@@ -157,7 +157,7 @@ async function main() {
     console.log('');
 
     console.log('Done! Index ready for search.');
-    console.log(`  node search_index.js --index ${outputPath} --query "your search text"`);
+    console.log(`  Index saved to ${outputPath}`);
 }
 
 main().catch(err => {

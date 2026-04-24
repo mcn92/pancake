@@ -55,7 +55,7 @@ examples/demo/test.js
 # Embedding model excluded from public release
 src/embedding_model.hpp
 examples/cli/embed_documents.js
-
-# Embedding model excluded from public release
-src/embedding_model.hpp
-examples/cli/embed_documents.js
+examples/cli/search_index.js
+examples/demo/demo_hybrid_search.js
+examples/demo/demo_recipe_search.js
+examples/demo/demo_recipe_search_enhanced.js
