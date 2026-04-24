@@ -1,0 +1,61 @@
+node_modules/
+.wrangler/
+.tmp-test-work/
+.npm/
+.npm-cache/
+.codex
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+.DS_Store
+Thumbs.db
+
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+
+# Local benchmark output
+benchmark_results/
+**/benchmark_results/
+
+# Large dataset files — download separately
+nytimes/*.fvecs
+nytimes/*.ivecs
+nytimes/*.hdf5
+
+# Emscripten build cache
+.emscripten-cache/
+
+# Profiling output
+profiles/
+
+# Large binary data — download separately or store in R2
+cuad_data/
+recipe_data/
+dist/cuad_data/
+
+# Auto-generated Doxygen docs (27MB) — build with `doxygen` if needed
+docs/
+
+# nytimes/ — commit scripts, exclude data and outputs
+nytimes/*.fvecs
+nytimes/*.ivecs
+nytimes/*.hdf5
+nytimes/benchmark_results/
+nytimes/sweep_*.csv
+nytimes/sweep_*.png
+
+# Build artifact
+*.tgz
+examples/demo/test.js
+
+# Embedding model excluded from public release
+src/embedding_model.hpp
+examples/cli/embed_documents.js
+
+# Embedding model excluded from public release
+src/embedding_model.hpp
+examples/cli/embed_documents.js

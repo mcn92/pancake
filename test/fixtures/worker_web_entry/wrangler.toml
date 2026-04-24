@@ -1,0 +1,4 @@
+name = "pancake-web-entry-smoke"
+main = "worker.js"
+compatibility_date = "2025-04-09"
+compatibility_flags = ["nodejs_compat"]

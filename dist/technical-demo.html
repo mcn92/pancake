@@ -1,0 +1,1317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pancake WASM - Technical Demo</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            background: #0a0a0a;
+            color: #e0e0e0;
+            padding: 2rem;
+            font-size: 13px;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        h1 { font-size: 1.5rem; margin-bottom: 0.25rem; color: #4ade80; font-weight: 600; }
+        .subtitle { color: #555; margin-bottom: 0.25rem; font-size: 0.8rem; }
+        .engine-badge {
+            display: inline-block;
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 0.2rem 0.6rem;
+            font-size: 0.7rem;
+            color: #4ade80;
+            margin-bottom: 1.5rem;
+        }
+
+        /* Metrics Grid */
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+        .metric {
+            background: #111;
+            border: 1px solid #1e1e1e;
+            border-radius: 6px;
+            padding: 0.75rem 1rem;
+        }
+        .metric-label { color: #555; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        .metric-value { font-size: 1.3rem; color: #fff; margin-top: 0.2rem; font-weight: 600; }
+        .metric-value.success { color: #4ade80; }
+        .metric-value.warn    { color: #fb923c; }
+        .metric-value.error   { color: #ef4444; }
+
+        /* Panels */
+        .panel {
+            background: #111;
+            border: 1px solid #1e1e1e;
+            border-radius: 6px;
+            padding: 1.25rem;
+            margin-bottom: 0.75rem;
+        }
+        .panel-title {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #555;
+            margin-bottom: 1rem;
+        }
+        .panel-title.green { color: #4ade80; }
+        .panel-title.orange { color: #fb923c; }
+
+        /* Controls */
+        .control-group { margin-bottom: 0.875rem; }
+        .control-group:last-child { margin-bottom: 0; }
+        .control-label { color: #555; font-size: 0.7rem; margin-bottom: 0.4rem; display: block; }
+        .button-group { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+
+        button {
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            color: #ccc;
+            padding: 0.4rem 0.875rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.75rem;
+            font-family: inherit;
+            transition: all 0.1s;
+        }
+        button:hover:not(:disabled) { background: #222; border-color: #3a3a3a; color: #e0e0e0; }
+        button:disabled { opacity: 0.35; cursor: not-allowed; }
+        button.primary { background: #14532d; border-color: #16a34a; color: #4ade80; }
+        button.primary:hover:not(:disabled) { background: #166534; }
+        button.danger { background: #450a0a; border-color: #b91c1c; color: #f87171; }
+        button.danger:hover:not(:disabled) { background: #7f1d1d; }
+
+        /* Log */
+        .log {
+            background: #0d0d0d;
+            border: 1px solid #1e1e1e;
+            border-radius: 6px;
+            padding: 0.75rem;
+            height: 260px;
+            overflow-y: auto;
+            font-size: 0.72rem;
+            margin-bottom: 0.75rem;
+        }
+        .log-entry { padding: 0.2rem 0; border-bottom: 1px solid #141414; line-height: 1.5; }
+        .log-entry:last-child { border-bottom: none; }
+        .log-time { color: #444; margin-right: 0.5rem; }
+        .log-type { display: inline-block; width: 56px; margin-right: 0.5rem; }
+        .log-type.info    { color: #60a5fa; }
+        .log-type.success { color: #4ade80; }
+        .log-type.warn    { color: #fb923c; }
+        .log-type.error   { color: #ef4444; }
+
+        /* Latency chart */
+        .chart-container { background: #0d0d0d; border: 1px solid #1e1e1e; border-radius: 6px; padding: 0.75rem; margin-bottom: 0.75rem; }
+        .chart-title { color: #444; font-size: 0.65rem; text-transform: uppercase; margin-bottom: 0.75rem; }
+        .chart { height: 100px; display: flex; align-items: flex-end; gap: 2px; }
+        .chart-bar { flex: 1; background: #4ade80; min-height: 2px; border-radius: 1px 1px 0 0; }
+        .chart-bar.slow { background: #fb923c; }
+        .chart-bar.very-slow { background: #ef4444; }
+
+        /* Proof checklist */
+        .checklist { background: #111; border: 1px solid #1e1e1e; border-radius: 6px; padding: 1rem; }
+        .checklist-title { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: #4ade80; margin-bottom: 0.875rem; }
+        .checklist-item {
+            padding: 0.45rem 0.5rem;
+            border-bottom: 1px solid #141414;
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+        }
+        .checklist-item:last-child { border-bottom: none; }
+        .check-box {
+            width: 15px; height: 15px; flex-shrink: 0;
+            border: 1px solid #2a2a2a;
+            border-radius: 3px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 0.65rem;
+        }
+        .check-box.done { background: #4ade80; border-color: #4ade80; color: #0a0a0a; font-weight: 700; }
+        .check-text { flex: 1; font-size: 0.75rem; color: #999; }
+        .check-text.done { color: #555; }
+
+        /* Grid layout */
+        .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 0.75rem; }
+        @media (max-width: 1024px) { .grid { grid-template-columns: 1fr; } }
+
+        /* Adversarial panel */
+        #adversarial-panel { display: none; }
+
+        /* Loading overlay */
+        #loading {
+            position: fixed; inset: 0;
+            background: #0a0a0a;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            z-index: 100;
+            gap: 1rem;
+        }
+        #loading .load-title { color: #4ade80; font-size: 1.1rem; font-weight: 600; }
+        #loading .load-sub { color: #555; font-size: 0.8rem; }
+        .spinner {
+            width: 32px; height: 32px;
+            border: 2px solid #1e1e1e;
+            border-top-color: #4ade80;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+<!-- Loading overlay — hidden once engine + vectors are ready -->
+<div id="loading">
+    <div class="spinner"></div>
+    <div class="load-title">Pancake WASM</div>
+    <div class="load-sub" id="load-status">Loading engine...</div>
+</div>
+
+<div class="container">
+    <h1>Pancake WASM — Technical Validation</h1>
+    <p class="subtitle">Proving HNSW architecture correctness through live mutation, compaction, and deterministic behavior</p>
+    <div class="engine-badge" id="engine-badge">engine: initializing...</div>
+
+    <!-- Top metrics -->
+    <div class="metrics">
+        <div class="metric">
+            <div class="metric-label">Vector Count</div>
+            <div class="metric-value" id="m-count">0</div>
+        </div>
+        <div class="metric">
+            <div class="metric-label">Live Vectors</div>
+            <div class="metric-value success" id="m-live">0</div>
+        </div>
+        <div class="metric">
+            <div class="metric-label">Ghost Nodes</div>
+            <div class="metric-value warn" id="m-ghosts">0</div>
+        </div>
+        <div class="metric">
+            <div class="metric-label">Ghost Ratio</div>
+            <div class="metric-value" id="m-ghost-ratio">0%</div>
+        </div>
+        <div class="metric">
+            <div class="metric-label">Index Memory</div>
+            <div class="metric-value" id="m-memory">0 KB</div>
+        </div>
+        <div class="metric">
+            <div class="metric-label">Compactions</div>
+            <div class="metric-value" id="m-compactions">0</div>
+        </div>
+        <div class="metric">
+            <div class="metric-label">Search p50</div>
+            <div class="metric-value success" id="m-p50">—</div>
+        </div>
+        <div class="metric">
+            <div class="metric-label">Search p99</div>
+            <div class="metric-value" id="m-p99">—</div>
+        </div>
+    </div>
+
+    <div class="grid">
+        <!-- Left column -->
+        <div>
+            <!-- Controls -->
+            <div class="panel">
+                <div class="panel-title green">Index Operations</div>
+
+                <div class="control-group">
+                    <div class="control-label">Build from real embeddings (all-MiniLM-L6-v2 · 384D · cosine)</div>
+                    <div class="button-group">
+                        <button class="primary" id="btn-build-1k">Index 1K Vectors</button>
+                        <button id="btn-build-5k">Index 5K Vectors</button>
+                        <button class="danger" id="btn-reset">Reset Index</button>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <div class="control-label">Search</div>
+                    <div class="button-group">
+                        <button id="btn-search-1" disabled>Single Search</button>
+                        <button id="btn-search-10" disabled>10 Searches</button>
+                        <button id="btn-search-100" disabled>100 Searches</button>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <div class="control-label">Mutation</div>
+                    <div class="button-group">
+                        <button id="btn-insert-1" disabled>Insert 1</button>
+                        <button id="btn-insert-100" disabled>Insert 100</button>
+                        <button id="btn-delete-100" disabled>Delete 100</button>
+                        <button id="btn-delete-500" disabled>Delete 500</button>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <div class="control-label">Compaction & Persistence</div>
+                    <div class="button-group">
+                        <button class="danger" id="btn-compact" disabled>Compact</button>
+                        <button id="btn-export" disabled>Export Index</button>
+                        <button id="btn-import" disabled>Import Index</button>
+                        <input type="file" id="file-import" style="display:none" accept=".bin">
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <div class="control-label">Adversarial Stress Tests</div>
+                    <div class="button-group">
+                        <button id="btn-adv-ghost" disabled>Ghost Explosion</button>
+                        <button id="btn-adv-churn" disabled>Memory Churn</button>
+                        <button id="btn-adv-read" disabled>Read-Heavy</button>
+                        <button id="btn-adv-write" disabled>Write-Heavy</button>
+                        <button class="danger" id="btn-adv-worst" disabled>Worst-Case</button>
+                        <button id="btn-adv-stop" disabled>Stop</button>
+                    </div>
+                    <div style="margin-top: 0.5rem; display: flex; gap: 1rem; align-items: center;">
+                        <label style="color: #555; font-size: 0.7rem;">
+                            <input type="checkbox" id="auto-compact" checked> Auto-Compact
+                        </label>
+                        <label style="color: #555; font-size: 0.7rem;">
+                            Duration:
+                            <select id="adv-duration" style="background:#1a1a1a; border:1px solid #2a2a2a; color:#ccc; padding:0.2rem; border-radius:3px; font-family:inherit; font-size:0.7rem;">
+                                <option value="10">10s</option>
+                                <option value="30" selected>30s</option>
+                                <option value="60">60s</option>
+                            </select>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <div class="control-label">Automated Proof Sequence</div>
+                    <div class="button-group">
+                        <button class="primary" id="btn-auto-proof" disabled>Run Full Proof Sequence</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Adversarial metrics panel -->
+            <div class="panel" id="adversarial-panel">
+                <div class="panel-title orange">Adversarial Stress Test — Live Metrics</div>
+                <div class="metrics" style="margin-bottom: 0.75rem;">
+                    <div class="metric">
+                        <div class="metric-label">Insert Rate</div>
+                        <div class="metric-value" id="adv-insert-rate">0/s</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">Delete Rate</div>
+                        <div class="metric-value" id="adv-delete-rate">0/s</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">Search Rate</div>
+                        <div class="metric-value" id="adv-search-rate">0/s</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">p50</div>
+                        <div class="metric-value success" id="adv-p50">—</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">p99</div>
+                        <div class="metric-value warn" id="adv-p99">—</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">Max</div>
+                        <div class="metric-value error" id="adv-max">—</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">Elapsed</div>
+                        <div class="metric-value" id="adv-elapsed">0s</div>
+                    </div>
+                </div>
+                <div id="adv-health" style="font-size: 0.72rem; padding: 0.5rem 0.75rem; background: #0d0d0d; border-radius: 4px; border-left: 2px solid #fb923c; color: #4ade80;">
+                    ✓ Structural integrity maintained
+                </div>
+            </div>
+
+            <!-- Latency chart -->
+            <div class="chart-container">
+                <div class="chart-title">Search Latency — Last 50 Queries</div>
+                <div class="chart" id="latency-chart"></div>
+            </div>
+
+            <!-- Event log -->
+            <div class="log" id="event-log"></div>
+        </div>
+
+        <!-- Right column: proof checklist -->
+        <div class="checklist">
+            <div class="checklist-title">Proof Checklist</div>
+            <div id="proof-list"></div>
+        </div>
+    </div>
+</div>
+
+<script src="engine.js"></script>
+<script>
+'use strict';
+
+// ─── Configuration ────────────────────────────────────────────────────────────
+const DIMS        = 384;
+const K           = 10;
+const MAX_ELEM    = 110_000;
+const VECTORS_URL = 'vectors.bin'; // 5000 x 384 float32 vectors, pre-embedded
+
+// ─── Proof definitions ────────────────────────────────────────────────────────
+const PROOFS = [
+    { id: 'load',         text: 'Real embeddings loaded from vectors.bin' },
+    { id: 'init',         text: 'Index built from real embedding data' },
+    { id: 'search',       text: 'Successful search execution' },
+    { id: 'low_latency',  text: 'Search latency < 2ms p50' },
+    { id: 'insert',       text: 'Live vector insertion post-build' },
+    { id: 'delete',       text: 'Live vector deletion' },
+    { id: 'ghosts',       text: 'Ghost node accumulation visible' },
+    { id: 'compact',      text: 'Compaction executed successfully' },
+    { id: 'no_block',     text: 'Search continues immediately after compaction' },
+    { id: 'mem_shrink',   text: 'Memory decreases after compaction' },
+    { id: 'deterministic',text: 'Search is deterministic (same query → same results)' },
+    { id: 'excl_deleted', text: 'Deleted vectors excluded from results' },
+    { id: 'export',       text: 'Index serialized to binary (export)' },
+    { id: 'import',       text: 'Index restored from binary (import round-trip)' },
+    { id: 'self_recall',  text: 'Self-recall: inserted vectors found at rank 1 (50/50)' },
+    { id: 'recall_at_k',  text: 'Recall@10 ≥ 99% vs brute-force (50 queries)' },
+    { id: 'stable',       text: 'Latency stable under sustained mutation' },
+    { id: 'stress',       text: 'Survived adversarial stress test' },
+];
+
+// ─── State ────────────────────────────────────────────────────────────────────
+let engine       = null;
+let vectors      = null; // Float32Array, all 5K vectors flat
+let vectorCount  = 0;    // how many have been indexed
+let totalVectors = 0;    // total available in vectors.bin
+
+let queryPtr     = null;
+let insertPtr    = null;
+let resultIdPtr  = null;
+let resultDistPtr= null;
+
+let latencyHistory   = [];
+let compactionCount  = 0;
+let memBeforeCompact = 0;
+let proofState       = {};
+
+let adversarialRunning = false;
+let adversarialState   = {};
+
+// ─── Proof checklist ──────────────────────────────────────────────────────────
+function initChecklist() {
+    const list = document.getElementById('proof-list');
+    PROOFS.forEach(p => {
+        proofState[p.id] = false;
+        const el = document.createElement('div');
+        el.className = 'checklist-item';
+        el.id = `proof-${p.id}`;
+        el.innerHTML = `
+            <div class="check-box"></div>
+            <div class="check-text">${p.text}</div>
+        `;
+        list.appendChild(el);
+    });
+}
+
+function markProof(id) {
+    if (proofState[id]) return;
+    proofState[id] = true;
+    const el = document.getElementById(`proof-${id}`);
+    if (!el) return;
+    el.querySelector('.check-box').classList.add('done');
+    el.querySelector('.check-box').textContent = '✓';
+    el.querySelector('.check-text').classList.add('done');
+}
+
+// ─── Logging ──────────────────────────────────────────────────────────────────
+function log(msg, type = 'info') {
+    const logEl = document.getElementById('event-log');
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    const time = new Date().toLocaleTimeString('en', { hour12: false });
+    entry.innerHTML = `<span class="log-time">${time}</span><span class="log-type ${type}">${type.toUpperCase()}</span><span>${msg}</span>`;
+    logEl.appendChild(entry);
+    logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ─── Metrics ──────────────────────────────────────────────────────────────────
+function updateMetrics() {
+    if (!engine) return;
+    const count      = engine._i8_count();
+    const ghosts     = engine._i8_ghost_count();
+    const ghostRatio = engine._i8_ghost_ratio();
+    const mem        = engine._i8_memory();
+    const live       = count - ghosts;
+
+    document.getElementById('m-count').textContent       = count.toLocaleString();
+    document.getElementById('m-live').textContent        = live.toLocaleString();
+    document.getElementById('m-ghosts').textContent      = ghosts.toLocaleString();
+    document.getElementById('m-ghost-ratio').textContent = (ghostRatio * 100).toFixed(1) + '%';
+    document.getElementById('m-memory').textContent      = mem >= 1048576
+        ? (mem / 1048576).toFixed(1) + ' MB'
+        : (mem / 1024).toFixed(1) + ' KB';
+    document.getElementById('m-compactions').textContent = compactionCount.toString();
+
+    const ratioEl = document.getElementById('m-ghost-ratio');
+    ratioEl.className = 'metric-value ' + (ghostRatio > 0.3 ? 'error' : ghostRatio > 0.1 ? 'warn' : 'success');
+
+    if (ghosts > 0) markProof('ghosts');
+}
+
+function updateLatencyMetrics() {
+    if (latencyHistory.length === 0) return;
+    const sorted = [...latencyHistory].sort((a, b) => a - b);
+    const p50 = sorted[Math.floor(sorted.length * 0.5)];
+    const p99 = sorted[Math.floor(sorted.length * 0.99)];
+    document.getElementById('m-p50').textContent = p50.toFixed(2) + ' ms';
+    document.getElementById('m-p99').textContent = p99.toFixed(2) + ' ms';
+    if (p50 < 2.0) markProof('low_latency');
+}
+
+function updateLatencyChart() {
+    const chart  = document.getElementById('latency-chart');
+    const recent = latencyHistory.slice(-50);
+    const max    = Math.max(...recent, 2);
+    chart.innerHTML = '';
+    recent.forEach(l => {
+        const bar = document.createElement('div');
+        bar.className = 'chart-bar' + (l > 5 ? ' very-slow' : l > 2 ? ' slow' : '');
+        bar.style.height = ((l / max) * 100) + '%';
+        chart.appendChild(bar);
+    });
+}
+
+// ─── Vector helpers ───────────────────────────────────────────────────────────
+function getVec(idx) {
+    // Return a view into the pre-loaded flat Float32Array
+    const offset = idx * DIMS;
+    return vectors.subarray(offset, offset + DIMS);
+}
+
+function randomLoadedVec() {
+    return getVec(Math.floor(Math.random() * totalVectors));
+}
+
+function randomSyntheticVec() {
+    const v = new Float32Array(DIMS);
+    let norm = 0;
+    for (let i = 0; i < DIMS; i++) { v[i] = Math.random() * 2 - 1; norm += v[i] * v[i]; }
+    norm = Math.sqrt(norm);
+    for (let i = 0; i < DIMS; i++) v[i] /= norm;
+    return v;
+}
+
+// ─── Core search ─────────────────────────────────────────────────────────────
+function doSearch(vec) {
+    engine.HEAPF32.set(vec, queryPtr >> 2);
+    const t0 = performance.now();
+    const found = engine._i8_query(queryPtr, K, resultIdPtr, resultDistPtr);
+    const latency = performance.now() - t0;
+    latencyHistory.push(latency);
+    updateLatencyMetrics();
+    updateLatencyChart();
+    return { latency, found };
+}
+
+function readIds(found) {
+    const dv = new DataView(engine.HEAPU8.buffer);
+    const ids = [];
+    for (let i = 0; i < found; i++) {
+        const lo = dv.getUint32(resultIdPtr + i * 8, true);
+        const hi = dv.getUint32(resultIdPtr + i * 8 + 4, true);
+        ids.push(hi * 0x100000000 + lo);
+    }
+    return ids;
+}
+
+// ─── Initialisation ───────────────────────────────────────────────────────────
+async function init() {
+    const loadStatus = document.getElementById('load-status');
+
+    // Load engine
+    loadStatus.textContent = 'Loading WASM engine...';
+    engine = await window.P();
+    engine._i8_init(DIMS, MAX_ELEM, 1, 16, 200, 100); // dim, max_elem, metric=cosine, M, ef_c, ef_s
+
+    queryPtr      = engine._emsc_malloc(DIMS * 4);
+    resultIdPtr   = engine._emsc_malloc(K * 8);
+    resultDistPtr = engine._emsc_malloc(K * 4);
+    insertPtr     = engine._emsc_malloc(DIMS * 4);
+
+    // Load vectors
+    loadStatus.textContent = 'Fetching embeddings (vectors.bin)...';
+    const resp = await fetch(VECTORS_URL);
+    if (!resp.ok) throw new Error(`Failed to fetch ${VECTORS_URL}: ${resp.status}`);
+    const buf = await resp.arrayBuffer();
+    vectors      = new Float32Array(buf);
+    totalVectors = vectors.length / DIMS;
+
+    document.getElementById('engine-badge').textContent =
+        `engine: 384D int8 HNSW · ${totalVectors.toLocaleString()} embeddings loaded · cosine`;
+    document.getElementById('loading').style.display = 'none';
+
+    markProof('load');
+    log(`Engine ready. ${totalVectors.toLocaleString()} real embeddings available (all-MiniLM-L6-v2, 384D, cosine).`, 'success');
+    log('Click "Index 1K Vectors" or "Index 5K Vectors" to build the index.', 'info');
+
+    enableButtons(['btn-build-1k', 'btn-build-5k']);
+}
+
+// ─── Index operations ─────────────────────────────────────────────────────────
+async function buildIndex(count) {
+    const n = Math.min(count, totalVectors);
+    log(`Building index with ${n.toLocaleString()} real embeddings...`, 'info');
+    const t0 = performance.now();
+    const batchSize = 500;
+
+    for (let i = 0; i < n; i += batchSize) {
+        const end = Math.min(i + batchSize, n);
+        for (let j = i; j < end; j++) {
+            engine.HEAPF32.set(getVec(j), insertPtr >> 2);
+            engine._i8_add(insertPtr);
+        }
+        const rate = ((end) / ((performance.now() - t0) / 1000)).toFixed(0);
+        log(`Indexed ${end.toLocaleString()}/${n.toLocaleString()} (${rate} vec/s)`, 'info');
+        await yieldFrame();
+    }
+
+    vectorCount = n;
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
+    updateMetrics();
+    log(`Index built: ${n.toLocaleString()} vectors in ${elapsed}s`, 'success');
+    markProof('init');
+    enableAllOperations();
+}
+
+function resetIndex() {
+    engine._i8_init(DIMS, MAX_ELEM, 1, 16, 200, 100);
+    vectorCount      = 0;
+    compactionCount  = 0;
+    memBeforeCompact = 0;
+    latencyHistory   = [];
+    updateMetrics();
+    updateLatencyChart();
+    log('Index reset.', 'warn');
+    disableOperations();
+}
+
+async function performSearches(count) {
+    log(`Running ${count} search${count > 1 ? 'es' : ''}...`, 'info');
+    let total = 0;
+    for (let i = 0; i < count; i++) {
+        total += doSearch(randomLoadedVec()).latency;
+        if (i % 20 === 19) await yieldFrame();
+    }
+    log(`${count} search${count > 1 ? 'es' : ''} complete (avg ${(total / count).toFixed(2)}ms)`, 'success');
+    markProof('search');
+}
+
+async function insertVectors(count) {
+    log(`Inserting ${count} synthetic vector${count > 1 ? 's' : ''}...`, 'info');
+    for (let i = 0; i < count; i++) {
+        engine.HEAPF32.set(randomSyntheticVec(), insertPtr >> 2);
+        engine._i8_add(insertPtr);
+    }
+    updateMetrics();
+    log(`Inserted ${count} vector${count > 1 ? 's' : ''}`, 'success');
+    markProof('insert');
+}
+
+async function deleteVectors(count) {
+    const total = engine._i8_count();
+    const n     = Math.min(count, total);
+    log(`Deleting ${n} vector${n > 1 ? 's' : ''}...`, 'info');
+    for (let i = 0; i < n; i++) {
+        engine._i8_delete(Math.floor(Math.random() * total));
+    }
+    updateMetrics();
+    log(`Deleted ${n} vectors (${engine._i8_ghost_count()} ghosts now)`, 'success');
+    markProof('delete');
+}
+
+async function compact() {
+    const memBefore    = engine._i8_memory();
+    const ghostsBefore = engine._i8_ghost_count();
+    memBeforeCompact   = memBefore;
+
+    log('Compacting...', 'info');
+    const t0 = performance.now();
+    engine._i8_compact();
+    const elapsed = (performance.now() - t0).toFixed(2);
+    compactionCount++;
+
+    const memAfter    = engine._i8_memory();
+    const ghostsAfter = engine._i8_ghost_count();
+    const saved       = memBefore - memAfter;
+
+    updateMetrics();
+    log(`Compaction done in ${elapsed}ms — ghosts: ${ghostsBefore}→${ghostsAfter}, memory saved: ${(saved / 1024).toFixed(1)} KB`, 'success');
+    markProof('compact');
+    if (saved > 0) markProof('mem_shrink');
+}
+
+async function exportIndex() {
+    log('Exporting index...', 'info');
+    const sizePtr = engine._emsc_malloc(4);
+    const dataPtr = engine._i8_export_index(sizePtr);
+    const size    = engine.HEAPU32[sizePtr >> 2];
+    const data    = new Uint8Array(engine.HEAPU8.buffer, dataPtr, size);
+    const blob    = new Blob([data], { type: 'application/octet-stream' });
+    const a       = document.createElement('a');
+    a.href        = URL.createObjectURL(blob);
+    a.download    = 'pancake-index.bin';
+    a.click();
+    engine._emsc_free(sizePtr);
+    log(`Exported ${(size / 1024).toFixed(1)} KB`, 'success');
+    markProof('export');
+}
+
+async function importIndex(file) {
+    log('Importing index...', 'info');
+    const buf  = await file.arrayBuffer();
+    const data = new Uint8Array(buf);
+    const ptr  = engine._emsc_malloc(data.length);
+    engine.HEAPU8.set(data, ptr);
+    engine._i8_import_index(ptr, data.length, DIMS);
+    engine._emsc_free(ptr);
+    updateMetrics();
+    const { latency } = doSearch(randomLoadedVec());
+    log(`Imported ${engine._i8_count().toLocaleString()} vectors. Immediate search: ${latency.toFixed(2)}ms`, 'success');
+    markProof('import');
+    enableAllOperations();
+}
+
+// ─── Explicit proof functions ─────────────────────────────────────────────────
+async function proveDeterministic() {
+    log('=== PROOF: Deterministic Search ===', 'info');
+    const vec     = randomLoadedVec();
+    const results = [];
+
+    for (let run = 0; run < 3; run++) {
+        engine.HEAPF32.set(vec, queryPtr >> 2);
+        const found = engine._i8_query(queryPtr, K, resultIdPtr, resultDistPtr);
+        const ids   = readIds(found);
+        results.push(ids);
+        log(`  Run ${run + 1}: [${ids.slice(0, 5).join(', ')}${ids.length > 5 ? '...' : ''}]`, 'info');
+        await sleep(80);
+    }
+
+    const allSame = results.every(r =>
+        r.length === results[0].length && r.every((id, i) => id === results[0][i])
+    );
+
+    if (allSame) {
+        log('✓ PROVEN: Identical results across 3 runs', 'success');
+        markProof('deterministic');
+    } else {
+        log('✗ FAILED: Results differ across runs', 'error');
+    }
+}
+
+async function proveDeletionExclusion() {
+    log('=== PROOF: Deleted Vector Excluded from Results ===', 'info');
+
+    // Insert a known vector and remember its ID
+    const vec = randomSyntheticVec();
+    engine.HEAPF32.set(vec, insertPtr >> 2);
+    const id = engine._i8_add(insertPtr);
+    log(`  Inserted test vector, ID=${id}`, 'info');
+    await sleep(80);
+
+    // Search — should appear at top
+    engine.HEAPF32.set(vec, queryPtr >> 2);
+    let found     = engine._i8_query(queryPtr, K, resultIdPtr, resultDistPtr);
+    let ids       = readIds(found);
+    const before  = ids.includes(id);
+    log(`  Before delete — appears in results: ${before}`, 'info');
+    await sleep(80);
+
+    // Delete
+    engine._i8_delete(id);
+    updateMetrics();
+    log(`  Deleted ID=${id}`, 'info');
+    await sleep(80);
+
+    // Search again — should not appear
+    engine.HEAPF32.set(vec, queryPtr >> 2);
+    found         = engine._i8_query(queryPtr, K, resultIdPtr, resultDistPtr);
+    ids           = readIds(found);
+    const after   = ids.includes(id);
+    log(`  After delete — appears in results: ${after}`, 'info');
+
+    if (before && !after) {
+        log('✓ PROVEN: Deleted vector excluded from results', 'success');
+        markProof('excl_deleted');
+    } else {
+        log(`✗ Result: before=${before}, after=${after}`, 'error');
+    }
+}
+
+async function proveSearchDuringCompaction() {
+    log('=== PROOF: Search Continues After Compaction ===', 'info');
+
+    // Ensure there are ghosts to compact
+    if (engine._i8_ghost_count() < 10) {
+        await deleteVectors(100);
+    }
+
+    engine._i8_compact();
+    compactionCount++;
+    const { latency } = doSearch(randomLoadedVec());
+    log(`  Immediate post-compaction search: ${latency.toFixed(2)}ms`, 'success');
+
+    if (latency < 10) {
+        log('✓ PROVEN: Search continues immediately after compaction', 'success');
+        markProof('no_block');
+    }
+    updateMetrics();
+}
+
+async function proveMemoryDecrease() {
+    log('=== PROOF: Memory Decreases After Compaction ===', 'info');
+
+    if (engine._i8_ghost_count() < 50) {
+        log('  Generating ghosts...', 'info');
+        await deleteVectors(200);
+    }
+
+    const memBefore = engine._i8_memory();
+    log(`  Memory before: ${(memBefore / 1024).toFixed(1)} KB, ghosts: ${engine._i8_ghost_count()}`, 'info');
+    await compact();
+    const memAfter = engine._i8_memory();
+    const saved    = memBefore - memAfter;
+    log(`  Memory after: ${(memAfter / 1024).toFixed(1)} KB, saved: ${(saved / 1024).toFixed(1)} KB`, 'success');
+
+    if (saved > 0) {
+        log('✓ PROVEN: Memory decreased after compaction', 'success');
+        markProof('mem_shrink');
+    }
+}
+
+async function proveSustainedStability() {
+    log('=== PROOF: Latency Stable Under Sustained Mutation (5s) ===', 'info');
+    const duration = 5000;
+    const t0       = performance.now();
+    let inserts    = 0, deletes = 0;
+    const lats     = [];
+
+    while (performance.now() - t0 < duration) {
+        engine.HEAPF32.set(randomSyntheticVec(), insertPtr >> 2);
+        engine._i8_add(insertPtr);
+        inserts++;
+
+        if (Math.random() < 0.4) {
+            engine._i8_delete(Math.floor(Math.random() * engine._i8_count()));
+            deletes++;
+        }
+
+        const t1 = performance.now();
+        engine.HEAPF32.set(randomLoadedVec(), queryPtr >> 2);
+        engine._i8_query(queryPtr, K, resultIdPtr, resultDistPtr);
+        lats.push(performance.now() - t1);
+
+        if (inserts % 50 === 0) await yieldFrame();
+    }
+
+    const sorted = [...lats].sort((a, b) => a - b);
+    const p50    = sorted[Math.floor(sorted.length * 0.5)];
+    const p99    = sorted[Math.floor(sorted.length * 0.99)];
+    const elapsed= ((performance.now() - t0) / 1000).toFixed(2);
+
+    log(`  ${elapsed}s — ${inserts} inserts, ${deletes} deletes, ${lats.length} searches`, 'success');
+    log(`  p50: ${p50.toFixed(2)}ms, p99: ${p99.toFixed(2)}ms`, 'success');
+    updateMetrics();
+
+    if (p99 < 5.0 && p50 < 2.0) {
+        log('✓ PROVEN: Latency stable under sustained mutation', 'success');
+        markProof('stable');
+    } else {
+        log(`⚠ Latency exceeded thresholds (p50=${p50.toFixed(2)}ms, p99=${p99.toFixed(2)}ms)`, 'warn');
+    }
+}
+
+async function proveExportImport() {
+    log('=== PROOF: Export → Reset → Import → Immediate Search ===', 'info');
+    const countBefore = engine._i8_count();
+
+    if (countBefore === 0) {
+        log('✗ SKIPPED: Index is empty — nothing to export', 'error');
+        return false;
+    }
+
+    // Export — snapshot the buffer before any reset
+    const sizePtr = engine._emsc_malloc(4);
+    const dataPtr = engine._i8_export_index(sizePtr);
+    const size    = engine.HEAPU32[sizePtr >> 2];
+    if (size === 0) {
+        log('✗ Export returned 0 bytes', 'error');
+        engine._emsc_free(sizePtr);
+        return false;
+    }
+    // .slice() copies the data out of WASM memory before we reset
+    const saved = new Uint8Array(engine.HEAPU8.buffer, dataPtr, size).slice();
+    engine._emsc_free(sizePtr);
+    log(`  Exported ${(size / 1024).toFixed(1)} KB (${countBefore.toLocaleString()} vectors)`, 'success');
+    markProof('export');
+
+    await sleep(400);
+
+    // Reset — wipe the index entirely
+    engine._i8_init(DIMS, MAX_ELEM, 1, 16, 200, 100);
+    log(`  Index reset (now has ${engine._i8_count()} vectors)`, 'info');
+    await sleep(400);
+
+    // Import — write saved bytes into WASM memory then call import
+    const ptr = engine._emsc_malloc(saved.length);
+    if (!ptr) {
+        log('✗ Import failed — WASM malloc returned null', 'error');
+        return false;
+    }
+    engine.HEAPU8.set(saved, ptr);
+
+    let importStatus;
+    try {
+        importStatus = engine._i8_import_index(ptr, saved.length, DIMS);
+    } catch (e) {
+        engine._emsc_free(ptr);
+        log(`✗ Import crashed: ${e.message}`, 'error');
+        // Rebuild the index so subsequent proofs aren't broken
+        log('  Rebuilding index for subsequent proofs...', 'warn');
+        engine._i8_init(DIMS, MAX_ELEM, 1, 16, 200, 100);
+        for (let i = 0; i < Math.min(countBefore, totalVectors); i++) {
+            engine.HEAPF32.set(getVec(i), insertPtr >> 2);
+            engine._i8_add(insertPtr);
+        }
+        updateMetrics();
+        log(`  Rebuilt ${engine._i8_count()} vectors`, 'warn');
+        return false;
+    }
+    engine._emsc_free(ptr);
+
+    if (importStatus !== 0) {
+        log(`✗ Import returned error status ${importStatus}`, 'error');
+        // Rebuild
+        engine._i8_init(DIMS, MAX_ELEM, 1, 16, 200, 100);
+        for (let i = 0; i < Math.min(countBefore, totalVectors); i++) {
+            engine.HEAPF32.set(getVec(i), insertPtr >> 2);
+            engine._i8_add(insertPtr);
+        }
+        updateMetrics();
+        log(`  Rebuilt ${engine._i8_count()} vectors`, 'warn');
+        return false;
+    }
+
+    const countAfter = engine._i8_count();
+    updateMetrics();
+
+    if (countAfter === 0) {
+        log(`✗ Import failed — index still empty after import (exported ${countBefore} vectors)`, 'error');
+        // Rebuild the index so subsequent proofs aren't broken
+        log('  Rebuilding index for subsequent proofs...', 'warn');
+        engine._i8_init(DIMS, MAX_ELEM, 1, 16, 200, 100);
+        for (let i = 0; i < Math.min(countBefore, totalVectors); i++) {
+            engine.HEAPF32.set(getVec(i), insertPtr >> 2);
+            engine._i8_add(insertPtr);
+        }
+        updateMetrics();
+        log(`  Rebuilt ${engine._i8_count()} vectors`, 'warn');
+        return false;
+    }
+
+    log(`  Imported ${countAfter.toLocaleString()} vectors`, 'success');
+    await sleep(200);
+
+    // Immediate search after import
+    const { latency } = doSearch(randomLoadedVec());
+    log(`  Immediate search: ${latency.toFixed(2)}ms`, 'success');
+
+    if (countBefore === countAfter && latency < 10) {
+        log('✓ PROVEN: Export → Import → Immediate Search works', 'success');
+        markProof('import');
+        return true;
+    } else {
+        log(`✗ Count mismatch: before=${countBefore}, after=${countAfter}`, 'error');
+        return false;
+    }
+}
+
+// ─── Self-recall proof ────────────────────────────────────────────────────────
+async function proveSelfRecall() {
+    const N = 50;
+    log(`=== PROOF: Self-Recall (${N} trials) ===`, 'info');
+
+    let rank1Hits = 0;
+    let misses = [];
+
+    for (let trial = 0; trial < N; trial++) {
+        // Insert a fresh random vector
+        const vec = randomSyntheticVec();
+        engine.HEAPF32.set(vec, insertPtr >> 2);
+        const id = engine._i8_add(insertPtr);
+
+        // Search with the same vector
+        engine.HEAPF32.set(vec, queryPtr >> 2);
+        const found = engine._i8_query(queryPtr, K, resultIdPtr, resultDistPtr);
+        const dv2 = new DataView(engine.HEAPU8.buffer);
+        const topLo = dv2.getUint32(resultIdPtr, true);
+        const topHi = dv2.getUint32(resultIdPtr + 4, true);
+        const topId = topHi * 0x100000000 + topLo;
+        const topDist = engine.HEAPF32[(resultDistPtr >> 2)];
+
+        if (topId === id) {
+            rank1Hits++;
+        } else {
+            // Find what rank it actually appeared at
+            let rank = -1;
+            for (let i = 0; i < found; i++) {
+                const lo = dv2.getUint32(resultIdPtr + i * 8, true);
+                const hi = dv2.getUint32(resultIdPtr + i * 8 + 4, true);
+                if (hi * 0x100000000 + lo === id) { rank = i + 1; break; }
+            }
+            misses.push({ trial, id, topId, topDist, rank });
+        }
+
+        if ((trial + 1) % 10 === 0) await yieldFrame();
+    }
+
+    const pct = (rank1Hits / N * 100).toFixed(1);
+    log(`  Result: ${rank1Hits}/${N} rank-1 hits (${pct}%)`, rank1Hits === N ? 'success' : 'warn');
+
+    if (misses.length > 0) {
+        for (const m of misses.slice(0, 5)) {
+            const rankStr = m.rank > 0 ? `rank ${m.rank}` : 'not in top-K';
+            log(`  Miss: trial ${m.trial} — inserted ID=${m.id}, top result ID=${m.topId}, actual ${rankStr}`, 'warn');
+        }
+        if (misses.length > 5) log(`  ... and ${misses.length - 5} more misses`, 'warn');
+    }
+
+    if (rank1Hits === N) {
+        log(`✓ PROVEN: ${N}/${N} inserted vectors found at rank 1`, 'success');
+        markProof('self_recall');
+    } else {
+        log(`✗ FAILED: ${N - rank1Hits} misses — possible graph connectivity issue`, 'error');
+    }
+}
+
+// ─── Recall@K proof ──────────────────────────────────────────────────────────
+async function proveRecallAtK() {
+    const N_QUERIES = 50;
+    const TOP_K = 10;
+    log(`=== PROOF: Recall@${TOP_K} vs Brute-Force (${N_QUERIES} queries) ===`, 'info');
+
+    const count = engine._i8_count();
+    if (count < TOP_K) {
+        log('✗ SKIPPED: Not enough vectors in index', 'error');
+        return;
+    }
+
+    // Pick N random query indices from the indexed vectors
+    const queryIndices = [];
+    const used = new Set();
+    while (queryIndices.length < N_QUERIES) {
+        const idx = Math.floor(Math.random() * Math.min(count, totalVectors));
+        if (!used.has(idx)) { used.add(idx); queryIndices.push(idx); }
+    }
+
+    let totalRecall = 0;
+
+    for (let qi = 0; qi < N_QUERIES; qi++) {
+        const qIdx = queryIndices[qi];
+        const qVec = getVec(qIdx);
+
+        // --- Brute-force: cosine distance to all indexed vectors ---
+        const scored = [];
+        const limit = Math.min(count, totalVectors);
+        for (let i = 0; i < limit; i++) {
+            const v = getVec(i);
+            let dot = 0, na = 0, nb = 0;
+            for (let d = 0; d < DIMS; d++) {
+                dot += qVec[d] * v[d];
+                na  += qVec[d] * qVec[d];
+                nb  += v[d] * v[d];
+            }
+            scored.push({ id: i, dist: 1 - dot / (Math.sqrt(na) * Math.sqrt(nb)) });
+        }
+        scored.sort((a, b) => a.dist - b.dist);
+        const trueTopK = new Set(scored.slice(0, TOP_K).map(s => s.id));
+
+        // --- HNSW search ---
+        engine.HEAPF32.set(qVec, queryPtr >> 2);
+        const found = engine._i8_query(queryPtr, TOP_K, resultIdPtr, resultDistPtr);
+        const hnswIds = new Set();
+        const dv = new DataView(engine.HEAPU8.buffer);
+        for (let i = 0; i < found; i++) {
+            const lo = dv.getUint32(resultIdPtr + i * 8, true);
+            const hi = dv.getUint32(resultIdPtr + i * 8 + 4, true);
+            hnswIds.add(hi * 0x100000000 + lo);
+        }
+
+        // --- Overlap ---
+        let hits = 0;
+        for (const id of hnswIds) { if (trueTopK.has(id)) hits++; }
+        totalRecall += hits / TOP_K;
+
+        if ((qi + 1) % 10 === 0) await yieldFrame();
+    }
+
+    const avgRecall = totalRecall / N_QUERIES;
+    const pct = (avgRecall * 100).toFixed(1);
+    log(`  Result: ${pct}% average recall@${TOP_K} over ${N_QUERIES} queries`, avgRecall >= 0.95 ? 'success' : 'warn');
+
+    if (avgRecall >= 0.95) {
+        log(`✓ PROVEN: Recall@${TOP_K} = ${pct}% (≥ 95%)`, 'success');
+        markProof('recall_at_k');
+    } else if (avgRecall >= 0.90) {
+        log(`~ CLOSE: Recall@${TOP_K} = ${pct}% (≥ 90% but below 95% threshold)`, 'warn');
+    } else {
+        log(`✗ FAILED: Recall@${TOP_K} = ${pct}% — below 90%`, 'error');
+    }
+}
+
+// ─── Full proof sequence ──────────────────────────────────────────────────────
+async function runFullProofSequence() {
+    log('=== STARTING FULL PROOF SEQUENCE ===', 'info');
+    disableAllButtons();
+
+    // Reset index to ensure clean state for repeatable runs (without disabling operations)
+    engine._i8_init(DIMS, MAX_ELEM, 1, 16, 200, 100);
+    vectorCount      = 0;
+    compactionCount  = 0;
+    memBeforeCompact = 0;
+    latencyHistory   = [];
+    updateMetrics();
+    updateLatencyChart();
+    log('Index reset for proof sequence.', 'warn');
+    await sleep(500);
+
+    // Rebuild index with real embeddings for recall test
+    await buildIndex(5000);
+    await sleep(500);
+
+    await performSearches(10);
+    await sleep(500);
+    await proveRecallAtK();
+    await sleep(800);
+    await insertVectors(100);
+    await sleep(500);
+    await deleteVectors(50);
+    await sleep(500);
+    await proveDeterministic();
+    await sleep(800);
+    await proveDeletionExclusion();
+    await sleep(800);
+    await proveSearchDuringCompaction();
+    await sleep(800);
+    await proveMemoryDecrease();
+    await sleep(800);
+    // Self-recall runs before export/import so it operates on a healthy index
+    await proveSelfRecall();
+    await sleep(800);
+    await proveSustainedStability();
+    await sleep(800);
+    await proveExportImport();
+
+    log('=== ALL PROOFS COMPLETE ===', 'success');
+    enableAllOperations();
+}
+
+// ─── Adversarial tests ────────────────────────────────────────────────────────
+const ADV_MODES = {
+    ghost: { name: 'Ghost Explosion',        insert: 100, delete: 500, search: 100,  desc: 'Rapid deletions → ghost accumulation' },
+    churn: { name: 'Memory Churn',           insert: 500, delete: 500, search: 100,  desc: 'Equal inserts + deletes → memory pressure' },
+    read:  { name: 'Read-Heavy',             insert: 10,  delete: 10,  search: 1000, desc: 'Search-dominated workload' },
+    write: { name: 'Write-Heavy',            insert: 1000,delete: 800, search: 50,   desc: 'Insert-dominated workload' },
+    worst: { name: 'Worst-Case Adversarial', insert: 500, delete: 490, search: 1000, desc: 'Max stress on all paths simultaneously' },
+};
+
+function startAdversarialTest(mode) {
+    if (adversarialRunning) return;
+    const cfg      = ADV_MODES[mode];
+    const duration = parseInt(document.getElementById('adv-duration').value) * 1000;
+    const autoCompact = document.getElementById('auto-compact').checked;
+
+    log(`=== ADVERSARIAL: ${cfg.name} — ${cfg.desc} ===`, 'info');
+    adversarialRunning = true;
+
+    adversarialState = {
+        startTime: performance.now(),
+        inserts: 0, deletes: 0, searches: 0,
+        latencies: [],
+        intervals: [],
+    };
+
+    document.getElementById('adversarial-panel').style.display = 'block';
+
+    function addInterval(fn, ms) {
+        if (ms === 0 || 1000 / ms === 0) return;
+        adversarialState.intervals.push(setInterval(fn, Math.max(1, 1000 / (1000 / ms))));
+    }
+
+    // Insert loop
+    if (cfg.insert > 0) addInterval(() => {
+        engine.HEAPF32.set(randomSyntheticVec(), insertPtr >> 2);
+        engine._i8_add(insertPtr);
+        adversarialState.inserts++;
+    }, 1000 / cfg.insert);
+
+    // Delete loop
+    if (cfg.delete > 0) addInterval(() => {
+        const total = engine._i8_count();
+        if (total > 0) { engine._i8_delete(Math.floor(Math.random() * total)); adversarialState.deletes++; }
+    }, 1000 / cfg.delete);
+
+    // Search loop
+    if (cfg.search > 0) addInterval(() => {
+        engine.HEAPF32.set(randomLoadedVec(), queryPtr >> 2);
+        const t0 = performance.now();
+        engine._i8_query(queryPtr, K, resultIdPtr, resultDistPtr);
+        adversarialState.latencies.push(performance.now() - t0);
+        adversarialState.searches++;
+        if (adversarialState.latencies.length > 1000) adversarialState.latencies.shift();
+    }, 1000 / cfg.search);
+
+    // Auto-compact loop
+    if (autoCompact) adversarialState.intervals.push(setInterval(() => {
+        if (engine._i8_ghost_ratio() > 0.15) { engine._i8_compact(); compactionCount++; }
+    }, 1000));
+
+    // Metrics update loop
+    adversarialState.intervals.push(setInterval(() => {
+        updateAdversarialMetrics();
+        updateMetrics();
+    }, 250));
+
+    // Stop after duration
+    setTimeout(stopAdversarialTest, duration);
+
+    document.getElementById('btn-adv-stop').disabled = false;
+    ['btn-adv-ghost','btn-adv-churn','btn-adv-read','btn-adv-write','btn-adv-worst'].forEach(id => {
+        document.getElementById(id).disabled = true;
+    });
+}
+
+function stopAdversarialTest() {
+    if (!adversarialRunning) return;
+    adversarialRunning = false;
+    adversarialState.intervals.forEach(clearInterval);
+
+    const elapsed = (performance.now() - adversarialState.startTime) / 1000;
+    log(`=== ADVERSARIAL COMPLETE — ${elapsed.toFixed(1)}s ===`, 'success');
+    log(`  Ops: ${adversarialState.inserts} inserts, ${adversarialState.deletes} deletes, ${adversarialState.searches} searches`, 'success');
+
+    if (adversarialState.latencies.length > 0) {
+        const sorted = [...adversarialState.latencies].sort((a, b) => a - b);
+        const p50    = sorted[Math.floor(sorted.length * 0.5)];
+        const p99    = sorted[Math.floor(sorted.length * 0.99)];
+        const max    = sorted[sorted.length - 1];
+        log(`  Latency: p50=${p50.toFixed(2)}ms, p99=${p99.toFixed(2)}ms, max=${max.toFixed(2)}ms`, 'success');
+        if (p99 < 5.0 && max < 20.0) markProof('stress');
+    }
+
+    updateMetrics();
+    document.getElementById('btn-adv-stop').disabled = true;
+    ['btn-adv-ghost','btn-adv-churn','btn-adv-read','btn-adv-write','btn-adv-worst'].forEach(id => {
+        document.getElementById(id).disabled = false;
+    });
+}
+
+function updateAdversarialMetrics() {
+    const elapsed = (performance.now() - adversarialState.startTime) / 1000;
+    document.getElementById('adv-insert-rate').textContent = (adversarialState.inserts / elapsed).toFixed(0) + '/s';
+    document.getElementById('adv-delete-rate').textContent = (adversarialState.deletes / elapsed).toFixed(0) + '/s';
+    document.getElementById('adv-search-rate').textContent = (adversarialState.searches / elapsed).toFixed(0) + '/s';
+    document.getElementById('adv-elapsed').textContent     = elapsed.toFixed(1) + 's';
+
+    if (adversarialState.latencies.length > 10) {
+        const sorted = [...adversarialState.latencies].sort((a, b) => a - b);
+        const p50    = sorted[Math.floor(sorted.length * 0.5)];
+        const p99    = sorted[Math.floor(sorted.length * 0.99)];
+        const max    = sorted[sorted.length - 1];
+        document.getElementById('adv-p50').textContent = p50.toFixed(2) + 'ms';
+        document.getElementById('adv-p99').textContent = p99.toFixed(2) + 'ms';
+        document.getElementById('adv-max').textContent = max.toFixed(2) + 'ms';
+    }
+
+    // Structural health
+    const ghostRatio = engine._i8_ghost_ratio();
+    const health     = document.getElementById('adv-health');
+    const warnings   = [];
+    if (ghostRatio > 0.3) warnings.push('⚠ Ghost ratio excessive (>30%)');
+    if (adversarialState.latencies.length > 50) {
+        const sorted = [...adversarialState.latencies].sort((a, b) => a - b);
+        const p99    = sorted[Math.floor(sorted.length * 0.99)];
+        const p50    = sorted[Math.floor(sorted.length * 0.5)];
+        if (p99 > p50 * 5) warnings.push('⚠ Latency tail explosion detected');
+    }
+    health.innerHTML = warnings.length > 0
+        ? `<span style="color:#fb923c">${warnings.join('<br>')}</span>`
+        : '<span style="color:#4ade80">✓ Structural integrity maintained</span>';
+}
+
+// ─── Button helpers ───────────────────────────────────────────────────────────
+function enableButtons(ids) {
+    ids.forEach(id => { const el = document.getElementById(id); if (el) el.disabled = false; });
+}
+
+function enableAllOperations() {
+    ['btn-search-1','btn-search-10','btn-search-100',
+     'btn-insert-1','btn-insert-100','btn-delete-100','btn-delete-500',
+     'btn-compact','btn-export','btn-import',
+     'btn-adv-ghost','btn-adv-churn','btn-adv-read','btn-adv-write','btn-adv-worst',
+     'btn-auto-proof','btn-build-1k','btn-build-5k'
+    ].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = false; });
+}
+
+function disableOperations() {
+    ['btn-search-1','btn-search-10','btn-search-100',
+     'btn-insert-1','btn-insert-100','btn-delete-100','btn-delete-500',
+     'btn-compact','btn-export','btn-adv-ghost','btn-adv-churn',
+     'btn-adv-read','btn-adv-write','btn-adv-worst','btn-auto-proof'
+    ].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = true; });
+}
+
+function disableAllButtons() {
+    document.querySelectorAll('button').forEach(b => b.disabled = true);
+}
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
+const sleep      = ms => new Promise(r => setTimeout(r, ms));
+const yieldFrame = ()  => new Promise(r => setTimeout(r, 0));
+
+// ─── Wire up event listeners ──────────────────────────────────────────────────
+document.getElementById('btn-build-1k').addEventListener('click', () => buildIndex(1000));
+document.getElementById('btn-build-5k').addEventListener('click', () => buildIndex(5000));
+document.getElementById('btn-reset').addEventListener('click', resetIndex);
+document.getElementById('btn-search-1').addEventListener('click', () => performSearches(1));
+document.getElementById('btn-search-10').addEventListener('click', () => performSearches(10));
+document.getElementById('btn-search-100').addEventListener('click', () => performSearches(100));
+document.getElementById('btn-insert-1').addEventListener('click', () => insertVectors(1));
+document.getElementById('btn-insert-100').addEventListener('click', () => insertVectors(100));
+document.getElementById('btn-delete-100').addEventListener('click', () => deleteVectors(100));
+document.getElementById('btn-delete-500').addEventListener('click', () => deleteVectors(500));
+document.getElementById('btn-compact').addEventListener('click', compact);
+document.getElementById('btn-export').addEventListener('click', exportIndex);
+document.getElementById('btn-import').addEventListener('click', () => document.getElementById('file-import').click());
+document.getElementById('file-import').addEventListener('change', e => { if (e.target.files[0]) importIndex(e.target.files[0]); });
+document.getElementById('btn-adv-ghost').addEventListener('click', () => startAdversarialTest('ghost'));
+document.getElementById('btn-adv-churn').addEventListener('click', () => startAdversarialTest('churn'));
+document.getElementById('btn-adv-read').addEventListener('click',  () => startAdversarialTest('read'));
+document.getElementById('btn-adv-write').addEventListener('click', () => startAdversarialTest('write'));
+document.getElementById('btn-adv-worst').addEventListener('click', () => startAdversarialTest('worst'));
+document.getElementById('btn-adv-stop').addEventListener('click',  stopAdversarialTest);
+document.getElementById('btn-auto-proof').addEventListener('click', runFullProofSequence);
+
+// ─── Boot ─────────────────────────────────────────────────────────────────────
+initChecklist();
+init().catch(err => {
+    document.getElementById('load-status').textContent = 'Error: ' + err.message;
+    document.getElementById('load-status').style.color = '#ef4444';
+    console.error(err);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,83 @@
+{
+  "name": "pancake-wasm",
+  "version": "0.1.0",
+  "description": "HNSW vector search in WebAssembly. Runs in Node.js, browsers, and Cloudflare Workers with no native dependencies.",
+  "main": "pancake.js",
+  "types": "pancake.d.ts",
+  "exports": {
+    ".": {
+      "types": "./pancake.d.ts",
+      "workerd": "./pancake.web.mjs",
+      "browser": "./pancake.web.mjs",
+      "import": "./pancake.node.mjs",
+      "require": "./pancake.js",
+      "default": "./pancake.js"
+    },
+    "./web": {
+      "types": "./pancake.d.ts",
+      "workerd": "./pancake.web.mjs",
+      "browser": "./pancake.web.mjs",
+      "import": "./pancake.web.mjs",
+      "default": "./pancake.web.mjs"
+    },
+    "./node": {
+      "types": "./pancake.d.ts",
+      "import": "./pancake.node.mjs",
+      "require": "./pancake.js",
+      "default": "./pancake.js"
+    },
+    "./engine": "./dist/engine.js",
+    "./engine.wasm": "./dist/engine.wasm"
+  },
+  "files": [
+    "pancake.js",
+    "pancake.node.mjs",
+    "pancake.web.mjs",
+    "pancake-core.js",
+    "pancake.d.ts",
+    "dist/engine.js",
+    "dist/engine.wasm",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "bash build.sh",
+    "test": "node run_tests.js"
+  },
+  "keywords": [
+    "vector-search",
+    "ann",
+    "hnsw",
+    "wasm",
+    "webassembly",
+    "simd",
+    "int8",
+    "quantization",
+    "embedding",
+    "embeddings",
+    "nearest-neighbor",
+    "similarity-search",
+    "cloudflare-workers",
+    "edge",
+    "edge-compute"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mcn92/pancake.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mcn92/pancake/issues"
+  },
+  "homepage": "https://github.com/mcn92/pancake#readme",
+  "author": "Matthew Noonan",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=16"
+  },
+  "sideEffects": false,
+  "devDependencies": {
+    "hnswlib-node": "^3.0.0",
+    "usearch": "^2.25.1",
+    "wrangler": "^4.81.1"
+  }
+}
