@@ -6,12 +6,12 @@ const ENVELOPE_VERSION = 2;
 const ENVELOPE_HEADER_SIZE = 20; // magic(4) + version(4) + dim(4) + metric(4) + quantized(4)
 
 class PancakeIndex {
-    constructor(engine, opts, vecPtr, idPtr, distPtr, bufferCapacity) {
+    constructor(engine, opts, handle, vecPtr, idPtr, distPtr, bufferCapacity) {
         this._e = engine;
         this._dim = opts.dim;
-        this._useInt8 = !!opts.quantized;
         this._quantized = !!opts.quantized;
         this._isL2 = (opts.metric === 'l2');
+        this._handle = handle;
         this._vecPtr = vecPtr;
         this._idPtr = idPtr;
         this._distPtr = distPtr;
@@ -33,9 +33,7 @@ class PancakeIndex {
             throw new Error(`Expected vector of length ${this._dim}, got ${f32.length}`);
         }
         this._e.HEAPF32.set(f32, this._vecPtr >> 2);
-        const intId = this._useInt8
-            ? this._e._i8_add(this._vecPtr)
-            : this._e._float_add(this._vecPtr);
+        const intId = this._e._pancake_add(this._handle, this._vecPtr);
         if (intId === 0xFFFFFFFF || intId < 0) {
             throw new Error('Insert failed (index full or not initialized)');
         }
@@ -53,15 +51,6 @@ class PancakeIndex {
         }
         if (vectors.length === 0) return [];
 
-        const bulkInsert = this._bulkInsertFn();
-        if (!bulkInsert) {
-            const ids = new Array(vectors.length);
-            for (let i = 0; i < vectors.length; i++) {
-                ids[i] = this.add(vectors[i]);
-            }
-            return ids;
-        }
-
         const flat = new Float32Array(vectors.length * this._dim);
         let validCount = 0;
         for (let i = 0; i < vectors.length; i++) {
@@ -70,13 +59,13 @@ class PancakeIndex {
                 if (validCount === 0) {
                     throw new Error(`Expected vector of length ${this._dim}, got ${f32.length}`);
                 }
-                const ids = this._bulkInsert(flat.subarray(0, validCount * this._dim), validCount, bulkInsert);
+                this._bulkInsert(flat.subarray(0, validCount * this._dim), validCount);
                 throw new Error(`Expected vector of length ${this._dim}, got ${f32.length}`);
             }
             flat.set(f32, i * this._dim);
             validCount++;
         }
-        return this._bulkInsert(flat, validCount, bulkInsert);
+        return this._bulkInsert(flat, validCount);
     }
 
     search(query, k) {
@@ -91,9 +80,7 @@ class PancakeIndex {
         if (k === 0) return [];
         this._ensureSearchCapacity(k);
         this._e.HEAPF32.set(f32, this._vecPtr >> 2);
-        const found = this._useInt8
-            ? this._e._i8_query(this._vecPtr, k, this._idPtr, this._distPtr)
-            : this._e._float_query(this._vecPtr, k, this._idPtr, this._distPtr);
+        const found = this._e._pancake_query(this._handle, this._vecPtr, k, this._idPtr, this._distPtr);
         return this._readResults(found);
     }
 
@@ -101,11 +88,7 @@ class PancakeIndex {
         this._checkDisposed();
         const intId = this._extToInt.get(id);
         if (intId === undefined) return;
-        if (this._useInt8) {
-            this._e._i8_delete(intId);
-        } else {
-            this._e._float_delete(intId);
-        }
+        this._e._pancake_delete(this._handle, intId);
         this._deletedExt.add(id);
     }
 
@@ -120,11 +103,7 @@ class PancakeIndex {
         }
         survivors.sort((a, b) => a.intId - b.intId);
 
-        if (this._useInt8) {
-            this._e._i8_compact();
-        } else {
-            this._e._float_compact();
-        }
+        this._e._pancake_compact(this._handle);
 
         this._intToExt.clear();
         this._extToInt.clear();
@@ -141,9 +120,7 @@ class PancakeIndex {
         const sizePtr = this._e._emsc_malloc(4);
         if (!sizePtr) throw new Error('WASM malloc failed for export');
 
-        const dataPtr = this._useInt8
-            ? this._e._i8_export_index(sizePtr)
-            : this._e._float_export_index(sizePtr);
+        const dataPtr = this._e._pancake_export(this._handle, sizePtr);
 
         if (!dataPtr) {
             this._e._emsc_free(sizePtr);
@@ -211,17 +188,13 @@ class PancakeIndex {
 
         this._e.HEAPU8.set(wasmBytes, dataPtr);
 
-        const status = this._useInt8
-            ? this._e._i8_import_index(dataPtr, wasmBytes.length, this._dim)
-            : this._e._float_import_index(dataPtr, wasmBytes.length);
+        const status = this._e._pancake_import(this._handle, dataPtr, wasmBytes.length);
 
         this._e._emsc_free(dataPtr);
 
         if (status !== 0) throw new Error('Import failed');
 
-        const count = this._useInt8
-            ? this._e._i8_count()
-            : this._e._float_count();
+        const count = this._e._pancake_count(this._handle);
         this._intToExt.clear();
         this._extToInt.clear();
         this._deletedExt.clear();
@@ -234,40 +207,37 @@ class PancakeIndex {
 
     get count() {
         this._checkDisposed();
-        return this._useInt8
-            ? this._e._i8_count()
-            : this._e._float_count();
+        return this._e._pancake_count(this._handle);
     }
 
     get ghostCount() {
         this._checkDisposed();
-        return this._useInt8
-            ? this._e._i8_ghost_count()
-            : this._e._float_ghost_count();
+        return this._e._pancake_ghost_count(this._handle);
     }
 
     get ghostRatio() {
         this._checkDisposed();
-        return this._useInt8
-            ? this._e._i8_ghost_ratio()
-            : this._e._float_ghost_ratio();
+        return this._e._pancake_ghost_ratio(this._handle);
     }
 
     get memory() {
         this._checkDisposed();
-        return this._useInt8
-            ? this._e._i8_memory()
-            : this._e._float_memory();
+        return this._e._pancake_memory(this._handle);
     }
 
     get dim() { return this._dim; }
 
     dispose() {
         if (this._disposed) return;
+        this._e._pancake_dispose(this._handle);
         this._e._emsc_free(this._vecPtr);
         this._e._emsc_free(this._idPtr);
         this._e._emsc_free(this._distPtr);
         this._disposed = true;
+    }
+
+    _setEfSearch(ef) {
+        this._e._pancake_set_ef(this._handle, ef);
     }
 
     _checkDisposed() {
@@ -292,13 +262,13 @@ class PancakeIndex {
         this._bufferCapacity = k;
     }
 
-    _bulkInsert(flatVectors, count, bulkInsert) {
+    _bulkInsert(flatVectors, count) {
         const dataPtr = this._e._emsc_malloc(flatVectors.length * 4);
         if (!dataPtr) throw new Error('WASM malloc failed for bulk insert');
         try {
             this._e.HEAPF32.set(flatVectors, dataPtr >> 2);
             const countBefore = this.count;
-            const inserted = bulkInsert.call(this._e, dataPtr, count);
+            const inserted = this._e._pancake_bulk_insert(this._handle, dataPtr, count);
             const ids = this._recordInsertedRange(countBefore, inserted);
             if (inserted !== count) {
                 throw new Error('Insert failed (index full or not initialized)');
@@ -307,11 +277,6 @@ class PancakeIndex {
         } finally {
             this._e._emsc_free(dataPtr);
         }
-    }
-
-    _bulkInsertFn() {
-        if (this._useInt8) return this._e._i8_bulk_insert;
-        return null;
     }
 
     _recordInsertedRange(firstIntId, count) {
@@ -367,9 +332,6 @@ function createPancakeApi(loadEngineImpl) {
         const resolvedOpts = { ...opts, quantized: isQuantized, M, efConstruction, efSearch };
 
         const e = await loadEngineImpl();
-        if (quantized) {
-            e.__pancake_i8_dim = dim;
-        }
 
         const vecPtr = e._emsc_malloc(dim * 4);
         const initialBufferCapacity = 16;
@@ -380,18 +342,16 @@ function createPancakeApi(loadEngineImpl) {
             throw new Error('WASM malloc failed');
         }
 
-        const status = quantized
-            ? e._i8_init(dim, maxElements, metric, M, efConstruction, efSearch)
-            : e._float_init(dim, maxElements, M, efConstruction, efSearch, metric);
+        const handle = e._pancake_init(dim, maxElements, quantized, metric, M, efConstruction, efSearch);
 
-        if (status !== 0) {
+        if (handle === 0xFFFFFFFF) {
             e._emsc_free(vecPtr);
             e._emsc_free(idPtr);
             e._emsc_free(distPtr);
-            throw new Error(`Backend init failed (status=${status})`);
+            throw new Error('Backend init failed');
         }
 
-        return new PancakeIndex(e, resolvedOpts, vecPtr, idPtr, distPtr, initialBufferCapacity);
+        return new PancakeIndex(e, resolvedOpts, handle, vecPtr, idPtr, distPtr, initialBufferCapacity);
     }
 
     return { create };

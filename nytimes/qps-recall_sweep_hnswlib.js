@@ -34,7 +34,7 @@ const REPETITIONS = 3;
 const WARMUP_QUERIES = 200;
 
 const CONFIGS = [
-  { label: 'pancake-int8-wasm',   library: 'pancake',  dtype: 'i8' },
+  { label: 'pancake-i8-wasm',    library: 'pancake',  dtype: 'i8' },
   { label: 'hnswlib-f32-native',  library: 'hnswlib',  dtype: 'f32' },
 ];
 

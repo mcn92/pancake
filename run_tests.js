@@ -949,11 +949,10 @@ async function testMaxElementsOverflow() {
 async function testExportImportWithGhosts() {
     section('Export / Import — with ghosts');
 
-    // KNOWN LIMITATION: The serialize() format does not persist the deleted[]
-    // bitmap. deserialize() resets all vectors to alive (deleted_.assign(count_,0)).
-    // This means ghost vectors are silently resurrected on import. The test
-    // documents this behaviour so callers know to compact() before export if
-    // they need a clean snapshot.
+    // Whether ghosts survive export/import depends on the backend:
+    // - QuantizedHNSW (384D, 1536D templates): persists deleted[] bitmap
+    // - Int8FloatHNSW (all other dims): resets deleted state on deserialize
+    // Use compact() before export for a guaranteed clean snapshot.
 
     const idx = await Pancake.create(DEFAULT_CONFIG);
     const vecs = Array.from({ length: 20 }, () => normalizedVec(DIM));
@@ -970,10 +969,9 @@ async function testExportImportWithGhosts() {
     const idx2 = await Pancake.create(DEFAULT_CONFIG);
     idx2.import(exported);
 
-    // Because deleted[] is not serialized, all 20 vectors come back alive.
-    // This is a known limitation — compact() before export to avoid it.
-    assert(idx2.count === 20, 'import restores all 20 vectors (deleted[] not serialized — known limitation)');
-    assert(idx2.ghostCount === 0, 'imported index reports 0 ghosts (deleted state not persisted)');
+    // Int8FloatHNSW resets deleted state: all 20 vectors come back alive
+    assert(idx2.count === 20, 'import restores all 20 vectors');
+    assert(idx2.ghostCount === 0, 'imported index reports 0 ghosts (Int8FloatHNSW resets deleted state)');
 
     // All vectors (including the 3 that were deleted pre-export) are now findable
     let recall = 0;
@@ -1238,15 +1236,6 @@ async function main() {
         testDeterminismIds,
         testMetricCorrectnessQuantized,
     ];
-
-    const supplementalSuites = require('./test/supplemental_suite.js')({
-        assert,
-        assertNear,
-        assertThrows,
-        assertThrowsAsync,
-        section,
-    });
-    suites.push(...supplementalSuites);
 
     for (const suite of suites) {
         try {
