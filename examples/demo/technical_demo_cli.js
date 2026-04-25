@@ -59,6 +59,7 @@ function formatBytes(bytes) {
 class TechnicalDemoCLI {
     constructor() {
         this.engine = null;
+        this.handle = null;
         this.vectors = null;
         this.totalVectors = 0;
         this.vectorCount = 0;
@@ -76,10 +77,9 @@ class TechnicalDemoCLI {
 
     async init(showHelp = true) {
         this.log('Loading WASM engine...', 'info');
-        const wasmBinary = fs.readFileSync(require('path').join(__dirname, '..', '..', 'dist', 'engine.wasm'));
+        const wasmBinary = fs.readFileSync(path.join(__dirname, '..', '..', 'dist', 'engine.wasm'));
         this.engine = await Pancake({ wasmBinary });
         this.resetIndex();
-        console.log(`DEBUG after resetIndex: _c()=${this.engine._c()} _m()=${this.engine._m()}`);
 
         this.queryPtr = this.engine._emsc_malloc(DIMS * 4);
         this.insertPtr = this.engine._emsc_malloc(DIMS * 4);
@@ -129,22 +129,30 @@ class TechnicalDemoCLI {
     }
 
     resetIndex() {
-        this.engine._i(MAX_ELEM);
+        if (this.handle !== null) {
+            this.engine._pancake_dispose(this.handle);
+        }
+        // quantized=1, metric=1 (cosine), M=12, ef_c=150, ef_s=250
+        this.handle = this.engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 12, 150, 250);
         this.vectorCount = 0;
         this.compactionCount = 0;
         this.latencyHistory = [];
     }
 
     currentCount() {
-        return this.engine._c();
+        return this.engine._pancake_count(this.handle);
     }
 
     currentGhosts() {
-        return this.engine._ghost_count();
+        return this.engine._pancake_ghost_count(this.handle);
     }
 
     currentMemory() {
-        return this.engine._m();
+        return this.engine._pancake_memory(this.handle);
+    }
+
+    currentGhostRatio() {
+        return this.engine._pancake_ghost_ratio(this.handle);
     }
 
     requireIndexedData(action) {
@@ -157,7 +165,7 @@ class TechnicalDemoCLI {
         const count = this.currentCount();
         const ghosts = this.currentGhosts();
         const live = count - ghosts;
-        const ghostRatio = this.engine._ghost_ratio();
+        const ghostRatio = this.currentGhostRatio();
         const mem = this.currentMemory();
         const sorted = [...this.latencyHistory].sort((a, b) => a - b);
         const p50 = percentile(sorted, 0.5);
@@ -203,7 +211,7 @@ class TechnicalDemoCLI {
     doSearch(vec) {
         this.engine.HEAPF32.set(vec, this.queryPtr >> 2);
         const t0 = performance.now();
-        const found = this.engine._q(this.queryPtr, K, this.resultIdPtr, this.resultDistPtr);
+        const found = this.engine._pancake_query(this.handle, this.queryPtr, K, this.resultIdPtr, this.resultDistPtr);
         const latency = performance.now() - t0;
         this.latencyHistory.push(latency);
         if (this.latencyHistory.length > 1000) this.latencyHistory.shift();
@@ -230,7 +238,7 @@ class TechnicalDemoCLI {
             const end = Math.min(i + batchSize, n);
             for (let j = i; j < end; j++) {
                 this.engine.HEAPF32.set(this.getVec(j), this.insertPtr >> 2);
-                this.engine._a(this.insertPtr);
+                this.engine._pancake_add(this.handle, this.insertPtr);
             }
             const rate = (end / ((performance.now() - t0) / 1000)).toFixed(0);
             this.log(`Indexed ${end.toLocaleString()}/${n.toLocaleString()} (${rate} vec/s)`, 'info');
@@ -260,7 +268,7 @@ class TechnicalDemoCLI {
         this.log(`Inserting ${count} synthetic vector${count === 1 ? '' : 's'}...`, 'info');
         for (let i = 0; i < count; i++) {
             this.engine.HEAPF32.set(this.randomSyntheticVec(), this.insertPtr >> 2);
-            this.engine._a(this.insertPtr);
+            this.engine._pancake_add(this.handle, this.insertPtr);
         }
         this.markProof('insert');
         this.log(`Inserted ${count} vectors`, 'success');
@@ -273,7 +281,7 @@ class TechnicalDemoCLI {
         const n = Math.min(count, total);
         this.log(`Deleting ${n} vector${n === 1 ? '' : 's'}...`, 'info');
         for (let i = 0; i < n; i++) {
-            this.engine._d(Math.floor(Math.random() * total));
+            this.engine._pancake_delete(this.handle, Math.floor(Math.random() * total));
         }
         if (this.currentGhosts() > 0) this.markProof('ghosts');
         this.markProof('delete');
@@ -287,7 +295,7 @@ class TechnicalDemoCLI {
         const ghostsBefore = this.currentGhosts();
         this.log('Compacting...', 'info');
         const t0 = performance.now();
-        this.engine._compact();
+        this.engine._pancake_compact(this.handle);
         const elapsed = performance.now() - t0;
         this.compactionCount += 1;
         const memAfter = this.currentMemory();
@@ -303,7 +311,7 @@ class TechnicalDemoCLI {
         this.requireIndexedData('export');
         const outPath = path.resolve(filePath);
         const sizePtr = this.engine._emsc_malloc(4);
-        const dataPtr = this.engine._export_index(sizePtr);
+        const dataPtr = this.engine._pancake_export(this.handle, sizePtr);
         const size = this.engine.HEAPU32[sizePtr >> 2];
         const data = Buffer.from(new Uint8Array(this.engine.HEAPU8.buffer, dataPtr, size));
         fs.writeFileSync(outPath, data);
@@ -317,7 +325,7 @@ class TechnicalDemoCLI {
         const data = fs.readFileSync(inPath);
         const ptr = this.engine._emsc_malloc(data.length);
         this.engine.HEAPU8.set(data, ptr);
-        const status = this.engine._import_index(ptr, data.length);
+        const status = this.engine._pancake_import(this.handle, ptr, data.length);
         this.engine._emsc_free(ptr);
         if (status !== 0) {
             throw new Error(`Import failed with status ${status}`);
@@ -334,7 +342,7 @@ class TechnicalDemoCLI {
         const results = [];
         for (let run = 0; run < 3; run++) {
             this.engine.HEAPF32.set(vec, this.queryPtr >> 2);
-            const found = this.engine._q(this.queryPtr, K, this.resultIdPtr, this.resultDistPtr);
+            const found = this.engine._pancake_query(this.handle, this.queryPtr, K, this.resultIdPtr, this.resultDistPtr);
             results.push(this.readIds(found));
             await sleep(50);
         }
@@ -351,14 +359,14 @@ class TechnicalDemoCLI {
         this.log('Proof: deleted vectors excluded from results', 'info');
         const vec = this.randomSyntheticVec();
         this.engine.HEAPF32.set(vec, this.insertPtr >> 2);
-        const id = this.engine._a(this.insertPtr);
+        const id = this.engine._pancake_add(this.handle, this.insertPtr);
 
         this.engine.HEAPF32.set(vec, this.queryPtr >> 2);
-        let found = this.engine._q(this.queryPtr, K, this.resultIdPtr, this.resultDistPtr);
+        let found = this.engine._pancake_query(this.handle, this.queryPtr, K, this.resultIdPtr, this.resultDistPtr);
         const before = this.readIds(found).includes(id);
 
-        this.engine._d(id);
-        found = this.engine._q(this.queryPtr, K, this.resultIdPtr, this.resultDistPtr);
+        this.engine._pancake_delete(this.handle, id);
+        found = this.engine._pancake_query(this.handle, this.queryPtr, K, this.resultIdPtr, this.resultDistPtr);
         const after = this.readIds(found).includes(id);
 
         if (!before || after) throw new Error(`deletion exclusion failed (before=${before}, after=${after})`);
@@ -400,17 +408,17 @@ class TechnicalDemoCLI {
 
         while (performance.now() - t0 < duration) {
             this.engine.HEAPF32.set(this.randomSyntheticVec(), this.insertPtr >> 2);
-            this.engine._a(this.insertPtr);
+            this.engine._pancake_add(this.handle, this.insertPtr);
             inserts++;
 
             if (Math.random() < 0.4) {
-                this.engine._d(Math.floor(Math.random() * this.currentCount()));
+                this.engine._pancake_delete(this.handle, Math.floor(Math.random() * this.currentCount()));
                 deletes++;
             }
 
             this.engine.HEAPF32.set(this.randomLoadedVec(), this.queryPtr >> 2);
             const t1 = performance.now();
-            this.engine._q(this.queryPtr, K, this.resultIdPtr, this.resultDistPtr);
+            this.engine._pancake_query(this.handle, this.queryPtr, K, this.resultIdPtr, this.resultDistPtr);
             lats.push(performance.now() - t1);
 
             if (inserts % 50 === 0) await sleep(0);
@@ -433,16 +441,19 @@ class TechnicalDemoCLI {
         if (countBefore === 0) throw new Error('index is empty');
 
         const sizePtr = this.engine._emsc_malloc(4);
-        const dataPtr = this.engine._export_index(sizePtr);
+        const dataPtr = this.engine._pancake_export(this.handle, sizePtr);
         const size = this.engine.HEAPU32[sizePtr >> 2];
         const saved = new Uint8Array(this.engine.HEAPU8.buffer, dataPtr, size).slice();
         this.engine._emsc_free(sizePtr);
         this.markProof('export');
 
-        this.engine._i(MAX_ELEM);
+        // Dispose old handle and create fresh one for import
+        this.engine._pancake_dispose(this.handle);
+        this.handle = this.engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 12, 150, 250);
+
         const ptr = this.engine._emsc_malloc(saved.length);
         this.engine.HEAPU8.set(saved, ptr);
-        const status = this.engine._import_index(ptr, saved.length);
+        const status = this.engine._pancake_import(this.handle, ptr, saved.length);
         this.engine._emsc_free(ptr);
         if (status !== 0) throw new Error(`import failed with status ${status}`);
 
@@ -463,9 +474,9 @@ class TechnicalDemoCLI {
         for (let i = 0; i < trials; i++) {
             const vec = this.randomSyntheticVec();
             this.engine.HEAPF32.set(vec, this.insertPtr >> 2);
-            const id = this.engine._a(this.insertPtr);
+            const id = this.engine._pancake_add(this.handle, this.insertPtr);
             this.engine.HEAPF32.set(vec, this.queryPtr >> 2);
-            this.engine._q(this.queryPtr, K, this.resultIdPtr, this.resultDistPtr);
+            this.engine._pancake_query(this.handle, this.queryPtr, K, this.resultIdPtr, this.resultDistPtr);
             const topId = this.engine.HEAPU32[this.resultIdPtr >> 2];
             if (topId === id) hits++;
             if ((i + 1) % 10 === 0) await sleep(0);
@@ -518,7 +529,7 @@ class TechnicalDemoCLI {
             const trueTopK = new Set(scored.slice(0, topK).map((s) => s.id));
 
             this.engine.HEAPF32.set(qVec, this.queryPtr >> 2);
-            const found = this.engine._q(this.queryPtr, topK, this.resultIdPtr, this.resultDistPtr);
+            const found = this.engine._pancake_query(this.handle, this.queryPtr, topK, this.resultIdPtr, this.resultDistPtr);
             const hnswIds = new Set(this.readIds(found));
 
             let hits = 0;
@@ -560,7 +571,7 @@ class TechnicalDemoCLI {
 
             while (cfg.insert > 0 && now >= nextInsert) {
                 this.engine.HEAPF32.set(this.randomSyntheticVec(), this.insertPtr >> 2);
-                this.engine._a(this.insertPtr);
+                this.engine._pancake_add(this.handle, this.insertPtr);
                 inserts++;
                 nextInsert += 1000 / cfg.insert;
             }
@@ -568,7 +579,7 @@ class TechnicalDemoCLI {
             while (cfg.delete > 0 && now >= nextDelete) {
                 const total = this.currentCount();
                 if (total > 0) {
-                    this.engine._d(Math.floor(Math.random() * total));
+                    this.engine._pancake_delete(this.handle, Math.floor(Math.random() * total));
                     deletes++;
                 }
                 nextDelete += 1000 / cfg.delete;
@@ -577,7 +588,7 @@ class TechnicalDemoCLI {
             while (cfg.search > 0 && now >= nextSearch) {
                 this.engine.HEAPF32.set(this.randomLoadedVec(), this.queryPtr >> 2);
                 const t0 = performance.now();
-                this.engine._q(this.queryPtr, K, this.resultIdPtr, this.resultDistPtr);
+                this.engine._pancake_query(this.handle, this.queryPtr, K, this.resultIdPtr, this.resultDistPtr);
                 latencies.push(performance.now() - t0);
                 if (latencies.length > 1000) latencies.shift();
                 searches++;
@@ -585,8 +596,8 @@ class TechnicalDemoCLI {
             }
 
             if (now >= nextCompact) {
-                if (this.engine._ghost_ratio() > 0.15) {
-                    this.engine._compact();
+                if (this.currentGhostRatio() > 0.15) {
+                    this.engine._pancake_compact(this.handle);
                     this.compactionCount++;
                 }
                 nextCompact += 1000;
@@ -598,7 +609,7 @@ class TechnicalDemoCLI {
                 const p50 = percentile(sorted, 0.5);
                 const p99 = percentile(sorted, 0.99);
                 this.log(
-                    `stress ${elapsed.toFixed(1)}s | insert=${(inserts / elapsed).toFixed(0)}/s delete=${(deletes / elapsed).toFixed(0)}/s search=${(searches / elapsed).toFixed(0)}/s p50=${p50 ? p50.toFixed(2) : '—'}ms p99=${p99 ? p99.toFixed(2) : '—'}ms ghosts=${(this.engine._ghost_ratio() * 100).toFixed(1)}%`,
+                    `stress ${elapsed.toFixed(1)}s | insert=${(inserts / elapsed).toFixed(0)}/s delete=${(deletes / elapsed).toFixed(0)}/s search=${(searches / elapsed).toFixed(0)}/s p50=${p50 ? p50.toFixed(2) : '—'}ms p99=${p99 ? p99.toFixed(2) : '—'}ms ghosts=${(this.currentGhostRatio() * 100).toFixed(1)}%`,
                     'info'
                 );
                 lastReport = now;

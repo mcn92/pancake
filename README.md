@@ -87,13 +87,17 @@ restored.import(snapshot);
 | `memory` | WASM heap bytes in use |
 | `dim` | Vector dimension |
 
-### Backend-specific limitations
+### Backend dispatch
 
-Pancake routes to three internal implementations based on dimension:
+Pancake routes to one of three HNSW backends based on the `dim` and `quantized` options. This is transparent — the API is the same regardless of backend:
 
-- **1536D backend**: does not support `delete` or `compact`. Vectors are immutable once inserted. This affects OpenAI embeddings (which default to 1536D).
-- **384D backend**: uses fixed internal HNSW parameters; `M`, `efConstruction`, and `efSearch` passed to `create()` are ignored.
-- **Runtime-dimension backend** (all other dimensions): full API support, all parameters honored.
+| Condition | Backend | Notes |
+|-----------|---------|-------|
+| `quantized: true`, dim 384 or 1536 | Template-specialized int8 HNSW | Compile-time SIMD loop unrolling for these dimensions |
+| `quantized: true`, other dims | Runtime-dimension int8 HNSW | Asymmetric search (float32 query vs int8 database) |
+| `quantized: false` | Float32 HNSW | Full precision, any dimension |
+
+All backends support the full API: `add`, `addBatch`, `search`, `delete`, `compact`, `export`, `import`. All parameters (`M`, `efConstruction`, `efSearch`) are honored by all backends.
 
 ## Cloudflare Workers
 
@@ -105,15 +109,16 @@ The included Worker (`examples/worker/`) is a complete vector search HTTP API wi
 
 | Endpoint | Description |
 |----------|-------------|
-| `POST /init` | Create an index |
-| `POST /add` | Insert a vector |
-| `POST /add_batch` | Insert multiple vectors |
-| `POST /delete` | Soft-delete by ID |
-| `POST /compact` | Rebuild without deleted entries |
-| `POST /search` | k-NN search |
-| `GET /export` | Serialize to binary |
-| `POST /import` | Restore from binary |
+| `POST /init` | Create an index (`{ dims, maxElements, M?, efConstruction?, efSearch?, vectors? }`) |
+| `POST /add` | Insert a vector (`{ vector: float[] }`) |
+| `POST /add_batch` | Insert multiple vectors (`{ vectors: float[][] }`) |
+| `POST /delete` | Soft-delete by ID (`{ id: number }`) |
+| `POST /compact` | Rebuild graph without deleted entries |
+| `POST /search` | k-NN search (`{ query: float[], k?, ef? }`) |
+| `GET /export` | Serialize index to binary blob |
+| `POST /import` | Restore from binary (`?dims=N` required) |
 | `GET /stats` | Index count, memory, ghost ratio |
+| `GET /health` | Health check (public, no auth required) |
 
 ### Worker benchmark
 
@@ -211,12 +216,12 @@ Build times: Pancake 2,833s, hnswlib 1,356s on the same hardware. Both are offli
 
 Benchmark scripts are in the repo:
 
-- `benchmark_nytimes.js` — NYTimes-256 direct WASM evaluation
-- `benchmark_nytimes_worker.js` — NYTimes-256 end-to-end via the Worker HTTP API
-- `benchmark_sift1m.js` — SIFT-1M
+- `benchmarks/benchmark_nytimes.js` — NYTimes-256 direct WASM evaluation
+- `benchmarks/benchmark_nytimes_worker.js` — NYTimes-256 end-to-end via the Worker HTTP API
+- `benchmarks/benchmark_sift1m.js` — SIFT-1M
 - `nytimes/qps-recall_sweep_hnswlib.js` — recall-QPS sweep vs hnswlib-node
-- `qps-recall_sweep_sift1m.js` — recall-QPS sweep on SIFT-1M vs hnswlib-node
-- `plot_sweep.py` — plot sweep CSV results
+- `benchmarks/qps-recall_sweep_sift1m.js` — recall-QPS sweep on SIFT-1M vs hnswlib-node
+- `benchmarks/plot_sweep.py` — plot sweep CSV results
 
 Results depend on dimension, corpus size, HNSW parameters, and hardware.
 
@@ -245,20 +250,28 @@ q[i]   = uint8(clamp((x[i] - offset) / scale, 0, 255))
 
 This preserves per-vector dynamic range better than global (per-tensor) quantization, at the cost of 8 bytes of overhead per vector for the scale and offset.
 
-The runtime-dimension backend compares float32 queries against dequantized vectors (asymmetric distance). The 384D and 1536D template-specialized backends quantize the query once at search start and use int8-vs-int8 SIMD dot products (symmetric distance) for throughput.
+All quantized backends compare float32 queries against dequantized int8 vectors (asymmetric distance), preserving query-side precision. The 384D and 1536D template-specialized backends gain additional speed from compile-time SIMD loop unrolling.
 
 ### HNSW
 
 Standard HNSW graph search. `M` controls graph connectivity, `efConstruction` controls build quality, `efSearch` controls query quality. Higher values improve recall at the cost of build or query speed.
 
+### Handle-based C ABI
+
+The WASM module exposes a handle-based C API: `pancake_init` returns an opaque handle, and all operations (`pancake_add`, `pancake_query`, `pancake_delete`, etc.) take a handle as the first argument. This enables multiple independent indexes per WASM instance and keeps the exported function count small (~16 core functions). The JavaScript wrapper (`pancake-core.js`) manages handles, ID translation (WASM compact reassigns sequential IDs, but the JS layer maintains stable external IDs), and a binary envelope format for export/import validation.
+
 ## Examples
 
 - `examples/worker/` — reference Cloudflare Worker with persistence, auth, and rate limiting
-- `examples/cli/` — CLI pipeline for building an index from precomputed embeddings and searching (see [QUICKSTART.md](QUICKSTART.md))
+- `examples/cli/build_index.js` — build an HNSW index from precomputed embeddings (see [QUICKSTART.md](QUICKSTART.md))
 - `examples/demo/technical_demo_cli.js` — interactive REPL exercising the full API against 5,000 precomputed 384D embeddings: recall validation, deletion, compaction, export/import, and adversarial stress tests
 - `examples/demo/technical_demo_worker.js` — the same proof suite against a running Worker
 - `examples/demo/test_worker.js` — synthetic 1536D Worker integration test (no external data required)
 - `dist/technical-demo.html` — in-browser version of the proof suite
+
+## Architecture
+
+See [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) for a detailed design document covering the C++ engine, WASM compilation, JavaScript wrapper, serialization formats, and Worker deployment.
 
 ## Compatibility
 
@@ -266,6 +279,14 @@ Standard HNSW graph search. `M` controls graph connectivity, `efConstruction` co
 - **Browsers**: any browser with [WebAssembly SIMD](https://caniuse.com/wasm-simd) (Chrome 91+, Firefox 89+, Safari 16.4+)
 - **Cloudflare Workers**: tested with Wrangler >= 4.x; see `examples/worker/wrangler.toml` for the compatibility date
 - **TypeScript**: type definitions included (`pancake.d.ts`)
+
+## Tests
+
+```bash
+node run_tests.js
+```
+
+214 tests covering insertion, search, deletion, compaction, export/import, batch operations, quantized mode, error paths, edge cases, and metric correctness. No external test framework required.
 
 ## Building from source
 

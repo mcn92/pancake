@@ -21,10 +21,12 @@ Thumbs.db
 benchmark_results/
 **/benchmark_results/
 
-# Large dataset files — download separately
-nytimes/*.fvecs
-nytimes/*.ivecs
-nytimes/*.hdf5
+# Pre-refactor backups
+.backup/
+
+# Internal profiling
+build_profile.js
+
 
 # Emscripten build cache
 .emscripten-cache/
@@ -37,8 +39,9 @@ cuad_data/
 recipe_data/
 dist/cuad_data/
 
-# Auto-generated Doxygen docs (27MB) — build with `doxygen` if needed
-docs/
+# Auto-generated Doxygen HTML (27MB) — build with `doxygen` if needed
+docs/html/
+!docs/*.md
 
 # nytimes/ — commit scripts, exclude data and outputs
 nytimes/*.fvecs
