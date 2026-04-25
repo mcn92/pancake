@@ -17,14 +17,14 @@
 
 const fs = require('fs');
 const path = require('path');
-const Pancake = require('./pancake.js');
+const Pancake = require('../pancake.js');
 
 const SIFT_DIR = process.argv[2] || '/mnt/c/pancake_gt/sift';
 
 // --- Sweep configuration ---
 const K = 10;
-const M = 16;
-const EF_CONSTRUCTION = 200;
+const M = 12;
+const EF_CONSTRUCTION = 100;
 const EF_SEARCH_VALUES = [10, 20, 40, 60, 80, 100, 150, 200, 300, 500, 800];
 const REPETITIONS = 3;
 const WARMUP_QUERIES = 200;
@@ -35,7 +35,7 @@ const CONFIGS = [
 ];
 
 // --- Logging setup ---
-const RESULTS_DIR = path.join(__dirname, 'benchmark_results');
+const RESULTS_DIR = path.join(__dirname, '..', 'benchmark_results');
 if (!fs.existsSync(RESULTS_DIR)) fs.mkdirSync(RESULTS_DIR);
 const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
 const LOG_PATH  = path.join(RESULTS_DIR, `sweep_sift1m_${timestamp}.log`);

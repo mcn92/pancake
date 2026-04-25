@@ -21,9 +21,9 @@ const K = 10;
 
 // Compile-time 384D path uses hardcoded HNSW params in the WASM engine:
 //   M=12, efConstruction=150, efSearch=250
-const HNSW_M = 12;
-const HNSW_EF_CONSTRUCTION = 150;
-const HNSW_EF_SEARCH = 250;
+const HNSW_M = 16;
+const HNSW_EF_CONSTRUCTION = 100;
+const HNSW_EF_SEARCH = 100;
 
 function log(msg = '') {
   console.log(msg);

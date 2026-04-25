@@ -27,9 +27,9 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const Pancake = require('./pancake.js');
+const Pancake = require('../pancake.js');
 
-const HDF5_PATH = process.argv[2] || '/nytimes/nytimes-256-angular.hdf5';
+const HDF5_PATH = process.argv[2] || path.join(__dirname, '..', 'nytimes', 'nytimes-256-angular.hdf5');
 
 // --- Sweep configuration ---
 const K = 10;
@@ -50,7 +50,7 @@ const CONFIGS = [
 ];
 
 // --- Logging setup ---
-const RESULTS_DIR = path.join(__dirname, 'benchmark_results');
+const RESULTS_DIR = path.join(__dirname, '..', 'benchmark_results');
 if (!fs.existsSync(RESULTS_DIR)) fs.mkdirSync(RESULTS_DIR);
 const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
 const LOG_PATH  = path.join(RESULTS_DIR, `sweep_nytimes_${timestamp}.log`);
