@@ -64,6 +64,8 @@ public:
         qdata_.reserve(max_elements_ * dims_);
         scales_.reserve(max_elements_);
         offsets_.reserve(max_elements_);
+        sum_q_.reserve(max_elements_);
+        sum_q2_.reserve(max_elements_);
         neighbors_.reserve(max_elements_);
         levels_.reserve(max_elements_);
         deleted_.reserve(max_elements_);
@@ -71,8 +73,6 @@ public:
         visited_list_.assign(max_elements_, 0);
         visited_curr_ = 0;
         // Scratch buffers for symmetric distance during construction
-        scratch_a_.resize(dims_);
-        scratch_b_.resize(dims_);
         scratch_norm_.resize(dims_);
     }
 
@@ -113,6 +113,16 @@ public:
             if (q > 255.0f) q = 255.0f;
             qdata_[off + d] = static_cast<uint8_t>(q);
         }
+
+        // Precompute per-vector statistics for symmetric int8 distance
+        uint32_t sq = 0, sq2 = 0;
+        for (size_t d = 0; d < dims_; d++) {
+            uint32_t v = qdata_[off + d];
+            sq += v;
+            sq2 += v * v;
+        }
+        sum_q_.push_back(sq);
+        sum_q2_.push_back(sq2);
 
         deleted_.push_back(0);
 
@@ -250,6 +260,8 @@ public:
                     std::memcpy(&qdata_[new_id * dims_], &qdata_[old_id * dims_], dims_);
                     scales_[new_id] = scales_[old_id];
                     offsets_[new_id] = offsets_[old_id];
+                    sum_q_[new_id] = sum_q_[old_id];
+                    sum_q2_[new_id] = sum_q2_[old_id];
                     neighbors_[new_id] = std::move(neighbors_[old_id]);
                     levels_[new_id] = levels_[old_id];
                 }
@@ -290,6 +302,8 @@ public:
         qdata_.resize(new_id * dims_);
         scales_.resize(new_id);
         offsets_.resize(new_id);
+        sum_q_.resize(new_id);
+        sum_q2_.resize(new_id);
         neighbors_.resize(new_id);
         levels_.resize(new_id);
         deleted_.assign(new_id, 0);
@@ -448,6 +462,22 @@ public:
         if (max_elements_ > visited_list_.size())
             visited_list_.assign(max_elements_, 0);
         visited_curr_ = 0;
+
+        // Recompute precomputed per-vector statistics from quantized data
+        sum_q_.resize(count_);
+        sum_q2_.resize(count_);
+        for (size_t i = 0; i < count_; ++i) {
+            const uint8_t* row = &qdata_[i * dims_];
+            uint32_t sq = 0, sq2 = 0;
+            for (size_t d = 0; d < dims_; d++) {
+                uint32_t v = row[d];
+                sq += v;
+                sq2 += v * v;
+            }
+            sum_q_[i] = sq;
+            sum_q2_[i] = sq2;
+        }
+
         return true;
     }
 
@@ -692,14 +722,90 @@ private:
     }
 
     // =========================================================================
-    // Symmetric distance: int8 vs int8 (construction -- dequantize via scratch)
+    // Fast symmetric int8 distance using precomputed per-vector statistics.
+    //
+    // For two affine-quantized vectors a, b with per-vector scale/offset:
+    //   a[d] = oa + sa * qa[d],  b[d] = ob + sb * qb[d]
+    //
+    // L2:  ||a-b||² = D*(oa-ob)² + 2*(oa-ob)*(sa*Σqa - sb*Σqb)
+    //                + sa²*Σqa² + sb²*Σqb² - 2*sa*sb*Σ(qa·qb)
+    //
+    // Cosine (pre-normalized): dot(a,b) = D*oa*ob + oa*sb*Σqb
+    //                                   + ob*sa*Σqa + sa*sb*Σ(qa·qb)
+    //
+    // Only Σ(qa·qb) is O(D) and pairwise; everything else is O(1) from
+    // precomputed sum_q_ and sum_q2_. The integer dot product is the hot
+    // loop and gets SIMD acceleration via i16x8_extmul.
     // =========================================================================
+
+    uint32_t int8_dot(uint32_t a, uint32_t b) const {
+        const uint8_t* da = &qdata_[a * dims_];
+        const uint8_t* db = &qdata_[b * dims_];
+        uint32_t sum = 0;
+        size_t d = 0;
+
+#ifdef INT8_HNSW_WASM_SIMD
+        // Accumulate in i32x4 to avoid overflow.
+        // Each uint8*uint8 <= 65025, and at 1536D we get up to ~99M which fits u32.
+        v128_t acc = wasm_i32x4_splat(0);
+        for (; d + 16 <= dims_; d += 16) {
+            v128_t va = wasm_v128_load(da + d);
+            v128_t vb = wasm_v128_load(db + d);
+
+            // Extend u8 → u16, then use unsigned extmul u16→u32
+            v128_t lo_a = wasm_u16x8_extend_low_u8x16(va);
+            v128_t lo_b = wasm_u16x8_extend_low_u8x16(vb);
+            v128_t hi_a = wasm_u16x8_extend_high_u8x16(va);
+            v128_t hi_b = wasm_u16x8_extend_high_u8x16(vb);
+
+            // u16 values are 0-255, safe for both signed and unsigned extmul.
+            // Use signed extmul (universally available in WASM SIMD).
+            acc = wasm_i32x4_add(acc, wasm_i32x4_extmul_low_i16x8(lo_a, lo_b));
+            acc = wasm_i32x4_add(acc, wasm_i32x4_extmul_high_i16x8(lo_a, lo_b));
+            acc = wasm_i32x4_add(acc, wasm_i32x4_extmul_low_i16x8(hi_a, hi_b));
+            acc = wasm_i32x4_add(acc, wasm_i32x4_extmul_high_i16x8(hi_a, hi_b));
+        }
+        sum = static_cast<uint32_t>(
+            wasm_i32x4_extract_lane(acc, 0) + wasm_i32x4_extract_lane(acc, 1) +
+            wasm_i32x4_extract_lane(acc, 2) + wasm_i32x4_extract_lane(acc, 3));
+#endif
+        for (; d < dims_; d++) {
+            sum += static_cast<uint32_t>(da[d]) * static_cast<uint32_t>(db[d]);
+        }
+        return sum;
+    }
+
+    float symmetric_l2_i8(uint32_t a, uint32_t b) const {
+        float sa = scales_[a], oa = offsets_[a];
+        float sb = scales_[b], ob = offsets_[b];
+        float D = static_cast<float>(dims_);
+        float diff_o = oa - ob;
+        float dot_ab = static_cast<float>(int8_dot(a, b));
+
+        return D * diff_o * diff_o
+             + 2.0f * diff_o * (sa * static_cast<float>(sum_q_[a]) - sb * static_cast<float>(sum_q_[b]))
+             + sa * sa * static_cast<float>(sum_q2_[a])
+             + sb * sb * static_cast<float>(sum_q2_[b])
+             - 2.0f * sa * sb * dot_ab;
+    }
+
+    float symmetric_cosine_i8(uint32_t a, uint32_t b) const {
+        float sa = scales_[a], oa = offsets_[a];
+        float sb = scales_[b], ob = offsets_[b];
+        float D = static_cast<float>(dims_);
+        float dot_ab = static_cast<float>(int8_dot(a, b));
+
+        float dot = D * oa * ob
+                   + oa * sb * static_cast<float>(sum_q_[b])
+                   + ob * sa * static_cast<float>(sum_q_[a])
+                   + sa * sb * dot_ab;
+        return 1.0f - dot;
+    }
+
     float distance(uint32_t a, uint32_t b) const {
-        dequantize(a, scratch_a_.data());
-        dequantize(b, scratch_b_.data());
         return (metric_ == DistanceMetric::Cosine)
-            ? cosine_dist_float(scratch_a_.data(), scratch_b_.data())
-            : l2_float(scratch_a_.data(), scratch_b_.data());
+            ? symmetric_cosine_i8(a, b)
+            : symmetric_l2_i8(a, b);
     }
 
     // Asymmetric: float query vs int8 database (search hot path)
@@ -783,25 +889,14 @@ private:
         result.reserve(std::min(M, candidates.size()));
         std::vector<size_t> selected_indices;
         selected_indices.reserve(std::min(M, candidates.size()));
+        // Pairwise distance cache — uses symmetric int8 distance directly
+        // (integer dot product + precomputed scalar stats), no dequantization.
         const float uncached = std::numeric_limits<float>::lowest();
         std::vector<float> pair_cache(candidates.size() * candidates.size(), uncached);
-        std::vector<float> dequantized(candidates.size() * dims_);
-        std::vector<uint8_t> dequantized_ready(candidates.size(), 0);
-        auto candidate_ptr = [&](size_t idx) -> const float* {
-            if (!dequantized_ready[idx]) {
-                dequantize(candidates[idx].second, dequantized.data() + idx * dims_);
-                dequantized_ready[idx] = 1;
-            }
-            return dequantized.data() + idx * dims_;
-        };
         auto candidate_distance = [&](size_t a_idx, size_t b_idx) -> float {
             float& cached = pair_cache[a_idx * candidates.size() + b_idx];
             if (cached != uncached) return cached;
-            const float* a = candidate_ptr(a_idx);
-            const float* b = candidate_ptr(b_idx);
-            float d = (metric_ == DistanceMetric::Cosine)
-                ? cosine_dist_float(a, b)
-                : l2_float(a, b);
+            float d = distance(candidates[a_idx].second, candidates[b_idx].second);
             cached = d;
             pair_cache[b_idx * candidates.size() + a_idx] = d;
             return d;
@@ -843,15 +938,10 @@ private:
 
     void prune_neighbors(uint32_t node, int level, size_t M) {
         auto& list = neighbors_[node][level];
-        // Dequantize node once, then use asymmetric float-vs-int8 for each neighbor
-        dequantize(node, scratch_a_.data());
         std::vector<std::pair<float, uint32_t>> candidates;
         candidates.reserve(list.size());
         for (uint32_t n : list) {
-            float d = (metric_ == DistanceMetric::Cosine)
-                ? asymmetric_cosine(scratch_a_.data(), n)
-                : asymmetric_l2(scratch_a_.data(), n);
-            candidates.emplace_back(d, n);
+            candidates.emplace_back(distance(node, n), n);
         }
         std::sort(candidates.begin(), candidates.end());
         select_neighbors_heuristic(node, candidates, M, level);
@@ -880,11 +970,15 @@ private:
     std::vector<float> scales_;      // per-vector scale
     std::vector<float> offsets_;     // per-vector offset (min_val)
 
+    // Precomputed per-vector statistics for fast symmetric int8 distance.
+    // Avoids dequantization in the heuristic: pairwise L2/cosine reduces to
+    // one integer dot product + O(1) scalar arithmetic from these cached sums.
+    std::vector<uint32_t> sum_q_;    // sum of uint8 values per vector
+    std::vector<uint32_t> sum_q2_;   // sum of uint8² values per vector
+
     const float* cached_query_;
     const float* cached_insert_;  // float32 vector being inserted (avoids dequantize during construction)
     std::vector<float> norm_query_;
-    mutable std::vector<float> scratch_a_;  // dequantize buffer for prune_neighbors
-    mutable std::vector<float> scratch_b_;
     mutable std::vector<float> scratch_norm_;  // normalization buffer for cosine metric inserts
 
     std::vector<std::vector<std::vector<uint32_t>>> neighbors_;
