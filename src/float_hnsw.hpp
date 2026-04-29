@@ -531,24 +531,39 @@ private:
     void select_neighbors_heuristic(uint32_t node, std::vector<std::pair<float, uint32_t>>& candidates, size_t M, int level) {
         std::vector<uint32_t> result;
         if (use_heuristic_) {
-            size_t best_rejected = candidates.size(); // index of closest rejected
-            for (size_t ci = 0; ci < candidates.size(); ci++) {
+            // Pairwise distance cache — avoids recomputing the same float L2/cosine
+            // distance when a candidate is compared against multiple selected neighbors.
+            const size_t nc = candidates.size();
+            const float uncached = std::numeric_limits<float>::lowest();
+            std::vector<float> pair_cache(nc * nc, uncached);
+            auto cached_distance = [&](size_t a_idx, size_t b_idx) -> float {
+                float& cached = pair_cache[a_idx * nc + b_idx];
+                if (cached != uncached) return cached;
+                float d = distance(candidates[a_idx].second, candidates[b_idx].second);
+                cached = d;
+                pair_cache[b_idx * nc + a_idx] = d;
+                return d;
+            };
+
+            std::vector<size_t> selected_indices;
+            selected_indices.reserve(std::min(M, nc));
+            size_t best_rejected = nc;
+            for (size_t ci = 0; ci < nc; ci++) {
                 if (result.size() >= M) break;
                 auto& cand = candidates[ci];
                 bool keep = true;
-                for (uint32_t sel : result) {
-                    if (distance(cand.second, sel) < cand.first) { keep = false; break; }
+                for (size_t sel_idx : selected_indices) {
+                    if (cached_distance(ci, sel_idx) < cand.first) { keep = false; break; }
                 }
                 if (keep) {
                     result.push_back(cand.second);
-                } else if (best_rejected == candidates.size()) {
-                    best_rejected = ci; // track first (closest) rejected
+                    selected_indices.push_back(ci);
+                } else if (best_rejected == nc) {
+                    best_rejected = ci;
                 }
             }
             // Backfill from closest rejected candidates.
-            // WHY: Backfill ensures node reaches minimum connectivity even when
-            // heuristic rejects candidates (prevents disconnected nodes).
-            for (size_t ci = best_rejected; ci < candidates.size() && result.size() < M; ci++) {
+            for (size_t ci = best_rejected; ci < nc && result.size() < M; ci++) {
                 bool already = false;
                 for (uint32_t sel : result) {
                     if (sel == candidates[ci].second) { already = true; break; }
@@ -556,7 +571,6 @@ private:
                 if (!already) result.push_back(candidates[ci].second);
             }
         } else {
-            // Naive: just take the M closest candidates
             for (auto& cand : candidates) {
                 if (result.size() >= M) break;
                 result.push_back(cand.second);
