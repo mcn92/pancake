@@ -79,5 +79,8 @@
     "hnswlib-node": "^3.0.0",
     "usearch": "^2.25.1",
     "wrangler": "^4.81.1"
+  },
+  "dependencies": {
+    "faiss-node": "^0.5.1"
   }
 }

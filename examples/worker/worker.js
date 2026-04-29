@@ -23,7 +23,7 @@ let pancake = null;
 let index = null;
 const MAX_RESULTS = 100;
 const MAX_DIMS = 4096;
-const MAX_ELEMENTS = 1_000_000;
+const MAX_ELEMENTS = 5_000;
 const MAX_EF = 2000;
 const MAX_M = 128;
 
@@ -66,6 +66,7 @@ let persistTimer = null;
 const PERSIST_DEBOUNCE_MS = 2000;
 
 async function persistIndex(env) {
+  console.log("persistIndex called, INDEX_BUCKET=" + !!env.INDEX_BUCKET + " index=" + !!index);
   if (!env.INDEX_BUCKET || !index) return;
   try {
     const bytes = index.exportBinary();
@@ -482,7 +483,7 @@ async function handleRequest(request, env, ctx) {
       inserted++;
     }
 
-    schedulePersist(env, ctx);
+    await persistIndex(env);
     return jsonResponse({
       status: 'initialized',
       dims,
@@ -514,7 +515,7 @@ async function handleRequest(request, env, ctx) {
       }
       throw e;
     }
-    schedulePersist(env, ctx);
+    await persistIndex(env);
     return jsonResponse({ id, count: index.count });
   }
 
@@ -526,7 +527,7 @@ async function handleRequest(request, env, ctx) {
     if (typeof id !== 'number' || !Number.isInteger(id) || id < 0)
       return jsonResponse({ error: 'id must be a non-negative integer' }, 400);
     index.delete(id);
-    schedulePersist(env, ctx);
+    await persistIndex(env);
     return jsonResponse({ deleted: id, ghost_count: index.ghostCount(), ghost_ratio: index.ghostRatio() });
   }
 
@@ -535,7 +536,7 @@ async function handleRequest(request, env, ctx) {
     const t0 = performance.now();
     index.compact();
     const elapsed = performance.now() - t0;
-    schedulePersist(env, ctx);
+    await persistIndex(env);
     return jsonResponse({ compacted: true, elapsed_ms: elapsed, count: index.count, memory_bytes: index.memory });
   }
 
@@ -579,7 +580,7 @@ async function handleRequest(request, env, ctx) {
       }
     }
 
-    schedulePersist(env, ctx);
+    await persistIndex(env);
     return jsonResponse({ inserted: ids.length, ids, count: index.count });
   }
 
@@ -671,7 +672,7 @@ async function handleRequest(request, env, ctx) {
     const importedCount = index.count;
     for (let i = 0; i < importedCount; i++) index._seedId(i);
 
-    schedulePersist(env, ctx);
+    await persistIndex(env);
     return jsonResponse({
       status: 'imported',
       dims,

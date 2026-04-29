@@ -51,21 +51,39 @@ class PancakeIndex {
         }
         if (vectors.length === 0) return [];
 
-        const flat = new Float32Array(vectors.length * this._dim);
-        let validCount = 0;
+        // Validate ALL vectors first before mutating the index, so a bad
+        // input mid-batch can't leave the index in a partially-inserted state.
         for (let i = 0; i < vectors.length; i++) {
-            const f32 = vectors[i] instanceof Float32Array ? vectors[i] : new Float32Array(vectors[i]);
-            if (f32.length !== this._dim) {
-                if (validCount === 0) {
-                    throw new Error(`Expected vector of length ${this._dim}, got ${f32.length}`);
-                }
-                this._bulkInsert(flat.subarray(0, validCount * this._dim), validCount);
-                throw new Error(`Expected vector of length ${this._dim}, got ${f32.length}`);
+            const v = vectors[i];
+            const len = (v instanceof Float32Array) ? v.length : (v && v.length);
+            if (len !== this._dim) {
+                throw new Error(`Expected vector of length ${this._dim}, got ${len} at index ${i}`);
             }
-            flat.set(f32, i * this._dim);
-            validCount++;
         }
-        return this._bulkInsert(flat, validCount);
+
+        // Allocate the WASM buffer once, write directly into the heap (no
+        // intermediate JS Float32Array), call bulk_insert once.
+        const totalFloats = vectors.length * this._dim;
+        const dataPtr = this._e._emsc_malloc(totalFloats * 4);
+        if (!dataPtr) throw new Error('WASM malloc failed for bulk insert');
+
+        try {
+            const heapOffset = dataPtr >> 2;
+            for (let i = 0; i < vectors.length; i++) {
+                const v = vectors[i];
+                const f32 = v instanceof Float32Array ? v : new Float32Array(v);
+                this._e.HEAPF32.set(f32, heapOffset + i * this._dim);
+            }
+            const countBefore = this.count;
+            const inserted = this._e._pancake_bulk_insert(this._handle, dataPtr, vectors.length);
+            const ids = this._recordInsertedRange(countBefore, inserted);
+            if (inserted !== vectors.length) {
+                throw new Error('Insert failed (index full or not initialized)');
+            }
+            return ids;
+        } finally {
+            this._e._emsc_free(dataPtr);
+        }
     }
 
     search(query, k) {
@@ -260,23 +278,6 @@ class PancakeIndex {
         this._idPtr = newIdPtr;
         this._distPtr = newDistPtr;
         this._bufferCapacity = k;
-    }
-
-    _bulkInsert(flatVectors, count) {
-        const dataPtr = this._e._emsc_malloc(flatVectors.length * 4);
-        if (!dataPtr) throw new Error('WASM malloc failed for bulk insert');
-        try {
-            this._e.HEAPF32.set(flatVectors, dataPtr >> 2);
-            const countBefore = this.count;
-            const inserted = this._e._pancake_bulk_insert(this._handle, dataPtr, count);
-            const ids = this._recordInsertedRange(countBefore, inserted);
-            if (inserted !== count) {
-                throw new Error('Insert failed (index full or not initialized)');
-            }
-            return ids;
-        } finally {
-            this._e._emsc_free(dataPtr);
-        }
     }
 
     _recordInsertedRange(firstIntId, count) {
