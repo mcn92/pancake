@@ -8,7 +8,7 @@ const Pancake = require('../../dist/engine.js');
 
 const DIMS = 384;
 const K = 10;
-const MAX_ELEM = 10_000;
+const MAX_ELEM = 110_000;
 const VECTORS_PATH = path.join(__dirname, '..', '..', 'dist', 'vectors.bin');
 const DEFAULT_EXPORT_PATH = path.join(__dirname, 'pancake-index.bin');
 
@@ -195,7 +195,7 @@ class TechnicalDemoCLI {
         process.stdout.write('  help                                 Show commands\n');
         process.stdout.write('  status                               Show index metrics\n');
         process.stdout.write('  checklist                            Show proof checklist\n');
-        process.stdout.write('  build <1000|5000|count>              Build index from vectors.bin\n');
+        process.stdout.write('  build <count>                        Build index (default 100000)\n');
         process.stdout.write('  reset                                Reset the index\n');
         process.stdout.write('  search <count>                       Run N random searches\n');
         process.stdout.write('  insert <count>                       Insert synthetic vectors\n');
@@ -229,23 +229,34 @@ class TechnicalDemoCLI {
     }
 
     async buildIndex(count) {
-        const n = Math.min(count, this.totalVectors);
-        this.log(`Building index with ${n.toLocaleString()} real embeddings...`, 'info');
+        const realCount = Math.min(count, this.totalVectors);
+        const syntheticCount = count - realCount;
+        if (syntheticCount > 0) {
+            this.log(`Building index with ${realCount.toLocaleString()} real + ${syntheticCount.toLocaleString()} synthetic embeddings...`, 'info');
+        } else {
+            this.log(`Building index with ${realCount.toLocaleString()} real embeddings...`, 'info');
+        }
         const t0 = performance.now();
-        const batchSize = 500;
+        const batchSize = 10000;
+        const batchPtr = this.engine._emsc_malloc(batchSize * DIMS * 4);
 
-        for (let i = 0; i < n; i += batchSize) {
-            const end = Math.min(i + batchSize, n);
-            for (let j = i; j < end; j++) {
-                this.engine.HEAPF32.set(this.getVec(j), this.insertPtr >> 2);
-                this.engine._pancake_add(this.handle, this.insertPtr);
+        for (let i = 0; i < count; i += batchSize) {
+            const end = Math.min(i + batchSize, count);
+            const n = end - i;
+            const heapOffset = batchPtr >> 2;
+            for (let j = 0; j < n; j++) {
+                const vec = (i + j) < this.totalVectors ? this.getVec(i + j) : this.randomSyntheticVec();
+                this.engine.HEAPF32.set(vec, heapOffset + j * DIMS);
             }
+            this.engine._pancake_bulk_insert(this.handle, batchPtr, n);
             const rate = (end / ((performance.now() - t0) / 1000)).toFixed(0);
-            this.log(`Indexed ${end.toLocaleString()}/${n.toLocaleString()} (${rate} vec/s)`, 'info');
+            this.log(`Indexed ${end.toLocaleString()}/${count.toLocaleString()} (${rate} vec/s)`, 'info');
             await sleep(0);
         }
 
-        this.vectorCount = n;
+        this.engine._emsc_free(batchPtr);
+
+        this.vectorCount = count;
         this.markProof('init');
         this.log(`Index built in ${((performance.now() - t0) / 1000).toFixed(2)}s`, 'success');
         this.printStatus();
@@ -630,7 +641,7 @@ class TechnicalDemoCLI {
         this.log('Starting full proof sequence...', 'info');
         this.resetIndex();
         await sleep(100);
-        await this.buildIndex(5000);
+        await this.buildIndex(100000);
         await sleep(100);
         await this.performSearches(10);
         await sleep(100);
@@ -678,7 +689,7 @@ class TechnicalDemoCLI {
             this.log('Index reset', 'warn');
             return true;
         case 'build':
-            await this.buildIndex(parseInt(args[0] || '5000', 10));
+            await this.buildIndex(parseInt(args[0] || '100000', 10));
             return true;
         case 'search':
             await this.performSearches(parseInt(args[0] || '1', 10));
