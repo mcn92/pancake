@@ -21,7 +21,6 @@
  * Usage:
  *   node bench_sweep_nytimes.js [path-to-hdf5]
  *
- * Requires: pancake.js (your wrapper), usearch (npm), h5py (for loading).
  */
 
 const { execSync } = require('child_process');
@@ -32,9 +31,11 @@ const Pancake = require('../pancake.js');
 const HDF5_PATH = process.argv[2] || path.join(__dirname, '..', 'nytimes', 'nytimes-256-angular.hdf5');
 
 // --- Sweep configuration ---
+// K, M, and EF_CONSTRUCTION are fixed for fair comparison, but can be changed if desired. 
+// Lower M and EF_CONSTRUCTION will reduce build time, but will also lower recall ceilings.
 const K = 10;
-const M = 12;
-const EF_CONSTRUCTION = 100;
+const M = 16;
+const EF_CONSTRUCTION =  200;
 // Sweep these ef_search values. Chosen to span low recall (fast) to
 // near-ceiling recall (slow), with more density in the operating region
 // where libraries typically differ.
@@ -44,9 +45,8 @@ const WARMUP_QUERIES = 200;   // Warmup per point (hot cache, V8 tier-up)
 
 // Which (library, dtype) combinations to run
 const CONFIGS = [
-  { label: 'pancake-int8-wasm',    library: 'pancake',  dtype: 'i8' },
-  { label: 'usearch-int8-native',  library: 'usearch',  dtype: 'i8' },
-  { label: 'usearch-f32-native',   library: 'usearch',  dtype: 'f32' },
+  { label: 'pancake-int8-wasm',   library: 'pancake',  dtype: 'i8' },
+  { label: 'hnswlib-f32-native',  library: 'hnswlib',  dtype: 'f32' },
 ];
 
 // --- Logging setup ---
@@ -199,59 +199,44 @@ function queryPancake(index, test, groundTruth, efSearch) {
   return { latencies, meanRecall: totalRecall / test.length };
 }
 
-// --- USearch: build and query ---
-let usearch;
-try { usearch = require('usearch'); }
-catch (e) { log('WARNING: usearch not installed; skipping USearch configs'); }
+// --- hnswlib-node: build and query ---
+let HierarchicalNSW;
+try {
+  HierarchicalNSW = require('hnswlib-node').HierarchicalNSW;
+} catch (e) {
+  log('WARNING: hnswlib-node not installed; skipping hnswlib configs');
+}
 
-function buildUSearch({ train, dim, dtype }) {
-  if (!usearch) return null;
-  log(`  [usearch-${dtype}] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
-  const index = new usearch.Index({
-    metric: 'cos',
-    connectivity: M,
-    dimensions: dim,
-    dtype: dtype,                // 'i8' or 'f32'
-    expansion_add: EF_CONSTRUCTION,
-    expansion_search: EF_SEARCH_VALUES[0],
-  });
+function buildHnswlib({ train, dim }) {
+  if (!HierarchicalNSW) return null;
+  log(`  [hnswlib-f32] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
+  const index = new HierarchicalNSW('cosine', dim);
+  index.initIndex(train.length, M, EF_CONSTRUCTION, 100);
+
   const t0 = performance.now();
-  for (let i = 0; i < train.length; i++) index.add(BigInt(i), train[i]);
+  for (let i = 0; i < train.length; i++) {
+    index.addPoint(Array.from(train[i]), i);
+  }
   const buildMs = performance.now() - t0;
-  log(`  [usearch-${dtype}] build: ${(buildMs / 1000).toFixed(1)}s`);
+  log(`  [hnswlib-f32] build: ${(buildMs / 1000).toFixed(1)}s`);
   return { index, buildMs };
 }
 
-function queryUSearch(index, test, groundTruth, efSearch) {
-  // USearch exposes expansion_search as a runtime-settable property.
-  // Some versions require setting via `index.expansionSearch = N`
-  // and others via `index.expansion_search(N)`. Try both.
-  if (typeof index.expansionSearch === 'function') {
-    index.expansionSearch(efSearch);
-  } else {
-    try { index.expansionSearch = efSearch; }
-    catch (e) {
-      // Fallback: some versions use a setter method
-      if (typeof index.setExpansionSearch === 'function') {
-        index.setExpansionSearch(efSearch);
-      } else {
-        log(`  WARNING: could not set ef_search=${efSearch} on usearch index`);
-      }
-    }
-  }
+function queryHnswlib(index, test, groundTruth, efSearch) {
+  index.setEf(efSearch);
 
   for (let i = 0; i < WARMUP_QUERIES && i < test.length; i++) {
-    index.search(test[i], K);
+    index.searchKnn(Array.from(test[i]), K);
   }
 
   const latencies = new Array(test.length);
   let totalRecall = 0;
   for (let i = 0; i < test.length; i++) {
+    const query = Array.from(test[i]);
     const st = performance.now();
-    const results = index.search(test[i], K);
+    const results = index.searchKnn(query, K);
     latencies[i] = performance.now() - st;
-    const ids = Array.from(results.keys).map(Number);
-    totalRecall += recall(ids, groundTruth[i]);
+    totalRecall += recall(results.neighbors, groundTruth[i]);
   }
   return { latencies, meanRecall: totalRecall / test.length };
 }
@@ -267,7 +252,7 @@ async function sweepOne(config, dataset) {
   if (config.library === 'pancake') {
     built = await buildPancake({ train, dim, dtype: config.dtype });
   } else {
-    built = buildUSearch({ train, dim, dtype: config.dtype });
+    built = buildHnswlib({ train, dim });
     if (!built) return null;
   }
 
@@ -280,7 +265,7 @@ async function sweepOne(config, dataset) {
     for (let rep = 0; rep < REPETITIONS; rep++) {
       const { latencies, meanRecall } = config.library === 'pancake'
         ? queryPancake(index, test, groundTruth, efSearch)
-        : queryUSearch(index, test, groundTruth, efSearch);
+        : queryHnswlib(index, test, groundTruth, efSearch);
       const sorted = [...latencies].sort((a, b) => a - b);
       const avgLatency = mean(latencies);
       reps.push({

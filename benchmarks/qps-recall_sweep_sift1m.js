@@ -23,8 +23,8 @@ const SIFT_DIR = process.argv[2] || '/mnt/c/pancake_gt/sift';
 
 // --- Sweep configuration ---
 const K = 10;
-const M = 12;
-const EF_CONSTRUCTION = 100;
+const M = 16;
+const EF_CONSTRUCTION = 200;
 const EF_SEARCH_VALUES = [10, 20, 40, 60, 80, 100, 150, 200, 300, 500, 800];
 const REPETITIONS = 3;
 const WARMUP_QUERIES = 200;

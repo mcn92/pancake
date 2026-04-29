@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-Plot recall-QPS curves from the sweep CSV.
+Plot recall-QPS curves from any sweep CSV.
 
 Usage:
-  python3 plot_sweep.py benchmark_results/sweep_nytimes_<timestamp>.csv
+  python3 benchmarks/plot_sweep.py benchmark_results/sweep_*.csv
+  python3 benchmarks/plot_sweep.py nytimes/benchmark_results/sweep_*.csv
 """
 import sys
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 
@@ -26,21 +28,29 @@ elif 'nytimes' in _base or 'hnswlib' in _base:
 else:
     DATASET_NAME = 'Sweep'
 
-# Consistent colors: pancake = warm, usearch-int8 = teal, usearch-f32 = gray
-STYLE = {
-    'pancake-int8-wasm':   {'color': '#d9480f', 'marker': 'o', 'linestyle': '-'},
-    'usearch-int8-native': {'color': '#0c8599', 'marker': 's', 'linestyle': '-'},
-    'usearch-f32-native':  {'color': '#495057', 'marker': '^', 'linestyle': '--'},
-}
+# Identify pancake and baseline labels from data
+labels = df['label'].unique().tolist()
+pancake_label = next((l for l in labels if 'pancake' in l.lower()), None)
+baseline_labels = [l for l in labels if l != pancake_label]
+
+# Color palette: pancake warm, baselines cool
+COLORS = ['#d9480f', '#0c8599', '#495057', '#5c940d', '#862e9c']
+MARKERS = ['o', 's', '^', 'D', 'v']
+
+style_map = {}
+if pancake_label:
+    style_map[pancake_label] = {'color': COLORS[0], 'marker': MARKERS[0], 'linestyle': '-'}
+for i, bl in enumerate(baseline_labels):
+    style_map[bl] = {'color': COLORS[1 + i], 'marker': MARKERS[1 + i], 'linestyle': '--'}
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
-# --- Plot 1: recall-QPS curves (the canonical ann-benchmarks view) ---
+# --- Plot 1: recall-QPS curves ---
 for label, g in df.groupby('label'):
     g = g.sort_values('recall')
-    style = STYLE.get(label, {'color': 'k', 'marker': 'x', 'linestyle': '-'})
+    style = style_map.get(label, {'color': 'k', 'marker': 'x', 'linestyle': '-'})
     ax1.errorbar(g['recall'], g['qps'],
-                 xerr=g['recall_std'], yerr=g['qps_std'],
+                 xerr=g.get('recall_std', 0), yerr=g.get('qps_std', 0),
                  label=label, capsize=3, markersize=7, linewidth=1.5,
                  **style)
 
@@ -52,18 +62,19 @@ ax1.grid(True, alpha=0.3, which='both')
 ax1.legend(loc='lower left', framealpha=0.9)
 ax1.yaxis.set_major_formatter(mticker.ScalarFormatter())
 
-# Annotate ef_search values on the Pancake curve for reference
-pancake = df[df['label'] == 'pancake-int8-wasm'].sort_values('ef_search')
-for _, row in pancake.iterrows():
-    ax1.annotate(f"ef={int(row.ef_search)}",
-                 xy=(row.recall, row.qps),
-                 xytext=(5, 5), textcoords='offset points',
-                 fontsize=8, alpha=0.6)
+# Annotate ef_search values on pancake curve
+if pancake_label:
+    pk = df[df['label'] == pancake_label].sort_values('ef_search')
+    for _, row in pk.iterrows():
+        ax1.annotate(f"ef={int(row.ef_search)}",
+                     xy=(row.recall, row.qps),
+                     xytext=(5, 5), textcoords='offset points',
+                     fontsize=8, alpha=0.6)
 
 # --- Plot 2: latency curves ---
 for label, g in df.groupby('label'):
     g = g.sort_values('recall')
-    style = STYLE.get(label, {'color': 'k', 'marker': 'x', 'linestyle': '-'})
+    style = style_map.get(label, {'color': 'k', 'marker': 'x', 'linestyle': '-'})
     ax2.plot(g['recall'].values, g['p50_ms'].values, label=f'{label} p50',
              markersize=7, linewidth=1.5, **style)
     ax2.plot(g['recall'].values, g['p99_ms'].values, markersize=5, linewidth=1.0,
@@ -84,21 +95,29 @@ out_path = csv_path.replace('.csv', '.png')
 fig.savefig(out_path, dpi=150, bbox_inches='tight')
 print(f"Saved: {out_path}")
 
-# --- Print the matched-recall comparison table ---
-print("\nMatched-recall QPS comparison (pancake / baseline):")
-print(f"{'recall':>8}  {'pancake':>10}  {'usearch-i8':>12}  {'usearch-f32':>12}")
+# --- Print matched-recall comparison table ---
+if pancake_label and baseline_labels:
+    print(f"\nMatched-recall QPS comparison:")
+    header = f"{'recall':>8}  {pancake_label:>20}"
+    for bl in baseline_labels:
+        header += f"  {bl:>20}"
+    print(header)
 
-pancake_by_recall = df[df['label'] == 'pancake-int8-wasm'][['recall', 'qps']].sort_values('recall')
-import numpy as np
-for _, row in pancake_by_recall.iterrows():
-    target_recall = row['recall']
-    line = f"  {target_recall*100:>5.1f}%  {row['qps']:>10.0f}"
-    for baseline in ['usearch-int8-native', 'usearch-f32-native']:
-        b = df[df['label'] == baseline].sort_values('recall')
-        if len(b) and b['recall'].min() <= target_recall <= b['recall'].max():
-            # Log-linear interpolation in recall-QPS space
-            interp = np.exp(np.interp(target_recall, b['recall'], np.log(b['qps'])))
-            line += f"  {interp:>12.0f}"
-        else:
-            line += f"  {'n/a':>12}"
-    print(line)
+    pk_data = df[df['label'] == pancake_label][['recall', 'qps']].sort_values('recall')
+    for _, row in pk_data.iterrows():
+        target = row['recall']
+        line = f"  {target*100:>5.1f}%  {row['qps']:>20.0f}"
+        for bl in baseline_labels:
+            b = df[df['label'] == bl].sort_values('recall')
+            if len(b) and b['recall'].min() <= target <= b['recall'].max():
+                interp = np.exp(np.interp(target, b['recall'], np.log(b['qps'])))
+                line += f"  {interp:>20.0f}"
+            else:
+                line += f"  {'n/a':>20}"
+        print(line)
+elif pancake_label:
+    print(f"\nPancake-only results (no baseline to compare):")
+    pk_data = df[df['label'] == pancake_label][['recall', 'qps', 'ef_search']].sort_values('ef_search')
+    print(f"  {'ef':>4}  {'recall':>8}  {'qps':>6}")
+    for _, row in pk_data.iterrows():
+        print(f"  {int(row.ef_search):>4}  {row.recall*100:>6.1f}%  {row.qps:>6.0f}")
