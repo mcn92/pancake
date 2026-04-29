@@ -107,9 +107,11 @@ public:
     size_t memory_bytes() const override { return impl_->memory_bytes(); }
     std::vector<uint8_t> serialize() const override { return impl_->serialize(); }
     bool deserialize(const uint8_t* data, size_t size) override {
+        // Header: [0] magic [1] dims [2] version [3] count ...
+        // Count is at byte offset 12 (field index 3)
         size_t cnt = 100000;
-        if (size >= 12) {
-            uint32_t c; memcpy(&c, data + 8, 4);
+        if (size >= 16) {
+            uint32_t c; memcpy(&c, data + 12, 4);
             cnt = static_cast<size_t>(c);
         }
         FloatHNSWConfig cfg = cfg_;
@@ -142,9 +144,11 @@ public:
     size_t memory_bytes() const override { return impl_->memory_bytes(); }
     std::vector<uint8_t> serialize() const override { return impl_->serialize(); }
     bool deserialize(const uint8_t* data, size_t size) override {
+        // Header: [0] magic [1] dims [2] version [3] count ...
+        // Count is at byte offset 12 (field index 3)
         size_t cnt = 100000;
-        if (size >= 12) {
-            uint32_t c; memcpy(&c, data + 8, 4);
+        if (size >= 16) {
+            uint32_t c; memcpy(&c, data + 12, 4);
             cnt = static_cast<size_t>(c);
         }
         Int8FloatHNSWConfig cfg = cfg_;
@@ -438,31 +442,14 @@ uint32_t pancake_init(int dim, int max_elem, int quantized, int metric,
     bool use_cosine = (metric == 1);
 
     if (quantized) {
-        QuantizedHNSWConfig cfg;
-        cfg.max_elements = static_cast<size_t>(max_elem);
-        cfg.M = (M > 0) ? static_cast<size_t>(M) : 32;
-        cfg.ef_construction = (ef_c > 0) ? static_cast<size_t>(ef_c) : 200;
-        cfg.ef_search = (ef_s > 0) ? static_cast<size_t>(ef_s) : 128;
-        cfg.metric = use_cosine ? DistanceMetric::Cosine : DistanceMetric::L2;
-        cfg.quantize = true;
-
-        // Template specializations for dims with SIMD-optimized distance kernels.
-        // Must match old i8_init dispatch: only 384 and 1536 get templates.
-        // All other dims use Int8FloatHNSW (runtime-dim int8).
-        if (dim == 384) {
-            g_handles[h].index = new QuantizedHNSWWrapper<384>(cfg);
-        } else if (dim == 1536) {
-            g_handles[h].index = new QuantizedHNSWWrapper<1536>(cfg);
-        } else {
-            Int8FloatHNSWConfig i8cfg;
-            i8cfg.max_elements = static_cast<size_t>(max_elem);
-            i8cfg.M = (M > 0) ? static_cast<size_t>(M) : 32;
-            i8cfg.ef_construction = (ef_c > 0) ? static_cast<size_t>(ef_c) : 200;
-            i8cfg.ef_search = (ef_s > 0) ? static_cast<size_t>(ef_s) : 128;
-            i8cfg.metric = use_cosine ? DistanceMetric::Cosine : DistanceMetric::L2;
-            i8cfg.use_heuristic = true;
-            g_handles[h].index = new Int8FloatHNSWWrapper(dim, i8cfg);
-        }
+        Int8FloatHNSWConfig i8cfg;
+        i8cfg.max_elements = static_cast<size_t>(max_elem);
+        i8cfg.M = (M > 0) ? static_cast<size_t>(M) : 32;
+        i8cfg.ef_construction = (ef_c > 0) ? static_cast<size_t>(ef_c) : 200;
+        i8cfg.ef_search = (ef_s > 0) ? static_cast<size_t>(ef_s) : 128;
+        i8cfg.metric = use_cosine ? DistanceMetric::Cosine : DistanceMetric::L2;
+        i8cfg.use_heuristic = true;
+        g_handles[h].index = new Int8FloatHNSWWrapper(dim, i8cfg);
     } else {
         FloatHNSWConfig cfg;
         cfg.max_elements = static_cast<size_t>(max_elem);
