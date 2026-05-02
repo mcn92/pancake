@@ -110,11 +110,11 @@
 
         /* Latency chart */
         .chart-container { background: #0d0d0d; border: 1px solid #1e1e1e; border-radius: 6px; padding: 0.75rem; margin-bottom: 0.75rem; }
-        .chart-title { color: #444; font-size: 0.65rem; text-transform: uppercase; margin-bottom: 0.75rem; }
-        .chart { height: 100px; display: flex; align-items: flex-end; gap: 2px; }
-        .chart-bar { flex: 1; background: #4ade80; min-height: 2px; border-radius: 1px 1px 0 0; }
-        .chart-bar.slow { background: #fb923c; }
-        .chart-bar.very-slow { background: #ef4444; }
+        .chart-title { color: #444; font-size: 0.65rem; text-transform: uppercase; margin-bottom: 0.25rem; }
+        .chart-legend { display: flex; gap: 1rem; margin-bottom: 0.5rem; font-size: 0.6rem; color: #555; }
+        .chart-legend span { display: flex; align-items: center; gap: 0.3rem; }
+        .chart-legend .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+        .chart canvas { width: 100%; height: 120px; display: block; }
 
         /* Proof checklist */
         .checklist { background: #111; border: 1px solid #1e1e1e; border-radius: 6px; padding: 1rem; }
@@ -271,6 +271,9 @@
                         <button class="danger" id="btn-adv-worst" disabled>Worst-Case</button>
                         <button id="btn-adv-stop" disabled>Stop</button>
                     </div>
+                    <div class="button-group" style="margin-top: 0.4rem;">
+                        <button class="primary" id="btn-adv-all" disabled>Run All Five (clean baseline each)</button>
+                    </div>
                     <div style="margin-top: 0.5rem; display: flex; gap: 1rem; align-items: center;">
                         <label style="color: #555; font-size: 0.7rem;">
                             <input type="checkbox" id="auto-compact" checked> Auto-Compact
@@ -323,6 +326,10 @@
                         <div class="metric-value error" id="adv-max">—</div>
                     </div>
                     <div class="metric">
+                        <div class="metric-label">Recall@10 (post-stress)</div>
+                        <div class="metric-value" id="adv-recall">—</div>
+                    </div>
+                    <div class="metric">
                         <div class="metric-label">Elapsed</div>
                         <div class="metric-value" id="adv-elapsed">0s</div>
                     </div>
@@ -334,8 +341,15 @@
 
             <!-- Latency chart -->
             <div class="chart-container">
-                <div class="chart-title">Search Latency — Last 50 Queries</div>
-                <div class="chart" id="latency-chart"></div>
+                <div class="chart-title">Search Latency + Ghost Ratio — Last 100 Samples</div>
+                <div class="chart-legend">
+                    <span><span class="swatch" style="background:#4ade80"></span> Latency (ms)</span>
+                    <span><span class="swatch" style="background:#fb923c"></span> &gt;2ms</span>
+                    <span><span class="swatch" style="background:#ef4444"></span> &gt;5ms</span>
+                    <span><span class="swatch" style="background:rgba(96,165,250,0.5)"></span> Ghost ratio</span>
+                    <span><span class="swatch" style="background:rgba(250,204,21,0.7)"></span> Compaction</span>
+                </div>
+                <div class="chart"><canvas id="latency-canvas"></canvas></div>
             </div>
 
             <!-- Event log -->
@@ -359,6 +373,7 @@ const DIMS        = 384;
 const K           = 10;
 const MAX_ELEM    = 110_000;
 const VECTORS_URL = 'vectors.bin'; // 5000 x 384 float32 vectors, pre-embedded
+const BUILD_BATCH = 500;           // vectors per bulk_insert call
 
 // ─── Proof definitions ────────────────────────────────────────────────────────
 const PROOFS = [
@@ -376,20 +391,22 @@ const PROOFS = [
     { id: 'excl_deleted', text: 'Deleted vectors excluded from results' },
     { id: 'export',       text: 'Index serialized to binary (export)' },
     { id: 'import',       text: 'Index restored from binary (import round-trip)' },
-    { id: 'self_recall',  text: 'Self-recall: inserted vectors found at rank 1 (50/50)' },
-    { id: 'recall_at_k',  text: 'Recall@10 ≥ 99% vs brute-force (50 queries)' },
+    { id: 'self_recall',  text: 'Insert integrity: fresh vectors retrievable at rank 1 (50/50)' },
+    { id: 'recall_at_k',  text: 'Recall@10 ≥ 95% vs brute-force (50 queries)' },
     { id: 'stable',       text: 'Latency stable under sustained mutation' },
     { id: 'stress',       text: 'Survived adversarial stress test' },
 ];
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let engine       = null;
+let handle       = 0;    // handle from _pancake_init
 let vectors      = null; // Float32Array, all 5K vectors flat
 let vectorCount  = 0;    // how many have been indexed
 let totalVectors = 0;    // total available in vectors.bin
 
 let queryPtr     = null;
 let insertPtr    = null;
+let batchPtr     = null; // for bulk_insert
 let resultIdPtr  = null;
 let resultDistPtr= null;
 
@@ -398,8 +415,60 @@ let compactionCount  = 0;
 let memBeforeCompact = 0;
 let proofState       = {};
 
+// Chart sample ring buffer: { latency, ghostRatio, compacted }
+const CHART_SIZE     = 100;
+let chartSamples     = [];
+
 let adversarialRunning = false;
 let adversarialState   = {};
+
+// Pre-selected recall probe vectors (indices into vectors[]).
+// Built once after first index build; used for recall@K proof.
+const RECALL_PROBE_N = 20;
+const RECALL_PROBE_K = 10;
+let recallProbeIndices  = null; // Int array of vector indices
+let recallProbeTruth    = null; // Array of Set<id>, brute-force top-K for each probe
+
+// Insert-integrity probe: insert fresh vectors, query them back, check rank 1.
+// Confirms inserts succeed and the inserted vector is reachable in the graph.
+// Note: this is NOT a measure of approximation quality — it only catches
+// catastrophic failures (failed inserts, unreachable nodes). Real recall is
+// measured post-stress via measurePostStressRecall().
+const SELF_RECALL_TRIALS = 20;
+
+// ─── Live vector registry ─────────────────────────────────────────────────────
+// JS-side mirror of every vector currently live in the index, keyed by ID.
+// Used for post-stress recall measurement: brute-force ground truth requires
+// access to the actual vector data, and synthetic vectors inserted during
+// stress tests are not in the original vectors.bin buffer.
+//
+// Invariants (must be maintained alongside every engine mutation):
+//   - liveVectors.has(id) iff the engine considers id live (not a ghost).
+//   - liveVectors.get(id) returns the Float32Array(DIMS) for that vector.
+//
+// Performance: a 5k×384 f32 mirror is ~7.7 MB, acceptable for an in-browser
+// demo. Original-vector entries reference slices of the loaded buffer to
+// avoid copying; only synthetic inserts allocate new arrays.
+const liveVectors = new Map();
+
+function registerOriginalVector(id) {
+    // ID matches the index into the loaded vectors buffer for bulk-built originals.
+    liveVectors.set(id, getVec(id));
+}
+
+function registerSyntheticVector(id, vec) {
+    // Synthetic vectors must be copied — randomSyntheticVec() returns a fresh
+    // buffer each call but we want to be defensive against reuse.
+    liveVectors.set(id, new Float32Array(vec));
+}
+
+function unregisterVector(id) {
+    liveVectors.delete(id);
+}
+
+function clearLiveVectorRegistry() {
+    liveVectors.clear();
+}
 
 // ─── Proof checklist ──────────────────────────────────────────────────────────
 function initChecklist() {
@@ -441,10 +510,10 @@ function log(msg, type = 'info') {
 // ─── Metrics ──────────────────────────────────────────────────────────────────
 function updateMetrics() {
     if (!engine) return;
-    const count      = engine._i8_count();
-    const ghosts     = engine._i8_ghost_count();
-    const ghostRatio = engine._i8_ghost_ratio();
-    const mem        = engine._i8_memory();
+    const count      = engine._pancake_count(handle);
+    const ghosts     = engine._pancake_ghost_count(handle);
+    const ghostRatio = engine._pancake_ghost_ratio(handle);
+    const mem        = engine._pancake_memory(handle);
     const live       = count - ghosts;
 
     document.getElementById('m-count').textContent       = count.toLocaleString();
@@ -472,17 +541,90 @@ function updateLatencyMetrics() {
     if (p50 < 2.0) markProof('low_latency');
 }
 
+function recordChartSample(latency, compacted = false) {
+    const ghostRatio = engine ? engine._pancake_ghost_ratio(handle) : 0;
+    chartSamples.push({ latency, ghostRatio, compacted });
+    if (chartSamples.length > CHART_SIZE) chartSamples.shift();
+}
+
 function updateLatencyChart() {
-    const chart  = document.getElementById('latency-chart');
-    const recent = latencyHistory.slice(-50);
-    const max    = Math.max(...recent, 2);
-    chart.innerHTML = '';
-    recent.forEach(l => {
-        const bar = document.createElement('div');
-        bar.className = 'chart-bar' + (l > 5 ? ' very-slow' : l > 2 ? ' slow' : '');
-        bar.style.height = ((l / max) * 100) + '%';
-        chart.appendChild(bar);
-    });
+    const canvas = document.getElementById('latency-canvas');
+    const dpr    = window.devicePixelRatio || 1;
+    const rect   = canvas.getBoundingClientRect();
+    canvas.width  = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    const W = rect.width, H = rect.height;
+    ctx.clearRect(0, 0, W, H);
+
+    if (chartSamples.length === 0) return;
+
+    const n       = chartSamples.length;
+    const maxLat  = Math.max(...chartSamples.map(s => s.latency), 2);
+    const barW    = Math.max(1, (W - n + 1) / n);
+    const gap     = Math.min(1, barW * 0.1);
+
+    // Ghost ratio fill (background area)
+    ctx.beginPath();
+    ctx.moveTo(0, H);
+    for (let i = 0; i < n; i++) {
+        const x = i * (barW + gap) + barW / 2;
+        const y = H - chartSamples[i].ghostRatio * H;
+        ctx.lineTo(x, y);
+    }
+    ctx.lineTo((n - 1) * (barW + gap) + barW, H);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(96, 165, 250, 0.12)';
+    ctx.fill();
+
+    // Ghost ratio line
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+        const x = i * (barW + gap) + barW / 2;
+        const y = H - chartSamples[i].ghostRatio * H;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = 'rgba(96, 165, 250, 0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Latency bars + compaction markers
+    for (let i = 0; i < n; i++) {
+        const s  = chartSamples[i];
+        const x  = i * (barW + gap);
+        const bh = Math.max(2, (s.latency / maxLat) * H);
+
+        // Compaction marker — full-height yellow line behind the bar
+        if (s.compacted) {
+            ctx.fillStyle = 'rgba(250, 204, 21, 0.25)';
+            ctx.fillRect(x, 0, barW, H);
+            ctx.strokeStyle = 'rgba(250, 204, 21, 0.7)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(x + barW / 2, 0);
+            ctx.lineTo(x + barW / 2, H);
+            ctx.stroke();
+        }
+
+        ctx.fillStyle = s.latency > 5 ? '#ef4444' : s.latency > 2 ? '#fb923c' : '#4ade80';
+        ctx.fillRect(x, H - bh, barW, bh);
+    }
+
+    // Right-side axis labels
+    ctx.fillStyle = '#444';
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(`${maxLat.toFixed(1)}ms`, W - 2, 10);
+    ctx.fillText('0', W - 2, H - 2);
+
+    // Ghost ratio label on left
+    const maxGhost = Math.max(...chartSamples.map(s => s.ghostRatio));
+    if (maxGhost > 0.01) {
+        ctx.fillStyle = 'rgba(96, 165, 250, 0.6)';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${(maxGhost * 100).toFixed(0)}% ghosts`, 2, 10);
+    }
 }
 
 // ─── Vector helpers ───────────────────────────────────────────────────────────
@@ -505,25 +647,323 @@ function randomSyntheticVec() {
     return v;
 }
 
+// ─── Recall probes ───────────────────────────────────────────────────────────
+// Pre-compute brute-force ground truth for a small set of vectors so we can
+// cheaply measure recall during adversarial tests without recomputing each time.
+function buildRecallProbes() {
+    const count = engine._pancake_count(handle);
+    const limit = Math.min(count, totalVectors);
+    if (limit < RECALL_PROBE_K) return;
+
+    recallProbeIndices = [];
+    const used = new Set();
+    while (recallProbeIndices.length < RECALL_PROBE_N && recallProbeIndices.length < limit) {
+        const idx = Math.floor(Math.random() * limit);
+        if (!used.has(idx)) { used.add(idx); recallProbeIndices.push(idx); }
+    }
+
+    recallProbeTruth = [];
+    for (const qIdx of recallProbeIndices) {
+        const qVec = getVec(qIdx);
+        const scored = [];
+        for (let i = 0; i < limit; i++) {
+            const v = getVec(i);
+            let dot = 0, na = 0, nb = 0;
+            for (let d = 0; d < DIMS; d++) {
+                dot += qVec[d] * v[d];
+                na  += qVec[d] * qVec[d];
+                nb  += v[d] * v[d];
+            }
+            scored.push({ id: i, dist: 1 - dot / (Math.sqrt(na) * Math.sqrt(nb)) });
+        }
+        scored.sort((a, b) => a.dist - b.dist);
+        recallProbeTruth.push(new Set(scored.slice(0, RECALL_PROBE_K).map(s => s.id)));
+    }
+}
+
+function measureLiveRecall() {
+    if (!recallProbeIndices || recallProbeIndices.length === 0) return null;
+    let totalRecall = 0;
+    for (let qi = 0; qi < recallProbeIndices.length; qi++) {
+        const qVec = getVec(recallProbeIndices[qi]);
+        engine.HEAPF32.set(qVec, queryPtr >> 2);
+        const found = engine._pancake_query(handle, queryPtr, RECALL_PROBE_K, resultIdPtr, resultDistPtr);
+        let hits = 0;
+        const truth = recallProbeTruth[qi];
+        // Read IDs via HEAPU32 (always current after memory growth)
+        for (let i = 0; i < found; i++) {
+            const id = engine.HEAPU32[(resultIdPtr >> 2) + i * 2];
+            if (truth.has(id)) hits++;
+        }
+        totalRecall += hits / RECALL_PROBE_K;
+    }
+    return totalRecall / recallProbeIndices.length;
+}
+
+// Insert-integrity probe: fresh vectors → query → check rank-1 match.
+// Confirms inserts succeed and inserted vectors are reachable. Note: this
+// only catches catastrophic failures (insert silently dropped, vector
+// unreachable in graph). It does NOT measure approximation quality —
+// querying a vector that was just inserted with itself as the query is
+// a degenerate case (distance to self = 0) and will succeed for any index
+// that isn't fundamentally broken.
+function measureInsertIntegrity() {
+    if (!engine || engine._pancake_count(handle) < RECALL_PROBE_K) return null;
+    let hits = 0;
+    for (let i = 0; i < SELF_RECALL_TRIALS; i++) {
+        const vec = randomSyntheticVec();
+        engine.HEAPF32.set(vec, insertPtr >> 2);
+        const id = engine._pancake_add(handle, insertPtr);
+        registerSyntheticVector(id, vec);
+        engine.HEAPF32.set(vec, queryPtr >> 2);
+        engine._pancake_query(handle, queryPtr, 1, resultIdPtr, resultDistPtr);
+        if (engine.HEAPU32[(resultIdPtr >> 2)] === id) hits++;
+    }
+    return hits / SELF_RECALL_TRIALS;
+}
+
+// Post-stress recall@K vs. exact brute-force ground truth.
+// Recomputes ground truth fresh against the current live index state so
+// the metric is meaningful even after heavy mutation. Returns:
+//   { recall, queriesUsed, candidateCount, bruteForceMs } | null
+//
+// Approach:
+//   1. Sample up to N query vectors from the live registry (keys still valid).
+//   2. For each query, brute-force scan all live vectors (cosine distance).
+//   3. Run production HNSW search against the same live state.
+//   4. Compute |hnsw_top_k ∩ true_top_k| / k, average across queries.
+//
+// Why this works under live mutation: the 30-second stress test ends before
+// measurement starts, so the index is stable while we measure. The registry
+// gives us the exact set of live vectors at this instant; brute force over
+// that set is unambiguous ground truth.
+function measurePostStressRecall(opts = {}) {
+    const N_QUERIES = opts.queries || 20;
+    const TOP_K     = opts.k || 10;
+    const DIAG      = opts.diag === true; // opt-in; off in normal demo runs
+
+    if (!engine || liveVectors.size < TOP_K + 1) return null;
+
+    // ── CONTROL MEASUREMENT ──────────────────────────────────────────────
+    // Replicate proveRecallAtK's exact methodology (no registry, no synthetics,
+    // no liveness filtering — brute force over all loaded original vectors).
+    // If THIS gives reasonable recall while the registry-based measurement
+    // below gives 0, the bug is in the registry path. If both are broken,
+    // the bug is in measurement-shared code (stride, distance metric, etc).
+    let controlRecall = null, controlQueries = 0;
+    if (DIAG) {
+        const count = engine._pancake_count(handle);
+        const limit = Math.min(count, totalVectors);
+        const cQueries = [];
+        const cUsed = new Set();
+        const cTarget = Math.min(N_QUERIES, limit);
+        while (cQueries.length < cTarget) {
+            const idx = Math.floor(Math.random() * limit);
+            if (!cUsed.has(idx)) { cUsed.add(idx); cQueries.push(idx); }
+        }
+        let cTotal = 0;
+        for (const qIdx of cQueries) {
+            const qVec = getVec(qIdx);
+            const scored = [];
+            for (let i = 0; i < limit; i++) {
+                const v = getVec(i);
+                let dot = 0, na = 0, nb = 0;
+                for (let d = 0; d < DIMS; d++) {
+                    dot += qVec[d] * v[d];
+                    na  += qVec[d] * qVec[d];
+                    nb  += v[d] * v[d];
+                }
+                scored.push({ id: i, dist: 1 - dot / (Math.sqrt(na) * Math.sqrt(nb)) });
+            }
+            scored.sort((a, b) => a.dist - b.dist);
+            const trueTopK = new Set(scored.slice(0, TOP_K).map(s => s.id));
+            engine.HEAPF32.set(qVec, queryPtr >> 2);
+            const found = engine._pancake_query(handle, queryPtr, TOP_K, resultIdPtr, resultDistPtr);
+            let hits = 0;
+            for (let i = 0; i < found; i++) {
+                const id = engine.HEAPU32[(resultIdPtr >> 2) + i * 2];
+                if (trueTopK.has(id)) hits++;
+            }
+            cTotal += hits / TOP_K;
+        }
+        controlRecall = cTotal / cQueries.length;
+        controlQueries = cQueries.length;
+        log(`  [control] proveRecallAtK-style recall=${(controlRecall * 100).toFixed(1)}% (n=${controlQueries}, ` +
+            `originals only, no liveness filter)`, controlRecall >= 0.90 ? 'success' : 'error');
+    }
+
+    // ── MAIN MEASUREMENT (registry-based) ────────────────────────────────
+    // Snapshot live IDs so we iterate a stable set even if anything else
+    // touches the registry between queries (it shouldn't, but be safe).
+    const liveIds = Array.from(liveVectors.keys());
+
+    // Pick query IDs (sample without replacement). Queries must themselves
+    // be live so we have their vector data; we use the registry directly.
+    const queryIds = [];
+    const used = new Set();
+    const target = Math.min(N_QUERIES, liveIds.length);
+    while (queryIds.length < target) {
+        const idx = Math.floor(Math.random() * liveIds.length);
+        const id = liveIds[idx];
+        if (!used.has(id)) { used.add(id); queryIds.push(id); }
+    }
+
+    const t0 = performance.now();
+    let totalRecall = 0;
+
+    // Diagnostic accumulators
+    const isOriginalId = (id) => id < totalVectors;
+    let originalQueryRecallSum = 0, originalQueryCount = 0;
+    let syntheticQueryRecallSum = 0, syntheticQueryCount = 0;
+    const overlapHistogram = [0,0,0,0,0,0,0,0,0,0,0]; // index = number of hits 0..10
+
+    for (let qi = 0; qi < queryIds.length; qi++) {
+        const qId = queryIds[qi];
+        const qVec = liveVectors.get(qId);
+
+        // Brute force: cosine distance over every live vector.
+        // Note: includes the query vector itself, which will be at rank 0
+        // with distance 0 — same as the HNSW search behavior, so the
+        // comparison is fair (both treat self-match identically).
+        const scored = [];
+        let qNorm = 0;
+        for (let d = 0; d < DIMS; d++) qNorm += qVec[d] * qVec[d];
+        qNorm = Math.sqrt(qNorm);
+
+        for (const vId of liveIds) {
+            const v = liveVectors.get(vId);
+            let dot = 0, vNorm = 0;
+            for (let d = 0; d < DIMS; d++) {
+                dot += qVec[d] * v[d];
+                vNorm += v[d] * v[d];
+            }
+            scored.push({ id: vId, dist: 1 - dot / (qNorm * Math.sqrt(vNorm)) });
+        }
+        scored.sort((a, b) => a.dist - b.dist);
+        const trueTopK = new Set(scored.slice(0, TOP_K).map(s => s.id));
+
+        // Production HNSW search.
+        engine.HEAPF32.set(qVec, queryPtr >> 2);
+        const found = engine._pancake_query(handle, queryPtr, TOP_K, resultIdPtr, resultDistPtr);
+
+        // Read HNSW results — both stride=2 (current code) and stride=1
+        // interpretations, so we can tell if the stride is wrong.
+        const hnswStride2Ids = [], hnswStride2Dists = [];
+        const hnswStride1Ids = [], hnswStride1Dists = [];
+        for (let i = 0; i < found; i++) {
+            hnswStride2Ids.push(engine.HEAPU32[(resultIdPtr >> 2) + i * 2]);
+            hnswStride2Dists.push(engine.HEAPF32[(resultDistPtr >> 2) + i * 2]);
+            hnswStride1Ids.push(engine.HEAPU32[(resultIdPtr >> 2) + i]);
+            hnswStride1Dists.push(engine.HEAPF32[(resultDistPtr >> 2) + i]);
+        }
+
+        let hits = 0;
+        for (const id of hnswStride2Ids) {
+            if (trueTopK.has(id)) hits++;
+        }
+        const queryRecall = hits / TOP_K;
+        totalRecall += queryRecall;
+        overlapHistogram[hits]++;
+
+        // Track recall split by query type (original vs synthetic vector).
+        if (isOriginalId(qId)) {
+            originalQueryRecallSum += queryRecall;
+            originalQueryCount++;
+        } else {
+            syntheticQueryRecallSum += queryRecall;
+            syntheticQueryCount++;
+        }
+
+        // Per-query dump for the first 2 queries.
+        if (DIAG && qi < 2) {
+            const bruteTop = scored.slice(0, TOP_K).map(s => ({
+                id: s.id,
+                dist: +s.dist.toFixed(4),
+                isOriginal: isOriginalId(s.id),
+                inRegistry: liveVectors.has(s.id),
+            }));
+            const stride2 = hnswStride2Ids.map((id, i) => ({
+                id,
+                dist: +hnswStride2Dists[i].toFixed(4),
+                isOriginal: isOriginalId(id),
+                inRegistry: liveVectors.has(id),
+                inBruteTopK: trueTopK.has(id),
+            }));
+            const stride1 = hnswStride1Ids.map((id, i) => ({
+                id,
+                dist: +hnswStride1Dists[i].toFixed(4),
+                isOriginal: isOriginalId(id),
+                inRegistry: liveVectors.has(id),
+            }));
+            const stride2InRegistry = stride2.filter(r => r.inRegistry).length;
+            const stride1InRegistry = stride1.filter(r => r.inRegistry).length;
+
+            console.log(`\n=== DIAG query ${qi} ===`);
+            console.log('Query ID:', qId, '(isOriginal:', isOriginalId(qId), ', inRegistry:', liveVectors.has(qId), ')');
+            console.log('Query vec norm:', qNorm.toFixed(4), '(norm≈1 means pre-normalized)');
+            console.log('Brute-force top-10:', bruteTop);
+            console.log('HNSW top-10 with stride=2 (current code):', stride2);
+            console.log('  IDs in registry:', stride2InRegistry, '/', stride2.length);
+            console.log('HNSW top-10 with stride=1 (alternative):', stride1);
+            console.log('  IDs in registry:', stride1InRegistry, '/', stride1.length);
+            console.log('Hits at stride=2:', hits);
+            const hits1 = stride1.filter(r => trueTopK.has(r.id)).length;
+            console.log('Hits at stride=1:', hits1);
+
+            log(`  [diag q${qi}] qID=${qId} (orig=${isOriginalId(qId)}) | ` +
+                `s2 hits=${hits} reg=${stride2InRegistry}/${stride2.length} | ` +
+                `s1 hits=${hits1} reg=${stride1InRegistry}/${stride1.length}`, 'info');
+        }
+    }
+
+    const bruteForceMs = performance.now() - t0;
+
+    if (DIAG) {
+        const result = {
+            recall: totalRecall / queryIds.length,
+            originalQueryRecall: originalQueryCount > 0 ? originalQueryRecallSum / originalQueryCount : null,
+            syntheticQueryRecall: syntheticQueryCount > 0 ? syntheticQueryRecallSum / syntheticQueryCount : null,
+            originalQueryCount,
+            syntheticQueryCount,
+            registrySize: liveVectors.size,
+            engineCount: engine._pancake_count(handle),
+            engineLive: engine._pancake_count(handle) - engine._pancake_ghost_count(handle),
+            overlapHistogram,
+        };
+        console.log('=== DIAG summary ===', result);
+        log(`  [diag] orig-q recall=${(result.originalQueryRecall || 0).toFixed(3)} (n=${originalQueryCount}), ` +
+            `synth-q recall=${(result.syntheticQueryRecall || 0).toFixed(3)} (n=${syntheticQueryCount})`, 'info');
+        log(`  [diag] registry=${result.registrySize}, engine live=${result.engineLive}, ` +
+            `engine total=${result.engineCount}`, 'info');
+        log(`  [diag] hits histogram (idx=hits, val=#queries): [${overlapHistogram.join(',')}]`, 'info');
+    }
+
+    return {
+        recall: totalRecall / queryIds.length,
+        queriesUsed: queryIds.length,
+        candidateCount: liveIds.length,
+        bruteForceMs,
+    };
+}
+
 // ─── Core search ─────────────────────────────────────────────────────────────
 function doSearch(vec) {
     engine.HEAPF32.set(vec, queryPtr >> 2);
     const t0 = performance.now();
-    const found = engine._i8_query(queryPtr, K, resultIdPtr, resultDistPtr);
+    const found = engine._pancake_query(handle, queryPtr, K, resultIdPtr, resultDistPtr);
     const latency = performance.now() - t0;
     latencyHistory.push(latency);
+    recordChartSample(latency);
     updateLatencyMetrics();
     updateLatencyChart();
     return { latency, found };
 }
 
 function readIds(found) {
-    const dv = new DataView(engine.HEAPU8.buffer);
+    // Use HEAPU32 which is always current after WASM memory growth
     const ids = [];
     for (let i = 0; i < found; i++) {
-        const lo = dv.getUint32(resultIdPtr + i * 8, true);
-        const hi = dv.getUint32(resultIdPtr + i * 8 + 4, true);
-        ids.push(hi * 0x100000000 + lo);
+        ids.push(engine.HEAPU32[(resultIdPtr >> 2) + i * 2]);
     }
     return ids;
 }
@@ -535,12 +975,14 @@ async function init() {
     // Load engine
     loadStatus.textContent = 'Loading WASM engine...';
     engine = await window.P();
-    engine._i8_init(DIMS, MAX_ELEM, 1, 16, 200, 100); // dim, max_elem, metric=cosine, M, ef_c, ef_s
+    // pancake_init(dim, max_elem, quantized, metric, M, ef_c, ef_s)
+    handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
 
     queryPtr      = engine._emsc_malloc(DIMS * 4);
     resultIdPtr   = engine._emsc_malloc(K * 8);
     resultDistPtr = engine._emsc_malloc(K * 4);
     insertPtr     = engine._emsc_malloc(DIMS * 4);
+    batchPtr      = engine._emsc_malloc(BUILD_BATCH * DIMS * 4);
 
     // Load vectors
     loadStatus.textContent = 'Fetching embeddings (vectors.bin)...';
@@ -550,8 +992,11 @@ async function init() {
     vectors      = new Float32Array(buf);
     totalVectors = vectors.length / DIMS;
 
+    // Check timer resolution — with COOP/COEP headers we get µs precision
+    const timerRes = estimateTimerResolution();
+    const timerNote = timerRes > 0.5 ? ` · timer: ~${timerRes.toFixed(0)}ms (serve with COOP/COEP headers for µs)` : ` · timer: ~${(timerRes * 1000).toFixed(0)}µs`;
     document.getElementById('engine-badge').textContent =
-        `engine: 384D int8 HNSW · ${totalVectors.toLocaleString()} embeddings loaded · cosine`;
+        `engine: 384D int8 HNSW · ${totalVectors.toLocaleString()} embeddings loaded · cosine${timerNote}`;
     document.getElementById('loading').style.display = 'none';
 
     markProof('load');
@@ -564,16 +1009,41 @@ async function init() {
 // ─── Index operations ─────────────────────────────────────────────────────────
 async function buildIndex(count) {
     const n = Math.min(count, totalVectors);
+
+    // Auto-reset if the handle already has vectors. Stack-on builds break
+    // every assumption downstream: bulk_insert assigns IDs starting from
+    // the current count, not from 0, so the registry's "ID i = getVec(i)"
+    // mapping becomes wrong, and recall measurements (both this code's and
+    // proveRecallAtK's) silently produce nonsense.
+    if (engine._pancake_count(handle) > 0) {
+        log(`Index already contains ${engine._pancake_count(handle).toLocaleString()} vectors — resetting first to ensure a clean build.`, 'warn');
+        engine._pancake_dispose(handle);
+        handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
+        vectorCount = 0;
+        compactionCount = 0;
+        memBeforeCompact = 0;
+        latencyHistory = [];
+        chartSamples = [];
+        recallProbeIndices = null;
+        recallProbeTruth = null;
+        clearLiveVectorRegistry();
+    }
+
     log(`Building index with ${n.toLocaleString()} real embeddings...`, 'info');
     const t0 = performance.now();
-    const batchSize = 500;
+    const heapOffset = batchPtr >> 2;
 
-    for (let i = 0; i < n; i += batchSize) {
-        const end = Math.min(i + batchSize, n);
-        for (let j = i; j < end; j++) {
-            engine.HEAPF32.set(getVec(j), insertPtr >> 2);
-            engine._i8_add(insertPtr);
+    for (let i = 0; i < n; i += BUILD_BATCH) {
+        const end = Math.min(i + BUILD_BATCH, n);
+        const batchN = end - i;
+        for (let j = 0; j < batchN; j++) {
+            engine.HEAPF32.set(getVec(i + j), heapOffset + j * DIMS);
         }
+        engine._pancake_bulk_insert(handle, batchPtr, batchN);
+        // Mirror in JS-side live registry. Bulk insert assigns sequential IDs
+        // starting from the current count, so IDs i..end-1 correspond to
+        // getVec(i)..getVec(end-1).
+        for (let j = 0; j < batchN; j++) registerOriginalVector(i + j);
         const rate = ((end) / ((performance.now() - t0) / 1000)).toFixed(0);
         log(`Indexed ${end.toLocaleString()}/${n.toLocaleString()} (${rate} vec/s)`, 'info');
         await yieldFrame();
@@ -583,16 +1053,78 @@ async function buildIndex(count) {
     const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
     updateMetrics();
     log(`Index built: ${n.toLocaleString()} vectors in ${elapsed}s`, 'success');
+
+    // ── ID-contract diagnostic ─────────────────────────────────────────────
+    // Verify that the IDs the engine returns from search match the IDs we
+    // assumed during bulk_insert (i.e., sequential 0..n-1). If this fails,
+    // the post-stress recall measurement will be broken.
+    // Runs only on the first build of a session — it's a one-time integrity
+    // check, not something that needs to repeat on every rebuild.
+    if (!window._idContractVerified) {
+        window._idContractVerified = true;
+        // 1. Search for the vector at slot 0 — top result should be ID 0 with dist≈0.
+        engine.HEAPF32.set(getVec(0), queryPtr >> 2);
+        const found = engine._pancake_query(handle, queryPtr, 5, resultIdPtr, resultDistPtr);
+        const ids = [], dists = [];
+        for (let i = 0; i < found; i++) {
+            ids.push(engine.HEAPU32[(resultIdPtr >> 2) + i * 2]);
+            dists.push(engine.HEAPF32[(resultDistPtr >> 2) + i * 2]);
+        }
+        const rank0Id = ids[0], rank0Dist = dists[0];
+        const idsAlsoStride1 = [];
+        for (let i = 0; i < found; i++) idsAlsoStride1.push(engine.HEAPU32[(resultIdPtr >> 2) + i]);
+
+        log(`[id-contract] Query=getVec(0). HNSW stride=2 IDs=[${ids.join(',')}] dists=[${dists.map(d=>d.toFixed(3)).join(',')}]`, 'info');
+        log(`[id-contract] Same query, stride=1 IDs=[${idsAlsoStride1.join(',')}]`, 'info');
+        console.log('[id-contract] full result for getVec(0):', { stride2Ids: ids, stride2Dists: dists, stride1Ids: idsAlsoStride1 });
+
+        if (rank0Id === 0 && rank0Dist < 0.01) {
+            log(`[id-contract] ✓ Build assigns sequential IDs starting at 0 (rank-0 ID matches, dist=${rank0Dist.toFixed(4)})`, 'success');
+        } else {
+            log(`[id-contract] ✗ MISMATCH: expected rank-0 to be ID 0 dist≈0, got ID ${rank0Id} dist=${rank0Dist.toFixed(4)}`, 'error');
+            log(`[id-contract]   → registry keys are wrong; recall measurement will not work`, 'error');
+        }
+
+        // 2. Insert one synthetic vector and check what _pancake_add returns vs. what
+        //    a self-query says its ID is. They must agree.
+        const probeVec = randomSyntheticVec();
+        engine.HEAPF32.set(probeVec, insertPtr >> 2);
+        const reportedId = engine._pancake_add(handle, insertPtr);
+        engine.HEAPF32.set(probeVec, queryPtr >> 2);
+        engine._pancake_query(handle, queryPtr, 1, resultIdPtr, resultDistPtr);
+        const actualTopId = engine.HEAPU32[(resultIdPtr >> 2)];
+        const actualTopDist = engine.HEAPF32[(resultDistPtr >> 2)];
+
+        log(`[id-contract] _pancake_add returned ${reportedId}. Self-query says top ID=${actualTopId} dist=${actualTopDist.toFixed(4)}`, 'info');
+        console.log('[id-contract] add-vs-query:', { reportedByAdd: reportedId, reportedByQuery: actualTopId, dist: actualTopDist });
+
+        if (reportedId === actualTopId) {
+            log(`[id-contract] ✓ _pancake_add return value matches engine ID`, 'success');
+            registerSyntheticVector(reportedId, probeVec);
+        } else {
+            log(`[id-contract] ✗ MISMATCH: _pancake_add returned ${reportedId} but engine assigned ${actualTopId}`, 'error');
+            log(`[id-contract]   → every synthetic is registered under wrong key`, 'error');
+            // Register under the actual ID so this probe doesn't leak
+            registerSyntheticVector(actualTopId, probeVec);
+        }
+    }
+
     markProof('init');
+    buildRecallProbes();
     enableAllOperations();
 }
 
 function resetIndex() {
-    engine._i8_init(DIMS, MAX_ELEM, 1, 16, 200, 100);
+    engine._pancake_dispose(handle);
+    handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
     vectorCount      = 0;
     compactionCount  = 0;
     memBeforeCompact = 0;
     latencyHistory   = [];
+    chartSamples     = [];
+    recallProbeIndices = null;
+    recallProbeTruth   = null;
+    clearLiveVectorRegistry();
     updateMetrics();
     updateLatencyChart();
     log('Index reset.', 'warn');
@@ -613,8 +1145,10 @@ async function performSearches(count) {
 async function insertVectors(count) {
     log(`Inserting ${count} synthetic vector${count > 1 ? 's' : ''}...`, 'info');
     for (let i = 0; i < count; i++) {
-        engine.HEAPF32.set(randomSyntheticVec(), insertPtr >> 2);
-        engine._i8_add(insertPtr);
+        const vec = randomSyntheticVec();
+        engine.HEAPF32.set(vec, insertPtr >> 2);
+        const id = engine._pancake_add(handle, insertPtr);
+        registerSyntheticVector(id, vec);
     }
     updateMetrics();
     log(`Inserted ${count} vector${count > 1 ? 's' : ''}`, 'success');
@@ -622,30 +1156,36 @@ async function insertVectors(count) {
 }
 
 async function deleteVectors(count) {
-    const total = engine._i8_count();
+    const total = engine._pancake_count(handle);
     const n     = Math.min(count, total);
     log(`Deleting ${n} vector${n > 1 ? 's' : ''}...`, 'info');
     for (let i = 0; i < n; i++) {
-        engine._i8_delete(Math.floor(Math.random() * total));
+        const id = Math.floor(Math.random() * total);
+        engine._pancake_delete(handle, id);
+        unregisterVector(id);
     }
     updateMetrics();
-    log(`Deleted ${n} vectors (${engine._i8_ghost_count()} ghosts now)`, 'success');
+    log(`Deleted ${n} vectors (${engine._pancake_ghost_count(handle)} ghosts now)`, 'success');
     markProof('delete');
 }
 
 async function compact() {
-    const memBefore    = engine._i8_memory();
-    const ghostsBefore = engine._i8_ghost_count();
+    const memBefore    = engine._pancake_memory(handle);
+    const ghostsBefore = engine._pancake_ghost_count(handle);
     memBeforeCompact   = memBefore;
 
     log('Compacting...', 'info');
     const t0 = performance.now();
-    engine._i8_compact();
+    engine._pancake_compact(handle);
     const elapsed = (performance.now() - t0).toFixed(2);
     compactionCount++;
 
-    const memAfter    = engine._i8_memory();
-    const ghostsAfter = engine._i8_ghost_count();
+    // Record a compaction marker on the chart
+    recordChartSample(0, true);
+    updateLatencyChart();
+
+    const memAfter    = engine._pancake_memory(handle);
+    const ghostsAfter = engine._pancake_ghost_count(handle);
     const saved       = memBefore - memAfter;
 
     updateMetrics();
@@ -657,7 +1197,7 @@ async function compact() {
 async function exportIndex() {
     log('Exporting index...', 'info');
     const sizePtr = engine._emsc_malloc(4);
-    const dataPtr = engine._i8_export_index(sizePtr);
+    const dataPtr = engine._pancake_export(handle, sizePtr);
     const size    = engine.HEAPU32[sizePtr >> 2];
     const data    = new Uint8Array(engine.HEAPU8.buffer, dataPtr, size);
     const blob    = new Blob([data], { type: 'application/octet-stream' });
@@ -676,11 +1216,11 @@ async function importIndex(file) {
     const data = new Uint8Array(buf);
     const ptr  = engine._emsc_malloc(data.length);
     engine.HEAPU8.set(data, ptr);
-    engine._i8_import_index(ptr, data.length, DIMS);
+    engine._pancake_import(handle, ptr, data.length);
     engine._emsc_free(ptr);
     updateMetrics();
     const { latency } = doSearch(randomLoadedVec());
-    log(`Imported ${engine._i8_count().toLocaleString()} vectors. Immediate search: ${latency.toFixed(2)}ms`, 'success');
+    log(`Imported ${engine._pancake_count(handle).toLocaleString()} vectors. Immediate search: ${latency.toFixed(2)}ms`, 'success');
     markProof('import');
     enableAllOperations();
 }
@@ -693,7 +1233,7 @@ async function proveDeterministic() {
 
     for (let run = 0; run < 3; run++) {
         engine.HEAPF32.set(vec, queryPtr >> 2);
-        const found = engine._i8_query(queryPtr, K, resultIdPtr, resultDistPtr);
+        const found = engine._pancake_query(handle, queryPtr, K, resultIdPtr, resultDistPtr);
         const ids   = readIds(found);
         results.push(ids);
         log(`  Run ${run + 1}: [${ids.slice(0, 5).join(', ')}${ids.length > 5 ? '...' : ''}]`, 'info');
@@ -718,27 +1258,29 @@ async function proveDeletionExclusion() {
     // Insert a known vector and remember its ID
     const vec = randomSyntheticVec();
     engine.HEAPF32.set(vec, insertPtr >> 2);
-    const id = engine._i8_add(insertPtr);
+    const id = engine._pancake_add(handle, insertPtr);
+    registerSyntheticVector(id, vec);
     log(`  Inserted test vector, ID=${id}`, 'info');
     await sleep(80);
 
     // Search — should appear at top
     engine.HEAPF32.set(vec, queryPtr >> 2);
-    let found     = engine._i8_query(queryPtr, K, resultIdPtr, resultDistPtr);
+    let found     = engine._pancake_query(handle, queryPtr, K, resultIdPtr, resultDistPtr);
     let ids       = readIds(found);
     const before  = ids.includes(id);
     log(`  Before delete — appears in results: ${before}`, 'info');
     await sleep(80);
 
     // Delete
-    engine._i8_delete(id);
+    engine._pancake_delete(handle, id);
+    unregisterVector(id);
     updateMetrics();
     log(`  Deleted ID=${id}`, 'info');
     await sleep(80);
 
     // Search again — should not appear
     engine.HEAPF32.set(vec, queryPtr >> 2);
-    found         = engine._i8_query(queryPtr, K, resultIdPtr, resultDistPtr);
+    found         = engine._pancake_query(handle, queryPtr, K, resultIdPtr, resultDistPtr);
     ids           = readIds(found);
     const after   = ids.includes(id);
     log(`  After delete — appears in results: ${after}`, 'info');
@@ -755,11 +1297,11 @@ async function proveSearchDuringCompaction() {
     log('=== PROOF: Search Continues After Compaction ===', 'info');
 
     // Ensure there are ghosts to compact
-    if (engine._i8_ghost_count() < 10) {
+    if (engine._pancake_ghost_count(handle) < 10) {
         await deleteVectors(100);
     }
 
-    engine._i8_compact();
+    engine._pancake_compact(handle);
     compactionCount++;
     const { latency } = doSearch(randomLoadedVec());
     log(`  Immediate post-compaction search: ${latency.toFixed(2)}ms`, 'success');
@@ -774,15 +1316,15 @@ async function proveSearchDuringCompaction() {
 async function proveMemoryDecrease() {
     log('=== PROOF: Memory Decreases After Compaction ===', 'info');
 
-    if (engine._i8_ghost_count() < 50) {
+    if (engine._pancake_ghost_count(handle) < 50) {
         log('  Generating ghosts...', 'info');
         await deleteVectors(200);
     }
 
-    const memBefore = engine._i8_memory();
-    log(`  Memory before: ${(memBefore / 1024).toFixed(1)} KB, ghosts: ${engine._i8_ghost_count()}`, 'info');
+    const memBefore = engine._pancake_memory(handle);
+    log(`  Memory before: ${(memBefore / 1024).toFixed(1)} KB, ghosts: ${engine._pancake_ghost_count(handle)}`, 'info');
     await compact();
-    const memAfter = engine._i8_memory();
+    const memAfter = engine._pancake_memory(handle);
     const saved    = memBefore - memAfter;
     log(`  Memory after: ${(memAfter / 1024).toFixed(1)} KB, saved: ${(saved / 1024).toFixed(1)} KB`, 'success');
 
@@ -800,18 +1342,22 @@ async function proveSustainedStability() {
     const lats     = [];
 
     while (performance.now() - t0 < duration) {
-        engine.HEAPF32.set(randomSyntheticVec(), insertPtr >> 2);
-        engine._i8_add(insertPtr);
+        const vec = randomSyntheticVec();
+        engine.HEAPF32.set(vec, insertPtr >> 2);
+        const insertedId = engine._pancake_add(handle, insertPtr);
+        registerSyntheticVector(insertedId, vec);
         inserts++;
 
         if (Math.random() < 0.4) {
-            engine._i8_delete(Math.floor(Math.random() * engine._i8_count()));
+            const delId = Math.floor(Math.random() * engine._pancake_count(handle));
+            engine._pancake_delete(handle, delId);
+            unregisterVector(delId);
             deletes++;
         }
 
         const t1 = performance.now();
         engine.HEAPF32.set(randomLoadedVec(), queryPtr >> 2);
-        engine._i8_query(queryPtr, K, resultIdPtr, resultDistPtr);
+        engine._pancake_query(handle, queryPtr, K, resultIdPtr, resultDistPtr);
         lats.push(performance.now() - t1);
 
         if (inserts % 50 === 0) await yieldFrame();
@@ -836,7 +1382,7 @@ async function proveSustainedStability() {
 
 async function proveExportImport() {
     log('=== PROOF: Export → Reset → Import → Immediate Search ===', 'info');
-    const countBefore = engine._i8_count();
+    const countBefore = engine._pancake_count(handle);
 
     if (countBefore === 0) {
         log('✗ SKIPPED: Index is empty — nothing to export', 'error');
@@ -845,7 +1391,7 @@ async function proveExportImport() {
 
     // Export — snapshot the buffer before any reset
     const sizePtr = engine._emsc_malloc(4);
-    const dataPtr = engine._i8_export_index(sizePtr);
+    const dataPtr = engine._pancake_export(handle, sizePtr);
     const size    = engine.HEAPU32[sizePtr >> 2];
     if (size === 0) {
         log('✗ Export returned 0 bytes', 'error');
@@ -860,9 +1406,10 @@ async function proveExportImport() {
 
     await sleep(400);
 
-    // Reset — wipe the index entirely
-    engine._i8_init(DIMS, MAX_ELEM, 1, 16, 200, 100);
-    log(`  Index reset (now has ${engine._i8_count()} vectors)`, 'info');
+    // Reset — dispose and re-init
+    engine._pancake_dispose(handle);
+    handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
+    log(`  Index reset (now has ${engine._pancake_count(handle)} vectors)`, 'info');
     await sleep(400);
 
     // Import — write saved bytes into WASM memory then call import
@@ -875,19 +1422,20 @@ async function proveExportImport() {
 
     let importStatus;
     try {
-        importStatus = engine._i8_import_index(ptr, saved.length, DIMS);
+        importStatus = engine._pancake_import(handle, ptr, saved.length);
     } catch (e) {
         engine._emsc_free(ptr);
         log(`✗ Import crashed: ${e.message}`, 'error');
         // Rebuild the index so subsequent proofs aren't broken
         log('  Rebuilding index for subsequent proofs...', 'warn');
-        engine._i8_init(DIMS, MAX_ELEM, 1, 16, 200, 100);
+        engine._pancake_dispose(handle);
+        handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
         for (let i = 0; i < Math.min(countBefore, totalVectors); i++) {
             engine.HEAPF32.set(getVec(i), insertPtr >> 2);
-            engine._i8_add(insertPtr);
+            engine._pancake_add(handle, insertPtr);
         }
         updateMetrics();
-        log(`  Rebuilt ${engine._i8_count()} vectors`, 'warn');
+        log(`  Rebuilt ${engine._pancake_count(handle)} vectors`, 'warn');
         return false;
     }
     engine._emsc_free(ptr);
@@ -895,30 +1443,32 @@ async function proveExportImport() {
     if (importStatus !== 0) {
         log(`✗ Import returned error status ${importStatus}`, 'error');
         // Rebuild
-        engine._i8_init(DIMS, MAX_ELEM, 1, 16, 200, 100);
+        engine._pancake_dispose(handle);
+        handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
         for (let i = 0; i < Math.min(countBefore, totalVectors); i++) {
             engine.HEAPF32.set(getVec(i), insertPtr >> 2);
-            engine._i8_add(insertPtr);
+            engine._pancake_add(handle, insertPtr);
         }
         updateMetrics();
-        log(`  Rebuilt ${engine._i8_count()} vectors`, 'warn');
+        log(`  Rebuilt ${engine._pancake_count(handle)} vectors`, 'warn');
         return false;
     }
 
-    const countAfter = engine._i8_count();
+    const countAfter = engine._pancake_count(handle);
     updateMetrics();
 
     if (countAfter === 0) {
         log(`✗ Import failed — index still empty after import (exported ${countBefore} vectors)`, 'error');
         // Rebuild the index so subsequent proofs aren't broken
         log('  Rebuilding index for subsequent proofs...', 'warn');
-        engine._i8_init(DIMS, MAX_ELEM, 1, 16, 200, 100);
+        engine._pancake_dispose(handle);
+        handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
         for (let i = 0; i < Math.min(countBefore, totalVectors); i++) {
             engine.HEAPF32.set(getVec(i), insertPtr >> 2);
-            engine._i8_add(insertPtr);
+            engine._pancake_add(handle, insertPtr);
         }
         updateMetrics();
-        log(`  Rebuilt ${engine._i8_count()} vectors`, 'warn');
+        log(`  Rebuilt ${engine._pancake_count(handle)} vectors`, 'warn');
         return false;
     }
 
@@ -939,10 +1489,16 @@ async function proveExportImport() {
     }
 }
 
-// ─── Self-recall proof ────────────────────────────────────────────────────────
+// ─── Insert-integrity proof ───────────────────────────────────────────────────
+// Inserts fresh synthetic vectors and verifies each appears at rank 1 when
+// queried with itself. This is a *liveness* check — it confirms inserts are
+// landing in the index and the inserted vector is reachable. It does NOT
+// measure approximation quality (querying a vector with itself trivially
+// matches) and should not be confused with recall@K. The post-stress
+// recall measurement in stopAdversarialTest() is the real quality metric.
 async function proveSelfRecall() {
     const N = 50;
-    log(`=== PROOF: Self-Recall (${N} trials) ===`, 'info');
+    log(`=== PROOF: Insert Integrity (${N} trials) ===`, 'info');
 
     let rank1Hits = 0;
     let misses = [];
@@ -951,15 +1507,13 @@ async function proveSelfRecall() {
         // Insert a fresh random vector
         const vec = randomSyntheticVec();
         engine.HEAPF32.set(vec, insertPtr >> 2);
-        const id = engine._i8_add(insertPtr);
+        const id = engine._pancake_add(handle, insertPtr);
+        registerSyntheticVector(id, vec);
 
         // Search with the same vector
         engine.HEAPF32.set(vec, queryPtr >> 2);
-        const found = engine._i8_query(queryPtr, K, resultIdPtr, resultDistPtr);
-        const dv2 = new DataView(engine.HEAPU8.buffer);
-        const topLo = dv2.getUint32(resultIdPtr, true);
-        const topHi = dv2.getUint32(resultIdPtr + 4, true);
-        const topId = topHi * 0x100000000 + topLo;
+        const found = engine._pancake_query(handle, queryPtr, K, resultIdPtr, resultDistPtr);
+        const topId = engine.HEAPU32[(resultIdPtr >> 2)];
         const topDist = engine.HEAPF32[(resultDistPtr >> 2)];
 
         if (topId === id) {
@@ -968,9 +1522,7 @@ async function proveSelfRecall() {
             // Find what rank it actually appeared at
             let rank = -1;
             for (let i = 0; i < found; i++) {
-                const lo = dv2.getUint32(resultIdPtr + i * 8, true);
-                const hi = dv2.getUint32(resultIdPtr + i * 8 + 4, true);
-                if (hi * 0x100000000 + lo === id) { rank = i + 1; break; }
+                if (engine.HEAPU32[(resultIdPtr >> 2) + i * 2] === id) { rank = i + 1; break; }
             }
             misses.push({ trial, id, topId, topDist, rank });
         }
@@ -1003,7 +1555,7 @@ async function proveRecallAtK() {
     const TOP_K = 10;
     log(`=== PROOF: Recall@${TOP_K} vs Brute-Force (${N_QUERIES} queries) ===`, 'info');
 
-    const count = engine._i8_count();
+    const count = engine._pancake_count(handle);
     if (count < TOP_K) {
         log('✗ SKIPPED: Not enough vectors in index', 'error');
         return;
@@ -1041,13 +1593,10 @@ async function proveRecallAtK() {
 
         // --- HNSW search ---
         engine.HEAPF32.set(qVec, queryPtr >> 2);
-        const found = engine._i8_query(queryPtr, TOP_K, resultIdPtr, resultDistPtr);
+        const found = engine._pancake_query(handle, queryPtr, TOP_K, resultIdPtr, resultDistPtr);
         const hnswIds = new Set();
-        const dv = new DataView(engine.HEAPU8.buffer);
         for (let i = 0; i < found; i++) {
-            const lo = dv.getUint32(resultIdPtr + i * 8, true);
-            const hi = dv.getUint32(resultIdPtr + i * 8 + 4, true);
-            hnswIds.add(hi * 0x100000000 + lo);
+            hnswIds.add(engine.HEAPU32[(resultIdPtr >> 2) + i * 2]);
         }
 
         // --- Overlap ---
@@ -1078,11 +1627,15 @@ async function runFullProofSequence() {
     disableAllButtons();
 
     // Reset index to ensure clean state for repeatable runs (without disabling operations)
-    engine._i8_init(DIMS, MAX_ELEM, 1, 16, 200, 100);
+    engine._pancake_dispose(handle);
+    handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
     vectorCount      = 0;
     compactionCount  = 0;
     memBeforeCompact = 0;
     latencyHistory   = [];
+    chartSamples     = [];
+    recallProbeIndices = null;
+    recallProbeTruth   = null;
     updateMetrics();
     updateLatencyChart();
     log('Index reset for proof sequence.', 'warn');
@@ -1128,20 +1681,59 @@ const ADV_MODES = {
     worst: { name: 'Worst-Case Adversarial', insert: 500, delete: 490, search: 1000, desc: 'Max stress on all paths simultaneously' },
 };
 
-function startAdversarialTest(mode) {
+// Standard size for stress-test indices. Fixed across all five tests so
+// results are comparable. Kept small enough that brute-force ground truth
+// for post-stress measurement runs in ~200ms.
+const ADV_INDEX_SIZE = 5000;
+
+async function startAdversarialTest(mode) {
     if (adversarialRunning) return;
     const cfg      = ADV_MODES[mode];
     const duration = parseInt(document.getElementById('adv-duration').value) * 1000;
     const autoCompact = document.getElementById('auto-compact').checked;
 
     log(`=== ADVERSARIAL: ${cfg.name} — ${cfg.desc} ===`, 'info');
-    adversarialRunning = true;
 
+    // Disable test-trigger buttons immediately so a fast double-click doesn't
+    // start two builds in parallel.
+    ['btn-adv-ghost','btn-adv-churn','btn-adv-read','btn-adv-write','btn-adv-worst','btn-auto-proof','btn-adv-all'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = true;
+    });
+
+    // Build a fresh index so this test starts from the same baseline as
+    // every other adversarial test. Without this, the second test in a
+    // sequence would inherit whatever state the previous test left behind,
+    // making cross-test comparisons meaningless.
+    log(`  Preparing fresh index (${ADV_INDEX_SIZE.toLocaleString()} vectors) for clean baseline...`, 'info');
+    await buildIndex(ADV_INDEX_SIZE);
+    await sleep(200);
+
+    // Measure baseline recall before any stress is applied. This is the
+    // ceiling: post-stress recall is meaningful only relative to this.
+    const baseline = measurePostStressRecall({ queries: 20, k: 10 });
+    let baselineRecall = null;
+    if (baseline !== null) {
+        baselineRecall = baseline.recall;
+        log(`  Baseline recall@10: ${(baselineRecall * 100).toFixed(1)}% (${baseline.candidateCount.toLocaleString()} live vectors)`, 'success');
+    }
+
+    adversarialRunning = true;
+    // The "completion" promise resolves once stopAdversarialTest finishes
+    // (whether via timeout or manual stop). The sequencer awaits this so
+    // tests run strictly serially, with all post-stress measurement done
+    // before the next test rebuilds.
+    let resolveCompletion;
+    const completion = new Promise(r => { resolveCompletion = r; });
     adversarialState = {
         startTime: performance.now(),
         inserts: 0, deletes: 0, searches: 0,
         latencies: [],
         intervals: [],
+        lastRecall: null,
+        baselineRecall,
+        mode,
+        resolveCompletion,
     };
 
     document.getElementById('adversarial-panel').style.display = 'block';
@@ -1153,45 +1745,60 @@ function startAdversarialTest(mode) {
 
     // Insert loop
     if (cfg.insert > 0) addInterval(() => {
-        engine.HEAPF32.set(randomSyntheticVec(), insertPtr >> 2);
-        engine._i8_add(insertPtr);
+        const vec = randomSyntheticVec();
+        engine.HEAPF32.set(vec, insertPtr >> 2);
+        const id = engine._pancake_add(handle, insertPtr);
+        registerSyntheticVector(id, vec);
         adversarialState.inserts++;
     }, 1000 / cfg.insert);
 
     // Delete loop
     if (cfg.delete > 0) addInterval(() => {
-        const total = engine._i8_count();
-        if (total > 0) { engine._i8_delete(Math.floor(Math.random() * total)); adversarialState.deletes++; }
+        const total = engine._pancake_count(handle);
+        if (total > 0) {
+            const id = Math.floor(Math.random() * total);
+            engine._pancake_delete(handle, id);
+            unregisterVector(id);
+            adversarialState.deletes++;
+        }
     }, 1000 / cfg.delete);
 
     // Search loop
     if (cfg.search > 0) addInterval(() => {
         engine.HEAPF32.set(randomLoadedVec(), queryPtr >> 2);
         const t0 = performance.now();
-        engine._i8_query(queryPtr, K, resultIdPtr, resultDistPtr);
-        adversarialState.latencies.push(performance.now() - t0);
+        engine._pancake_query(handle, queryPtr, K, resultIdPtr, resultDistPtr);
+        const lat = performance.now() - t0;
+        adversarialState.latencies.push(lat);
         adversarialState.searches++;
         if (adversarialState.latencies.length > 1000) adversarialState.latencies.shift();
+        recordChartSample(lat);
     }, 1000 / cfg.search);
 
     // Auto-compact loop
     if (autoCompact) adversarialState.intervals.push(setInterval(() => {
-        if (engine._i8_ghost_ratio() > 0.15) { engine._i8_compact(); compactionCount++; }
+        if (engine._pancake_ghost_ratio(handle) > 0.15) {
+            engine._pancake_compact(handle);
+            compactionCount++;
+            recordChartSample(0, true);
+        }
     }, 1000));
 
-    // Metrics update loop
+
+    // Metrics + chart update loop
     adversarialState.intervals.push(setInterval(() => {
         updateAdversarialMetrics();
         updateMetrics();
+        updateLatencyChart();
     }, 250));
 
     // Stop after duration
     setTimeout(stopAdversarialTest, duration);
 
+    // Buttons are already disabled (see top of function); just enable Stop.
     document.getElementById('btn-adv-stop').disabled = false;
-    ['btn-adv-ghost','btn-adv-churn','btn-adv-read','btn-adv-write','btn-adv-worst'].forEach(id => {
-        document.getElementById(id).disabled = true;
-    });
+
+    return completion;
 }
 
 function stopAdversarialTest() {
@@ -1212,11 +1819,102 @@ function stopAdversarialTest() {
         if (p99 < 5.0 && max < 20.0) markProof('stress');
     }
 
+    // Post-stress measurement: recall@10 vs. fresh brute-force ground truth.
+    // Ground truth is recomputed against the current live index state — this
+    // is the only correct way to measure recall after live mutation, since
+    // any pre-computed truth set is invalidated by inserts/deletes.
+    const result = measurePostStressRecall({ queries: 20, k: 10 });
+    if (result !== null) {
+        const pct = (result.recall * 100).toFixed(1);
+        const label = result.recall >= 0.95 ? 'success' : result.recall >= 0.80 ? 'warn' : 'error';
+        const baselineRecall = adversarialState.baselineRecall;
+        if (baselineRecall !== null) {
+            const baselinePct = (baselineRecall * 100).toFixed(1);
+            const deltaPp = ((result.recall - baselineRecall) * 100).toFixed(1);
+            const sign = deltaPp >= 0 ? '+' : '';
+            log(`  Recall@10: ${baselinePct}% (baseline) → ${pct}% (post-stress) [${sign}${deltaPp}pp] ` +
+                `over ${result.candidateCount.toLocaleString()} live vectors ` +
+                `(${result.queriesUsed} queries, brute-force ${result.bruteForceMs.toFixed(0)}ms)`, label);
+        } else {
+            log(`  Recall@10: ${pct}% vs. brute-force over ${result.candidateCount.toLocaleString()} live vectors ` +
+                `(${result.queriesUsed} queries, brute-force ${result.bruteForceMs.toFixed(0)}ms)`, label);
+        }
+        adversarialState.lastRecall = result.recall;
+        adversarialState.lastRecallDetail = result;
+        updateAdversarialMetrics();
+    } else {
+        log('  Recall@10: not enough live vectors to measure', 'warn');
+    }
+
+    // Insert-integrity sanity check (cheap, runs in addition to the above).
+    // Mostly redundant once recall is measured, but useful as a fast signal
+    // that inserts are still functioning at all.
+    const integrity = measureInsertIntegrity();
+    if (integrity !== null && integrity < 1.0) {
+        log(`  ⚠ Insert integrity: ${(integrity * 100).toFixed(1)}% — fresh inserts not always reachable`, 'warn');
+    }
+
     updateMetrics();
     document.getElementById('btn-adv-stop').disabled = true;
-    ['btn-adv-ghost','btn-adv-churn','btn-adv-read','btn-adv-write','btn-adv-worst'].forEach(id => {
-        document.getElementById(id).disabled = false;
+    ['btn-adv-ghost','btn-adv-churn','btn-adv-read','btn-adv-write','btn-adv-worst','btn-auto-proof','btn-adv-all'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = false;
     });
+
+    // Hand control back to anything awaiting test completion (e.g., the
+    // Run All Five sequencer). Capture before clearing in case state gets
+    // overwritten by a follow-up test starting immediately.
+    const resolve = adversarialState.resolveCompletion;
+    if (resolve) resolve({
+        mode: adversarialState.mode,
+        baselineRecall: adversarialState.baselineRecall,
+        postStressRecall: adversarialState.lastRecall,
+        latencies: adversarialState.latencies.slice(),
+    });
+}
+
+// ─── Run All Five: full adversarial sequence ─────────────────────────────────
+// Runs each of the five stress tests in turn, with a fresh-built index
+// before each (handled by startAdversarialTest itself). Collects baseline
+// and post-stress recall for each, then prints a summary table.
+async function runAllAdversarialTests() {
+    if (adversarialRunning) return;
+
+    log('=== RUNNING FULL ADVERSARIAL SEQUENCE (5 tests × 30s + rebuilds ≈ 3-4 minutes) ===', 'info');
+
+    const order = ['ghost', 'churn', 'read', 'write', 'worst'];
+    const results = [];
+
+    for (const mode of order) {
+        const completion = startAdversarialTest(mode);
+        if (!completion) {
+            log(`  Skipped ${mode} — already running`, 'warn');
+            continue;
+        }
+        const result = await completion;
+        results.push(result);
+        // Brief pause between tests so the log is readable and the user can
+        // see each result before the next rebuild kicks off.
+        await sleep(1500);
+    }
+
+    // Summary table
+    log('=== ADVERSARIAL SEQUENCE COMPLETE — Summary ===', 'success');
+    log(`  ${'Test'.padEnd(22)} ${'Baseline'.padStart(10)} ${'Post-stress'.padStart(13)} ${'Δ (pp)'.padStart(10)}`, 'info');
+    log(`  ${'─'.repeat(22)} ${'─'.repeat(10)} ${'─'.repeat(13)} ${'─'.repeat(10)}`, 'info');
+    for (const r of results) {
+        const cfg = ADV_MODES[r.mode];
+        const baseStr = r.baselineRecall !== null ? (r.baselineRecall * 100).toFixed(1) + '%' : '—';
+        const postStr = r.postStressRecall !== null ? (r.postStressRecall * 100).toFixed(1) + '%' : '—';
+        let deltaStr = '—', deltaLabel = 'info';
+        if (r.baselineRecall !== null && r.postStressRecall !== null) {
+            const delta = (r.postStressRecall - r.baselineRecall) * 100;
+            const sign = delta >= 0 ? '+' : '';
+            deltaStr = `${sign}${delta.toFixed(1)}`;
+            deltaLabel = delta >= -2 ? 'success' : delta >= -10 ? 'warn' : 'error';
+        }
+        log(`  ${cfg.name.padEnd(22)} ${baseStr.padStart(10)} ${postStr.padStart(13)} ${deltaStr.padStart(10)}`, deltaLabel);
+    }
 }
 
 function updateAdversarialMetrics() {
@@ -1236,8 +1934,17 @@ function updateAdversarialMetrics() {
         document.getElementById('adv-max').textContent = max.toFixed(2) + 'ms';
     }
 
+    const recallEl = document.getElementById('adv-recall');
+    if (adversarialState.lastRecall !== null) {
+        const pct = (adversarialState.lastRecall * 100).toFixed(1);
+        recallEl.textContent = pct + '%';
+        recallEl.className = 'metric-value ' + (adversarialState.lastRecall >= 0.95 ? 'success' : adversarialState.lastRecall >= 0.80 ? 'warn' : 'error');
+    } else {
+        recallEl.textContent = '—';
+    }
+
     // Structural health
-    const ghostRatio = engine._i8_ghost_ratio();
+    const ghostRatio = engine._pancake_ghost_ratio(handle);
     const health     = document.getElementById('adv-health');
     const warnings   = [];
     if (ghostRatio > 0.3) warnings.push('⚠ Ghost ratio excessive (>30%)');
@@ -1261,7 +1968,7 @@ function enableAllOperations() {
     ['btn-search-1','btn-search-10','btn-search-100',
      'btn-insert-1','btn-insert-100','btn-delete-100','btn-delete-500',
      'btn-compact','btn-export','btn-import',
-     'btn-adv-ghost','btn-adv-churn','btn-adv-read','btn-adv-write','btn-adv-worst',
+     'btn-adv-ghost','btn-adv-churn','btn-adv-read','btn-adv-write','btn-adv-worst','btn-adv-all',
      'btn-auto-proof','btn-build-1k','btn-build-5k'
     ].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = false; });
 }
@@ -1270,7 +1977,7 @@ function disableOperations() {
     ['btn-search-1','btn-search-10','btn-search-100',
      'btn-insert-1','btn-insert-100','btn-delete-100','btn-delete-500',
      'btn-compact','btn-export','btn-adv-ghost','btn-adv-churn',
-     'btn-adv-read','btn-adv-write','btn-adv-worst','btn-auto-proof'
+     'btn-adv-read','btn-adv-write','btn-adv-worst','btn-adv-all','btn-auto-proof'
     ].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = true; });
 }
 
@@ -1281,6 +1988,18 @@ function disableAllButtons() {
 // ─── Utilities ────────────────────────────────────────────────────────────────
 const sleep      = ms => new Promise(r => setTimeout(r, ms));
 const yieldFrame = ()  => new Promise(r => setTimeout(r, 0));
+
+function estimateTimerResolution() {
+    // Sample the smallest non-zero delta from performance.now()
+    let minDelta = Infinity;
+    for (let i = 0; i < 20; i++) {
+        const t0 = performance.now();
+        let t1 = t0;
+        while (t1 === t0) t1 = performance.now();
+        minDelta = Math.min(minDelta, t1 - t0);
+    }
+    return minDelta;
+}
 
 // ─── Wire up event listeners ──────────────────────────────────────────────────
 document.getElementById('btn-build-1k').addEventListener('click', () => buildIndex(1000));
@@ -1303,6 +2022,7 @@ document.getElementById('btn-adv-read').addEventListener('click',  () => startAd
 document.getElementById('btn-adv-write').addEventListener('click', () => startAdversarialTest('write'));
 document.getElementById('btn-adv-worst').addEventListener('click', () => startAdversarialTest('worst'));
 document.getElementById('btn-adv-stop').addEventListener('click',  stopAdversarialTest);
+document.getElementById('btn-adv-all').addEventListener('click',   runAllAdversarialTests);
 document.getElementById('btn-auto-proof').addEventListener('click', runFullProofSequence);
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
