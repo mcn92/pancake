@@ -41,7 +41,7 @@ $EMCC $OPT_FLAGS \
     -mbulk-memory \
     -D PANCAKE_WASM_BUILD=1 \
     -fno-merge-all-constants \
-    -s EXPORTED_FUNCTIONS='["_pancake_init","_pancake_add","_pancake_bulk_insert","_pancake_query","_pancake_delete","_pancake_compact","_pancake_count","_pancake_memory","_pancake_ghost_count","_pancake_ghost_ratio","_pancake_set_ef","_pancake_export","_pancake_import","_pancake_dispose","_pancake_dimension","_pancake_shutdown_all","_shutdown_all","_si_init","_si_add","_si_query","_si_delete","_si_count","_si_memory","_si_segment_count","_si_ghost_count","_si_ghost_ratio","_si_compact","_si_set_budget","_si128_init","_si128_add","_si128_query","_si128_delete","_si128_count","_si128_memory","_si128_segment_count","_si128_ghost_count","_si128_compact","_si128_set_budget","_si128_get_vector_segment","_si128_get_query_segments","_dense_matmul","_sparse_matmul","_normalize","_emsc_malloc","_emsc_free"]' \
+    -s EXPORTED_FUNCTIONS='["_pancake_init","_pancake_add","_pancake_bulk_insert","_pancake_query","_pancake_delete","_pancake_compact","_pancake_count","_pancake_memory","_pancake_ghost_count","_pancake_ghost_ratio","_pancake_set_ef","_pancake_export","_pancake_import","_pancake_dispose","_pancake_dimension","_pancake_shutdown_all","_shutdown_all","_dense_matmul","_sparse_matmul","_normalize","_emsc_malloc","_emsc_free","_pancake_profile_print","_pancake_profile_reset"]' \
     -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","HEAPF32","HEAPU8","HEAPU32","HEAP32"]' \
     -s MODULARIZE=1 \
     -s EXPORT_NAME="P" \
