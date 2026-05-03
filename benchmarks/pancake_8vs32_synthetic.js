@@ -2,21 +2,21 @@
 'use strict';
 
 /**
- * Synthetic 1536D Benchmark: Pancake Int8 vs Pancake FP32
+ * Synthetic 1536D Benchmark: Pancake vs hnswlib-node
  *
- * 50K clustered unit-norm vectors in 1536D (OpenAI Ada dimension).
- * Sweeps ef_search to produce recall-QPS curves comparing Pancake's
- * int8 quantized backend against its fp32 backend.
+ * 100K clustered unit-norm vectors in 1536D (OpenAI Ada dimension).
+ * Sweeps ef_search to produce recall-QPS curves comparable to the
+ * NYTimes-256 and SIFT-1M benchmarks.
  *
- * Data: 50 clusters, spread=0.02, gaussian noise + re-normalize.
+ * Data: 50 clusters, spread=0.25, gaussian noise + re-normalize.
  * Queries drawn from the same distribution. Deterministic (seed=42).
  *
  * Ground truth is brute-force cosine distance, cached to disk on
  * first run. Pass --regenerate-gt to force recomputation.
  *
  * Usage:
- *   node benchmarks/pancake_8vs32_synthetic.js
- *   node benchmarks/pancake_8vs32_synthetic.js --regenerate-gt
+ *   node benchmarks/benchmark_synthetic_1536.js
+ *   node benchmarks/benchmark_synthetic_1536.js --regenerate-gt
  */
 
 const fs = require('fs');
@@ -204,11 +204,18 @@ function stddev(arr) {
   return Math.sqrt(arr.reduce((a, b) => a + (b - m) ** 2, 0) / arr.length);
 }
 
+// --- hnswlib-node ---
+let HierarchicalNSW;
+try {
+  HierarchicalNSW = require('hnswlib-node').HierarchicalNSW;
+} catch (e) {
+  log('WARNING: hnswlib-node not installed; skipping hnswlib comparison');
+}
 
 // --- Main ---
 async function main() {
   log('='.repeat(70));
-  log('Synthetic 1536D Benchmark: Pancake Int8 vs FP32');
+  log('Synthetic 1536D Benchmark');
   log(`${N_VECTORS.toLocaleString()} vectors, ${DIM}D, ${N_CLUSTERS} clusters, spread=${CLUSTER_SPREAD}`);
   log(`${N_QUERIES} queries, k=${K}`);
   log(`M=${M}, ef_construction=${EF_CONSTRUCTION}`);
@@ -309,71 +316,68 @@ async function main() {
   pkIndex.dispose();
 
   // =============================================
-  // Pancake FP32
+  // hnswlib-node
   // =============================================
-  log(`\n${'='.repeat(70)}`);
-  log('Pancake FP32 (WASM)');
-  log('='.repeat(70));
+  let hlPoints = null;
+  let hlBuildSec = null;
+  if (HierarchicalNSW) {
+    log(`\n${'='.repeat(70)}`);
+    log('hnswlib Float32 (Native)');
+    log('='.repeat(70));
 
-  log('Building index...');
-  const fp32Index = await Pancake.create({
-    dim: DIM, maxElements: N_VECTORS, quantized: false,
-    M, efConstruction: EF_CONSTRUCTION, efSearch: EF_SEARCH_VALUES[0],
-  });
+    log('Building index...');
+    const hlIndex = new HierarchicalNSW('cosine', DIM);
+    hlIndex.initIndex(N_VECTORS, M, EF_CONSTRUCTION, 100);
 
-  const fp32BuildT0 = performance.now();
-  for (let i = 0; i < vectors.length; i += batchSize) {
-    fp32Index.addBatch(vectors.slice(i, Math.min(i + batchSize, vectors.length)));
-    if (Math.min(i + batchSize, vectors.length) % 10000 < batchSize) {
-      log(`  ${Math.min(i + batchSize, vectors.length).toLocaleString()}/${N_VECTORS.toLocaleString()}`);
+    const hlBuildT0 = performance.now();
+    for (let i = 0; i < vectors.length; i++) {
+      hlIndex.addPoint(Array.from(vectors[i]), i);
+      if ((i + 1) % 10000 === 0) log(`  ${(i + 1).toLocaleString()}/${N_VECTORS.toLocaleString()}`);
     }
-  }
-  const fp32BuildSec = (performance.now() - fp32BuildT0) / 1000;
-  const fp32IndexMem = fp32Index.memory;
+    hlBuildSec = (performance.now() - hlBuildT0) / 1000;
+    log(`  Build: ${hlBuildSec.toFixed(1)}s`);
 
-  log(`  Build: ${fp32BuildSec.toFixed(1)}s`);
-  log(`  Index memory: ${(fp32IndexMem / 1024 / 1024).toFixed(1)} MB`);
+    hlPoints = [];
+    for (const efS of EF_SEARCH_VALUES) {
+      hlIndex.setEf(efS);
 
-  const fp32Points = [];
-  for (const efS of EF_SEARCH_VALUES) {
-    fp32Index._setEfSearch(efS);
-
-    for (let i = 0; i < WARMUP_QUERIES && i < queries.length; i++) {
-      fp32Index.search(queries[i], K);
-    }
-
-    const reps = [];
-    for (let rep = 0; rep < REPETITIONS; rep++) {
-      const lats = [];
-      let rec = 0;
-      for (let i = 0; i < queries.length; i++) {
-        const t0 = performance.now();
-        const results = fp32Index.search(queries[i], K);
-        lats.push(performance.now() - t0);
-        rec += recall(results.map(r => r.id), groundTruth[i]);
+      for (let i = 0; i < WARMUP_QUERIES && i < queries.length; i++) {
+        hlIndex.searchKnn(Array.from(queries[i]), K);
       }
-      reps.push({ recall: rec / queries.length, lats });
+
+      const reps = [];
+      for (let rep = 0; rep < REPETITIONS; rep++) {
+        const lats = [];
+        let rec = 0;
+        for (let i = 0; i < queries.length; i++) {
+          const query = Array.from(queries[i]);
+          const t0 = performance.now();
+          const results = hlIndex.searchKnn(query, K);
+          lats.push(performance.now() - t0);
+          rec += recall(results.neighbors, groundTruth[i]);
+        }
+        reps.push({ recall: rec / queries.length, lats });
+      }
+
+      const avgRecall = mean(reps.map(r => r.recall));
+      const recallStd = stddev(reps.map(r => r.recall));
+      const allLats = reps.flatMap(r => r.lats).sort((a, b) => a - b);
+      const qps = 1000 / mean(allLats);
+      const qpsStd = stddev(reps.map(r => 1000 / mean(r.lats)));
+
+      const point = {
+        ef_search: efS,
+        recall_mean: avgRecall, recall_std: recallStd,
+        qps_mean: qps, qps_std: qpsStd,
+        p50: percentile(allLats, 0.5),
+        p95: percentile(allLats, 0.95),
+        p99: percentile(allLats, 0.99),
+        p999: percentile(allLats, 0.999),
+      };
+      hlPoints.push(point);
+      log(`  ef=${String(efS).padStart(4)}  recall=${(avgRecall * 100).toFixed(1).padStart(5)}%  qps=${String(qps.toFixed(0)).padStart(5)}  p50=${point.p50.toFixed(3)}ms  p95=${point.p95.toFixed(3)}ms  p999=${point.p999.toFixed(3)}ms`);
     }
-
-    const avgRecall = mean(reps.map(r => r.recall));
-    const recallStd = stddev(reps.map(r => r.recall));
-    const allLats = reps.flatMap(r => r.lats).sort((a, b) => a - b);
-    const qps = 1000 / mean(allLats);
-    const qpsStd = stddev(reps.map(r => 1000 / mean(r.lats)));
-
-    const point = {
-      ef_search: efS,
-      recall_mean: avgRecall, recall_std: recallStd,
-      qps_mean: qps, qps_std: qpsStd,
-      p50: percentile(allLats, 0.5),
-      p95: percentile(allLats, 0.95),
-      p99: percentile(allLats, 0.99),
-      p999: percentile(allLats, 0.999),
-    };
-    fp32Points.push(point);
-    log(`  ef=${String(efS).padStart(4)}  recall=${(avgRecall * 100).toFixed(1).padStart(5)}%  qps=${String(qps.toFixed(0)).padStart(5)}  p50=${point.p50.toFixed(3)}ms  p95=${point.p95.toFixed(3)}ms  p999=${point.p999.toFixed(3)}ms`);
   }
-  fp32Index.dispose();
 
   // =============================================
   // Output
@@ -389,19 +393,20 @@ async function main() {
       p.p50.toFixed(4), p.p95.toFixed(4), p.p99.toFixed(4), p.p999.toFixed(4),
     ].join(','));
   }
-  for (const p of fp32Points) {
-    csvRows.push([
-      'pancake-f32-wasm', 'pancake', 'f32', p.ef_search,
-      p.recall_mean.toFixed(5), p.recall_std.toFixed(5),
-      p.qps_mean.toFixed(2), p.qps_std.toFixed(2),
-      p.p50.toFixed(4), p.p95.toFixed(4), p.p99.toFixed(4), p.p999.toFixed(4),
-    ].join(','));
+  if (hlPoints) {
+    for (const p of hlPoints) {
+      csvRows.push([
+        'hnswlib-f32-native', 'hnswlib', 'f32', p.ef_search,
+        p.recall_mean.toFixed(5), p.recall_std.toFixed(5),
+        p.qps_mean.toFixed(2), p.qps_std.toFixed(2),
+        p.p50.toFixed(4), p.p95.toFixed(4), p.p99.toFixed(4), p.p999.toFixed(4),
+      ].join(','));
+    }
   }
   fs.writeFileSync(CSV_PATH, csvRows.join('\n') + '\n');
 
   // JSON
-  const bytesPerVecInt8 = pkIndexMem / N_VECTORS;
-  const bytesPerVecFp32 = fp32IndexMem / N_VECTORS;
+  const bytesPerVec = pkIndexMem / N_VECTORS;
   fs.writeFileSync(JSON_PATH, JSON.stringify({
     benchmark: 'synthetic-1536',
     timestamp: new Date().toISOString(),
@@ -413,18 +418,16 @@ async function main() {
       ef_search_values: EF_SEARCH_VALUES,
       repetitions: REPETITIONS, warmup: WARMUP_QUERIES,
     },
-    pancake_int8: {
+    pancake: {
       build_s: +pkBuildSec.toFixed(1),
       index_memory_mb: +(pkIndexMem / 1024 / 1024).toFixed(1),
-      bytes_per_vector: +bytesPerVecInt8.toFixed(0),
+      bytes_per_vector: +bytesPerVec.toFixed(0),
       points: pkPoints,
     },
-    pancake_fp32: {
-      build_s: +fp32BuildSec.toFixed(1),
-      index_memory_mb: +(fp32IndexMem / 1024 / 1024).toFixed(1),
-      bytes_per_vector: +bytesPerVecFp32.toFixed(0),
-      points: fp32Points,
-    },
+    hnswlib: hlPoints ? {
+      build_s: +hlBuildSec.toFixed(1),
+      points: hlPoints,
+    } : null,
   }, null, 2) + '\n');
 
   log(`\nOutputs:\n  ${LOG_PATH}\n  ${JSON_PATH}\n  ${CSV_PATH}`);

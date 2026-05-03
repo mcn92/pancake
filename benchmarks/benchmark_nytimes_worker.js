@@ -20,7 +20,7 @@ const fs = require('fs');
 const path = require('path');
 
 const WORKER_URL = process.argv[2] || 'http://localhost:8787';
-const NYTIMES_DIR = process.argv[3] || path.join(__dirname, 'nytimes');
+const NYTIMES_DIR = process.argv[3] || path.join(__dirname, '..', 'nytimes');
 const K = 10;
 const MAX_VECTORS = parseInt(process.env.N || '30000', 10);
 const BATCH_SIZE = 500;

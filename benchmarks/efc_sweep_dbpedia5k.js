@@ -19,7 +19,7 @@ const K = 10;
 const M = 16;
 const EF_SEARCH = 100;
 const N_QUERIES = 200;
-const EFC_VALUES = [50, 75, 100, 125, 150, 200, 300];
+const EFC_VALUES = [16, 32, 50, 64, 75];
 
 function readFvecs(filePath, maxVectors) {
   const buf = fs.readFileSync(filePath);
