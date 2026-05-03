@@ -17,6 +17,7 @@
 #include <cmath>
 #include <limits>
 #include <cstring>
+#include <unordered_set>
 
 #if defined(__wasm_simd128__)
     #include <wasm_simd128.h>
@@ -193,10 +194,20 @@ public:
     // Compact: remove ghosts with stable remapping, then refine edges.
     // Cheaper than a full rebuild — preserves graph skeleton.
     void compact() {
-        if (num_deleted_ == 0) return;
+        std::vector<uint32_t> discard;
+        compact(discard);
+    }
+
+    void compact(std::vector<uint32_t>& out_map) {
+        if (num_deleted_ == 0) {
+            out_map.resize(count_);
+            for (uint32_t i = 0; i < count_; i++) out_map[i] = i;
+            return;
+        }
 
         // Phase 1: Build id_map and compact arrays in-place.
-        std::vector<uint32_t> id_map(count_, UINT32_MAX);
+        out_map.assign(count_, UINT32_MAX);
+        auto& id_map = out_map;
         uint32_t new_id = 0;
         for (uint32_t old_id = 0; old_id < count_; ++old_id) {
             if (!deleted_[old_id]) {
@@ -225,7 +236,54 @@ public:
             }
         }
 
-        // Phase 3: Update entry point.
+        // Phase 3: Backfill under-connected nodes.
+        for (uint32_t i = 0; i < new_id; i++) {
+            for (int l = 0; l <= levels_[i]; l++) {
+                size_t target = (l == 0) ? M0_ : M_;
+                auto& nbrs = neighbors_[i][l];
+                if (nbrs.size() >= target) continue;
+
+                std::vector<uint32_t> old_nbrs(nbrs.begin(), nbrs.end());
+                std::unordered_set<uint32_t> old_set(old_nbrs.begin(), old_nbrs.end());
+
+                std::unordered_set<uint32_t> seen;
+                seen.insert(i);
+                for (uint32_t n : old_nbrs) seen.insert(n);
+
+                std::vector<uint32_t> expansion;
+                for (uint32_t n : old_nbrs) {
+                    if (n >= new_id) continue;
+                    if (l > levels_[n]) continue;
+                    for (uint32_t nn : neighbors_[n][l]) {
+                        if (nn < new_id && seen.find(nn) == seen.end()) {
+                            seen.insert(nn);
+                            expansion.push_back(nn);
+                        }
+                    }
+                }
+
+                if (expansion.empty()) continue;
+
+                std::vector<std::pair<float, uint32_t>> candidates;
+                candidates.reserve(old_nbrs.size() + expansion.size());
+                for (uint32_t n : old_nbrs) candidates.emplace_back(distance(i, n), n);
+                for (uint32_t n : expansion) candidates.emplace_back(distance(i, n), n);
+                std::sort(candidates.begin(), candidates.end());
+
+                select_neighbors_heuristic(i, candidates, target, l);
+
+                for (uint32_t n : neighbors_[i][l]) {
+                    if (old_set.count(n)) continue;
+                    if (n >= new_id || l > levels_[n]) continue;
+                    neighbors_[n][l].push_back(i);
+                    if (neighbors_[n][l].size() > target) {
+                        prune_neighbors(n, l, target);
+                    }
+                }
+            }
+        }
+
+        // Phase 4: Update entry point.
         if (entry_point_ != UINT32_MAX && id_map[entry_point_] != UINT32_MAX) {
             entry_point_ = id_map[entry_point_];
         } else {

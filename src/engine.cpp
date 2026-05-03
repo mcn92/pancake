@@ -31,6 +31,7 @@ public:
     virtual std::vector<std::pair<uint32_t, float>> search(const float* query, size_t k) = 0;
     virtual void mark_delete(uint32_t id) = 0;
     virtual void compact() = 0;
+    virtual void compact(std::vector<uint32_t>& out_map) = 0;
     virtual size_t count() const = 0;
     virtual size_t ghost_count() const = 0;
     virtual float ghost_ratio() const = 0;
@@ -64,6 +65,7 @@ public:
     }
     void mark_delete(uint32_t id) override { impl_->mark_delete(id); }
     void compact() override { impl_->compact(); }
+    void compact(std::vector<uint32_t>& out_map) override { impl_->compact(out_map); }
     size_t count() const override { return impl_->count(); }
     size_t ghost_count() const override { return impl_->ghost_count(); }
     float ghost_ratio() const override { return impl_->ghost_ratio(); }
@@ -101,6 +103,7 @@ public:
     }
     void mark_delete(uint32_t id) override { impl_->mark_delete(id); }
     void compact() override { impl_->compact(); }
+    void compact(std::vector<uint32_t>& out_map) override { impl_->compact(out_map); }
     size_t count() const override { return impl_->count(); }
     size_t ghost_count() const override { return impl_->ghost_count(); }
     float ghost_ratio() const override { return impl_->ghost_ratio(); }
@@ -222,6 +225,18 @@ void pancake_delete(uint32_t h, uint32_t id) {
 void pancake_compact(uint32_t h) {
     if (h >= MAX_HANDLES || !g_handles[h].index) return;
     g_handles[h].index->compact();
+}
+
+// Compact and write the old→new ID remap into caller-allocated buffer.
+// out_buf[old_id] = new_id, or 0xFFFFFFFF for deleted vectors.
+// Returns the number of entries written (= pre-compaction count).
+size_t pancake_compact_remap(uint32_t h, uint32_t* out_buf, size_t out_capacity) {
+    if (h >= MAX_HANDLES || !g_handles[h].index) return 0;
+    std::vector<uint32_t> map;
+    g_handles[h].index->compact(map);
+    size_t n = std::min(map.size(), out_capacity);
+    std::memcpy(out_buf, map.data(), n * sizeof(uint32_t));
+    return n;
 }
 
 size_t pancake_count(uint32_t h) {

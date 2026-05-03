@@ -21,14 +21,71 @@
 #include <cmath>
 #include <limits>
 #include <cstring>
+#include <cstdio>
+#include <unordered_set>
 
 #if defined(__wasm_simd128__)
     #include <wasm_simd128.h>
     #define INT8_HNSW_WASM_SIMD 1
 #endif
 
+#ifdef __EMSCRIPTEN__
+    #include <emscripten/emscripten.h>
+#else
+    // Fallback for non-Emscripten builds
+    #include <chrono>
+    static double emscripten_get_now() {
+        using namespace std::chrono;
+        return duration<double, std::milli>(steady_clock::now().time_since_epoch()).count();
+    }
+#endif
+
 namespace pancake {
 namespace wasm {
+
+struct BuildProfile {
+    uint64_t inserts = 0;
+
+    double quantize_ms = 0;
+    double search_layers_ms = 0;
+    double search_base_ms = 0;
+    double select_neighbors_ms = 0;
+    double connect_ms = 0;
+
+    uint64_t dist_calls = 0;
+    uint64_t candidate_pushes = 0;
+    uint64_t candidate_pops = 0;
+    uint64_t visited_marks = 0;
+
+    void reset() { *this = BuildProfile{}; }
+
+    void print(uint32_t range_start, uint32_t range_end) const {
+        double n = static_cast<double>(inserts);
+        if (n == 0) { printf("No inserts recorded.\n"); return; }
+        printf("=== Build Profile [%u..%u] (%u inserts) ===\n",
+               range_start, range_end, (unsigned)inserts);
+        printf("  avg insert:         %.3f ms\n", (quantize_ms + search_layers_ms + search_base_ms + select_neighbors_ms + connect_ms) / n);
+        printf("  quantize:           %.2f ms total (%.4f ms/ins)\n", quantize_ms, quantize_ms / n);
+        printf("  upper layer search: %.2f ms total (%.4f ms/ins)\n", search_layers_ms, search_layers_ms / n);
+        printf("  base layer search:  %.2f ms total (%.4f ms/ins)\n", search_base_ms, search_base_ms / n);
+        printf("  select neighbors:   %.2f ms total (%.4f ms/ins)\n", select_neighbors_ms, select_neighbors_ms / n);
+        printf("  connect/rewire:     %.2f ms total (%.4f ms/ins)\n", connect_ms, connect_ms / n);
+        printf("  dist calls/insert:  %.1f\n", (double)dist_calls / n);
+        printf("  cand pushes/insert: %.1f\n", (double)candidate_pushes / n);
+        printf("  cand pops/insert:   %.1f\n", (double)candidate_pops / n);
+        printf("  visited marks/ins:  %.1f\n", (double)visited_marks / n);
+        printf("================================================\n");
+    }
+};
+
+static BuildProfile g_build_profile;
+
+#define PROFILE_BLOCK(field, code)              \
+  do {                                          \
+    double _t0 = emscripten_get_now();          \
+    code;                                       \
+    g_build_profile.field += emscripten_get_now() - _t0; \
+  } while (0)
 
 // Forward: uses DistanceMetric from float_hnsw.hpp (already included in engine.cpp)
 
@@ -80,49 +137,55 @@ public:
         if (count_ >= max_elements_) return UINT32_MAX;
 
         uint32_t id = static_cast<uint32_t>(count_++);
+        g_build_profile.inserts++;
 
         // Normalize if cosine, then quantize
         const float* src = vec;
-        if (metric_ == DistanceMetric::Cosine) {
-            float norm_sq = 0.0f;
-            for (size_t d = 0; d < dims_; d++) norm_sq += vec[d] * vec[d];
-            float inv_norm = (norm_sq > 0.0f) ? 1.0f / std::sqrt(norm_sq) : 0.0f;
-            for (size_t d = 0; d < dims_; d++) scratch_norm_[d] = vec[d] * inv_norm;
-            src = scratch_norm_.data();
-        }
+        {
+            double _qt0 = emscripten_get_now();
+            if (metric_ == DistanceMetric::Cosine) {
+                float norm_sq = 0.0f;
+                for (size_t d = 0; d < dims_; d++) norm_sq += vec[d] * vec[d];
+                float inv_norm = (norm_sq > 0.0f) ? 1.0f / std::sqrt(norm_sq) : 0.0f;
+                for (size_t d = 0; d < dims_; d++) scratch_norm_[d] = vec[d] * inv_norm;
+                src = scratch_norm_.data();
+            }
 
-        // Quantize: row-wise affine uint8
-        float vmin = src[0], vmax = src[0];
-        for (size_t d = 1; d < dims_; d++) {
-            if (src[d] < vmin) vmin = src[d];
-            if (src[d] > vmax) vmax = src[d];
-        }
-        float range = vmax - vmin;
-        if (range < 1e-30f) range = 1.0f;  // constant vector fallback
-        float scale = range / 255.0f;
-        float inv_scale = 255.0f / range;
+            float vmin = src[0];
+            float vmax = src[0];
+            for (size_t d = 1; d < dims_; d++) {
+                if (src[d] < vmin) vmin = src[d];
+                if (src[d] > vmax) vmax = src[d];
+            }
+            float range = vmax - vmin;
+            if (range < 1e-30f) range = 1.0f;
+            float scale = range / 255.0f;
+            float inv_scale = 255.0f / range;
 
-        scales_.push_back(scale);
-        offsets_.push_back(vmin);
+            scales_.push_back(scale);
+            offsets_.push_back(vmin);
 
-        size_t off = qdata_.size();
-        qdata_.resize(off + dims_);
-        for (size_t d = 0; d < dims_; d++) {
-            float q = (src[d] - vmin) * inv_scale + 0.5f;
-            if (q < 0.0f) q = 0.0f;
-            if (q > 255.0f) q = 255.0f;
-            qdata_[off + d] = static_cast<uint8_t>(q);
-        }
+            size_t off = qdata_.size();
+            qdata_.resize(off + dims_);
+            for (size_t d = 0; d < dims_; d++) {
+                float q = (src[d] - vmin) * inv_scale + 0.5f;
+                if (q < 0.0f) q = 0.0f;
+                if (q > 255.0f) q = 255.0f;
+                qdata_[off + d] = static_cast<uint8_t>(q);
+            }
 
-        // Precompute per-vector statistics for symmetric int8 distance
-        uint32_t sq = 0, sq2 = 0;
-        for (size_t d = 0; d < dims_; d++) {
-            uint32_t v = qdata_[off + d];
-            sq += v;
-            sq2 += v * v;
+            uint32_t sq = 0;
+            uint32_t sq2 = 0;
+            size_t qoff = qdata_.size() - dims_;
+            for (size_t d = 0; d < dims_; d++) {
+                uint32_t v = qdata_[qoff + d];
+                sq += v;
+                sq2 += v * v;
+            }
+            sum_q_.push_back(sq);
+            sum_q2_.push_back(sq2);
+            g_build_profile.quantize_ms += emscripten_get_now() - _qt0;
         }
-        sum_q_.push_back(sq);
-        sum_q2_.push_back(sq2);
 
         deleted_.push_back(0);
 
@@ -140,34 +203,46 @@ public:
         // asymmetric distance (float vs int8) instead of dequantizing both sides.
         cached_insert_ = src;
 
-        uint32_t curr = entry_point_;
-        float curr_dist = distance_to_insert(curr);
+        PROFILE_BLOCK(search_layers_ms, {
+            uint32_t curr_upper = entry_point_;
+            float curr_dist_upper = distance_to_insert(curr_upper);
 
-        for (int l = max_level_; l > level; --l) {
-            bool changed = true;
-            while (changed) {
-                changed = false;
-                for (uint32_t neighbor : neighbors_[curr][l]) {
-                    float d = distance_to_insert(neighbor);
-                    if (d < curr_dist) {
-                        curr = neighbor;
-                        curr_dist = d;
-                        changed = true;
+            for (int l = max_level_; l > level; --l) {
+                bool changed = true;
+                while (changed) {
+                    changed = false;
+                    for (uint32_t neighbor : neighbors_[curr_upper][l]) {
+                        float d = distance_to_insert(neighbor);
+                        if (d < curr_dist_upper) {
+                            curr_upper = neighbor;
+                            curr_dist_upper = d;
+                            changed = true;
+                        }
                     }
                 }
             }
-        }
+            insert_entry_ = curr_upper;
+        });
+
+        uint32_t curr = insert_entry_;
 
         for (int l = std::min(level, max_level_); l >= 0; --l) {
-            auto candidates = search_layer_insert(id, curr, ef_construction_, l);
+            std::vector<std::pair<float, uint32_t>> candidates;
+            PROFILE_BLOCK(search_base_ms, {
+                candidates = search_layer_insert(id, curr, ef_construction_, l);
+            });
             size_t max_n = (l == 0) ? M0_ : M_;
-            select_neighbors_heuristic(id, candidates, max_n, l);
-            for (uint32_t neighbor : neighbors_[id][l]) {
-                neighbors_[neighbor][l].push_back(id);
-                if (neighbors_[neighbor][l].size() > max_n) {
-                    prune_neighbors(neighbor, l, max_n);
+            PROFILE_BLOCK(select_neighbors_ms, {
+                select_neighbors_heuristic(id, candidates, max_n, l);
+            });
+            PROFILE_BLOCK(connect_ms, {
+                for (uint32_t neighbor : neighbors_[id][l]) {
+                    neighbors_[neighbor][l].push_back(id);
+                    if (neighbors_[neighbor][l].size() > max_n) {
+                        prune_neighbors(neighbor, l, max_n);
+                    }
                 }
-            }
+            });
             if (!candidates.empty()) curr = candidates[0].second;
         }
 
@@ -247,11 +322,23 @@ public:
     }
 
     // Compact: remove ghosts with stable remapping, then refine edges.
+    // The overload taking out_map returns the old→new ID mapping so the
+    // caller can remap its own data structures.
     void compact() {
-        if (num_deleted_ == 0) return;
+        std::vector<uint32_t> discard;
+        compact(discard);
+    }
+
+    void compact(std::vector<uint32_t>& out_map) {
+        if (num_deleted_ == 0) {
+            out_map.resize(count_);
+            for (uint32_t i = 0; i < count_; i++) out_map[i] = i;
+            return;
+        }
 
         // Phase 1: Build id_map and compact arrays in-place.
-        std::vector<uint32_t> id_map(count_, UINT32_MAX);
+        out_map.assign(count_, UINT32_MAX);
+        auto& id_map = out_map;
         uint32_t new_id = 0;
         for (uint32_t old_id = 0; old_id < count_; ++old_id) {
             if (!deleted_[old_id]) {
@@ -284,7 +371,62 @@ public:
             }
         }
 
-        // Phase 3: Update entry point.
+        // Phase 3: Backfill under-connected nodes.
+        // After stripping ghost references, some nodes may have lost neighbors.
+        // For each such node, gather neighbors-of-neighbors as candidates and
+        // re-run the selection heuristic to restore connectivity. New edges are
+        // added bidirectionally (same as the insert path).
+        for (uint32_t i = 0; i < new_id; i++) {
+            for (int l = 0; l <= levels_[i]; l++) {
+                size_t target = (l == 0) ? M0_ : M_;
+                auto& nbrs = neighbors_[i][l];
+                if (nbrs.size() >= target) continue;
+
+                // Snapshot old neighbors before heuristic overwrites them
+                std::vector<uint32_t> old_nbrs(nbrs.begin(), nbrs.end());
+                std::unordered_set<uint32_t> old_set(old_nbrs.begin(), old_nbrs.end());
+
+                // Collect candidates: current neighbors + their neighbors (1-hop expansion)
+                std::unordered_set<uint32_t> seen;
+                seen.insert(i);
+                for (uint32_t n : old_nbrs) seen.insert(n);
+
+                std::vector<uint32_t> expansion;
+                for (uint32_t n : old_nbrs) {
+                    if (n >= new_id) continue;
+                    if (l > levels_[n]) continue;
+                    for (uint32_t nn : neighbors_[n][l]) {
+                        if (nn < new_id && seen.find(nn) == seen.end()) {
+                            seen.insert(nn);
+                            expansion.push_back(nn);
+                        }
+                    }
+                }
+
+                if (expansion.empty()) continue;
+
+                // Build candidate list: existing neighbors + new candidates, sorted by distance
+                std::vector<std::pair<float, uint32_t>> candidates;
+                candidates.reserve(old_nbrs.size() + expansion.size());
+                for (uint32_t n : old_nbrs) candidates.emplace_back(distance(i, n), n);
+                for (uint32_t n : expansion) candidates.emplace_back(distance(i, n), n);
+                std::sort(candidates.begin(), candidates.end());
+
+                select_neighbors_heuristic(i, candidates, target, l);
+
+                // Add reverse edges for newly added neighbors
+                for (uint32_t n : neighbors_[i][l]) {
+                    if (old_set.count(n)) continue; // already connected
+                    if (n >= new_id || l > levels_[n]) continue;
+                    neighbors_[n][l].push_back(i);
+                    if (neighbors_[n][l].size() > target) {
+                        prune_neighbors(n, l, target);
+                    }
+                }
+            }
+        }
+
+        // Phase 4: Update entry point.
         if (entry_point_ != UINT32_MAX && id_map[entry_point_] != UINT32_MAX) {
             entry_point_ = id_map[entry_point_];
         } else {
@@ -842,21 +984,28 @@ private:
 
         prepare_visited();
         float d = dist_func(entry);
+        g_build_profile.dist_calls++;
         candidates.emplace(d, entry);
+        g_build_profile.candidate_pushes++;
         results.emplace(d, entry);
         mark_visited(entry);
+        g_build_profile.visited_marks++;
 
         while (!candidates.empty()) {
             auto [curr_dist, curr] = candidates.top();
             candidates.pop();
+            g_build_profile.candidate_pops++;
             if (curr_dist > results.top().first && results.size() >= ef) break;
             for (uint32_t neighbor : neighbors_[curr][level]) {
                 if (is_visited(neighbor)) continue;
                 if (skip_deleted && deleted_[neighbor]) continue;
                 mark_visited(neighbor);
+                g_build_profile.visited_marks++;
                 float nd = dist_func(neighbor);
+                g_build_profile.dist_calls++;
                 if (nd < results.top().first || results.size() < ef) {
                     candidates.emplace(nd, neighbor);
+                    g_build_profile.candidate_pushes++;
                     results.emplace(nd, neighbor);
                     if (results.size() > ef) results.pop();
                 }
@@ -978,6 +1127,7 @@ private:
 
     const float* cached_query_;
     const float* cached_insert_;  // float32 vector being inserted (avoids dequantize during construction)
+    uint32_t insert_entry_;       // temp: entry point found by upper layer search
     std::vector<float> norm_query_;
     mutable std::vector<float> scratch_norm_;  // normalization buffer for cosine metric inserts
 
