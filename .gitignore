@@ -43,6 +43,14 @@ dist/cuad_data/
 docs/html/
 !docs/*.md
 
+# Dataset files — large, download separately
+dbpedia/
+dist/vectors_100k.bin
+sift/
+
+# Worker build output
+examples/worker/dist/
+
 # nytimes/ — commit scripts, exclude data and outputs
 nytimes/*.fvecs
 nytimes/*.ivecs

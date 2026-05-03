@@ -224,10 +224,10 @@
                 <div class="panel-title green">Index Operations</div>
 
                 <div class="control-group">
-                    <div class="control-label">Build from real embeddings (all-MiniLM-L6-v2 · 384D · cosine)</div>
+                    <div class="control-label">Build from real embeddings (DBpedia OpenAI · 1536D · L2)</div>
                     <div class="button-group">
-                        <button class="primary" id="btn-build-1k">Index 1K Vectors</button>
-                        <button id="btn-build-5k">Index 5K Vectors</button>
+                        <button class="primary" id="btn-build-10k">Index 10K Vectors</button>
+                        <button id="btn-build-100k">Index 100K Vectors</button>
                         <button class="danger" id="btn-reset">Reset Index</button>
                     </div>
                 </div>
@@ -369,11 +369,12 @@
 'use strict';
 
 // ─── Configuration ────────────────────────────────────────────────────────────
-const DIMS        = 384;
-const K           = 10;
-const MAX_ELEM    = 110_000;
-const VECTORS_URL = 'vectors.bin'; // 5000 x 384 float32 vectors, pre-embedded
-const BUILD_BATCH = 500;           // vectors per bulk_insert call
+const DIMS            = 1536;
+const K               = 10;
+const MAX_ELEM        = 110_000;
+const VECTORS_URL     = 'vectors.bin';      // 10K x 1536 float32, loaded on page open
+const VECTORS_100K_URL= 'vectors_100k.bin'; // 100K x 1536 float32, fetched on demand
+const BUILD_BATCH     = 1000;               // vectors per bulk_insert call
 
 // ─── Proof definitions ────────────────────────────────────────────────────────
 const PROOFS = [
@@ -468,6 +469,36 @@ function unregisterVector(id) {
 
 function clearLiveVectorRegistry() {
     liveVectors.clear();
+}
+
+// Compact the engine and remap the liveVectors registry so IDs stay in sync.
+// Also invalidates recall probes (they reference pre-compaction IDs).
+function compactAndRemap() {
+    const countBefore = engine._pancake_count(handle);
+    if (countBefore === 0) {
+        engine._pancake_compact(handle);
+        return;
+    }
+    const mapPtr = engine._emsc_malloc(countBefore * 4);
+    const written = engine._pancake_compact_remap(handle, mapPtr, countBefore);
+    // Read the remap AFTER compact returns — WASM memory is stable at this point.
+    // mapView[oldId] = newId, or 0xFFFFFFFF for deleted vectors.
+    const mapView = new Uint32Array(engine.HEAPU32.buffer, mapPtr, written);
+
+    const remapped = new Map();
+    for (const [oldId, vec] of liveVectors) {
+        if (oldId >= written) continue; // shouldn't happen if registry is consistent
+        const newId = mapView[oldId];
+        if (newId !== 0xFFFFFFFF) remapped.set(newId, vec);
+    }
+    liveVectors.clear();
+    for (const [k, v] of remapped) liveVectors.set(k, v);
+
+    engine._emsc_free(mapPtr);
+
+    // Invalidate recall probes — they reference pre-compaction engine IDs.
+    recallProbeIndices = null;
+    recallProbeTruth = null;
 }
 
 // ─── Proof checklist ──────────────────────────────────────────────────────────
@@ -668,13 +699,9 @@ function buildRecallProbes() {
         const scored = [];
         for (let i = 0; i < limit; i++) {
             const v = getVec(i);
-            let dot = 0, na = 0, nb = 0;
-            for (let d = 0; d < DIMS; d++) {
-                dot += qVec[d] * v[d];
-                na  += qVec[d] * qVec[d];
-                nb  += v[d] * v[d];
-            }
-            scored.push({ id: i, dist: 1 - dot / (Math.sqrt(na) * Math.sqrt(nb)) });
+            let sum = 0;
+            for (let d = 0; d < DIMS; d++) { const diff = qVec[d] - v[d]; sum += diff * diff; }
+            scored.push({ id: i, dist: sum });
         }
         scored.sort((a, b) => a.dist - b.dist);
         recallProbeTruth.push(new Set(scored.slice(0, RECALL_PROBE_K).map(s => s.id)));
@@ -729,7 +756,7 @@ function measureInsertIntegrity() {
 //
 // Approach:
 //   1. Sample up to N query vectors from the live registry (keys still valid).
-//   2. For each query, brute-force scan all live vectors (cosine distance).
+//   2. For each query, brute-force scan all live vectors (L2 squared distance).
 //   3. Run production HNSW search against the same live state.
 //   4. Compute |hnsw_top_k ∩ true_top_k| / k, average across queries.
 //
@@ -767,13 +794,9 @@ function measurePostStressRecall(opts = {}) {
             const scored = [];
             for (let i = 0; i < limit; i++) {
                 const v = getVec(i);
-                let dot = 0, na = 0, nb = 0;
-                for (let d = 0; d < DIMS; d++) {
-                    dot += qVec[d] * v[d];
-                    na  += qVec[d] * qVec[d];
-                    nb  += v[d] * v[d];
-                }
-                scored.push({ id: i, dist: 1 - dot / (Math.sqrt(na) * Math.sqrt(nb)) });
+                let sum = 0;
+                for (let d = 0; d < DIMS; d++) { const diff = qVec[d] - v[d]; sum += diff * diff; }
+                scored.push({ id: i, dist: sum });
             }
             scored.sort((a, b) => a.dist - b.dist);
             const trueTopK = new Set(scored.slice(0, TOP_K).map(s => s.id));
@@ -821,23 +844,14 @@ function measurePostStressRecall(opts = {}) {
         const qId = queryIds[qi];
         const qVec = liveVectors.get(qId);
 
-        // Brute force: cosine distance over every live vector.
-        // Note: includes the query vector itself, which will be at rank 0
-        // with distance 0 — same as the HNSW search behavior, so the
-        // comparison is fair (both treat self-match identically).
+        // Brute force: L2 squared distance over every live vector.
         const scored = [];
-        let qNorm = 0;
-        for (let d = 0; d < DIMS; d++) qNorm += qVec[d] * qVec[d];
-        qNorm = Math.sqrt(qNorm);
 
         for (const vId of liveIds) {
             const v = liveVectors.get(vId);
-            let dot = 0, vNorm = 0;
-            for (let d = 0; d < DIMS; d++) {
-                dot += qVec[d] * v[d];
-                vNorm += v[d] * v[d];
-            }
-            scored.push({ id: vId, dist: 1 - dot / (qNorm * Math.sqrt(vNorm)) });
+            let sum = 0;
+            for (let d = 0; d < DIMS; d++) { const diff = qVec[d] - v[d]; sum += diff * diff; }
+            scored.push({ id: vId, dist: sum });
         }
         scored.sort((a, b) => a.dist - b.dist);
         const trueTopK = new Set(scored.slice(0, TOP_K).map(s => s.id));
@@ -976,7 +990,7 @@ async function init() {
     loadStatus.textContent = 'Loading WASM engine...';
     engine = await window.P();
     // pancake_init(dim, max_elem, quantized, metric, M, ef_c, ef_s)
-    handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
+    handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 0, 16, 200, 100);
 
     queryPtr      = engine._emsc_malloc(DIMS * 4);
     resultIdPtr   = engine._emsc_malloc(K * 8);
@@ -996,14 +1010,14 @@ async function init() {
     const timerRes = estimateTimerResolution();
     const timerNote = timerRes > 0.5 ? ` · timer: ~${timerRes.toFixed(0)}ms (serve with COOP/COEP headers for µs)` : ` · timer: ~${(timerRes * 1000).toFixed(0)}µs`;
     document.getElementById('engine-badge').textContent =
-        `engine: 384D int8 HNSW · ${totalVectors.toLocaleString()} embeddings loaded · cosine${timerNote}`;
+        `engine: 1536D int8 HNSW · ${totalVectors.toLocaleString()} embeddings loaded · L2${timerNote}`;
     document.getElementById('loading').style.display = 'none';
 
     markProof('load');
-    log(`Engine ready. ${totalVectors.toLocaleString()} real embeddings available (all-MiniLM-L6-v2, 384D, cosine).`, 'success');
-    log('Click "Index 1K Vectors" or "Index 5K Vectors" to build the index.', 'info');
+    log(`Engine ready. ${totalVectors.toLocaleString()} real embeddings available (DBpedia OpenAI, 1536D, L2).`, 'success');
+    log('Click "Index 10K Vectors" or "Index 100K Vectors" to build the index.', 'info');
 
-    enableButtons(['btn-build-1k', 'btn-build-5k']);
+    enableButtons(['btn-build-10k', 'btn-build-100k']);
 }
 
 // ─── Index operations ─────────────────────────────────────────────────────────
@@ -1018,7 +1032,7 @@ async function buildIndex(count) {
     if (engine._pancake_count(handle) > 0) {
         log(`Index already contains ${engine._pancake_count(handle).toLocaleString()} vectors — resetting first to ensure a clean build.`, 'warn');
         engine._pancake_dispose(handle);
-        handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
+        handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 0, 16, 200, 100);
         vectorCount = 0;
         compactionCount = 0;
         memBeforeCompact = 0;
@@ -1116,7 +1130,7 @@ async function buildIndex(count) {
 
 function resetIndex() {
     engine._pancake_dispose(handle);
-    handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
+    handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 0, 16, 200, 100);
     vectorCount      = 0;
     compactionCount  = 0;
     memBeforeCompact = 0;
@@ -1176,7 +1190,7 @@ async function compact() {
 
     log('Compacting...', 'info');
     const t0 = performance.now();
-    engine._pancake_compact(handle);
+    compactAndRemap();
     const elapsed = (performance.now() - t0).toFixed(2);
     compactionCount++;
 
@@ -1301,7 +1315,7 @@ async function proveSearchDuringCompaction() {
         await deleteVectors(100);
     }
 
-    engine._pancake_compact(handle);
+    compactAndRemap();
     compactionCount++;
     const { latency } = doSearch(randomLoadedVec());
     log(`  Immediate post-compaction search: ${latency.toFixed(2)}ms`, 'success');
@@ -1408,7 +1422,7 @@ async function proveExportImport() {
 
     // Reset — dispose and re-init
     engine._pancake_dispose(handle);
-    handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
+    handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 0, 16, 200, 100);
     log(`  Index reset (now has ${engine._pancake_count(handle)} vectors)`, 'info');
     await sleep(400);
 
@@ -1429,7 +1443,7 @@ async function proveExportImport() {
         // Rebuild the index so subsequent proofs aren't broken
         log('  Rebuilding index for subsequent proofs...', 'warn');
         engine._pancake_dispose(handle);
-        handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
+        handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 0, 16, 200, 100);
         for (let i = 0; i < Math.min(countBefore, totalVectors); i++) {
             engine.HEAPF32.set(getVec(i), insertPtr >> 2);
             engine._pancake_add(handle, insertPtr);
@@ -1444,7 +1458,7 @@ async function proveExportImport() {
         log(`✗ Import returned error status ${importStatus}`, 'error');
         // Rebuild
         engine._pancake_dispose(handle);
-        handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
+        handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 0, 16, 200, 100);
         for (let i = 0; i < Math.min(countBefore, totalVectors); i++) {
             engine.HEAPF32.set(getVec(i), insertPtr >> 2);
             engine._pancake_add(handle, insertPtr);
@@ -1462,7 +1476,7 @@ async function proveExportImport() {
         // Rebuild the index so subsequent proofs aren't broken
         log('  Rebuilding index for subsequent proofs...', 'warn');
         engine._pancake_dispose(handle);
-        handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
+        handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 0, 16, 200, 100);
         for (let i = 0; i < Math.min(countBefore, totalVectors); i++) {
             engine.HEAPF32.set(getVec(i), insertPtr >> 2);
             engine._pancake_add(handle, insertPtr);
@@ -1575,18 +1589,14 @@ async function proveRecallAtK() {
         const qIdx = queryIndices[qi];
         const qVec = getVec(qIdx);
 
-        // --- Brute-force: cosine distance to all indexed vectors ---
+        // --- Brute-force: L2 squared distance to all indexed vectors ---
         const scored = [];
         const limit = Math.min(count, totalVectors);
         for (let i = 0; i < limit; i++) {
             const v = getVec(i);
-            let dot = 0, na = 0, nb = 0;
-            for (let d = 0; d < DIMS; d++) {
-                dot += qVec[d] * v[d];
-                na  += qVec[d] * qVec[d];
-                nb  += v[d] * v[d];
-            }
-            scored.push({ id: i, dist: 1 - dot / (Math.sqrt(na) * Math.sqrt(nb)) });
+            let sum = 0;
+            for (let d = 0; d < DIMS; d++) { const diff = qVec[d] - v[d]; sum += diff * diff; }
+            scored.push({ id: i, dist: sum });
         }
         scored.sort((a, b) => a.dist - b.dist);
         const trueTopK = new Set(scored.slice(0, TOP_K).map(s => s.id));
@@ -1625,10 +1635,11 @@ async function proveRecallAtK() {
 async function runFullProofSequence() {
     log('=== STARTING FULL PROOF SEQUENCE ===', 'info');
     disableAllButtons();
+    if (!await ensureFullDataset()) { enableAllOperations(); return; }
 
     // Reset index to ensure clean state for repeatable runs (without disabling operations)
     engine._pancake_dispose(handle);
-    handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
+    handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 0, 16, 200, 100);
     vectorCount      = 0;
     compactionCount  = 0;
     memBeforeCompact = 0;
@@ -1642,7 +1653,7 @@ async function runFullProofSequence() {
     await sleep(500);
 
     // Rebuild index with real embeddings for recall test
-    await buildIndex(5000);
+    await buildIndex(100000);
     await sleep(500);
 
     await performSearches(10);
@@ -1684,7 +1695,7 @@ const ADV_MODES = {
 // Standard size for stress-test indices. Fixed across all five tests so
 // results are comparable. Kept small enough that brute-force ground truth
 // for post-stress measurement runs in ~200ms.
-const ADV_INDEX_SIZE = 5000;
+const ADV_INDEX_SIZE = 100000;
 
 async function startAdversarialTest(mode) {
     if (adversarialRunning) return;
@@ -1705,6 +1716,7 @@ async function startAdversarialTest(mode) {
     // every other adversarial test. Without this, the second test in a
     // sequence would inherit whatever state the previous test left behind,
     // making cross-test comparisons meaningless.
+    if (!await ensureFullDataset()) { enableAllOperations(); return; }
     log(`  Preparing fresh index (${ADV_INDEX_SIZE.toLocaleString()} vectors) for clean baseline...`, 'info');
     await buildIndex(ADV_INDEX_SIZE);
     await sleep(200);
@@ -1778,7 +1790,7 @@ async function startAdversarialTest(mode) {
     // Auto-compact loop
     if (autoCompact) adversarialState.intervals.push(setInterval(() => {
         if (engine._pancake_ghost_ratio(handle) > 0.15) {
-            engine._pancake_compact(handle);
+            compactAndRemap();
             compactionCount++;
             recordChartSample(0, true);
         }
@@ -1969,7 +1981,7 @@ function enableAllOperations() {
      'btn-insert-1','btn-insert-100','btn-delete-100','btn-delete-500',
      'btn-compact','btn-export','btn-import',
      'btn-adv-ghost','btn-adv-churn','btn-adv-read','btn-adv-write','btn-adv-worst','btn-adv-all',
-     'btn-auto-proof','btn-build-1k','btn-build-5k'
+     'btn-auto-proof','btn-build-10k','btn-build-100k'
     ].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = false; });
 }
 
@@ -1989,6 +2001,23 @@ function disableAllButtons() {
 const sleep      = ms => new Promise(r => setTimeout(r, ms));
 const yieldFrame = ()  => new Promise(r => setTimeout(r, 0));
 
+async function ensureFullDataset() {
+    if (totalVectors >= 100000) return true;
+    log('Fetching full 100K dataset...', 'info');
+    try {
+        const resp = await fetch(VECTORS_100K_URL);
+        if (!resp.ok) throw new Error(`${resp.status}`);
+        const buf = await resp.arrayBuffer();
+        vectors = new Float32Array(buf);
+        totalVectors = vectors.length / DIMS;
+        log(`Loaded ${totalVectors.toLocaleString()} vectors (${(buf.byteLength / 1024 / 1024).toFixed(0)} MB).`, 'success');
+        return true;
+    } catch (e) {
+        log(`Failed to load 100K dataset: ${e.message}`, 'error');
+        return false;
+    }
+}
+
 function estimateTimerResolution() {
     // Sample the smallest non-zero delta from performance.now()
     let minDelta = Infinity;
@@ -2002,8 +2031,13 @@ function estimateTimerResolution() {
 }
 
 // ─── Wire up event listeners ──────────────────────────────────────────────────
-document.getElementById('btn-build-1k').addEventListener('click', () => buildIndex(1000));
-document.getElementById('btn-build-5k').addEventListener('click', () => buildIndex(5000));
+document.getElementById('btn-build-10k').addEventListener('click', () => buildIndex(10000));
+document.getElementById('btn-build-100k').addEventListener('click', async () => {
+    disableAllButtons();
+    if (!await ensureFullDataset()) { enableAllOperations(); return; }
+    enableAllOperations();
+    buildIndex(100000);
+});
 document.getElementById('btn-reset').addEventListener('click', resetIndex);
 document.getElementById('btn-search-1').addEventListener('click', () => performSearches(1));
 document.getElementById('btn-search-10').addEventListener('click', () => performSearches(10));
