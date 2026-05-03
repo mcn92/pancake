@@ -354,10 +354,13 @@ function buildIndexWrapper(engine, dims, maxElements, handle, initParams = {}) {
 // Helpers
 // ---------------------------------------------------------------------------
 
+let _corsEnv = null; // set per-request in handleRequest
+
 function jsonResponse(body, status = 200, extraHeaders = {}) {
+  const cors = _corsEnv ? { 'Access-Control-Allow-Origin': getCorsOrigin(_corsEnv) } : {};
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json', ...extraHeaders }
+    headers: { 'Content-Type': 'application/json', ...cors, ...extraHeaders }
   });
 }
 
@@ -389,15 +392,13 @@ function getCorsOrigin(env) {
   return env.ALLOWED_ORIGIN || '*';
 }
 
-function corsHeaders(env) {
-  return { 'Access-Control-Allow-Origin': getCorsOrigin(env) };
-}
 
 // ---------------------------------------------------------------------------
 // Request handler
 // ---------------------------------------------------------------------------
 
 async function handleRequest(request, env, ctx) {
+  _corsEnv = env;
   const url = new URL(request.url);
   const method = request.method;
   const origin = getCorsOrigin(env);
@@ -603,7 +604,7 @@ async function handleRequest(request, env, ctx) {
     const results = index.search(new Float32Array(query), k, ef);
     const latency_ms = performance.now() - t0;
 
-    return jsonResponse({ ...results, latency_ms }, 200, corsHeaders(env));
+    return jsonResponse({ ...results, latency_ms });
   }
 
   if (url.pathname === '/search_debug' && method === 'POST') {
@@ -631,7 +632,8 @@ async function handleRequest(request, env, ctx) {
         'Content-Type': 'application/octet-stream',
         'Content-Length': String(bytes.byteLength),
         'X-Pancake-Dims': String(index.dims),
-        'X-Pancake-Count': String(index.count)
+        'X-Pancake-Count': String(index.count),
+        'Access-Control-Allow-Origin': getCorsOrigin(env)
       }
     });
   }
