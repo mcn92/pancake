@@ -44,6 +44,7 @@ docs/html/
 
 # Dataset files — large, download separately
 dbpedia/
+dist/vectors.bin
 dist/vectors_100k.bin
 sift/
 
