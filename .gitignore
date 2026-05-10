@@ -62,6 +62,10 @@ nytimes/sweep_*.png
 *.tgz
 examples/demo/test.js
 
+# Generated binaries — regenerate with emb.py or demo scripts
+/vectors.bin
+examples/demo/loyalty-index.bin
+
 # Embedding model excluded from public release
 src/embedding_model.hpp
 examples/cli/embed_documents.js
