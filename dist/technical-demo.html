@@ -224,7 +224,7 @@
                 <div class="panel-title green">Index Operations</div>
 
                 <div class="control-group">
-                    <div class="control-label">Build from real embeddings (DBpedia OpenAI · 1536D · L2)</div>
+                    <div class="control-label">Build from real embeddings (384D · cosine)</div>
                     <div class="button-group">
                         <button class="primary" id="btn-build-10k">Index 10K Vectors</button>
                         <button id="btn-build-100k">Index 100K Vectors</button>
@@ -369,12 +369,11 @@
 'use strict';
 
 // ─── Configuration ────────────────────────────────────────────────────────────
-const DIMS            = 1536;
+const DIMS            = 384;
 const K               = 10;
 const MAX_ELEM        = 110_000;
-const VECTORS_URL     = 'vectors.bin';      // 10K x 1536 float32, loaded on page open
-const VECTORS_100K_URL= 'vectors_100k.bin'; // 100K x 1536 float32, fetched on demand
-const BUILD_BATCH     = 1000;               // vectors per bulk_insert call
+const VECTORS_URL     = 'vectors.bin';      // 100K x 384 float32
+const BUILD_BATCH     = 10000;              // vectors per bulk_insert call
 
 // ─── Proof definitions ────────────────────────────────────────────────────────
 const PROOFS = [
@@ -447,7 +446,7 @@ const SELF_RECALL_TRIALS = 20;
 //   - liveVectors.has(id) iff the engine considers id live (not a ghost).
 //   - liveVectors.get(id) returns the Float32Array(DIMS) for that vector.
 //
-// Performance: a 5k×384 f32 mirror is ~7.7 MB, acceptable for an in-browser
+// Performance: a 100k×384 f32 mirror is ~153 MB, acceptable for an in-browser
 // demo. Original-vector entries reference slices of the loaded buffer to
 // avoid copying; only synthetic inserts allocate new arrays.
 const liveVectors = new Map();
@@ -699,9 +698,9 @@ function buildRecallProbes() {
         const scored = [];
         for (let i = 0; i < limit; i++) {
             const v = getVec(i);
-            let sum = 0;
-            for (let d = 0; d < DIMS; d++) { const diff = qVec[d] - v[d]; sum += diff * diff; }
-            scored.push({ id: i, dist: sum });
+            let dot = 0, na = 0, nb = 0;
+            for (let d = 0; d < DIMS; d++) { dot += qVec[d] * v[d]; na += qVec[d] * qVec[d]; nb += v[d] * v[d]; }
+            scored.push({ id: i, dist: 1 - dot / (Math.sqrt(na) * Math.sqrt(nb)) });
         }
         scored.sort((a, b) => a.dist - b.dist);
         recallProbeTruth.push(new Set(scored.slice(0, RECALL_PROBE_K).map(s => s.id)));
@@ -756,7 +755,7 @@ function measureInsertIntegrity() {
 //
 // Approach:
 //   1. Sample up to N query vectors from the live registry (keys still valid).
-//   2. For each query, brute-force scan all live vectors (L2 squared distance).
+//   2. For each query, brute-force scan all live vectors (cosine distance).
 //   3. Run production HNSW search against the same live state.
 //   4. Compute |hnsw_top_k ∩ true_top_k| / k, average across queries.
 //
@@ -767,61 +766,11 @@ function measureInsertIntegrity() {
 function measurePostStressRecall(opts = {}) {
     const N_QUERIES = opts.queries || 20;
     const TOP_K     = opts.k || 10;
-    const DIAG      = opts.diag === true; // opt-in; off in normal demo runs
 
     if (!engine || liveVectors.size < TOP_K + 1) return null;
 
-    // ── CONTROL MEASUREMENT ──────────────────────────────────────────────
-    // Replicate proveRecallAtK's exact methodology (no registry, no synthetics,
-    // no liveness filtering — brute force over all loaded original vectors).
-    // If THIS gives reasonable recall while the registry-based measurement
-    // below gives 0, the bug is in the registry path. If both are broken,
-    // the bug is in measurement-shared code (stride, distance metric, etc).
-    let controlRecall = null, controlQueries = 0;
-    if (DIAG) {
-        const count = engine._pancake_count(handle);
-        const limit = Math.min(count, totalVectors);
-        const cQueries = [];
-        const cUsed = new Set();
-        const cTarget = Math.min(N_QUERIES, limit);
-        while (cQueries.length < cTarget) {
-            const idx = Math.floor(Math.random() * limit);
-            if (!cUsed.has(idx)) { cUsed.add(idx); cQueries.push(idx); }
-        }
-        let cTotal = 0;
-        for (const qIdx of cQueries) {
-            const qVec = getVec(qIdx);
-            const scored = [];
-            for (let i = 0; i < limit; i++) {
-                const v = getVec(i);
-                let sum = 0;
-                for (let d = 0; d < DIMS; d++) { const diff = qVec[d] - v[d]; sum += diff * diff; }
-                scored.push({ id: i, dist: sum });
-            }
-            scored.sort((a, b) => a.dist - b.dist);
-            const trueTopK = new Set(scored.slice(0, TOP_K).map(s => s.id));
-            engine.HEAPF32.set(qVec, queryPtr >> 2);
-            const found = engine._pancake_query(handle, queryPtr, TOP_K, resultIdPtr, resultDistPtr);
-            let hits = 0;
-            for (let i = 0; i < found; i++) {
-                const id = engine.HEAPU32[(resultIdPtr >> 2) + i * 2];
-                if (trueTopK.has(id)) hits++;
-            }
-            cTotal += hits / TOP_K;
-        }
-        controlRecall = cTotal / cQueries.length;
-        controlQueries = cQueries.length;
-        log(`  [control] proveRecallAtK-style recall=${(controlRecall * 100).toFixed(1)}% (n=${controlQueries}, ` +
-            `originals only, no liveness filter)`, controlRecall >= 0.90 ? 'success' : 'error');
-    }
-
-    // ── MAIN MEASUREMENT (registry-based) ────────────────────────────────
-    // Snapshot live IDs so we iterate a stable set even if anything else
-    // touches the registry between queries (it shouldn't, but be safe).
     const liveIds = Array.from(liveVectors.keys());
 
-    // Pick query IDs (sample without replacement). Queries must themselves
-    // be live so we have their vector data; we use the registry directly.
     const queryIds = [];
     const used = new Set();
     const target = Math.min(N_QUERIES, liveIds.length);
@@ -834,123 +783,32 @@ function measurePostStressRecall(opts = {}) {
     const t0 = performance.now();
     let totalRecall = 0;
 
-    // Diagnostic accumulators
-    const isOriginalId = (id) => id < totalVectors;
-    let originalQueryRecallSum = 0, originalQueryCount = 0;
-    let syntheticQueryRecallSum = 0, syntheticQueryCount = 0;
-    const overlapHistogram = [0,0,0,0,0,0,0,0,0,0,0]; // index = number of hits 0..10
-
     for (let qi = 0; qi < queryIds.length; qi++) {
         const qId = queryIds[qi];
         const qVec = liveVectors.get(qId);
 
-        // Brute force: L2 squared distance over every live vector.
         const scored = [];
-
         for (const vId of liveIds) {
             const v = liveVectors.get(vId);
-            let sum = 0;
-            for (let d = 0; d < DIMS; d++) { const diff = qVec[d] - v[d]; sum += diff * diff; }
-            scored.push({ id: vId, dist: sum });
+            let dot = 0, na = 0, nb = 0;
+            for (let d = 0; d < DIMS; d++) { dot += qVec[d] * v[d]; na += qVec[d] * qVec[d]; nb += v[d] * v[d]; }
+            scored.push({ id: vId, dist: 1 - dot / (Math.sqrt(na) * Math.sqrt(nb)) });
         }
         scored.sort((a, b) => a.dist - b.dist);
         const trueTopK = new Set(scored.slice(0, TOP_K).map(s => s.id));
 
-        // Production HNSW search.
         engine.HEAPF32.set(qVec, queryPtr >> 2);
         const found = engine._pancake_query(handle, queryPtr, TOP_K, resultIdPtr, resultDistPtr);
 
-        // Read HNSW results — both stride=2 (current code) and stride=1
-        // interpretations, so we can tell if the stride is wrong.
-        const hnswStride2Ids = [], hnswStride2Dists = [];
-        const hnswStride1Ids = [], hnswStride1Dists = [];
-        for (let i = 0; i < found; i++) {
-            hnswStride2Ids.push(engine.HEAPU32[(resultIdPtr >> 2) + i * 2]);
-            hnswStride2Dists.push(engine.HEAPF32[(resultDistPtr >> 2) + i * 2]);
-            hnswStride1Ids.push(engine.HEAPU32[(resultIdPtr >> 2) + i]);
-            hnswStride1Dists.push(engine.HEAPF32[(resultDistPtr >> 2) + i]);
-        }
-
         let hits = 0;
-        for (const id of hnswStride2Ids) {
+        for (let i = 0; i < found; i++) {
+            const id = engine.HEAPU32[(resultIdPtr >> 2) + i * 2];
             if (trueTopK.has(id)) hits++;
         }
-        const queryRecall = hits / TOP_K;
-        totalRecall += queryRecall;
-        overlapHistogram[hits]++;
-
-        // Track recall split by query type (original vs synthetic vector).
-        if (isOriginalId(qId)) {
-            originalQueryRecallSum += queryRecall;
-            originalQueryCount++;
-        } else {
-            syntheticQueryRecallSum += queryRecall;
-            syntheticQueryCount++;
-        }
-
-        // Per-query dump for the first 2 queries.
-        if (DIAG && qi < 2) {
-            const bruteTop = scored.slice(0, TOP_K).map(s => ({
-                id: s.id,
-                dist: +s.dist.toFixed(4),
-                isOriginal: isOriginalId(s.id),
-                inRegistry: liveVectors.has(s.id),
-            }));
-            const stride2 = hnswStride2Ids.map((id, i) => ({
-                id,
-                dist: +hnswStride2Dists[i].toFixed(4),
-                isOriginal: isOriginalId(id),
-                inRegistry: liveVectors.has(id),
-                inBruteTopK: trueTopK.has(id),
-            }));
-            const stride1 = hnswStride1Ids.map((id, i) => ({
-                id,
-                dist: +hnswStride1Dists[i].toFixed(4),
-                isOriginal: isOriginalId(id),
-                inRegistry: liveVectors.has(id),
-            }));
-            const stride2InRegistry = stride2.filter(r => r.inRegistry).length;
-            const stride1InRegistry = stride1.filter(r => r.inRegistry).length;
-
-            console.log(`\n=== DIAG query ${qi} ===`);
-            console.log('Query ID:', qId, '(isOriginal:', isOriginalId(qId), ', inRegistry:', liveVectors.has(qId), ')');
-            console.log('Query vec norm:', qNorm.toFixed(4), '(norm≈1 means pre-normalized)');
-            console.log('Brute-force top-10:', bruteTop);
-            console.log('HNSW top-10 with stride=2 (current code):', stride2);
-            console.log('  IDs in registry:', stride2InRegistry, '/', stride2.length);
-            console.log('HNSW top-10 with stride=1 (alternative):', stride1);
-            console.log('  IDs in registry:', stride1InRegistry, '/', stride1.length);
-            console.log('Hits at stride=2:', hits);
-            const hits1 = stride1.filter(r => trueTopK.has(r.id)).length;
-            console.log('Hits at stride=1:', hits1);
-
-            log(`  [diag q${qi}] qID=${qId} (orig=${isOriginalId(qId)}) | ` +
-                `s2 hits=${hits} reg=${stride2InRegistry}/${stride2.length} | ` +
-                `s1 hits=${hits1} reg=${stride1InRegistry}/${stride1.length}`, 'info');
-        }
+        totalRecall += hits / TOP_K;
     }
 
     const bruteForceMs = performance.now() - t0;
-
-    if (DIAG) {
-        const result = {
-            recall: totalRecall / queryIds.length,
-            originalQueryRecall: originalQueryCount > 0 ? originalQueryRecallSum / originalQueryCount : null,
-            syntheticQueryRecall: syntheticQueryCount > 0 ? syntheticQueryRecallSum / syntheticQueryCount : null,
-            originalQueryCount,
-            syntheticQueryCount,
-            registrySize: liveVectors.size,
-            engineCount: engine._pancake_count(handle),
-            engineLive: engine._pancake_count(handle) - engine._pancake_ghost_count(handle),
-            overlapHistogram,
-        };
-        console.log('=== DIAG summary ===', result);
-        log(`  [diag] orig-q recall=${(result.originalQueryRecall || 0).toFixed(3)} (n=${originalQueryCount}), ` +
-            `synth-q recall=${(result.syntheticQueryRecall || 0).toFixed(3)} (n=${syntheticQueryCount})`, 'info');
-        log(`  [diag] registry=${result.registrySize}, engine live=${result.engineLive}, ` +
-            `engine total=${result.engineCount}`, 'info');
-        log(`  [diag] hits histogram (idx=hits, val=#queries): [${overlapHistogram.join(',')}]`, 'info');
-    }
 
     return {
         recall: totalRecall / queryIds.length,
@@ -989,8 +847,8 @@ async function init() {
     // Load engine
     loadStatus.textContent = 'Loading WASM engine...';
     engine = await window.P();
-    // pancake_init(dim, max_elem, quantized, metric, M, ef_c, ef_s)
-    handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 0, 16, 200, 100);
+    // pancake_init(dim, max_elem, quantized, metric, M, ef_c, ef_s)  metric: 1=cosine
+    handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
 
     queryPtr      = engine._emsc_malloc(DIMS * 4);
     resultIdPtr   = engine._emsc_malloc(K * 8);
@@ -1010,11 +868,11 @@ async function init() {
     const timerRes = estimateTimerResolution();
     const timerNote = timerRes > 0.5 ? ` · timer: ~${timerRes.toFixed(0)}ms (serve with COOP/COEP headers for µs)` : ` · timer: ~${(timerRes * 1000).toFixed(0)}µs`;
     document.getElementById('engine-badge').textContent =
-        `engine: 1536D int8 HNSW · ${totalVectors.toLocaleString()} embeddings loaded · L2${timerNote}`;
+        `engine: 384D int8 HNSW · ${totalVectors.toLocaleString()} embeddings loaded · cosine${timerNote}`;
     document.getElementById('loading').style.display = 'none';
 
     markProof('load');
-    log(`Engine ready. ${totalVectors.toLocaleString()} real embeddings available (DBpedia OpenAI, 1536D, L2).`, 'success');
+    log(`Engine ready. ${totalVectors.toLocaleString()} real embeddings available (384D, cosine).`, 'success');
     log('Click "Index 10K Vectors" or "Index 100K Vectors" to build the index.', 'info');
 
     enableButtons(['btn-build-10k', 'btn-build-100k']);
@@ -1032,7 +890,7 @@ async function buildIndex(count) {
     if (engine._pancake_count(handle) > 0) {
         log(`Index already contains ${engine._pancake_count(handle).toLocaleString()} vectors — resetting first to ensure a clean build.`, 'warn');
         engine._pancake_dispose(handle);
-        handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 0, 16, 200, 100);
+        handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
         vectorCount = 0;
         compactionCount = 0;
         memBeforeCompact = 0;
@@ -1068,61 +926,6 @@ async function buildIndex(count) {
     updateMetrics();
     log(`Index built: ${n.toLocaleString()} vectors in ${elapsed}s`, 'success');
 
-    // ── ID-contract diagnostic ─────────────────────────────────────────────
-    // Verify that the IDs the engine returns from search match the IDs we
-    // assumed during bulk_insert (i.e., sequential 0..n-1). If this fails,
-    // the post-stress recall measurement will be broken.
-    // Runs only on the first build of a session — it's a one-time integrity
-    // check, not something that needs to repeat on every rebuild.
-    if (!window._idContractVerified) {
-        window._idContractVerified = true;
-        // 1. Search for the vector at slot 0 — top result should be ID 0 with dist≈0.
-        engine.HEAPF32.set(getVec(0), queryPtr >> 2);
-        const found = engine._pancake_query(handle, queryPtr, 5, resultIdPtr, resultDistPtr);
-        const ids = [], dists = [];
-        for (let i = 0; i < found; i++) {
-            ids.push(engine.HEAPU32[(resultIdPtr >> 2) + i * 2]);
-            dists.push(engine.HEAPF32[(resultDistPtr >> 2) + i * 2]);
-        }
-        const rank0Id = ids[0], rank0Dist = dists[0];
-        const idsAlsoStride1 = [];
-        for (let i = 0; i < found; i++) idsAlsoStride1.push(engine.HEAPU32[(resultIdPtr >> 2) + i]);
-
-        log(`[id-contract] Query=getVec(0). HNSW stride=2 IDs=[${ids.join(',')}] dists=[${dists.map(d=>d.toFixed(3)).join(',')}]`, 'info');
-        log(`[id-contract] Same query, stride=1 IDs=[${idsAlsoStride1.join(',')}]`, 'info');
-        console.log('[id-contract] full result for getVec(0):', { stride2Ids: ids, stride2Dists: dists, stride1Ids: idsAlsoStride1 });
-
-        if (rank0Id === 0 && rank0Dist < 0.01) {
-            log(`[id-contract] ✓ Build assigns sequential IDs starting at 0 (rank-0 ID matches, dist=${rank0Dist.toFixed(4)})`, 'success');
-        } else {
-            log(`[id-contract] ✗ MISMATCH: expected rank-0 to be ID 0 dist≈0, got ID ${rank0Id} dist=${rank0Dist.toFixed(4)}`, 'error');
-            log(`[id-contract]   → registry keys are wrong; recall measurement will not work`, 'error');
-        }
-
-        // 2. Insert one synthetic vector and check what _pancake_add returns vs. what
-        //    a self-query says its ID is. They must agree.
-        const probeVec = randomSyntheticVec();
-        engine.HEAPF32.set(probeVec, insertPtr >> 2);
-        const reportedId = engine._pancake_add(handle, insertPtr);
-        engine.HEAPF32.set(probeVec, queryPtr >> 2);
-        engine._pancake_query(handle, queryPtr, 1, resultIdPtr, resultDistPtr);
-        const actualTopId = engine.HEAPU32[(resultIdPtr >> 2)];
-        const actualTopDist = engine.HEAPF32[(resultDistPtr >> 2)];
-
-        log(`[id-contract] _pancake_add returned ${reportedId}. Self-query says top ID=${actualTopId} dist=${actualTopDist.toFixed(4)}`, 'info');
-        console.log('[id-contract] add-vs-query:', { reportedByAdd: reportedId, reportedByQuery: actualTopId, dist: actualTopDist });
-
-        if (reportedId === actualTopId) {
-            log(`[id-contract] ✓ _pancake_add return value matches engine ID`, 'success');
-            registerSyntheticVector(reportedId, probeVec);
-        } else {
-            log(`[id-contract] ✗ MISMATCH: _pancake_add returned ${reportedId} but engine assigned ${actualTopId}`, 'error');
-            log(`[id-contract]   → every synthetic is registered under wrong key`, 'error');
-            // Register under the actual ID so this probe doesn't leak
-            registerSyntheticVector(actualTopId, probeVec);
-        }
-    }
-
     markProof('init');
     buildRecallProbes();
     enableAllOperations();
@@ -1130,7 +933,7 @@ async function buildIndex(count) {
 
 function resetIndex() {
     engine._pancake_dispose(handle);
-    handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 0, 16, 200, 100);
+    handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
     vectorCount      = 0;
     compactionCount  = 0;
     memBeforeCompact = 0;
@@ -1422,7 +1225,7 @@ async function proveExportImport() {
 
     // Reset — dispose and re-init
     engine._pancake_dispose(handle);
-    handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 0, 16, 200, 100);
+    handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
     log(`  Index reset (now has ${engine._pancake_count(handle)} vectors)`, 'info');
     await sleep(400);
 
@@ -1443,7 +1246,7 @@ async function proveExportImport() {
         // Rebuild the index so subsequent proofs aren't broken
         log('  Rebuilding index for subsequent proofs...', 'warn');
         engine._pancake_dispose(handle);
-        handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 0, 16, 200, 100);
+        handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
         for (let i = 0; i < Math.min(countBefore, totalVectors); i++) {
             engine.HEAPF32.set(getVec(i), insertPtr >> 2);
             engine._pancake_add(handle, insertPtr);
@@ -1458,7 +1261,7 @@ async function proveExportImport() {
         log(`✗ Import returned error status ${importStatus}`, 'error');
         // Rebuild
         engine._pancake_dispose(handle);
-        handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 0, 16, 200, 100);
+        handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
         for (let i = 0; i < Math.min(countBefore, totalVectors); i++) {
             engine.HEAPF32.set(getVec(i), insertPtr >> 2);
             engine._pancake_add(handle, insertPtr);
@@ -1476,7 +1279,7 @@ async function proveExportImport() {
         // Rebuild the index so subsequent proofs aren't broken
         log('  Rebuilding index for subsequent proofs...', 'warn');
         engine._pancake_dispose(handle);
-        handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 0, 16, 200, 100);
+        handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
         for (let i = 0; i < Math.min(countBefore, totalVectors); i++) {
             engine.HEAPF32.set(getVec(i), insertPtr >> 2);
             engine._pancake_add(handle, insertPtr);
@@ -1589,14 +1392,14 @@ async function proveRecallAtK() {
         const qIdx = queryIndices[qi];
         const qVec = getVec(qIdx);
 
-        // --- Brute-force: L2 squared distance to all indexed vectors ---
+        // --- Brute-force: cosine distance to all indexed vectors ---
         const scored = [];
         const limit = Math.min(count, totalVectors);
         for (let i = 0; i < limit; i++) {
             const v = getVec(i);
-            let sum = 0;
-            for (let d = 0; d < DIMS; d++) { const diff = qVec[d] - v[d]; sum += diff * diff; }
-            scored.push({ id: i, dist: sum });
+            let dot = 0, na = 0, nb = 0;
+            for (let d = 0; d < DIMS; d++) { dot += qVec[d] * v[d]; na += qVec[d] * qVec[d]; nb += v[d] * v[d]; }
+            scored.push({ id: i, dist: 1 - dot / (Math.sqrt(na) * Math.sqrt(nb)) });
         }
         scored.sort((a, b) => a.dist - b.dist);
         const trueTopK = new Set(scored.slice(0, TOP_K).map(s => s.id));
@@ -1639,7 +1442,7 @@ async function runFullProofSequence() {
 
     // Reset index to ensure clean state for repeatable runs (without disabling operations)
     engine._pancake_dispose(handle);
-    handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 0, 16, 200, 100);
+    handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, 16, 200, 100);
     vectorCount      = 0;
     compactionCount  = 0;
     memBeforeCompact = 0;
@@ -2002,20 +1805,7 @@ const sleep      = ms => new Promise(r => setTimeout(r, ms));
 const yieldFrame = ()  => new Promise(r => setTimeout(r, 0));
 
 async function ensureFullDataset() {
-    if (totalVectors >= 100000) return true;
-    log('Fetching full 100K dataset...', 'info');
-    try {
-        const resp = await fetch(VECTORS_100K_URL);
-        if (!resp.ok) throw new Error(`${resp.status}`);
-        const buf = await resp.arrayBuffer();
-        vectors = new Float32Array(buf);
-        totalVectors = vectors.length / DIMS;
-        log(`Loaded ${totalVectors.toLocaleString()} vectors (${(buf.byteLength / 1024 / 1024).toFixed(0)} MB).`, 'success');
-        return true;
-    } catch (e) {
-        log(`Failed to load 100K dataset: ${e.message}`, 'error');
-        return false;
-    }
+    return totalVectors >= 100000;
 }
 
 function estimateTimerResolution() {
