@@ -1,7 +1,7 @@
 # Pancake WASM Vector Search Engine: System Design Document
 
 **Scope:** The complete Pancake 1.0.0 system — C++ core, WASM compilation, JavaScript wrapper, Cloudflare Worker deployment  
-**Last Updated:** 2026-04-24
+**Last Updated:** 2026-05-01
 
 ---
 
@@ -16,18 +16,17 @@
 7. [Serialization and Persistence](#7-serialization-and-persistence)
 8. [Cloudflare Worker Deployment](#8-cloudflare-worker-deployment)
 9. [Quantization](#9-quantization)
-10. [Segmented Indexes](#10-segmented-indexes)
-11. [SIMD Architecture](#11-simd-architecture)
-12. [Limitations and Non-Goals](#12-limitations-and-non-goals)
-13. [Appendix A: Serialization Formats](#appendix-a-serialization-formats)
-14. [Appendix B: Configuration Reference](#appendix-b-configuration-reference)
-15. [Appendix C: WASM Export Inventory](#appendix-c-wasm-export-inventory)
+10. [SIMD Architecture](#10-simd-architecture)
+11. [Limitations and Non-Goals](#11-limitations-and-non-goals)
+12. [Appendix A: Serialization Formats](#appendix-a-serialization-formats)
+13. [Appendix B: Configuration Reference](#appendix-b-configuration-reference)
+14. [Appendix C: WASM Export Inventory](#appendix-c-wasm-export-inventory)
 
 ---
 
 ## 1. System Overview
 
-Pancake is a vector similarity search engine compiled from C++ to WebAssembly. It runs in browsers, Node.js, and Cloudflare Workers — any environment with a WASM runtime and 128-bit SIMD support. The core is a set of HNSW (Hierarchical Navigable Small World) graph implementations with int8 quantization for memory efficiency.
+Pancake is a vector similarity search engine compiled from C++ to WebAssembly. It runs in browsers, Node.js, and Cloudflare Workers — any environment with a WASM runtime and 128-bit SIMD support. The core provides two HNSW (Hierarchical Navigable Small World) graph backends: a full-precision float32 backend and an int8 quantized backend with asymmetric search for memory efficiency.
 
 ### 1.1 Layer Architecture
 
@@ -50,20 +49,17 @@ Pancake is a vector similarity search engine compiled from C++ to WebAssembly. I
 │  │  engine.cpp — handle-based API                          │  │
 │  │  pancake_init / pancake_add / pancake_query / ...       │  │
 │  │  IndexWrapper → dispatch to backend                     │  │
-│  └─────┬────────────────┬──────────────────┬───────────────┘  │
-├────────┼────────────────┼──────────────────┼─────────────────┤
+│  └─────────┬──────────────────────┬────────────────────────┘  │
+├────────────┼──────────────────────┼──────────────────────────┤
 │  Backend Layer                                               │
-│  ┌─────┴──────┐  ┌─────┴──────────┐  ┌────┴─────────────┐   │
-│  │ FloatHNSW  │  │QuantizedHNSW   │  │ Int8FloatHNSW    │   │
-│  │ (runtime   │  │ <384> <1536>   │  │ (runtime dim,    │   │
-│  │  dim, f32) │  │ (template dim, │  │  int8 asymmetric)│   │
-│  │            │  │  SIMD-opt)     │  │                  │   │
-│  └────────────┘  └────────────────┘  └──────────────────┘   │
-│                          │                                   │
-│  ┌───────────────────────┴─────────────────────────────────┐  │
-│  │  quantized_simd.hpp — WASM SIMD / SSE2 / scalar        │  │
-│  │  AffineVector<DIMS>, distance kernels                   │  │
-│  └─────────────────────────────────────────────────────────┘  │
+│  ┌─────────┴────────┐  ┌─────────┴──────────────────────┐   │
+│  │ FloatHNSW        │  │ Int8FloatHNSW                   │   │
+│  │ (runtime dim,    │  │ (runtime dim, row-wise int8     │   │
+│  │  float32, SIMD)  │  │  quantization, asymmetric       │   │
+│  │                  │  │  search: f32 query vs i8 db)    │   │
+│  └──────────────────┘  └────────────────────────────────┘   │
+│                                                              │
+│  Distance kernels: WASM SIMD (128-bit) / scalar fallback    │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -73,12 +69,12 @@ When `pancake_init(dim, max_elem, quantized, metric, M, ef_c, ef_s)` is called, 
 
 | Condition | Backend | Rationale |
 |-----------|---------|-----------|
-| `quantized && dim == 384` | `QuantizedHNSW<384>` | Template specialization enables compile-time SIMD loop unrolling for 384-dimensional embeddings (all-MiniLM-L6-v2, etc.) |
-| `quantized && dim == 1536` | `QuantizedHNSW<1536>` | Same for OpenAI Ada embeddings |
-| `quantized && other dim` | `Int8FloatHNSW` | Runtime-dimension int8 with asymmetric search (float32 query vs int8 database) |
+| `quantized` | `Int8FloatHNSW` | Runtime-dimension int8 with asymmetric search (float32 query vs int8 database). ~4× memory savings over float32. |
 | `!quantized` | `FloatHNSW` | Full-precision float32, runtime dimension |
 
 This dispatch is invisible to the caller. The handle returned by `pancake_init` is an opaque `uint32_t` index into a 64-slot table. All subsequent operations use the handle.
+
+> **Historical note:** An earlier version included `QuantizedHNSW<DIMS>` — a template-specialized backend that enabled compile-time SIMD loop unrolling for fixed dimensions (384, 1536). This was removed in favor of the single `Int8FloatHNSW` backend, which handles all dimensions at runtime. The template approach produced marginally faster distance kernels for specific dimensions but tripled the code surface and prevented runtime dimension flexibility. `Int8FloatHNSW`'s asymmetric search (float32 query vs int8 database) also produces better recall than the symmetric quantized distance that `QuantizedHNSW` used.
 
 ### 1.3 Thread Model
 
@@ -105,21 +101,19 @@ The target deployment is Cloudflare Workers, which runs V8 isolates — not nati
 
 WASM also provides portability: the same binary runs in Node.js (for testing and batch operations), browsers (for client-side search), and Workers (for edge deployment).
 
-### 2.2 Why Three HNSW Implementations
+### 2.2 Why Two HNSW Implementations
 
-A single generic HNSW with runtime dimension and runtime quantization would be simpler, but the performance cost is unacceptable:
+Two backends exist because quantization is not always acceptable:
 
-1. **Template specialization (`QuantizedHNSW<DIMS>`) enables compile-time loop unrolling.** The SIMD distance kernel processes 16 uint8 elements per iteration. When DIMS is known at compile time, the compiler can unroll the loop exactly `DIMS/16` times with no loop overhead. For DIMS=384, this is 24 iterations — a 2-3× speedup over a runtime loop with bounds checking.
+1. **`Int8FloatHNSW` — quantized, asymmetric search.** During search, the query stays as float32 while the database is int8. This avoids quantizing the query (which would compound quantization error). The asymmetric kernel dequantizes database vectors on the fly during distance computation. Row-wise affine quantization (per-vector scale and offset) maps each vector to uint8 independently, preserving ~98%+ recall for typical embedding distributions.
 
-2. **Asymmetric distance (`Int8FloatHNSW`) avoids double quantization.** During search, the query stays as float32 while the database is int8. This avoids quantizing the query (which would add quantization error to the query, compounding with database quantization error). The asymmetric kernel dequantizes database vectors on the fly during distance computation.
+2. **`FloatHNSW` — full-precision float32.** For workloads where quantization is unacceptable (exact nearest neighbor verification, high-dimensional spaces where int8 doesn't preserve distances, recall-critical applications). Also serves as the ground-truth baseline for benchmarking.
 
-3. **Float32 (`FloatHNSW`) exists for workloads where quantization is unacceptable.** Some applications (e.g., exact nearest neighbor verification, high-dimensional spaces where int8 doesn't preserve distances) need full precision. FloatHNSW avoids the overhead of quantization/dequantization.
-
-The cost is code duplication: all three backends implement the same HNSW graph algorithm (insert, search, compact, serialize, deserialize) with different storage and distance functions. This is a maintenance burden but an acceptable trade for a 2-3× performance difference on the hot path.
+Both backends implement the same HNSW graph algorithm (insert, search, compact, serialize, deserialize) with different storage and distance kernels. Both support runtime dimensions — no template specialization is used.
 
 ### 2.3 Why Handle-Based C ABI
 
-The original engine.cpp had 13 global singletons and ~100 C exports (`_i8_init`, `_i8_add`, `_float_init`, `_float_add`, `_p128_init`, `_p128_add`, ...). This was replaced with a handle-based API (`_pancake_init` returns a handle, all operations take a handle) for three reasons:
+An earlier version of engine.cpp had multiple global singletons and per-backend C exports (`_i8_init`, `_i8_add`, `_float_init`, `_float_add`, etc.). This was replaced with a handle-based API (`_pancake_init` returns a handle, all operations take a handle) for three reasons:
 
 1. **Extensibility.** Adding a new backend (e.g., product quantization, binary embeddings) required adding a new set of C exports and corresponding JS branching. With handles, adding a backend means adding a new `IndexWrapper` subclass — zero changes to the C ABI or JS wrapper.
 
@@ -153,7 +147,7 @@ This translation adds ~5μs per operation (one hashmap lookup). It is simpler an
 
 ### 2.6 Why the Export Envelope Format
 
-The raw WASM export (`pancake_export`) produces a backend-specific binary blob (QuantizedHNSW serialization, FloatHNSW serialization, etc.). The JS wrapper prepends a 20-byte envelope:
+The raw WASM export (`pancake_export`) produces a backend-specific binary blob. The JS wrapper prepends a 20-byte envelope:
 
 ```
 [0-3]   Magic: 0x504E434B ("PNCK")
@@ -289,21 +283,17 @@ PancakeIndex.add(vec: Float32Array)
   │    │
   │    ├─ IndexWrapper::insert(vec)
   │    │    │
-  │    │    ├─ [QuantizedHNSWWrapper<384>]
+  │    │    ├─ [Int8FloatHNSWWrapper]
   │    │    │    ├─ Normalize if cosine
-  │    │    │    ├─ quantize_fast<384>(float→uint8)
+  │    │    │    ├─ Row-wise affine quantize: find min/max, scale to [0,255]
   │    │    │    ├─ Random level assignment (geometric distribution)
   │    │    │    ├─ Greedy descent from entry_point to target layer
   │    │    │    ├─ Beam search insertion per layer (ef_construction width)
   │    │    │    ├─ Diversity heuristic neighbor selection
   │    │    │    └─ Return internal ID (count_++)
   │    │    │
-  │    │    ├─ [FloatHNSWWrapper]
-  │    │    │    └─ Same algorithm, float32 distances
-  │    │    │
-  │    │    └─ [Int8FloatHNSWWrapper]
-  │    │         ├─ Row-wise affine quantize: find min/max, scale to [0,255]
-  │    │         └─ Same algorithm, asymmetric distances during construction
+  │    │    └─ [FloatHNSWWrapper]
+  │    │         └─ Same algorithm, float32 distances (no quantization)
   │    │
   │    └─ Return internal ID
   │
@@ -324,21 +314,20 @@ PancakeIndex.search(query: Float32Array, k: number)
   │    │
   │    ├─ IndexWrapper::search(query, k)
   │    │    │
-  │    │    ├─ [QuantizedHNSW<384>]
-  │    │    │    ├─ Quantize query (cached if same query)
+  │    │    ├─ [Int8FloatHNSW]
   │    │    │    ├─ Greedy descent from entry_point (upper layers)
   │    │    │    ├─ Beam search on layer 0 (ef_search width)
-  │    │    │    │    ├─ Distance: l2_squared_fast<384> (WASM SIMD)
-  │    │    │    │    │    └─ 24 iterations of 16-uint8 widening
+  │    │    │    │    ├─ Asymmetric distance: f32 query vs i8 database
+  │    │    │    │    │    └─ Dequantize on the fly via per-vector scale/offset
   │    │    │    │    └─ Skip nodes with deletion flag set
   │    │    │    └─ Return top-k pairs (id, distance)
   │    │    │
-  │    │    └─ [FloatHNSW / Int8FloatHNSW: same structure, different kernels]
+  │    │    └─ [FloatHNSW: same structure, float32 distance kernel]
   │    │
   │    ├─ Write results to ids/dists heap arrays
   │    └─ Return count of results found
   │
-  ├─ Read uint64 IDs from WASM heap (DataView)
+  ├─ Read uint64 IDs from WASM heap (HEAPU32, low 32 bits only since IDs are uint32)
   ├─ Translate internal IDs → external IDs
   ├─ If L2 metric: sqrt(distance) for user-facing result
   └─ Return SearchResult[]
@@ -414,7 +403,8 @@ Source: src/engine.cpp + src/*.hpp
   │    ├─ DISABLE_EXCEPTION_CATCHING=0 (C++ exceptions enabled)
   │    └─ FILESYSTEM=0 (no virtual filesystem)
   │
-  ├─ Output: dist/engine.js (19KB) + dist/engine.wasm (232KB)
+  ├─ Output: dist/engine.js (~18KB) + dist/engine.wasm (~99KB)
+  │          Gzipped: ~5KB + ~39KB = ~44KB total
   │
   └─ patch_engine.py: Fix ENVIRONMENT_IS_NODE detection for Workers
        └─ Replaces `var ENVIRONMENT_IS_NODE = ...` with `false`
@@ -425,9 +415,9 @@ Source: src/engine.cpp + src/*.hpp
 The original build used `-Oz` (optimize for size). This was changed to `-O3` (optimize for speed) because:
 
 - `-Oz` disables inlining and loop optimizations.
-- The insert path has ~300 non-SIMD function calls reachable from the hot `_i8_add` entry point.
+- The insert path has many non-SIMD function calls reachable from the hot `_pancake_add` entry point.
 - With `-Oz`, inlining was suppressed, causing 2× regression on insert throughput.
-- The WASM binary grew from ~200KB to ~230KB — acceptable for the 2× speed improvement.
+- The WASM binary is ~99KB with `-O3` — small enough that the speed trade is clearly worthwhile.
 
 ### 6.3 Memory Model
 
@@ -477,9 +467,9 @@ The JS envelope (Layer 1) is added by `PancakeIndex.export()` and stripped by `P
 See Appendix A for byte-level format details. Key properties:
 
 - **All formats are little-endian.** Matches WASM's native byte order.
-- **All formats include a magic number.** QuantizedHNSW uses `0x504E434B` ("PNCK") for quantized and `0x504E4346` ("PNCF") for float. FloatHNSW uses `0x464C4831` ("FLH1"). Int8FloatHNSW uses `0x49384831` ("I8H1").
+- **All formats include a magic number.** FloatHNSW uses `0x464C4831` ("FLH1"). Int8FloatHNSW uses `0x49384831` ("I8H1").
 - **All formats include a version field.** Enables forward-compatible format evolution.
-- **QuantizedHNSW v3+ serializes deletion state.** Import preserves which vectors were deleted. Int8FloatHNSW and FloatHNSW do not — import resets all vectors to alive.
+- **Neither backend serializes deletion state.** Import resets all vectors to alive. The workaround is to `compact()` before `export()` to remove ghosts.
 
 ### 7.3 R2 Persistence Model
 
@@ -570,10 +560,7 @@ Dequantize:
   v[d] ≈ offset + quantized[d] * scale
 ```
 
-**Storage:**
-
-- `QuantizedHNSW<DIMS>`: `AffineVector<DIMS>` struct = `{float scale, float offset, uint8_t data[DIMS]}`, aligned to 16 bytes. Total: 8 + DIMS bytes per vector.
-- `Int8FloatHNSW`: Separate arrays for scales, offsets, and quantized data. Same total size but different memory layout (SoA vs AoS).
+**Storage:** `Int8FloatHNSW` uses separate arrays for scales, offsets, and quantized data (SoA layout). Total: 8 + D bytes per vector (two float32 parameters + D uint8 values).
 
 ### 9.2 Quantization Error
 
@@ -603,93 +590,44 @@ This avoids quantizing the query (which would compound quantization error) at th
 
 ---
 
-## 10. Segmented Indexes
+## 10. SIMD Architecture
 
-The C ABI exports two segmented index implementations alongside the handle-based single-index API. These are legacy APIs that predate the handle system.
+### 10.1 Platform Detection
 
-### 10.1 Segmented 384D (`si_*`)
-
-A set of `QuantizedHNSW<384>` shards with centroid-based routing.
-
-- **Routing:** Nearest centroid with available capacity. Running mean centroids (no k-means).
-- **Query:** Top-N segments by centroid distance → search each → merge results.
-- **Global ID mapping:** `g_si_id_map` translates global IDs to (segment_index, local_id) pairs.
-- **Centroid update:** Incremental running mean on insert. No periodic refresh.
-
-### 10.2 Segmented 128D (`si128_*`)
-
-Similar to 384D but with periodic k-means reclustering:
-
-- **Reservoir sampling:** Algorithm R collects 5K samples for k-means.
-- **Recluster trigger:** Every 10K inserts.
-- **Bootstrap phase:** First N inserts distributed round-robin to seed all segments before centroid-based routing begins.
-- **K-means:** L2 metric, 10 iterations, run on reservoir sample.
-
-### 10.3 Why These Are Separate
-
-These segmented indexes were built before the handle-based API and before `pancake-core.js`. They use direct global state and are exported as separate C functions (`_si_init`, `_si_add`, etc.). They are not accessible through the `PancakeIndex` JS wrapper.
-
-They exist for specialized use cases (Cloudflare Worker demos, pre-built multi-segment indexes) but are not the recommended API. Future work should migrate them to the handle-based system.
-
----
-
-## 11. SIMD Architecture
-
-### 11.1 Platform Detection
+Both backends use compile-time feature detection directly:
 
 ```cpp
-// quantized_simd.hpp, lines 23-41
-#if defined(__EMSCRIPTEN__) || defined(__wasm__)
-  #define PANCAKE_WASM_BUILD 1
-  #if defined(__wasm_simd128__)
-    #define PANCAKE_WASM_SIMD 1
-  #endif
-#endif
-
-#if defined(__AVX2__)
-  #define PANCAKE_USE_AVX2 1        // Detected but NOT IMPLEMENTED
-#endif
-
-#if defined(__SSE4_1__) || defined(__SSE2__)
-  #define PANCAKE_USE_SSE 1
+// int8_float_hnsw.hpp / float_hnsw.hpp
+#if defined(__wasm_simd128__)
+    #include <wasm_simd128.h>    // WASM 128-bit SIMD intrinsics
+#elif defined(__SSE2__)
+    #include <immintrin.h>       // x86 SSE2 intrinsics (native builds)
 #endif
 ```
 
-### 11.2 Dispatch Hierarchy
+Distance kernels use `#if defined(__wasm_simd128__) ... #elif defined(__SSE2__) ... #else ... #endif` blocks to select the implementation at compile time.
 
-```cpp
-template<size_t DIMS>
-float l2_squared_fast(const AffineVector<DIMS>& a, const AffineVector<DIMS>& b) {
-#ifdef PANCAKE_WASM_SIMD
-    return l2_squared_wasm<DIMS>(a, b);       // WASM 128-bit SIMD
-#elif defined(PANCAKE_USE_SSE)
-    return l2_squared_sse<DIMS>(a, b);        // x86 SSE2
-#else
-    return l2_squared_scalar<DIMS>(a, b);     // Scalar fallback
-#endif
-}
-```
+### 10.2 Dispatch Hierarchy
 
-The same pattern applies to `dot_product_fast`, `compute_norm_fast`, `cosine_distance_fast`, and `quantize_fast`.
+Both `FloatHNSW` and `Int8FloatHNSW` use WASM SIMD intrinsics directly in their distance kernels (via `<wasm_simd128.h>`). The kernels are runtime-dimension: they loop over the dimension in SIMD-width chunks (4 floats or 16 uint8s per iteration) with a scalar tail for non-aligned remainders.
 
-### 11.3 WASM SIMD Quantized Distance Kernel
+### 10.3 WASM SIMD Quantized Distance Kernel
 
-The core distance computation for quantized vectors processes 16 uint8 elements per iteration using WASM 128-bit SIMD:
+The `Int8FloatHNSW` asymmetric distance kernel computes the distance between a float32 query and an int8 database vector. It dequantizes the database vector on the fly using per-vector scale and offset, processing elements in SIMD-width chunks:
 
 ```
-For each group of 16 elements:
-  1. Load 16 uint8 from vector A and B          (v128_load)
-  2. Widen to 2×8 uint16                        (extend_low_u8x16, extend_high_u8x16)
-  3. Widen each uint16×8 to 2×4 uint32         (extend_low_u16x8, extend_high_u16x8)
-  4. Convert uint32×4 to float32×4              (convert_f32x4_u32x4)
-  5. Dequantize: float = offset + data * scale  (f32x4_add, f32x4_mul)
-  6. Compute squared difference                 (f32x4_sub, f32x4_mul)
-  7. Accumulate into sum register               (f32x4_add)
+For each group of 4 float32 elements:
+  1. Load 4 uint8 from database vector
+  2. Widen uint8 to float32                     (extend + convert)
+  3. Dequantize: float = offset + data * scale  (f32x4_add, f32x4_mul)
+  4. Subtract query float32                     (f32x4_sub)
+  5. Square                                     (f32x4_mul)
+  6. Accumulate into sum register               (f32x4_add)
 ```
 
-For DIMS=384, this is 24 iterations (384/16). The inner loop has no branches and no memory dependencies between iterations.
+For D=384, the inner loop runs 96 iterations (384/4). The loop has no branches and no memory dependencies between iterations.
 
-### 11.4 Non-Quantized SIMD
+### 10.4 Non-Quantized SIMD
 
 `FloatHNSW` uses WASM SIMD for float32 L2 and cosine distance:
 
@@ -701,17 +639,17 @@ For each group of 4 float32 elements:
   4. Accumulate                                (f32x4_add)
 ```
 
-This is simpler than the quantized kernel (no widening) but processes only 4 elements per iteration instead of 16.
+This is simpler than the quantized kernel (no widening/dequantization overhead).
 
-### 11.5 AVX2 Status
+### 10.5 AVX2 Status
 
 The `PANCAKE_USE_AVX2` flag is detected but **no AVX2 kernels exist**. The codebase uses SSE2 as the highest x86 SIMD level. AVX2 would double throughput (256-bit vs 128-bit lanes) but requires AVX2-capable hardware and a native (non-WASM) build.
 
 ---
 
-## 12. Limitations and Non-Goals
+## 11. Limitations and Non-Goals
 
-### 12.1 Things the System Does Not Do
+### 11.1 Things the System Does Not Do
 
 **No server-side persistence (Node.js).** The Node.js deployment is purely in-memory. There is no WAL, no checkpoint, no disk I/O. If the process exits, the index is lost. The only persistence mechanism is `export()` to a `Uint8Array` that the application can write to disk manually.
 
@@ -729,7 +667,7 @@ The `PANCAKE_USE_AVX2` flag is detected but **no AVX2 kernels exist**. The codeb
 
 **No dimension reduction.** Vectors must arrive pre-reduced to the target dimension. The system does not perform PCA, random projection, or any other dimensionality reduction.
 
-### 12.2 Known Weaknesses
+### 11.2 Known Weaknesses
 
 **Worker R2 persistence is best-effort.** The 2-second debounce timer means up to 2 seconds of mutations can be lost on isolate eviction. There is no acknowledgment that the R2 write completed. The Worker has no mechanism to detect or recover from R2 write failures other than a `console.error`.
 
@@ -739,13 +677,11 @@ The `PANCAKE_USE_AVX2` flag is detected but **no AVX2 kernels exist**. The codeb
 
 **No graph quality monitoring.** There is no metric for HNSW graph quality (e.g., average neighbor connectivity, recall vs brute-force). The only observable metric is `ghostRatio`. An index with poor graph quality (e.g., after many inserts into a compacted graph) will have degraded recall with no warning.
 
-**Segmented indexes use global state.** The `si_*` and `si128_*` functions use global variables, not handles. Only one segmented index of each type can exist per WASM instance. They cannot coexist with handle-based indexes that use the same dimension.
+**Int8FloatHNSW does not preserve deletion state on import.** When importing a serialized Int8FloatHNSW index, the deletion bitmap is reset — all vectors come back alive. The workaround is to `compact()` before `export()`.
 
-**Int8FloatHNSW does not preserve deletion state on import.** When importing a serialized Int8FloatHNSW index, the deletion bitmap is reset — all vectors come back alive. This differs from QuantizedHNSW (which preserves deletion state in v3+ format). The workaround is to `compact()` before `export()`.
+### 11.3 Intentional Non-Optimizations
 
-### 12.3 Intentional Non-Optimizations
-
-**No neighbor list packing.** Neighbor lists are stored as `vector<vector<vector<uint32_t>>>` — three levels of indirection per node. A flat packed representation (single contiguous array with offset table) would improve cache locality by 2-4× for search. This is the single largest performance opportunity but would require rewriting all three HNSW backends.
+**No neighbor list packing.** Neighbor lists are stored as `vector<vector<vector<uint32_t>>>` — three levels of indirection per node. A flat packed representation (single contiguous array with offset table) would improve cache locality by 2-4× for search. This is the single largest performance opportunity but would require rewriting both HNSW backends.
 
 **No batch distance computation.** The SIMD kernels compute distance between one query and one database vector at a time. A batch kernel (one query vs N database vectors) would enable better SIMD utilization (process 4 query-vector pairs in parallel). This would require restructuring the HNSW search loop.
 
@@ -756,28 +692,6 @@ The `PANCAKE_USE_AVX2` flag is detected but **no AVX2 kernels exist**. The codeb
 ---
 
 ## Appendix A: Serialization Formats
-
-### QuantizedHNSW (Magic: 0x504E434B / 0x504E4346)
-
-```
-Offset   Size           Field
-0        4              Magic (0x504E434B=quantized, 0x504E4346=float)
-4        4              DIMS (template parameter)
-8        4              Version (current: 3)
-12       4              Count
-16       4              Entry point
-20       4              Max level
-24       4              M
-28       4              M0 (2×M)
-32       4              Metric (0=L2, 1=Cosine)
-36       4              ef_construction
-40       count×AV       Vectors (AffineVector: scale+offset+data per vec)
-         or count×D×4   Float vectors (if magic==PNCF)
-?        count×4        Norms (if cosine, v3+)
-?        variable       Graph (per-node: level(4), per-level: count(4)+neighbors(count×4))
-?        4              num_deleted (v1+)
-?        count×1        Deleted flags (v1+)
-```
 
 ### FloatHNSW (Magic: 0x464C4831)
 
@@ -794,7 +708,7 @@ Offset   Size           Field
 32       4              Metric (v1+)
 36       4              ef_construction (v1+)
 40       count×D×4      Vectors (float32)
-?        variable       Graph (same format as QuantizedHNSW)
+?        variable       Graph (same format as FloatHNSW)
 ```
 
 Note: FloatHNSW does NOT serialize deletion state. Import resets all vectors to alive.
@@ -874,7 +788,7 @@ Offset   Size    Field
 
 ## Appendix C: WASM Export Inventory
 
-### Handle-Based Index API (16 functions)
+### Handle-Based Index API (18 functions)
 
 | Export | Signature | Returns |
 |--------|-----------|---------|
@@ -893,16 +807,11 @@ Offset   Size    Field
 | `_pancake_import` | `(handle, data_ptr, size) → status` | 0=success, -1=failure |
 | `_pancake_dispose` | `(handle) → void` | — |
 | `_pancake_dimension` | `(handle) → dim` | int |
+| `_pancake_profile_print` | `(range_start, range_end) → void` | — |
+| `_pancake_profile_reset` | `() → void` | — |
 | `_pancake_shutdown_all` | `() → void` | — |
 
-### Segmented Index API (26 functions)
-
-| Prefix | Functions |
-|--------|-----------|
-| `_si_` | init, add, query, delete, count, memory, segment_count, ghost_count, ghost_ratio, compact, set_budget |
-| `_si128_` | init, add, query, delete, count, memory, segment_count, ghost_count, compact, set_budget, get_vector_segment, get_query_segments |
-
-### Utility Functions (5 functions)
+### Utility Functions (6 functions)
 
 | Export | Purpose |
 |--------|---------|
@@ -911,6 +820,7 @@ Offset   Size    Field
 | `_normalize` | In-place L2 normalization |
 | `_emsc_malloc` | WASM heap allocation |
 | `_emsc_free` | WASM heap deallocation |
+| `_shutdown_all` | Alias for `_pancake_shutdown_all` |
 
 ### Exported Runtime Methods
 

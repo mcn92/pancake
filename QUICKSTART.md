@@ -1,6 +1,6 @@
 # Pancake Quick Start
 
-End-to-end repository workflow for building an HNSW index from your own embeddings, searching it locally, and validating the Cloudflare Worker example.
+End-to-end repository workflow for building an HNSW index from your own embeddings, searching it locally, and running the Cloudflare Worker example.
 
 ## What This Guide Covers
 
@@ -33,7 +33,7 @@ Use whatever embedder fits your use case (sentence-transformers, OpenAI API, Coh
 
 - 4 bytes: dimension (uint32 LE)
 - 4 bytes: count (uint32 LE)
-- 8 bytes: reserved (zeros)
+- 8 bytes: reserved (must be zero — the loader skips these bytes; they exist for future use)
 - count × dim × 4 bytes: float32 vectors, row-major
 
 Minimal Node example using [`@xenova/transformers`](https://github.com/xenova/transformers.js) with `all-MiniLM-L6-v2` (384D):
@@ -60,7 +60,7 @@ for (const text of texts) {
 // Write in Pancake's format
 const dim = embeddings[0].length;
 const count = embeddings.length;
-const buf = Buffer.alloc(16 + count * dim * 4);
+const buf = Buffer.alloc(16 + count * dim * 4); // alloc zero-fills (covers reserved bytes)
 buf.writeUInt32LE(dim, 0);
 buf.writeUInt32LE(count, 4);
 for (let i = 0; i < count; i++) {
@@ -87,41 +87,43 @@ node examples/cli/build_index.js \
   --ef-construction 200
 ```
 
+The default metric is cosine. The build script infers the dimension and vector count from the binary header.
+
 Useful parameters:
 
-- `--m 16`: balanced default for graph connectivity
-- `--ef-construction 200`: balanced default for build quality
+- `--m 16`: graph connectivity (typical range: 8–32; higher improves recall, costs more memory)
+- `--ef-construction 200`: build beam width (typical range: 100–400; higher improves graph quality, slows build)
 - `--no-quantize`: build a float32 index instead of the default int8 index
 
-This produces a serialized index binary that can be imported by the CLI search flow or by lower-level engine consumers.
+This produces a serialized index binary that can be imported via the JS API or the Worker.
 
 ### 3. Search The Index
 
-Single query (requires the same embedder you used in step 1 to convert the query text into a vector):
+The repo exposes the same JS API as the published npm package via `pancake.js` at the root:
 
-```bash
-node examples/cli/search_index.js \
-  --index my_index.bin \
-  --metadata my_embeddings_metadata.json \
-  --query "neural networks and deep learning" \
-  --k 5 \
-  --ef 100
+```js
+const Pancake = require('./pancake.js');
+const fs = require('fs');
+
+// maxElements sets index capacity — can exceed current count to leave room for additions
+const index = await Pancake.create({ dim: 384, maxElements: 10000 });
+index.import(fs.readFileSync('my_index.bin'));
+
+// Query with a pre-computed embedding vector
+const results = index.search(queryVector, 5);
+console.log(results); // [{ id: 0, distance: 0.12 }, ...]
 ```
 
-Interactive mode:
+Use the `id` field to look up the original document in `my_embeddings_metadata.json`.
+
+Or import the index into the Worker (see [Worker Example](#worker-example) below) and query via HTTP. Note: the HTTP API uses `dims` (plural) while the JS API uses `dim` (singular) — a historical inconsistency kept for backward compatibility:
 
 ```bash
-node examples/cli/search_index.js \
-  --index my_index.bin \
-  --metadata my_embeddings_metadata.json \
-  --interactive
+curl -X POST http://localhost:8787/import?dims=384 --data-binary @my_index.bin
+curl -X POST http://localhost:8787/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query": [0.1, 0.2, ...], "k": 5}'
 ```
-
-Useful parameters:
-
-- `--k`: number of results
-- `--ef`: query-time beam width
-- `--float`: load a float32 index instead of the default int8 path
 
 ## Worker Example
 
@@ -131,7 +133,7 @@ Typical flow:
 
 1. Build or export an index locally.
 2. Start the Worker example.
-3. Initialize/import the index into the Worker.
+3. Load the index into the Worker — use `/init` to create a new empty index and add vectors via `/add`, or use `/import` to load a pre-built index binary from step 2.
 4. Query `/search` directly without a separate ANN backend.
 
 ### Run The Worker Locally
@@ -150,7 +152,7 @@ node examples/demo/technical_demo_worker.js
 
 The demos exercise different paths:
 
-- `test_worker.js`: synthetic `1536D` Worker/API integration test (no external data required)
+- `test_worker.js`: synthetic 1536D Worker/API integration test (no external data required)
 - `technical_demo_worker.js`: interactive REPL against the Worker with 5,000 precomputed 384D embeddings from `dist/vectors.bin`; includes a full proof suite and adversarial stress tests
 
 The Worker example includes:
@@ -164,25 +166,19 @@ See `examples/worker/worker.js`.
 
 ## Sizing And Tuning
 
-General levers:
+| Parameter | Typical range | Effect |
+|-----------|--------------|--------|
+| `M` | 8–32 | Graph connectivity. Higher improves recall, increases memory and build time. Default: 16. |
+| `ef-construction` | 100–400 | Build beam width. Higher improves graph quality, slows build. Default: 200. |
+| `ef` (search) | 50–500 | Query beam width. Higher improves recall, slows search. Default: 100. |
+| `quantized` | true/false | Int8 quantization reduces memory ~4× with typically <2% recall loss on standard benchmarks (SIFT-1M, NYTimes-256). Default: true. |
+| `metric` | `'cosine'` / `'l2'` | Distance metric. Cosine for normalized embeddings, L2 for unnormalized. Default: `'cosine'`. |
 
-- higher `M` improves recall and increases graph memory/build cost
-- higher `ef-construction` improves build quality and slows index construction
-- higher `ef` improves recall and slows search
-- int8 quantization reduces memory substantially versus float32
-
-For memory-constrained deployments such as Cloudflare Workers, the int8 backend is the natural default.
+For memory-constrained deployments such as Cloudflare Workers (128 MB limit), the int8 backend is the natural default. See [README.md](README.md#deployment-notes) for per-vector memory estimates.
 
 ## Benchmarks
 
-See the [Performance section of README.md](README.md#performance) for benchmark scripts, datasets, and results. Benchmark outcomes depend heavily on:
-
-- dimension
-- corpus size
-- `M`
-- `ef-construction`
-- `ef`
-- quantized vs float mode
+Benchmark scripts are in `benchmarks/`. See the [Performance section of README.md](README.md#performance) for datasets and results. Benchmark outcomes depend heavily on dimension, corpus size, HNSW parameters, and quantization mode.
 
 ## Troubleshooting
 
@@ -197,7 +193,7 @@ See the [Performance section of README.md](README.md#performance) for benchmark 
 - raise `--ef-construction` when building
 - raise `--ef` when searching
 - raise `--m` and rebuild
-- verify your embeddings are L2-normalized if using cosine distance
+- verify your embeddings are L2-normalized if using cosine distance (the `metric` option defaults to `'cosine'`, which assumes unit-norm vectors for best results)
 
 ### Worker does not start from the repo root
 
@@ -210,6 +206,8 @@ npx wrangler dev examples/worker/worker.js --config examples/worker/wrangler.tom
 ## Next Steps
 
 - [README.md](README.md) for the published JS/WASM API surface
-- `examples/cli/` for repository-local indexing workflows
+- [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) for the full system design document
+- `examples/cli/build_index.js` for building indexes from precomputed embeddings
 - `examples/demo/` for validation and proof scripts
 - `examples/worker/` for the Cloudflare Worker deployment example
+- `benchmarks/` for reproducible benchmark scripts
