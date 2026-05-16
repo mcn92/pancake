@@ -1,14 +1,15 @@
 import loadEngine from './dist/engine.js';
-import wasmModule from './dist/engine.wasm';
 import createPancakeApi from './pancake-core.js';
 
 function loadWebEngine() {
+  const wasmUrl = new URL('./dist/engine.wasm', import.meta.url);
+
   return loadEngine({
-    instantiateWasm(imports, successCallback) {
-      WebAssembly.instantiate(wasmModule, imports)
-        .then(instance => successCallback(instance))
-        .catch(err => { throw err; });
-      return {};
+    locateFile(path) {
+      if (path === 'engine.wasm') {
+        return wasmUrl.href;
+      }
+      return path;
     }
   });
 }
