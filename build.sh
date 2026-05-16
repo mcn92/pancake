@@ -2,6 +2,9 @@
 set -e
 
 EMCC="${EMCC:-python3 $HOME/emsdk/upstream/emscripten/emcc.py}"
+OUT_BASENAME="${OUT_BASENAME:-engine}"
+PATCH_ENGINE_JS="${PATCH_ENGINE_JS:-1}"
+WASM_SIMD="${WASM_SIMD:-1}"
 
 if [[ "${DEBUG_SYMBOLS}" == "1" ]]; then
     BUILD_DESC="Debug"
@@ -22,7 +25,14 @@ echo "=============================================="
 
 mkdir -p dist
 
-echo "Compiling with WASM SIMD + Memory Access (exceptions enabled)..."
+SIMD_FLAGS=""
+SIMD_DESC="scalar"
+if [[ "${WASM_SIMD}" == "1" ]]; then
+    SIMD_FLAGS="-msimd128"
+    SIMD_DESC="WASM SIMD"
+fi
+
+echo "Compiling with ${SIMD_DESC} + Memory Access (exceptions enabled)..."
 $EMCC $OPT_FLAGS \
     $DEBUG_FLAGS \
     --closure 0 \
@@ -35,7 +45,7 @@ $EMCC $OPT_FLAGS \
     -s DYNAMIC_EXECUTION=0 \
     -s EMULATE_FUNCTION_POINTER_CASTS=0 \
     -s SUPPORT_LONGJMP=0 \
-    -msimd128 \
+    $SIMD_FLAGS \
     -mnontrapping-fptoint \
     -msign-ext \
     -mbulk-memory \
@@ -57,13 +67,15 @@ $EMCC $OPT_FLAGS \
     -fslp-vectorize \
     --no-entry \
     -Isrc \
-    -o dist/engine.js \
+    -o "dist/${OUT_BASENAME}.js" \
     src/engine.cpp
 
-echo ""
-echo "Applying engine.js patches..."
-python3 patch_engine.py
+if [[ "${PATCH_ENGINE_JS}" == "1" && "${OUT_BASENAME}" == "engine" ]]; then
+    echo ""
+    echo "Applying engine.js patches..."
+    python3 patch_engine.py
+fi
 
 echo ""
 echo "Build complete!"
-ls -lh dist/engine.js dist/engine.wasm
+ls -lh "dist/${OUT_BASENAME}.js" "dist/${OUT_BASENAME}.wasm"

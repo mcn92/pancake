@@ -22,6 +22,10 @@
 #if defined(__wasm_simd128__)
     #include <wasm_simd128.h>
     #define FLOAT_HNSW_WASM_SIMD 1
+#elif defined(PANCAKE_ENABLE_SSE2_SIMD) && defined(__SSE2__)
+    #include <xmmintrin.h>
+    #include <emmintrin.h>
+    #define FLOAT_HNSW_SSE2_SIMD 1
 #endif
 
 namespace pancake {
@@ -465,7 +469,7 @@ private:
         }
         sum = wasm_f32x4_extract_lane(acc, 0) + wasm_f32x4_extract_lane(acc, 1) +
               wasm_f32x4_extract_lane(acc, 2) + wasm_f32x4_extract_lane(acc, 3);
-#elif defined(__SSE2__)
+#elif defined(FLOAT_HNSW_SSE2_SIMD)
         __m128 acc = _mm_setzero_ps();
         for (; d + 4 <= dims_; d += 4) {
             __m128 diff = _mm_sub_ps(_mm_loadu_ps(a + d), _mm_loadu_ps(b + d));
@@ -493,7 +497,7 @@ private:
         }
         dot = wasm_f32x4_extract_lane(acc, 0) + wasm_f32x4_extract_lane(acc, 1) +
               wasm_f32x4_extract_lane(acc, 2) + wasm_f32x4_extract_lane(acc, 3);
-#elif defined(__SSE2__)
+#elif defined(FLOAT_HNSW_SSE2_SIMD)
         __m128 acc = _mm_setzero_ps();
         for (; d + 4 <= dims_; d += 4) {
             acc = _mm_add_ps(acc, _mm_mul_ps(_mm_loadu_ps(a + d), _mm_loadu_ps(b + d)));
