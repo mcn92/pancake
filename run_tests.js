@@ -10,6 +10,9 @@
 'use strict';
 
 const Pancake = require('./pancake.js');
+const fs = require('fs');
+const path = require('path');
+const { pathToFileURL } = require('url');
 
 // ─── Minimal test harness ────────────────────────────────────────────────────
 
@@ -493,6 +496,60 @@ async function testSearchDuringMutation() {
 }
 
 
+async function testRuntimeEntryPoints() {
+    section('Runtime entry points');
+
+    // CommonJS package entry
+    {
+        const CjsPancake = require('./pancake.js');
+        const idx = await CjsPancake.create({ dim: 4, maxElements: 10 });
+        idx.add(new Float32Array([1, 0, 0, 0]));
+        const results = idx.search(new Float32Array([1, 0, 0, 0]), 1);
+        assert(results.length === 1 && results[0].id === 0, 'CJS entry works');
+        idx.dispose();
+    }
+
+    // ESM package entry
+    {
+        const { default: EsmPancake } = await import(pathToFileURL(path.join(process.cwd(), 'pancake.node.mjs')).href);
+        const idx = await EsmPancake.create({ dim: 4, maxElements: 10 });
+        idx.add(new Float32Array([1, 0, 0, 0]));
+        const results = idx.search(new Float32Array([1, 0, 0, 0]), 1);
+        assert(results.length === 1 && results[0].id === 0, 'ESM node entry works');
+        idx.dispose();
+    }
+
+    // Browser-style instantiateWasm path. This validates the web runtime
+    // loading contract without depending on a specific bundler or browser.
+    {
+        const loadEngine = require('./dist/engine.js');
+        const createPancakeApi = require('./pancake-core.js');
+        const wasmBinary = fs.readFileSync(path.join(process.cwd(), 'dist', 'engine.wasm'));
+        const compiled = await WebAssembly.compile(
+            wasmBinary.buffer.slice(
+                wasmBinary.byteOffset,
+                wasmBinary.byteOffset + wasmBinary.byteLength
+            )
+        );
+
+        const BrowserStylePancake = createPancakeApi(() => loadEngine({
+            instantiateWasm(imports, successCallback) {
+                WebAssembly.instantiate(compiled, imports)
+                    .then(instance => successCallback(instance))
+                    .catch(err => { throw err; });
+                return {};
+            }
+        }));
+
+        const idx = await BrowserStylePancake.create({ dim: 4, maxElements: 10 });
+        idx.add(new Float32Array([1, 0, 0, 0]));
+        const results = idx.search(new Float32Array([1, 0, 0, 0]), 1);
+        assert(results.length === 1 && results[0].id === 0, 'browser-style instantiateWasm path works');
+        idx.dispose();
+    }
+}
+
+
 async function testExportImport() {
     section('Export / Import');
 
@@ -500,6 +557,10 @@ async function testExportImport() {
 
     const vecs = Array.from({ length: 50 }, () => normalizedVec(DIM));
     const ids  = idx.addBatch(vecs);
+    idx.delete(ids[1]);
+    idx.delete(ids[3]);
+    idx.compact();
+    const extraId = idx.add(normalizedVec(DIM));
 
     const query   = vecs[0];
     const before  = idx.search(query, 5).map(r => r.id);
@@ -515,11 +576,16 @@ async function testExportImport() {
     const idx2 = await Pancake.create(DEFAULT_CONFIG);
     idx2.import(exported);
 
-    assert(idx2.count === 50, 'imported index has correct count');
+    assert(idx2.count === 49, 'imported index has correct count');
 
     const after = idx2.search(query, 5).map(r => r.id);
     const roundTrip = before.every((id, i) => id === after[i]);
     assert(roundTrip, 'search results identical after export/import round-trip');
+    assert(after.includes(ids[0]), 'stable external IDs survive round-trip');
+    assert(!after.includes(ids[1]), 'deleted external IDs stay deleted after compact+export/import');
+
+    const newId = idx2.add(normalizedVec(DIM));
+    assert(newId === extraId + 1, 'new IDs continue from nextExtId after import');
 
     idx2.dispose();
 }
@@ -745,6 +811,60 @@ async function testErrorPaths() {
         assert(msg.includes('no longer supported'), 'import rejects deprecated DCT/PCA envelopes');
         dst.dispose();
     }
+
+    // Import of truncated v3 envelope is rejected
+    {
+        const src = await Pancake.create(DEFAULT_CONFIG);
+        src.addBatch(Array.from({ length: 10 }, () => normalizedVec(DIM)));
+        const exported = src.export();
+        src.dispose();
+
+        const truncated = exported.subarray(0, exported.byteLength - 3);
+        const dst = await Pancake.create(DEFAULT_CONFIG);
+        let msg = '';
+        try { dst.import(truncated); } catch (e) { msg = e.message; }
+        assert(msg.includes('truncated v3 envelope payload'), 'import rejects truncated v3 payload');
+        dst.dispose();
+    }
+
+    // Import of v3 envelope with invalid nextExtId is rejected
+    {
+        const src = await Pancake.create(DEFAULT_CONFIG);
+        src.addBatch(Array.from({ length: 5 }, () => normalizedVec(DIM)));
+        const exported = new Uint8Array(src.export());
+        src.dispose();
+
+        const view = new DataView(exported.buffer, exported.byteOffset, exported.byteLength);
+        view.setUint32(20, 1, true);
+
+        const dst = await Pancake.create(DEFAULT_CONFIG);
+        let msg = '';
+        try { dst.import(exported); } catch (e) { msg = e.message; }
+        assert(msg.includes('nextExtId is invalid'), 'import rejects v3 envelope with invalid nextExtId');
+        dst.dispose();
+    }
+
+    // Import of v3 envelope with mismatched mapping count is rejected
+    {
+        const src = await Pancake.create(DEFAULT_CONFIG);
+        src.addBatch(Array.from({ length: 5 }, () => normalizedVec(DIM)));
+        const exported = new Uint8Array(src.export());
+        src.dispose();
+
+        const view = new DataView(exported.buffer, exported.byteOffset, exported.byteLength);
+        view.setUint32(24, 4, true);
+        const oldOffset = 32 + 5 * 8;
+        const newOffset = 32 + 4 * 8;
+        const wasmBytes = exported.slice(oldOffset);
+        exported.set(wasmBytes, newOffset);
+        view.setUint32(28, wasmBytes.byteLength, true);
+
+        const dst = await Pancake.create(DEFAULT_CONFIG);
+        let msg = '';
+        try { dst.import(exported); } catch (e) { msg = e.message; }
+        assert(msg.includes('mapping count mismatch'), 'import rejects v3 envelope with mapping-count mismatch');
+        dst.dispose();
+    }
 }
 
 
@@ -949,56 +1069,65 @@ async function testMaxElementsOverflow() {
 async function testExportImportWithGhosts() {
     section('Export / Import — with ghosts');
 
-    // Whether ghosts survive export/import depends on the backend:
-    // - QuantizedHNSW (384D, 1536D templates): persists deleted[] bitmap
-    // - Int8FloatHNSW (all other dims): resets deleted state on deserialize
-    // Use compact() before export for a guaranteed clean snapshot.
-
     const idx = await Pancake.create(DEFAULT_CONFIG);
     const vecs = Array.from({ length: 20 }, () => normalizedVec(DIM));
     const ids  = idx.addBatch(vecs);
 
-    // Delete some vectors before exporting
     const deletedIndices = [0, 5, 10];
     for (const i of deletedIndices) idx.delete(ids[i]);
     assert(idx.ghostCount === 3, 'ghostCount is 3 before export');
 
-    const exported = idx.export();
+    let msg = '';
+    try { idx.export(); } catch (e) { msg = e.message; }
+    assert(msg.includes('compact() required before export'), 'export() with ghosts throws explicit compact-required error');
 
-    // Re-import into a fresh index
-    const idx2 = await Pancake.create(DEFAULT_CONFIG);
-    idx2.import(exported);
-
-    // Int8FloatHNSW resets deleted state: all 20 vectors come back alive
-    assert(idx2.count === 20, 'import restores all 20 vectors');
-    assert(idx2.ghostCount === 0, 'imported index reports 0 ghosts (Int8FloatHNSW resets deleted state)');
-
-    // All vectors (including the 3 that were deleted pre-export) are now findable
-    let recall = 0;
-    for (const vec of vecs) {
-        const r = idx2.search(vec, 1);
-        if (r.length > 0 && r[0].distance < 0.01) recall++;
-    }
-    assert(recall >= 18, `all vectors findable after import (${recall}/20)`);
-
-    // Contrast: compact() before export strips ghosts cleanly
     idx.compact();
     assert(idx.count === 17, 'compact() reduces count to 17 live vectors');
     const compactExported = idx.export();
 
-    const idx3 = await Pancake.create(DEFAULT_CONFIG);
-    idx3.import(compactExported);
-    assert(idx3.count === 17, 'import after compact() gives 17 vectors');
+    const idx2 = await Pancake.create(DEFAULT_CONFIG);
+    idx2.import(compactExported);
+    assert(idx2.count === 17, 'import after compact() gives 17 vectors');
 
-    // Deleted vectors are no longer present after compact+export+import
     let ghostLeak = 0;
     for (const i of deletedIndices) {
-        const r = idx3.search(vecs[i], 1);
+        const r = idx2.search(vecs[i], 1);
         if (r.length > 0 && r[0].distance < 0.001) ghostLeak++;
     }
     assert(ghostLeak === 0, 'compact()+export()+import() produces clean snapshot with no ghost data');
 
-    idx3.dispose();
+    idx2.dispose();
+    idx.dispose();
+}
+
+
+async function testExportImportWithGhostsQuantized() {
+    section('Export / Import — with ghosts (quantized)');
+
+    const idx = await Pancake.create({
+        ...DEFAULT_CONFIG,
+        quantized: true,
+    });
+    const vecs = Array.from({ length: 20 }, () => normalizedVec(DIM));
+    const ids  = idx.addBatch(vecs);
+
+    idx.delete(ids[2]);
+    idx.delete(ids[7]);
+    assert(idx.ghostCount === 2, 'quantized: ghostCount is 2 before export');
+
+    let msg = '';
+    try { idx.export(); } catch (e) { msg = e.message; }
+    assert(msg.includes('compact() required before export'), 'quantized: export() with ghosts throws explicit compact-required error');
+
+    idx.compact();
+    const exported = idx.export();
+    const idx2 = await Pancake.create({
+        ...DEFAULT_CONFIG,
+        quantized: true,
+    });
+    idx2.import(exported);
+    assert(idx2.count === 18, 'quantized: import after compact preserves live count');
+
     idx2.dispose();
     idx.dispose();
 }
@@ -1047,6 +1176,55 @@ async function testAddBatchPartialFailure() {
         assert(idx.count === 0, 'count still 0 after all-wrong-dim batch');
         idx.dispose();
     }
+
+    // addBatch exceeding remaining capacity must not partially insert
+    {
+        const idx = await Pancake.create({ ...DEFAULT_CONFIG, maxElements: 5 });
+        const existingIds = idx.addBatch(Array.from({ length: 4 }, () => normalizedVec(DIM)));
+        let threw = false;
+        try {
+            idx.addBatch([normalizedVec(DIM), normalizedVec(DIM)]);
+        } catch (e) {
+            threw = true;
+        }
+        assert(threw, 'addBatch exceeding remaining capacity throws');
+        assert(idx.count === 4, 'count unchanged after remaining-capacity overflow');
+        const results = idx.search(normalizedVec(DIM), 10);
+        const ids = new Set(results.map(r => r.id));
+        assert(Array.from(ids).every(id => existingIds.includes(id)), 'no new IDs leak after failed remaining-capacity batch');
+        idx.dispose();
+    }
+}
+
+
+async function testIdLifecycleAcrossCompaction() {
+    section('ID lifecycle across compaction');
+
+    const idx = await Pancake.create(DEFAULT_CONFIG);
+    const initialIds = idx.addBatch(Array.from({ length: 6 }, () => normalizedVec(DIM)));
+
+    idx.delete(initialIds[1]);
+    idx.delete(initialIds[4]);
+    idx.compact();
+
+    const afterFirstCompact = idx.add(normalizedVec(DIM));
+    assert(afterFirstCompact === 6, 'new ID after first compact continues monotonically');
+
+    idx.delete(initialIds[0]);
+    idx.delete(afterFirstCompact);
+    idx.compact();
+
+    const afterSecondCompact = idx.add(normalizedVec(DIM));
+    assert(afterSecondCompact === 7, 'new ID after second compact continues monotonically');
+
+    const exported = idx.export();
+    const idx2 = await Pancake.create(DEFAULT_CONFIG);
+    idx2.import(exported);
+    const afterImport = idx2.add(normalizedVec(DIM));
+    assert(afterImport === 8, 'new ID after import still continues monotonically');
+
+    idx2.dispose();
+    idx.dispose();
 }
 
 
@@ -1224,6 +1402,7 @@ async function main() {
         testDispose,
         testDeterminism,
         testSearchDuringMutation,
+        testRuntimeEntryPoints,
         testExportImport,
         testLargeIndex,
         testQuantized,
@@ -1231,7 +1410,9 @@ async function main() {
         testEdgeCases,
         testMaxElementsOverflow,
         testExportImportWithGhosts,
+        testExportImportWithGhostsQuantized,
         testAddBatchPartialFailure,
+        testIdLifecycleAcrossCompaction,
         testZeroAndDegenerateVectors,
         testDeterminismIds,
         testMetricCorrectnessQuantized,
