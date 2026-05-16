@@ -7,7 +7,7 @@
  * This is the primary worker demo for the 384D real-embedding flow using
  * `dist/vectors.bin` over the HTTP API.
  *
- * Proves: init, bulk insert, search, recall, deterministic search,
+ * Checks: init, bulk insert, search, recall, deterministic search,
  * export/import round-trip, latency, and sustained load.
  *
  * Usage:
@@ -26,6 +26,9 @@ const BASE_URL = process.env.PANCAKE_URL || 'http://localhost:8787';
 const DIMS = 384;
 const K = 10;
 const MAX_ELEM = 5_000;
+const LATENCY_CHECK_QUERIES = 50;
+const AVG_LATENCY_THRESHOLD_MS = 10;
+const P99_LATENCY_THRESHOLD_MS = 25;
 const VECTORS_PATH = path.join(__dirname, '..', '..', 'dist', 'vectors.bin');
 const DEFAULT_EXPORT_PATH = path.join(__dirname, 'pancake-index.bin');
 
@@ -33,7 +36,8 @@ const PROOFS = [
     { id: 'load', text: 'Real embeddings loaded from vectors.bin' },
     { id: 'init', text: 'Index initialized via worker API' },
     { id: 'search', text: 'Successful search via worker API' },
-    { id: 'low_latency', text: 'Search latency < 10ms (including HTTP)' },
+    { id: 'avg_latency', text: `Average end-to-end search latency under ${AVG_LATENCY_THRESHOLD_MS}ms over ${LATENCY_CHECK_QUERIES} HTTP queries` },
+    { id: 'p99_latency', text: `P99 end-to-end search latency under ${P99_LATENCY_THRESHOLD_MS}ms over ${LATENCY_CHECK_QUERIES} HTTP queries` },
     { id: 'insert', text: 'Live vector insertion post-build' },
     { id: 'delete', text: 'Live vector deletion via API' },
     { id: 'ghosts', text: 'Ghost node accumulation visible' },
@@ -46,8 +50,8 @@ const PROOFS = [
     { id: 'import', text: 'Index restored from binary (import round-trip)' },
     { id: 'self_recall', text: 'Self-recall: inserted vectors found at rank 1 (50/50)' },
     { id: 'recall_at_k', text: 'Recall@10 >= 95% vs brute-force (50 queries)' },
-    { id: 'stable', text: 'Latency stable under sustained mutation' },
-    { id: 'stress', text: 'Survived adversarial stress test' }
+    { id: 'stable', text: 'Met sustained-mutation latency thresholds' },
+    { id: 'stress', text: 'Completed mixed-workload stress run within demo thresholds' }
 ];
 
 const ADV_MODES = {
@@ -55,7 +59,7 @@ const ADV_MODES = {
     churn: { name: 'Memory Churn', insert: 500, delete: 500, search: 100, desc: 'Equal inserts + deletes -> memory pressure' },
     read: { name: 'Read-Heavy', insert: 10, delete: 10, search: 1000, desc: 'Search-dominated workload' },
     write: { name: 'Write-Heavy', insert: 1000, delete: 800, search: 50, desc: 'Insert-dominated workload' },
-    worst: { name: 'Worst-Case Adversarial', insert: 500, delete: 490, search: 1000, desc: 'Max stress on all paths simultaneously' }
+    worst: { name: 'Max-Load Mixed', insert: 500, delete: 490, search: 1000, desc: 'High combined load across insert, delete, and search' }
 };
 
 function sleep(ms) {
@@ -236,8 +240,17 @@ class TechnicalDemoWorker {
         this.latencyHistory.push(latency);
         if (this.latencyHistory.length > 1000) this.latencyHistory.shift();
         this.markProof('search');
-        if (latency < 10) this.markProof('low_latency');
         return { ...res.data, client_latency: latency };
+    }
+
+    evaluateLatencyChecks(latencies) {
+        if (latencies.length < LATENCY_CHECK_QUERIES) return;
+        const avg = latencies.reduce((sum, value) => sum + value, 0) / latencies.length;
+        const sorted = [...latencies].sort((a, b) => a - b);
+        const p99 = percentile(sorted, 0.99) ?? Infinity;
+
+        if (avg < AVG_LATENCY_THRESHOLD_MS) this.markProof('avg_latency');
+        if (p99 < P99_LATENCY_THRESHOLD_MS) this.markProof('p99_latency');
     }
 
     async deleteVector(id) {
@@ -313,7 +326,7 @@ class TechnicalDemoWorker {
     }
 
     printChecklist() {
-        process.stdout.write('\nProof Checklist\n');
+        process.stdout.write('\nValidation Checklist\n');
         for (const proof of PROOFS) {
             const marker = this.proofState[proof.id] ? '[PASS]' : '[    ]';
             process.stdout.write(`  ${marker} ${proof.text}\n`);
@@ -325,7 +338,7 @@ class TechnicalDemoWorker {
         process.stdout.write('\nCommands\n');
         process.stdout.write('  help                                 Show commands\n');
         process.stdout.write('  status                               Show index metrics\n');
-        process.stdout.write('  checklist                            Show proof checklist\n');
+        process.stdout.write('  checklist                            Show validation checklist\n');
         process.stdout.write('  build <count>                        Build index (default 5000)\n');
         process.stdout.write('  reset                                Reset the index\n');
         process.stdout.write('  search <count>                       Run N random searches\n');
@@ -334,7 +347,8 @@ class TechnicalDemoWorker {
         process.stdout.write('  compact                              Run compaction\n');
         process.stdout.write(`  export [path]                        Export index to file (default: ${path.basename(DEFAULT_EXPORT_PATH)})\n`);
         process.stdout.write('  import <path>                        Import index from file\n');
-        process.stdout.write('  proof <all|deterministic|deletion|compaction|memory|stability|export|self-recall|recall>\n');
+        process.stdout.write('  validate <all|deterministic|deletion|compaction|memory|stability|export|self-recall|recall>\n');
+        process.stdout.write('  proof <...>                          Alias for validate\n');
         process.stdout.write('  stress <ghost|churn|read|write|worst> [seconds]\n');
         process.stdout.write('  quit                                 Exit\n\n');
     }
@@ -378,12 +392,18 @@ class TechnicalDemoWorker {
     async performSearches(count) {
         this.log(`Running ${count} search${count === 1 ? '' : 'es'}...`, 'info');
         let total = 0;
+        const latencies = [];
         for (let i = 0; i < count; i++) {
             const res = await this.search(this.randomLoadedVec());
             total += res.client_latency;
+            latencies.push(res.client_latency);
             if ((i + 1) % 20 === 0) await sleep(0);
         }
+        this.evaluateLatencyChecks(latencies);
+        const sorted = [...latencies].sort((a, b) => a - b);
+        const p99 = percentile(sorted, 0.99) ?? 0;
         this.log(`Average latency: ${(total / count).toFixed(2)}ms`, 'success');
+        this.log(`P99 latency: ${p99.toFixed(2)}ms`, 'info');
         await this.printFullStatus();
     }
 
@@ -445,7 +465,7 @@ class TechnicalDemoWorker {
     // ---- Proofs ----
 
     async proveDeterministic() {
-        this.log('Proof: deterministic search', 'info');
+        this.log('Check: deterministic search', 'info');
         const vec = this.randomLoadedVec();
         const results = [];
         for (let run = 0; run < 3; run++) {
@@ -456,13 +476,13 @@ class TechnicalDemoWorker {
         const allSame = results.every((ids) =>
             ids.length === results[0].length && ids.every((id, idx) => id === results[0][idx])
         );
-        if (!allSame) throw new Error('deterministic proof failed');
+        if (!allSame) throw new Error('deterministic check failed');
         this.markProof('deterministic');
         this.log('Deterministic search verified across 3 runs', 'success');
     }
 
     async proveDeletionExclusion() {
-        this.log('Proof: deleted vectors excluded from results', 'info');
+        this.log('Check: deleted vectors excluded from results', 'info');
         const vec = this.randomSyntheticVec();
         const addRes = await this.addVector(vec);
         const id = addRes.id;
@@ -482,7 +502,7 @@ class TechnicalDemoWorker {
     }
 
     async proveSearchDuringCompaction() {
-        this.log('Proof: immediate search after compaction', 'info');
+        this.log('Check: immediate search after compaction', 'info');
         const stats = await this.getStats();
         if (stats.ghost_count < 10) await this.deleteVectors(100);
         await this.compact();
@@ -493,7 +513,7 @@ class TechnicalDemoWorker {
     }
 
     async proveMemoryDecrease() {
-        this.log('Proof: memory decreases after compaction', 'info');
+        this.log('Check: memory decreases after compaction', 'info');
         const stats = await this.getStats();
         if (stats.ghost_count < 50) await this.deleteVectors(200);
         const before = (await this.getStats()).memory_bytes;
@@ -505,7 +525,7 @@ class TechnicalDemoWorker {
     }
 
     async proveSustainedStability() {
-        this.log('Proof: latency stability under sustained mutation', 'info');
+        this.log('Check: sustained-mutation latency thresholds', 'info');
         const duration = 5000;
         const t0 = performance.now();
         const lats = [];
@@ -541,7 +561,7 @@ class TechnicalDemoWorker {
     }
 
     async proveExportImport() {
-        this.log('Proof: export/import round-trip', 'info');
+        this.log('Check: export/import round-trip', 'info');
         const healthBefore = await this.checkHealth();
         const countBefore = healthBefore.count;
         if (countBefore === 0) throw new Error('index is empty');
@@ -563,7 +583,7 @@ class TechnicalDemoWorker {
 
     async proveSelfRecall() {
         const trials = 50;
-        this.log(`Proof: self-recall (${trials} trials)`, 'info');
+        this.log(`Check: self-recall (${trials} trials)`, 'info');
         let hits = 0;
         for (let i = 0; i < trials; i++) {
             const vec = this.randomSyntheticVec();
@@ -582,7 +602,7 @@ class TechnicalDemoWorker {
     async proveRecallAtK() {
         const queryCount = 50;
         const topK = 10;
-        this.log(`Proof: recall@${topK} vs brute-force (${queryCount} queries)`, 'info');
+        this.log(`Check: recall@${topK} vs brute-force (${queryCount} queries)`, 'info');
 
         const stats = await this.getStats();
         const count = stats.count;
@@ -714,7 +734,7 @@ class TechnicalDemoWorker {
     }
 
     async runFullProofSequence() {
-        this.log('Starting full proof sequence against worker API...', 'info');
+        this.log('Starting full validation run against worker API...', 'info');
         this.log(`Target: ${BASE_URL}`, 'info');
         await sleep(100);
 
@@ -723,7 +743,7 @@ class TechnicalDemoWorker {
 
         await this.buildIndex(4000);
         await sleep(100);
-        await this.performSearches(10);
+        await this.performSearches(LATENCY_CHECK_QUERIES);
         await sleep(100);
         await this.proveRecallAtK();
         await sleep(100);
@@ -744,7 +764,7 @@ class TechnicalDemoWorker {
         await this.proveSustainedStability();
         await sleep(100);
         await this.proveExportImport();
-        this.log('Full proof sequence complete', 'success');
+        this.log('Full validation run complete', 'success');
         this.printChecklist();
     }
 
@@ -790,6 +810,7 @@ class TechnicalDemoWorker {
             if (!args[0]) throw new Error('import requires a file path');
             await this.importFromFile(args[0]);
             return true;
+        case 'validate':
         case 'proof':
             await this.handleProofCommand(args);
             return true;
