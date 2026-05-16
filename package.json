@@ -42,7 +42,9 @@
   ],
   "scripts": {
     "build": "bash build.sh",
-    "test": "node run_tests.js"
+    "test": "node run_tests.js",
+    "test:browser": "node test/browser_smoke.js",
+    "test:simd": "node test/simd_parity.js"
   },
   "keywords": [
     "vector-search",
@@ -77,10 +79,9 @@
   "sideEffects": false,
   "devDependencies": {
     "hnswlib-node": "^3.0.0",
+    "playwright": "^1.60.0",
     "usearch": "^2.25.1",
+    "vite": "^8.0.12",
     "wrangler": "^4.81.1"
-  },
-  "dependencies": {
-    "faiss-node": "^0.5.1"
   }
 }
