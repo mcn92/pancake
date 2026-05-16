@@ -224,7 +224,7 @@
                 <div class="panel-title green">Index Operations</div>
 
                 <div class="control-group">
-                    <div class="control-label">Build from real embeddings (384D · cosine)</div>
+                    <div class="control-label">Build from real embeddings (384D · cosine · synchronous main-thread build)</div>
                     <div class="button-group">
                         <button class="primary" id="btn-build-10k">Index 10K Vectors</button>
                         <button id="btn-build-100k">Index 100K Vectors</button>
@@ -373,7 +373,7 @@ const DIMS            = 384;
 const K               = 10;
 const MAX_ELEM        = 110_000;
 const VECTORS_URL     = 'vectors.bin';      // 100K x 384 float32
-const BUILD_BATCH     = 10000;              // vectors per bulk_insert call
+const BUILD_BATCH     = 1000;               // vectors per bulk_insert call; smaller to reduce main-thread stalls
 
 // ─── Proof definitions ────────────────────────────────────────────────────────
 const PROOFS = [
@@ -748,6 +748,31 @@ function measureInsertIntegrity() {
     return hits / SELF_RECALL_TRIALS;
 }
 
+// Baseline search latency on the current index, with no concurrent
+// mutation. Used to derive a per-machine threshold for the post-stress
+// latency check, so a 5x p99 regression fails the proof on any hardware
+// instead of relying on a hardcoded "p99 < 5ms" that's calibrated to one
+// laptop.
+function measureBaselineLatency(opts = {}) {
+    const SAMPLES = opts.samples || 200;
+    if (!engine || liveVectors.size < 1) return null;
+
+    const lats = [];
+    for (let i = 0; i < SAMPLES; i++) {
+        engine.HEAPF32.set(randomLoadedVec(), queryPtr >> 2);
+        const t0 = performance.now();
+        engine._pancake_query(handle, queryPtr, K, resultIdPtr, resultDistPtr);
+        lats.push(performance.now() - t0);
+    }
+    lats.sort((a, b) => a - b);
+    return {
+        p50: lats[Math.floor(lats.length * 0.5)],
+        p95: lats[Math.floor(lats.length * 0.95)],
+        p99: lats[Math.floor(lats.length * 0.99)],
+        samples: lats.length,
+    };
+}
+
 // Post-stress recall@K vs. exact brute-force ground truth.
 // Recomputes ground truth fresh against the current live index state so
 // the metric is meaningful even after heavy mutation. Returns:
@@ -874,6 +899,7 @@ async function init() {
     markProof('load');
     log(`Engine ready. ${totalVectors.toLocaleString()} real embeddings available (384D, cosine).`, 'success');
     log('Click "Index 10K Vectors" or "Index 100K Vectors" to build the index.', 'info');
+    log('Bulk build is synchronous and runs on the main thread. For large browser indexes, prefer prebuilt snapshots or a Web Worker.', 'warn');
 
     enableButtons(['btn-build-10k', 'btn-build-100k']);
 }
@@ -1488,7 +1514,7 @@ async function runFullProofSequence() {
 
 // ─── Adversarial tests ────────────────────────────────────────────────────────
 const ADV_MODES = {
-    ghost: { name: 'Ghost Explosion',        insert: 100, delete: 500, search: 100,  desc: 'Rapid deletions → ghost accumulation' },
+    ghost: { name: 'Ghost Explosion',        insert: 100, delete: 1500, search: 100,  desc: 'Rapid deletions → ghost accumulation' },
     churn: { name: 'Memory Churn',           insert: 500, delete: 500, search: 100,  desc: 'Equal inserts + deletes → memory pressure' },
     read:  { name: 'Read-Heavy',             insert: 10,  delete: 10,  search: 1000, desc: 'Search-dominated workload' },
     write: { name: 'Write-Heavy',            insert: 1000,delete: 800, search: 50,   desc: 'Insert-dominated workload' },
@@ -1533,6 +1559,17 @@ async function startAdversarialTest(mode) {
         log(`  Baseline recall@10: ${(baselineRecall * 100).toFixed(1)}% (${baseline.candidateCount.toLocaleString()} live vectors)`, 'success');
     }
 
+    // Measure baseline search latency on the fresh, unmutated index. Used
+    // at end-of-run to assert "stress didn't degrade latency by more than
+    // a fixed multiplier" — a differential check that's robust across
+    // machines, rather than a hardcoded "p99 < 5ms" that's calibrated to
+    // pass on the author's laptop.
+    const baselineLatency = measureBaselineLatency({ samples: 200 });
+    if (baselineLatency !== null) {
+        log(`  Baseline latency: p50=${baselineLatency.p50.toFixed(2)}ms, p99=${baselineLatency.p99.toFixed(2)}ms ` +
+            `(${baselineLatency.samples} samples, no concurrent mutation)`, 'success');
+    }
+
     adversarialRunning = true;
     // The "completion" promise resolves once stopAdversarialTest finishes
     // (whether via timeout or manual stop). The sequencer awaits this so
@@ -1544,9 +1581,12 @@ async function startAdversarialTest(mode) {
         startTime: performance.now(),
         inserts: 0, deletes: 0, searches: 0,
         latencies: [],
+        latencyTimestamps: [],   // ms since startTime, parallel to latencies
+        compactDurations: [],    // wall-time ms for each auto-compact event
         intervals: [],
         lastRecall: null,
         baselineRecall,
+        baselineLatency,
         mode,
         resolveCompletion,
     };
@@ -1578,23 +1618,33 @@ async function startAdversarialTest(mode) {
         }
     }, 1000 / cfg.delete);
 
-    // Search loop
+    // Search loop. We record (timestamp, latency) for every search so the
+    // post-run analysis can compute time-windowed percentiles. The previous
+    // implementation shifted off old entries to cap memory at 1000 samples,
+    // which at 1000 searches/sec meant the reported p99 was effectively the
+    // last second of data — masking any drift over the run. 30s × 1000/s =
+    // 30k entries × 16 bytes ≈ 480 KB, trivially bounded.
     if (cfg.search > 0) addInterval(() => {
         engine.HEAPF32.set(randomLoadedVec(), queryPtr >> 2);
         const t0 = performance.now();
         engine._pancake_query(handle, queryPtr, K, resultIdPtr, resultDistPtr);
         const lat = performance.now() - t0;
         adversarialState.latencies.push(lat);
+        adversarialState.latencyTimestamps.push(t0 - adversarialState.startTime);
         adversarialState.searches++;
-        if (adversarialState.latencies.length > 1000) adversarialState.latencies.shift();
         recordChartSample(lat);
     }, 1000 / cfg.search);
 
-    // Auto-compact loop
+    // Auto-compact loop. Each compaction's wall time is recorded so we can
+    // report cost-per-event at the end. Folded into general latency, a
+    // 50 ms compaction would be invisible among thousands of 0.5 ms queries.
     if (autoCompact) adversarialState.intervals.push(setInterval(() => {
         if (engine._pancake_ghost_ratio(handle) > 0.15) {
+            const cStart = performance.now();
             compactAndRemap();
+            const cMs = performance.now() - cStart;
             compactionCount++;
+            adversarialState.compactDurations.push(cMs);
             recordChartSample(0, true);
         }
     }, 1000));
@@ -1630,8 +1680,75 @@ function stopAdversarialTest() {
         const p50    = sorted[Math.floor(sorted.length * 0.5)];
         const p99    = sorted[Math.floor(sorted.length * 0.99)];
         const max    = sorted[sorted.length - 1];
-        log(`  Latency: p50=${p50.toFixed(2)}ms, p99=${p99.toFixed(2)}ms, max=${max.toFixed(2)}ms`, 'success');
-        if (p99 < 5.0 && max < 20.0) markProof('stress');
+        log(`  Latency (full run, ${sorted.length} samples): p50=${p50.toFixed(2)}ms, p99=${p99.toFixed(2)}ms, max=${max.toFixed(2)}ms`, 'success');
+
+        // Time-windowed breakdown — splits the run into ~6 windows and
+        // reports p50/p99 per window. The interesting failure mode is
+        // "fine for the first 20 seconds, degraded in the last 10" — a
+        // single overall p99 hides that.
+        const ts = adversarialState.latencyTimestamps;
+        if (ts.length > 0 && ts[ts.length - 1] > 0) {
+            const runMs = ts[ts.length - 1];
+            const N_WINDOWS = 6;
+            const windowMs = runMs / N_WINDOWS;
+            const windows = Array.from({ length: N_WINDOWS }, () => []);
+            for (let i = 0; i < ts.length; i++) {
+                const w = Math.min(N_WINDOWS - 1, Math.floor(ts[i] / windowMs));
+                windows[w].push(adversarialState.latencies[i]);
+            }
+            log(`  Latency drift (${N_WINDOWS} windows × ${(windowMs/1000).toFixed(1)}s):`, 'info');
+            for (let w = 0; w < N_WINDOWS; w++) {
+                const samples = windows[w];
+                if (samples.length === 0) { log(`    [w${w+1}] (no samples)`, 'info'); continue; }
+                const ws = samples.slice().sort((a, b) => a - b);
+                const wp50 = ws[Math.floor(ws.length * 0.5)];
+                const wp99 = ws[Math.floor(ws.length * 0.99)];
+                log(`    [w${w+1}] n=${ws.length.toString().padStart(4)}  p50=${wp50.toFixed(2)}ms  p99=${wp99.toFixed(2)}ms`, 'info');
+            }
+        }
+
+        // Compaction-cost breakdown. Reported separately because folded
+        // into query latency it'd be invisible (one 50 ms event vs.
+        // thousands of 0.5 ms queries averages to nothing).
+        const cd = adversarialState.compactDurations;
+        if (cd.length > 0) {
+            const cdSorted = cd.slice().sort((a, b) => a - b);
+            const cMax = cdSorted[cdSorted.length - 1];
+            const cMean = cd.reduce((a, b) => a + b, 0) / cd.length;
+            log(`  Compactions: ${cd.length} event(s), mean=${cMean.toFixed(1)}ms, max=${cMax.toFixed(1)}ms`, 'info');
+        } else {
+            log(`  Compactions: 0 events (ghost ratio never crossed threshold)`, 'info');
+        }
+
+        // Differential latency check. The previous version used a
+        // hardcoded "p99 < 5 && max < 20" threshold calibrated to pass
+        // on the author's laptop; that catches nothing on faster hardware
+        // and arbitrarily fails on slower hardware. The differential
+        // check asks the only question that matters: did stress meaningfully
+        // degrade latency vs. the unmutated baseline?
+        const baseLat = adversarialState.baselineLatency;
+        let stressPassed = false;
+        if (baseLat !== null) {
+            // Allow generous headroom: stress involves mutation, GC pressure,
+            // and possibly a compaction. 3x p50 and 4x p99 are comfortable
+            // bounds that still catch real regressions.
+            const P50_FACTOR = 3.0;
+            const P99_FACTOR = 4.0;
+            const p50Budget = baseLat.p50 * P50_FACTOR;
+            const p99Budget = baseLat.p99 * P99_FACTOR;
+            const p50Ok = p50 <= p50Budget;
+            const p99Ok = p99 <= p99Budget;
+            const p50Ratio = (p50 / baseLat.p50).toFixed(2);
+            const p99Ratio = (p99 / baseLat.p99).toFixed(2);
+            log(`  vs. baseline: p50 ${p50Ratio}× (budget ${P50_FACTOR}×), p99 ${p99Ratio}× (budget ${P99_FACTOR}×)`,
+                p50Ok && p99Ok ? 'success' : 'error');
+            stressPassed = p50Ok && p99Ok;
+        } else {
+            // Fall back to the absolute threshold if baseline measurement
+            // wasn't available (shouldn't happen on a well-built index).
+            stressPassed = (p99 < 5.0 && max < 20.0);
+        }
+        if (stressPassed) markProof('stress');
     }
 
     // Post-stress measurement: recall@10 vs. fresh brute-force ground truth.
@@ -1684,7 +1801,9 @@ function stopAdversarialTest() {
         mode: adversarialState.mode,
         baselineRecall: adversarialState.baselineRecall,
         postStressRecall: adversarialState.lastRecall,
+        baselineLatency: adversarialState.baselineLatency,
         latencies: adversarialState.latencies.slice(),
+        compactDurations: adversarialState.compactDurations.slice(),
     });
 }
 
@@ -1713,22 +1832,37 @@ async function runAllAdversarialTests() {
         await sleep(1500);
     }
 
-    // Summary table
+    // Summary table — recall delta and latency drift side-by-side.
     log('=== ADVERSARIAL SEQUENCE COMPLETE — Summary ===', 'success');
-    log(`  ${'Test'.padEnd(22)} ${'Baseline'.padStart(10)} ${'Post-stress'.padStart(13)} ${'Δ (pp)'.padStart(10)}`, 'info');
-    log(`  ${'─'.repeat(22)} ${'─'.repeat(10)} ${'─'.repeat(13)} ${'─'.repeat(10)}`, 'info');
+    log(`  ${'Test'.padEnd(22)} ${'Recall Δ'.padStart(10)} ${'p50 ×base'.padStart(12)} ${'p99 ×base'.padStart(12)} ${'Compacts'.padStart(10)}`, 'info');
+    log(`  ${'─'.repeat(22)} ${'─'.repeat(10)} ${'─'.repeat(12)} ${'─'.repeat(12)} ${'─'.repeat(10)}`, 'info');
     for (const r of results) {
         const cfg = ADV_MODES[r.mode];
-        const baseStr = r.baselineRecall !== null ? (r.baselineRecall * 100).toFixed(1) + '%' : '—';
-        const postStr = r.postStressRecall !== null ? (r.postStressRecall * 100).toFixed(1) + '%' : '—';
-        let deltaStr = '—', deltaLabel = 'info';
+
+        // Recall delta (pp)
+        let recallStr = '—', recallLabel = 'info';
         if (r.baselineRecall !== null && r.postStressRecall !== null) {
             const delta = (r.postStressRecall - r.baselineRecall) * 100;
             const sign = delta >= 0 ? '+' : '';
-            deltaStr = `${sign}${delta.toFixed(1)}`;
-            deltaLabel = delta >= -2 ? 'success' : delta >= -10 ? 'warn' : 'error';
+            recallStr = `${sign}${delta.toFixed(1)}pp`;
+            recallLabel = delta >= -2 ? 'success' : delta >= -10 ? 'warn' : 'error';
         }
-        log(`  ${cfg.name.padEnd(22)} ${baseStr.padStart(10)} ${postStr.padStart(13)} ${deltaStr.padStart(10)}`, deltaLabel);
+
+        // Latency ratios vs. the test's own baseline
+        let p50Str = '—', p99Str = '—';
+        if (r.baselineLatency !== null && r.latencies && r.latencies.length > 0) {
+            const sorted = r.latencies.slice().sort((a, b) => a - b);
+            const p50 = sorted[Math.floor(sorted.length * 0.5)];
+            const p99 = sorted[Math.floor(sorted.length * 0.99)];
+            p50Str = (p50 / r.baselineLatency.p50).toFixed(2) + '×';
+            p99Str = (p99 / r.baselineLatency.p99).toFixed(2) + '×';
+        }
+
+        const compactStr = r.compactDurations && r.compactDurations.length > 0
+            ? `${r.compactDurations.length} (max ${Math.max(...r.compactDurations).toFixed(0)}ms)`
+            : '0';
+
+        log(`  ${cfg.name.padEnd(22)} ${recallStr.padStart(10)} ${p50Str.padStart(12)} ${p99Str.padStart(12)} ${compactStr.padStart(10)}`, recallLabel);
     }
 }
 
@@ -1740,7 +1874,13 @@ function updateAdversarialMetrics() {
     document.getElementById('adv-elapsed').textContent     = elapsed.toFixed(1) + 's';
 
     if (adversarialState.latencies.length > 10) {
-        const sorted = [...adversarialState.latencies].sort((a, b) => a - b);
+        // Live UI uses a tail window to keep per-tick cost bounded as the
+        // full latencies array grows unbounded for end-of-run analysis.
+        // Final summary uses the full array.
+        const TAIL = 2000;
+        const lats = adversarialState.latencies;
+        const slice = lats.length > TAIL ? lats.slice(lats.length - TAIL) : lats.slice();
+        const sorted = slice.sort((a, b) => a - b);
         const p50    = sorted[Math.floor(sorted.length * 0.5)];
         const p99    = sorted[Math.floor(sorted.length * 0.99)];
         const max    = sorted[sorted.length - 1];

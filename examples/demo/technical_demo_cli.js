@@ -9,6 +9,9 @@ const Pancake = require('../../dist/engine.js');
 const DIMS = 384;
 const K = 10;
 const MAX_ELEM = 110_000;
+const LATENCY_CHECK_QUERIES = 50;
+const AVG_LATENCY_THRESHOLD_MS = 2;
+const P99_LATENCY_THRESHOLD_MS = 5;
 const VECTORS_PATH = path.join(__dirname, '..', '..', 'dist', 'vectors.bin');
 const DEFAULT_EXPORT_PATH = path.join(__dirname, 'pancake-index.bin');
 
@@ -16,7 +19,8 @@ const PROOFS = [
     { id: 'load', text: 'Real embeddings loaded from vectors.bin' },
     { id: 'init', text: 'Index built from real embedding data' },
     { id: 'search', text: 'Successful search execution' },
-    { id: 'low_latency', text: 'Search latency < 2ms p50' },
+    { id: 'avg_latency', text: `Average search latency under ${AVG_LATENCY_THRESHOLD_MS}ms over ${LATENCY_CHECK_QUERIES} queries` },
+    { id: 'p99_latency', text: `P99 search latency under ${P99_LATENCY_THRESHOLD_MS}ms over ${LATENCY_CHECK_QUERIES} queries` },
     { id: 'insert', text: 'Live vector insertion post-build' },
     { id: 'delete', text: 'Live vector deletion' },
     { id: 'ghosts', text: 'Ghost node accumulation visible' },
@@ -29,8 +33,8 @@ const PROOFS = [
     { id: 'import', text: 'Index restored from binary (import round-trip)' },
     { id: 'self_recall', text: 'Self-recall: inserted vectors found at rank 1 (50/50)' },
     { id: 'recall_at_k', text: 'Recall@10 >= 90% vs brute-force (50 queries)' },
-    { id: 'stable', text: 'Latency stable under sustained mutation' },
-    { id: 'stress', text: 'Survived adversarial stress test' }
+    { id: 'stable', text: 'Met sustained-mutation latency thresholds' },
+    { id: 'stress', text: 'Completed mixed-workload stress run within demo thresholds' }
 ];
 
 const ADV_MODES = {
@@ -38,7 +42,7 @@ const ADV_MODES = {
     churn: { name: 'Memory Churn', insert: 500, delete: 500, search: 100, desc: 'Equal inserts + deletes -> memory pressure' },
     read: { name: 'Read-Heavy', insert: 10, delete: 10, search: 1000, desc: 'Search-dominated workload' },
     write: { name: 'Write-Heavy', insert: 1000, delete: 800, search: 50, desc: 'Insert-dominated workload' },
-    worst: { name: 'Worst-Case Adversarial', insert: 500, delete: 490, search: 1000, desc: 'Max stress on all paths simultaneously' }
+    worst: { name: 'Max-Load Mixed', insert: 500, delete: 490, search: 1000, desc: 'High combined load across insert, delete, and search' }
 };
 
 function sleep(ms) {
@@ -187,7 +191,7 @@ class TechnicalDemoCLI {
     }
 
     printChecklist() {
-        process.stdout.write('\nProof Checklist\n');
+        process.stdout.write('\nValidation Checklist\n');
         for (const proof of PROOFS) {
             const marker = this.proofState[proof.id] ? '[PASS]' : '[    ]';
             process.stdout.write(`  ${marker} ${proof.text}\n`);
@@ -199,7 +203,7 @@ class TechnicalDemoCLI {
         process.stdout.write('\nCommands\n');
         process.stdout.write('  help                                 Show commands\n');
         process.stdout.write('  status                               Show index metrics\n');
-        process.stdout.write('  checklist                            Show proof checklist\n');
+        process.stdout.write('  checklist                            Show validation checklist\n');
         process.stdout.write('  build <count>                        Build index (default 100000)\n');
         process.stdout.write('  reset                                Reset the index\n');
         process.stdout.write('  search <count>                       Run N random searches\n');
@@ -208,7 +212,8 @@ class TechnicalDemoCLI {
         process.stdout.write('  compact                              Run compaction\n');
         process.stdout.write(`  export [path]                        Export index to file (default: ${path.basename(DEFAULT_EXPORT_PATH)})\n`);
         process.stdout.write('  import <path>                        Import index from file\n');
-        process.stdout.write('  proof <all|deterministic|deletion|compaction|memory|stability|export|self-recall|recall>\n');
+        process.stdout.write('  validate <all|deterministic|deletion|compaction|memory|stability|export|self-recall|recall>\n');
+        process.stdout.write('  proof <...>                          Alias for validate\n');
         process.stdout.write('  stress <ghost|churn|read|write|worst> [seconds]\n');
         process.stdout.write('  quit                                 Exit\n\n');
     }
@@ -220,9 +225,18 @@ class TechnicalDemoCLI {
         const latency = performance.now() - t0;
         this.latencyHistory.push(latency);
         if (this.latencyHistory.length > 1000) this.latencyHistory.shift();
-        if (latency < 2) this.markProof('low_latency');
         this.markProof('search');
         return { found, latency };
+    }
+
+    evaluateLatencyChecks(latencies) {
+        if (latencies.length < LATENCY_CHECK_QUERIES) return;
+        const avg = latencies.reduce((sum, value) => sum + value, 0) / latencies.length;
+        const sorted = [...latencies].sort((a, b) => a - b);
+        const p99 = percentile(sorted, 0.99) ?? Infinity;
+
+        if (avg < AVG_LATENCY_THRESHOLD_MS) this.markProof('avg_latency');
+        if (p99 < P99_LATENCY_THRESHOLD_MS) this.markProof('p99_latency');
     }
 
     readIds(found) {
@@ -273,11 +287,18 @@ class TechnicalDemoCLI {
         this.requireIndexedData('search');
         this.log(`Running ${count} search${count === 1 ? '' : 'es'}...`, 'info');
         let total = 0;
+        const latencies = [];
         for (let i = 0; i < count; i++) {
-            total += this.doSearch(this.randomLoadedVec()).latency;
+            const { latency } = this.doSearch(this.randomLoadedVec());
+            total += latency;
+            latencies.push(latency);
             if ((i + 1) % 20 === 0) await sleep(0);
         }
+        this.evaluateLatencyChecks(latencies);
+        const sorted = [...latencies].sort((a, b) => a - b);
+        const p99 = percentile(sorted, 0.99) ?? 0;
         this.log(`Average latency: ${(total / count).toFixed(2)}ms`, 'success');
+        this.log(`P99 latency: ${p99.toFixed(2)}ms`, 'info');
         this.printStatus();
     }
 
@@ -382,8 +403,8 @@ class TechnicalDemoCLI {
     }
 
     async proveDeterministic() {
-        this.requireIndexedData('proof deterministic');
-        this.log('Proof: deterministic search', 'info');
+        this.requireIndexedData('validation deterministic');
+        this.log('Check: deterministic search', 'info');
         const vec = this.randomLoadedVec();
         const results = [];
         for (let run = 0; run < 3; run++) {
@@ -395,14 +416,14 @@ class TechnicalDemoCLI {
         const allSame = results.every((ids) =>
             ids.length === results[0].length && ids.every((id, idx) => id === results[0][idx])
         );
-        if (!allSame) throw new Error('deterministic proof failed');
+        if (!allSame) throw new Error('deterministic check failed');
         this.markProof('deterministic');
         this.log('Deterministic search verified across 3 runs', 'success');
     }
 
     async proveDeletionExclusion() {
-        this.requireIndexedData('proof deletion');
-        this.log('Proof: deleted vectors excluded from results', 'info');
+        this.requireIndexedData('validation deletion');
+        this.log('Check: deleted vectors excluded from results', 'info');
         const vec = this.randomSyntheticVec();
         this.engine.HEAPF32.set(vec, this.insertPtr >> 2);
         const id = this.engine._pancake_add(this.handle, this.insertPtr);
@@ -423,8 +444,8 @@ class TechnicalDemoCLI {
     }
 
     async proveSearchDuringCompaction() {
-        this.requireIndexedData('proof compaction');
-        this.log('Proof: immediate search after compaction', 'info');
+        this.requireIndexedData('validation compaction');
+        this.log('Check: immediate search after compaction', 'info');
         if (this.currentGhosts() < 10) await this.deleteVectors(100);
         await this.compact();
         const { latency } = this.doSearch(this.randomLoadedVec());
@@ -434,8 +455,8 @@ class TechnicalDemoCLI {
     }
 
     async proveMemoryDecrease() {
-        this.requireIndexedData('proof memory');
-        this.log('Proof: memory decreases after compaction', 'info');
+        this.requireIndexedData('validation memory');
+        this.log('Check: memory decreases after compaction', 'info');
         if (this.currentGhosts() < 50) await this.deleteVectors(200);
         const before = this.currentMemory();
         await this.compact();
@@ -446,8 +467,8 @@ class TechnicalDemoCLI {
     }
 
     async proveSustainedStability() {
-        this.requireIndexedData('proof stability');
-        this.log('Proof: latency stability under sustained mutation', 'info');
+        this.requireIndexedData('validation stability');
+        this.log('Check: sustained-mutation latency thresholds', 'info');
         const duration = 5000;
         const t0 = performance.now();
         const lats = [];
@@ -487,10 +508,43 @@ class TechnicalDemoCLI {
     }
 
     async proveExportImport() {
-        this.requireIndexedData('proof export');
-        this.log('Proof: export/import round-trip', 'info');
+        this.requireIndexedData('validation export');
+        this.log('Check: export/import round-trip', 'info');
+        const countBeforeCompact = this.currentCount();
+        if (countBeforeCompact === 0) throw new Error('index is empty');
+        if (this.liveVectors.size < 10) {
+            throw new Error(`not enough tracked vectors (${this.liveVectors.size}) for round-trip validation`);
+        }
+
+        // Validate round-trip on a clean snapshot so deleted-state drift
+        // does not change the searchable set across export/import.
+        if (this.currentGhosts() > 0) {
+            this.compactAndRemap();
+        }
         const countBefore = this.currentCount();
-        if (countBefore === 0) throw new Error('index is empty');
+
+        const queryIds = [];
+        const liveIds = Array.from(this.liveVectors.keys());
+        const used = new Set();
+        while (queryIds.length < 10) {
+            const id = liveIds[Math.floor(Math.random() * liveIds.length)];
+            if (!used.has(id)) {
+                used.add(id);
+                queryIds.push(id);
+            }
+        }
+
+        const beforeResults = queryIds.map((id) => {
+            const queryVec = this.liveVectors.get(id);
+            this.engine.HEAPF32.set(queryVec, this.queryPtr >> 2);
+            const found = this.engine._pancake_query(this.handle, this.queryPtr, K, this.resultIdPtr, this.resultDistPtr);
+            const ids = this.readIds(found);
+            const distances = [];
+            for (let i = 0; i < found; i++) {
+                distances.push(this.engine.HEAPF32[(this.resultDistPtr >> 2) + i]);
+            }
+            return { ids, distances };
+        });
 
         const sizePtr = this.engine._emsc_malloc(4);
         const dataPtr = this.engine._pancake_export(this.handle, sizePtr);
@@ -510,18 +564,46 @@ class TechnicalDemoCLI {
         if (status !== 0) throw new Error(`import failed with status ${status}`);
 
         const countAfter = this.currentCount();
+        const afterResults = queryIds.map((id) => {
+            const queryVec = this.liveVectors.get(id);
+            this.engine.HEAPF32.set(queryVec, this.queryPtr >> 2);
+            const found = this.engine._pancake_query(this.handle, this.queryPtr, K, this.resultIdPtr, this.resultDistPtr);
+            const ids = this.readIds(found);
+            const distances = [];
+            for (let i = 0; i < found; i++) {
+                distances.push(this.engine.HEAPF32[(this.resultDistPtr >> 2) + i]);
+            }
+            return { ids, distances };
+        });
+
+        const idsMatch = beforeResults.every((before, idx) => {
+            const after = afterResults[idx];
+            return before.ids.length === after.ids.length &&
+                before.ids.every((id, resultIdx) => id === after.ids[resultIdx]);
+        });
+
+        const distancesMatch = beforeResults.every((before, idx) => {
+            const after = afterResults[idx];
+            return before.distances.length === after.distances.length &&
+                before.distances.every((distance, resultIdx) =>
+                    Math.abs(distance - after.distances[resultIdx]) < 1e-6
+                );
+        });
+
         const { latency } = this.doSearch(this.randomLoadedVec());
-        if (countAfter !== countBefore || latency >= 10) {
-            throw new Error(`round-trip mismatch (before=${countBefore}, after=${countAfter}, latency=${latency.toFixed(2)}ms)`);
+        if (countAfter !== countBefore || !idsMatch || !distancesMatch || latency >= 10) {
+            throw new Error(
+                `round-trip mismatch (before=${countBefore}, after=${countAfter}, idsMatch=${idsMatch}, distancesMatch=${distancesMatch}, latency=${latency.toFixed(2)}ms)`
+            );
         }
         this.markProof('import');
-        this.log(`Round-trip restored ${countAfter.toLocaleString()} vectors; immediate search ${latency.toFixed(2)}ms`, 'success');
+        this.log(`Round-trip restored ${countAfter.toLocaleString()} vectors; 10-query result set matched before/after import; immediate search ${latency.toFixed(2)}ms`, 'success');
     }
 
     async proveSelfRecall() {
-        this.requireIndexedData('proof self-recall');
+        this.requireIndexedData('validation self-recall');
         const trials = 50;
-        this.log(`Proof: self-recall (${trials} trials)`, 'info');
+        this.log(`Check: self-recall (${trials} trials)`, 'info');
         let hits = 0;
         for (let i = 0; i < trials; i++) {
             const vec = this.randomSyntheticVec();
@@ -540,13 +622,13 @@ class TechnicalDemoCLI {
     }
 
     async proveRecallAtK() {
-        this.requireIndexedData('proof recall');
+        this.requireIndexedData('validation recall');
         const queryCount = 50;
         const topK = 10;
-        this.log(`Proof: recall@${topK} vs brute-force (${queryCount} queries)`, 'info');
+        this.log(`Check: recall@${topK} vs brute-force (${queryCount} queries)`, 'info');
 
         if (this.liveVectors.size < topK + 1) {
-            throw new Error(`not enough tracked vectors (${this.liveVectors.size}) for recall proof`);
+            throw new Error(`not enough tracked vectors (${this.liveVectors.size}) for recall validation`);
         }
 
         // Snapshot live IDs so we iterate a stable set.
@@ -689,12 +771,12 @@ class TechnicalDemoCLI {
     }
 
     async runFullProofSequence() {
-        this.log('Starting full proof sequence...', 'info');
+        this.log('Starting full validation run...', 'info');
         this.resetIndex();
         await sleep(100);
         await this.buildIndex(100000);
         await sleep(100);
-        await this.performSearches(10);
+        await this.performSearches(LATENCY_CHECK_QUERIES);
         await sleep(100);
         await this.proveRecallAtK();
         await sleep(100);
@@ -715,7 +797,7 @@ class TechnicalDemoCLI {
         await this.proveSustainedStability();
         await sleep(100);
         await this.proveExportImport();
-        this.log('Full proof sequence complete', 'success');
+        this.log('Full validation run complete', 'success');
         this.printChecklist();
     }
 
@@ -761,6 +843,7 @@ class TechnicalDemoCLI {
             if (!args[0]) throw new Error('import requires a file path');
             this.importIndex(args[0]);
             return true;
+        case 'validate':
         case 'proof':
             await this.handleProofCommand(args);
             return true;
