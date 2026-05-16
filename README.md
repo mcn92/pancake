@@ -1,8 +1,8 @@
 # Pancake
 
-HNSW vector search in 43 KB of gzipped WebAssembly (113 KB uncompressed). Runs in Node.js, browsers, and Cloudflare Workers with no native dependencies.
+HNSW vector search in 43 KB of gzipped WebAssembly (113 KB uncompressed). Runs in Node.js and browser-bundled web apps with no native dependencies.
 
-Most ANN libraries ship as platform-specific native binaries, which means they don't work in edge runtimes, browser tabs, or any JavaScript environment without native extensions. Pancake is a single portable WASM module that runs wherever WebAssembly runs.
+Most ANN libraries ship as platform-specific native binaries, which means they do not work in browser tabs or JavaScript runtimes without native extensions. Pancake is a single portable WASM module built for JavaScript environments where native addons are not an option.
 
 Pancake ships two backends: an int8 quantized backend that cuts memory ~4x with minimal recall loss, and a full float32 backend for higher precision distances. Both use WASM SIMD acceleration. At high dimensions (1536D), the int8 backend is faster than native hnswlib at low-to-mid recall because quantized vectors fit in CPU cache where float32 vectors don't. The float32 backend matches or exceeds native throughput across the full recall range. At 256D, Pancake Int8 runs at 93-100% of native throughput at matched recall.
 
@@ -23,9 +23,13 @@ const Pancake = require('pancake-wasm');
 // Node.js ESM
 import Pancake from 'pancake-wasm';
 
-// Browser, Cloudflare Workers, other V8 isolates
+// Browser bundlers and other runtimes that support packaged wasm asset resolution
 import Pancake from 'pancake-wasm/web';
 ```
+
+The `pancake-wasm/web` entry expects a bundler or runtime that can resolve the packaged
+`./dist/engine.wasm` asset. This is tested with a bundled Vite + Chromium flow. For raw
+no-bundler demos, see `dist/technical-demo.html`.
 
 ## Quick start
 
@@ -39,8 +43,11 @@ const index = await Pancake.create({
   quantized: true,
 });
 
-const id = index.add(new Float32Array(384));
-index.addBatch([new Float32Array(384), new Float32Array(384)]);
+const id = index.add(new Float32Array(384)); // populate with your embedding
+index.addBatch([
+  new Float32Array(384), // populate with your embeddings
+  new Float32Array(384),
+]);
 
 const results = index.search(new Float32Array(384), 10);
 // [{ id: 0, distance: 0.12 }, ...]
@@ -49,10 +56,19 @@ index.delete(id);
 index.compact();
 
 // Persist and restore
+// If you have deleted anything, compact() before export().
 const snapshot = index.export();
-const restored = await Pancake.create({ dim: 384, maxElements: 100000 });
+const restored = await Pancake.create({
+  dim: 384,
+  maxElements: 100000,
+  metric: 'cosine',
+  quantized: true,
+});
 restored.import(snapshot);
 ```
+
+If `ghostCount > 0`, `export()` throws. Call `compact()` first to produce a clean snapshot.
+`import()` also requires the target index config to match the export's `dim`, `metric`, and `quantized` mode.
 
 ## API
 
@@ -77,7 +93,7 @@ restored.import(snapshot);
 | `search(query, k)` | `{id, distance}[]` | k-nearest-neighbor search |
 | `delete(id)` | -- | Soft-delete by ID |
 | `compact()` | -- | Rebuild graph without soft-deleted entries |
-| `export()` | `Uint8Array` | Serialize index state |
+| `export()` | `Uint8Array` | Serialize index state. Requires `ghostCount === 0`; call `compact()` first after deletions. |
 | `import(data)` | -- | Restore a previous export |
 | `dispose()` | -- | Free WASM buffers |
 
@@ -132,7 +148,7 @@ Pancake Int8 vs native hnswlib. M=16, efConstruction=150.
 | 500 | 93.2% | 387 | 92.5% | 485 |
 | 800 | 94.6% | 244 | 94.2% | 324 |
 
-Pancake reaches 2-3 percentage points higher recall at the same efSearch. At matched recall, Pancake runs at 93-100% of native throughput -- the gap reflects the cost of WASM vs native SIMD, not an algorithmic difference. Pancake Int8 reaches 94.6% recall where hnswlib tops out at 94.2%.
+Pancake reaches 2-3 percentage points higher recall at the same efSearch. At matched recall, Pancake runs at 93-100% of native throughput -- the gap reflects the cost of WASM vs native SIMD, not an algorithmic difference. In this sweep, Pancake Int8 reaches 94.6% recall at `ef_search=800`, while hnswlib reaches 94.2% at the same setting.
 
 ### Deletion tolerance
 
@@ -152,69 +168,26 @@ Recall holds within about 1 point of baseline through 70% ghosts. Search latency
 
 Benchmark scripts are in `benchmarks/`. Results depend on dimension, corpus size, HNSW parameters, and hardware.
 
-## Cloudflare Workers
+## Reference Worker Architecture
 
-Pancake was designed with edge workers in mind. The Worker *is* the vector search service -- no external ANN backend, no database round-trip, no cold-start connection pool. The index runs in-process and serves queries at the edge.
+Pancake can also be used inside Cloudflare Workers. The repository includes a Worker reference deployment in [`examples/worker/`](examples/worker/), but the npm package is scoped first around the core WASM ANN library and its Node/browser entrypoints.
 
-The included Worker (`examples/worker/`) is a complete vector search HTTP API with optional bearer-token auth, per-IP rate limiting, and automatic persistence to Cloudflare R2.
+The Worker example is aimed at read-mostly, modest-sized indexes where snapshot-backed restore from R2 is acceptable. It exposes an HTTP API for search, import/export, and index mutation, and it includes auth, rate limiting, and persistence wiring.
 
-### Endpoints
+See [`examples/worker/README.md`](examples/worker/README.md) for:
 
-| Endpoint | Description |
-|----------|-------------|
-| `POST /init` | Create an index (`{ dims, maxElements, M?, efConstruction?, efSearch?, vectors? }`) |
-| `POST /add` | Insert a vector (`{ vector: float[] }`) |
-| `POST /add_batch` | Insert multiple vectors (`{ vectors: float[][] }`) |
-| `POST /delete` | Soft-delete by ID (`{ id: number }`) |
-| `POST /compact` | Rebuild graph without deleted entries |
-| `POST /search` | k-NN search (`{ query: float[], k?, ef? }`) |
-| `GET /export` | Serialize index to binary blob |
-| `POST /import` | Restore from binary (`?dims=N` required) |
-| `GET /stats` | Index count, memory, ghost ratio |
-| `GET /health` | Health check (public, no auth required) |
-
-### Running locally
-
-```bash
-cd examples/worker
-npx wrangler dev --port 8787
-```
-
-### Deploying
-
-```bash
-cd examples/worker
-wrangler r2 bucket create pancake-indexes
-wrangler deploy
-```
-
-See `examples/worker/wrangler.toml` for the full configuration. Key env vars: `API_KEY` (bearer auth), `ALLOWED_ORIGIN` (CORS), `RATE_LIMIT_RPM` (per-IP rate limit).
-
-### Deployment notes
-
-**Memory.** Workers have a 128 MB memory ceiling per isolate. Rough formula for quantized index memory:
-
-```
-~(dim + 8 + 7 * M) * num_vectors bytes
-```
-
-At M=16 this is `(dim + 120)` bytes per vector. Examples: 30k x 256D = 10 MB, 200k x 384D = 100 MB. The fp32 backend uses `(4*dim + 8 + 7*M)` bytes per vector -- roughly 4x more.
-
-**CPU time.** Workers paid plan allows 50ms CPU per request (free tier: 10ms). Search comfortably fits within both tiers. Heavy operations (`/import`, `/compact`, `/add_batch` with large batches) can exceed free-tier limits on larger indexes.
-
-**Cold starts and R2 restore.** Worker isolates are not persistent. On cold start, the Worker fetches the index from R2 and deserializes it lazily on the first request. For a large index, the first request after idle will be slow (1-2 seconds).
-
-**Persistence.** The Worker debounces R2 writes with a 2-second timer and uses `ctx.waitUntil()` to complete writes after the response is sent. If the isolate is terminated before the timer fires, the last ~2 seconds of mutations may be lost. For workflows where every write must be durable, call `/export` explicitly after critical mutations.
-
-**Rate limiting** is in-memory per-isolate. Each isolate tracks its own sliding-window counter, so the effective rate across multiple isolates is approximately `limit * number_of_isolates`.
+- endpoint documentation
+- local development and deployment steps
+- environment variables and Wrangler configuration
+- memory, cold-start, and persistence tradeoffs
 
 ## When to use Pancake
 
 Pancake makes sense when native ANN libraries aren't an option:
 
-- **Edge workers** -- the Worker *is* the search service; no separate vector database
 - **Browser-based search** -- client-side retrieval without a server round-trip
 - **Portable applications** -- one artifact, same behavior across every JavaScript runtime
+- **Node.js without native addons** -- in-process ANN without native binary packaging
 - **Small to medium indexes** -- in-process search without external infrastructure
 
 If you have a server where native dependencies are fine, Faiss, hnswlib, or USearch will generally be faster -- especially at low dimensions where native SIMD width matters most. At high dimensions (1536D), Pancake's float32 backend matches native hnswlib throughput, and the int8 backend beats it at low-to-mid recall. Pancake exists for the places native libraries can't go -- and at high dimensions, it holds its own even where they can.
@@ -247,21 +220,20 @@ The WASM module exposes a handle-based C API: `pancake_init` returns an opaque h
 
 ## Examples
 
-- `examples/worker/` -- reference Cloudflare Worker with persistence, auth, and rate limiting
 - `examples/cli/build_index.js` -- build an HNSW index from precomputed embeddings (see [QUICKSTART.md](QUICKSTART.md))
 - `examples/demo/technical_demo_cli.js` -- interactive REPL exercising the full API against 5,000 precomputed 384D embeddings
-- `examples/demo/technical_demo_worker.js` -- the same proof suite against a running Worker
 - `dist/technical-demo.html` -- in-browser version of the proof suite with live latency chart and adversarial stress tests
+- `examples/browser-vite/` -- minimal bundled browser consumer fixture used by `npm run test:browser`
+- `examples/worker/` -- reference Cloudflare Worker deployment built on top of Pancake
 
 ## Architecture
 
-See [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) for a detailed design document covering the C++ engine, WASM compilation, JavaScript wrapper, serialization formats, and Worker deployment.
+See [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) for a detailed design document covering the C++ engine, WASM compilation, JavaScript wrapper, serialization formats, and the reference Worker deployment.
 
 ## Compatibility
 
 - **Node.js** >= 16 (uses `WebAssembly`, `performance.now`)
-- **Browsers**: any browser with [WebAssembly SIMD](https://caniuse.com/wasm-simd) (Chrome 91+, Firefox 89+, Safari 16.4+)
-- **Cloudflare Workers**: tested with Wrangler >= 4.x
+- **Browsers**: any browser with [WebAssembly SIMD](https://caniuse.com/wasm-simd) (Chrome 91+, Firefox 89+, Safari 16.4+) plus a bundler/runtime that supports importing the packaged `engine.wasm`
 - **TypeScript**: type definitions included (`pancake.d.ts`)
 
 ## Tests
@@ -270,7 +242,19 @@ See [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) for a detailed design documen
 node run_tests.js
 ```
 
-213 assertions covering insertion, search, deletion, compaction, export/import, batch operations, quantized and float32 modes, error paths, edge cases, and metric correctness.
+This covers the core API, Node CJS and ESM entrypoints, and the browser-style `instantiateWasm`
+loading path used by the web runtime.
+
+For a real bundled browser-consumer check of `import Pancake from 'pancake-wasm/web'`, run:
+
+```bash
+npm run test:browser
+```
+
+This starts a minimal Vite app in `examples/browser-vite/` and verifies the published web entry
+in Chromium via Playwright.
+
+229 assertions covering insertion, search, deletion, compaction, export/import, batch operations, quantized and float32 modes, error paths, edge cases, runtime entrypoints, and metric correctness.
 
 ## Building from source
 
@@ -287,6 +271,7 @@ Requires an Emscripten toolchain with WASM SIMD support. Produces `dist/engine.j
 - **Single-threaded by design.** Pancake is meant for runtimes where background threads are unavailable or unreliable. That is a deployment advantage, not just a limitation.
 - **Quantization is a real trade.** The int8 path wins on memory and often on throughput, but tops out around 97.6% recall on 1536D benchmarks. Use float32 when you need >99%.
 - **Compaction is rebuild-based.** Deletes are soft deletes. Compaction rewrites the graph rather than patching edges in place. That keeps behavior predictable and avoids relying on background maintenance threads.
+- **Index instances are not a shared-memory concurrency primitive.** Treat a Pancake index like ordinary mutable in-process state: safe within one JavaScript thread/event loop, but not something to share concurrently across Node worker threads or isolates without your own coordination.
 - **This is an index, not an embedding stack.** Pancake does vector search only. Bring your own embedding pipeline.
 
 ## License
