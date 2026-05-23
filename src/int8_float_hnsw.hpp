@@ -442,6 +442,10 @@ public:
                     entry_point_ = i;
                 }
             }
+            // All survivors at level 0: pick node 0 as entry point.
+            if (entry_point_ == UINT32_MAX && new_id > 0) {
+                entry_point_ = 0;
+            }
         }
 
         // Shrink arrays.
