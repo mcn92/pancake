@@ -28,6 +28,17 @@
     #define FLOAT_HNSW_SSE2_SIMD 1
 #endif
 
+#ifdef __EMSCRIPTEN__
+    #include <emscripten/emscripten.h>
+#elif !defined(PANCAKE_EMSCRIPTEN_GET_NOW_DEFINED)
+    #define PANCAKE_EMSCRIPTEN_GET_NOW_DEFINED
+    #include <chrono>
+    static double emscripten_get_now() {
+        using namespace std::chrono;
+        return duration<double, std::milli>(steady_clock::now().time_since_epoch()).count();
+    }
+#endif
+
 namespace pancake {
 namespace wasm {
 
@@ -363,6 +374,17 @@ public:
 
     bool deserialize(const uint8_t* data, size_t data_size) {
         size_t offset = 0;
+        auto fail = [&]() -> bool {
+            count_ = 0;
+            entry_point_ = UINT32_MAX;
+            max_level_ = 0;
+            vectors_.clear();
+            neighbors_.clear();
+            levels_.clear();
+            deleted_.clear();
+            num_deleted_ = 0;
+            return false;
+        };
         auto safe_read_u32 = [&](uint32_t& out) -> bool {
             if (offset + 4 > data_size) return false;
             memcpy(&out, data + offset, 4);
@@ -403,31 +425,56 @@ public:
         metric_ = static_cast<DistanceMetric>(metric_val);
         ef_construction_ = ef_construction_val;
 
-        if (count_ > max_elements_) { count_ = 0; return false; }
+        if (count_ > max_elements_) return fail();
+        if (metric_val > static_cast<uint32_t>(DistanceMetric::Cosine)) return fail();
+        if (M_ <= 1 || M_ > 128 || M0_ == 0 || M0_ > 256) return fail();
+        if (ef_construction_ == 0 || ef_construction_ > 4096) return fail();
+        if (count_ == 0) {
+            if (entry_point_ != UINT32_MAX) return fail();
+            max_level_ = 0;
+        } else if (entry_point_ >= count_) {
+            return fail();
+        }
+        level_mult_ = 1.0 / std::log(static_cast<double>(M_));
 
         size_t vec_bytes = count_ * dims_ * sizeof(float);
-        if (offset + vec_bytes > data_size) { count_ = 0; return false; }
+        if (offset + vec_bytes > data_size) return fail();
         vectors_.resize(count_ * dims_);
         memcpy(vectors_.data(), data + offset, vec_bytes);
         offset += vec_bytes;
 
+        // Reject non-finite vector components (NaN, Inf).
+        // Bit-level check required — std::isfinite is unreliable under -ffast-math.
+        for (size_t i = 0; i < count_ * dims_; ++i) {
+            uint32_t bits;
+            memcpy(&bits, &vectors_[i], 4);
+            if (((bits >> 23) & 0xFF) == 0xFF) return fail();
+        }
+
         neighbors_.resize(count_);
         levels_.resize(count_);
+        int observed_max_level = 0;
         for (size_t i = 0; i < count_; ++i) {
             uint32_t lvl;
-            if (!safe_read_u32(lvl)) { count_ = 0; return false; }
+            if (!safe_read_u32(lvl)) return fail();
+            if (lvl > static_cast<uint32_t>(max_level_)) return fail();
             levels_[i] = static_cast<int>(lvl);
+            observed_max_level = std::max(observed_max_level, levels_[i]);
             neighbors_[i].resize(lvl + 1);
             for (int l = 0; l <= static_cast<int>(lvl); ++l) {
                 uint32_t sz;
-                if (!safe_read_u32(sz)) { count_ = 0; return false; }
-                if (offset + sz * 4 > data_size) { count_ = 0; return false; }
+                size_t max_neighbors = (l == 0) ? M0_ : M_;
+                if (!safe_read_u32(sz)) return fail();
+                if (sz > max_neighbors) return fail();
+                if (offset + sz * 4 > data_size) return fail();
                 neighbors_[i][l].resize(sz);
                 for (uint32_t j = 0; j < sz; ++j) {
-                    if (!safe_read_u32(neighbors_[i][l][j])) { count_ = 0; return false; }
+                    if (!safe_read_u32(neighbors_[i][l][j])) return fail();
+                    if (neighbors_[i][l][j] >= count_) return fail();
                 }
             }
         }
+        if (count_ > 0 && observed_max_level != max_level_) return fail();
 
         deleted_.assign(count_, 0);
         num_deleted_ = 0;
