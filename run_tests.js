@@ -13,6 +13,7 @@ const Pancake = require('./pancake.js');
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
+const goldenSnapshots = require('./test/fixtures/golden_snapshots.js');
 
 // ─── Minimal test harness ────────────────────────────────────────────────────
 
@@ -105,6 +106,43 @@ function l2Dist(a, b) {
         sum += d * d;
     }
     return Math.sqrt(sum);
+}
+
+function extractRawEngineBytes(exported) {
+    const bytes = exported instanceof Uint8Array ? exported : new Uint8Array(exported);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const magic = view.getUint32(0, true);
+    if (magic !== 0x504E434B) return bytes;
+    const version = view.getUint32(4, true);
+    if (version === 3) {
+        const mappingCount = view.getUint32(24, true);
+        const wasmSize = view.getUint32(28, true);
+        const wasmOffset = 32 + mappingCount * 8;
+        return bytes.slice(wasmOffset, wasmOffset + wasmSize);
+    }
+    return bytes.slice(20);
+}
+
+function overwriteU32(bytes, offset, value) {
+    const copy = new Uint8Array(bytes);
+    new DataView(copy.buffer).setUint32(offset, value >>> 0, true);
+    return copy;
+}
+
+function decodeBase64Bytes(base64) {
+    return new Uint8Array(Buffer.from(base64, 'base64'));
+}
+
+function wrapV2Envelope(rawBytes, dim, quantized, metric = 1) {
+    const result = new Uint8Array(20 + rawBytes.length);
+    const view = new DataView(result.buffer);
+    view.setUint32(0, 0x504E434B, true);
+    view.setUint32(4, 2, true);
+    view.setUint32(8, dim, true);
+    view.setUint32(12, metric, true);
+    view.setUint32(16, quantized ? 1 : 0, true);
+    result.set(rawBytes, 20);
+    return result;
 }
 
 // ─── Default config ───────────────────────────────────────────────────────────
@@ -1381,6 +1419,273 @@ async function testMetricCorrectnessQuantized() {
     idx.dispose();
 }
 
+async function testRawEngineImportValidation() {
+    section('Raw engine import validation');
+
+    const cases = [
+        { label: 'float', quantized: false, magic: 0x464C4831, graphBaseOffset: (count, dim) => 40 + count * dim * 4 },
+        { label: 'quantized', quantized: true, magic: 0x49384831, graphBaseOffset: (count, dim) => 40 + count * 4 + count * 4 + count * dim },
+    ];
+
+    for (const testCase of cases) {
+        const cfg = { ...DEFAULT_CONFIG, quantized: testCase.quantized, dim: 16, maxElements: 64 };
+        const src = await Pancake.create(cfg);
+        const vecs = Array.from({ length: 8 }, () => normalizedVec(cfg.dim));
+        src.addBatch(vecs);
+        const raw = extractRawEngineBytes(src.export());
+        src.dispose();
+
+        // Header: count at 12, entry point at 16, max level at 20, M at 24, M0 at 28, metric at 32
+        {
+            const idx = await Pancake.create(cfg);
+            const bad = overwriteU32(raw, 16, 9999);
+            let msg = '';
+            try { idx.import(bad); } catch (e) { msg = e.message; }
+            assert(msg.includes('Import failed'), `${testCase.label}: rejects invalid entry point`);
+            idx.dispose();
+        }
+
+        {
+            const idx = await Pancake.create(cfg);
+            const bad = overwriteU32(raw, 32, 99);
+            let msg = '';
+            try { idx.import(bad); } catch (e) { msg = e.message; }
+            assert(msg.includes('Import failed'), `${testCase.label}: rejects invalid metric enum`);
+            idx.dispose();
+        }
+
+        {
+            const idx = await Pancake.create(cfg);
+            const bad = overwriteU32(raw, 24, 1);
+            let msg = '';
+            try { idx.import(bad); } catch (e) { msg = e.message; }
+            assert(msg.includes('Import failed'), `${testCase.label}: rejects invalid M <= 1`);
+            idx.dispose();
+        }
+
+        {
+            const idx = await Pancake.create(cfg);
+            const graphOffset = testCase.graphBaseOffset(8, cfg.dim);
+            const bad = overwriteU32(raw, graphOffset + 4, 9999);
+            let msg = '';
+            try { idx.import(bad); } catch (e) { msg = e.message; }
+            assert(msg.includes('Import failed'), `${testCase.label}: rejects invalid neighbor id`);
+            idx.dispose();
+        }
+    }
+}
+
+async function testDeleteChurnRegression() {
+    section('Delete churn regression');
+
+    const scenarios = [
+        { label: 'float-cosine', quantized: false, metric: 'cosine' },
+        { label: 'int8-cosine', quantized: true, metric: 'cosine' },
+    ];
+
+    for (const scenario of scenarios) {
+        const cfg = {
+            ...DEFAULT_CONFIG,
+            dim: 64,
+            maxElements: 256,
+            quantized: scenario.quantized,
+            metric: scenario.metric,
+            efSearch: 120,
+        };
+        const idx = await Pancake.create(cfg);
+        const corpus = Array.from({ length: 120 }, () => normalizedVec(cfg.dim));
+        const ids = idx.addBatch(corpus);
+
+        let live = new Set(ids);
+        const vectorsById = new Map(ids.map((id, i) => [id, corpus[i]]));
+        for (let round = 0; round < 4; round++) {
+            const toDelete = [];
+            for (let i = round * 10; i < round * 10 + 10; i++) toDelete.push(ids[i]);
+            for (const id of toDelete) {
+                idx.delete(id);
+                live.delete(id);
+            }
+            assert(idx.ghostCount === 10, `${scenario.label}: ghost count tracks deletes in round ${round + 1}`);
+
+            const warmQuery = corpus[119 - round];
+            const beforeCompact = idx.search(warmQuery, 10);
+            assert(beforeCompact.every(r => live.has(r.id)), `${scenario.label}: no deleted IDs leak before compact in round ${round + 1}`);
+
+            idx.compact();
+            assert(idx.ghostCount === 0, `${scenario.label}: compact clears ghosts in round ${round + 1}`);
+            const afterCompact = idx.search(warmQuery, 10);
+            assert(afterCompact.every(r => live.has(r.id)), `${scenario.label}: no deleted IDs leak after compact in round ${round + 1}`);
+
+            const newVecs = Array.from({ length: 5 }, () => normalizedVec(cfg.dim));
+            const newIds = idx.addBatch(newVecs);
+            for (let i = 0; i < newIds.length; i++) {
+                live.add(newIds[i]);
+                vectorsById.set(newIds[i], newVecs[i]);
+            }
+        }
+
+        const probeIds = Array.from(live).slice(0, 12);
+        let exactHits = 0;
+        for (const id of probeIds) {
+            const vec = vectorsById.get(id);
+            const results = idx.search(vec, 1);
+            if (results.length > 0 && results[0].id === id) exactHits++;
+        }
+        assert(exactHits >= 8, `${scenario.label}: retains acceptable self-recall after churn (got ${exactHits}/${probeIds.length})`);
+        idx.dispose();
+    }
+}
+
+async function testGoldenSnapshotCompatibility() {
+    section('Golden snapshot compatibility');
+
+    const scenarios = [
+        { label: 'int8', quantized: true, base64: goldenSnapshots.quantizedBase64 },
+        { label: 'float32', quantized: false, base64: goldenSnapshots.float32Base64 },
+    ];
+
+    const query = new Float32Array([1, 0, 0, 0]);
+
+    for (const scenario of scenarios) {
+        const exportedV3 = decodeBase64Bytes(scenario.base64);
+        const raw = extractRawEngineBytes(exportedV3);
+        const exportedV2 = wrapV2Envelope(raw, 4, scenario.quantized, 1);
+
+        for (const variant of [
+            { label: 'v3', bytes: exportedV3 },
+            { label: 'v2', bytes: exportedV2 },
+            { label: 'raw', bytes: raw },
+        ]) {
+            const idx = await Pancake.create({
+                dim: 4,
+                maxElements: 16,
+                metric: 'cosine',
+                quantized: scenario.quantized,
+                M: 8,
+                efConstruction: 50,
+                efSearch: 50,
+            });
+
+            idx.import(variant.bytes);
+
+            assert(idx.count === 3, `${scenario.label}/${variant.label}: imports golden snapshot with expected live count`);
+
+            const top = idx.search(query, 3);
+            assert(top.length === 3, `${scenario.label}/${variant.label}: search returns expected count`);
+            assert(top[0].id === 0, `${scenario.label}/${variant.label}: leading external ID preserved`);
+            assert(top.every(r => Number.isFinite(r.distance)), `${scenario.label}/${variant.label}: distances are finite`);
+
+            const reexported = idx.export();
+            const idx2 = await Pancake.create({
+                dim: 4,
+                maxElements: 16,
+                metric: 'cosine',
+                quantized: scenario.quantized,
+                M: 8,
+                efConstruction: 50,
+                efSearch: 50,
+            });
+            idx2.import(reexported);
+
+            assert(idx2.count === idx.count, `${scenario.label}/${variant.label}: export/import preserves count`);
+            const roundTrip = idx2.search(query, 3);
+            assert(roundTrip.length === top.length, `${scenario.label}/${variant.label}: round-trip preserves top-k length`);
+            assert(roundTrip[0].id === top[0].id, `${scenario.label}/${variant.label}: round-trip preserves top-1 ID`);
+
+            const nextId = idx2.add(new Float32Array([0, 0, 0, 1]));
+            const expectedNextId = variant.label === 'v3' ? 4 : 3;
+            assert(nextId === expectedNextId, `${scenario.label}/${variant.label}: next external ID follows expected ${variant.label} import semantics`);
+
+            idx2.dispose();
+            idx.dispose();
+        }
+    }
+}
+
+
+async function testNonFiniteRejection() {
+    section('Non-finite vector rejection');
+
+    const dim = 16;
+    for (const quantized of [false, true]) {
+        const label = quantized ? 'int8' : 'float32';
+        const idx = await Pancake.create({ dim, maxElements: 64, metric: 'cosine', quantized });
+
+        idx.add(normalizedVec(dim));
+
+        const nanVec = new Float32Array(dim);
+        nanVec.fill(NaN);
+        const infVec = new Float32Array(dim);
+        infVec.fill(Infinity);
+        const negInfVec = new Float32Array(dim);
+        negInfVec.fill(-Infinity);
+        const partialNaN = normalizedVec(dim);
+        partialNaN[7] = NaN;
+
+        assertThrows(() => idx.add(nanVec), `${label}: add() rejects all-NaN vector`);
+        assertThrows(() => idx.add(infVec), `${label}: add() rejects all-Infinity vector`);
+        assertThrows(() => idx.add(negInfVec), `${label}: add() rejects all-negative-Infinity vector`);
+        assertThrows(() => idx.add(partialNaN), `${label}: add() rejects vector with single NaN`);
+
+        assertThrows(() => idx.search(nanVec, 1), `${label}: search() rejects NaN query`);
+        assertThrows(() => idx.search(infVec, 1), `${label}: search() rejects Infinity query`);
+
+        assertThrows(() => idx.addBatch([nanVec]), `${label}: addBatch() rejects NaN vector`);
+        assertThrows(() => idx.addBatch([normalizedVec(dim), infVec]), `${label}: addBatch() rejects batch with Infinity at index 1`);
+
+        assert(idx.count === 1, `${label}: count unchanged after rejected inserts`);
+
+        idx.dispose();
+    }
+}
+
+async function testCompactEntryPointRecovery() {
+    section('Compact entry point recovery (all level 0)');
+
+    // Small index with low M — all vectors will be level 0 with high probability.
+    // Use dim=4 and M=4 to minimize the chance of any vector getting level > 0.
+    // With M=4, P(level >= 1) = 1/4 = 25% per vector, so 3 vectors gives
+    // ~42% chance all are level 0. We use a fixed seed via deterministic vectors.
+    for (const quantized of [false, true]) {
+        const label = quantized ? 'int8' : 'float32';
+        const idx = await Pancake.create({
+            dim: 4, maxElements: 32, metric: 'cosine', quantized,
+            M: 16, efConstruction: 50, efSearch: 50,
+        });
+
+        // Insert vectors. ID 0 is always the entry point (first insert).
+        const v0 = new Float32Array([1, 0, 0, 0]);
+        const v1 = new Float32Array([0, 1, 0, 0]);
+        const v2 = new Float32Array([0, 0, 1, 0]);
+        const id0 = idx.add(v0);
+        const id1 = idx.add(v1);
+        const id2 = idx.add(v2);
+
+        // Delete the entry point (first vector)
+        idx.delete(id0);
+        idx.compact();
+        assert(idx.count === 2, `${label}: count is 2 after deleting entry point and compacting`);
+
+        // Export must succeed (entry point must be valid)
+        const snapshot = idx.export();
+        assert(snapshot.length > 0, `${label}: export succeeds after entry point deletion + compact`);
+
+        // Reimport must succeed
+        const idx2 = await Pancake.create({
+            dim: 4, maxElements: 32, metric: 'cosine', quantized,
+            M: 16, efConstruction: 50, efSearch: 50,
+        });
+        idx2.import(snapshot);
+        assert(idx2.count === 2, `${label}: reimport preserves count`);
+
+        // Search must work
+        const results = idx2.search(v1, 2);
+        assert(results.length === 2, `${label}: search returns results after reimport`);
+
+        idx2.dispose();
+        idx.dispose();
+    }
+}
 
 // ─── Runner ───────────────────────────────────────────────────────────────────
 
@@ -1416,6 +1721,11 @@ async function main() {
         testZeroAndDegenerateVectors,
         testDeterminismIds,
         testMetricCorrectnessQuantized,
+        testRawEngineImportValidation,
+        testDeleteChurnRegression,
+        testGoldenSnapshotCompatibility,
+        testNonFiniteRejection,
+        testCompactEntryPointRecovery,
     ];
 
     for (const suite of suites) {

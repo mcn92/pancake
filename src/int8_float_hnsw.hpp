@@ -35,7 +35,8 @@
 
 #ifdef __EMSCRIPTEN__
     #include <emscripten/emscripten.h>
-#else
+#elif !defined(PANCAKE_EMSCRIPTEN_GET_NOW_DEFINED)
+    #define PANCAKE_EMSCRIPTEN_GET_NOW_DEFINED
     // Fallback for non-Emscripten builds
     #include <chrono>
     static double emscripten_get_now() {
@@ -523,6 +524,21 @@ public:
 
     bool deserialize(const uint8_t* data, size_t data_size) {
         size_t offset = 0;
+        auto fail = [&]() -> bool {
+            count_ = 0;
+            entry_point_ = UINT32_MAX;
+            max_level_ = 0;
+            qdata_.clear();
+            scales_.clear();
+            offsets_.clear();
+            sum_q_.clear();
+            sum_q2_.clear();
+            neighbors_.clear();
+            levels_.clear();
+            deleted_.clear();
+            num_deleted_ = 0;
+            return false;
+        };
         auto safe_read_u32 = [&](uint32_t& out) -> bool {
             if (offset + 4 > data_size) return false;
             memcpy(&out, data + offset, 4);
@@ -569,43 +585,69 @@ public:
         metric_ = static_cast<DistanceMetric>(metric_val);
         ef_construction_ = ef_construction_val;
 
-        if (count_ > max_elements_) { count_ = 0; return false; }
+        if (count_ > max_elements_) return fail();
+        if (metric_val > static_cast<uint32_t>(DistanceMetric::Cosine)) return fail();
+        if (M_ <= 1 || M_ > 128 || M0_ == 0 || M0_ > 256) return fail();
+        if (ef_construction_ == 0 || ef_construction_ > 4096) return fail();
+        if (count_ == 0) {
+            if (entry_point_ != UINT32_MAX) return fail();
+            max_level_ = 0;
+        } else if (entry_point_ >= count_) {
+            return fail();
+        }
+        level_mult_ = 1.0 / std::log(static_cast<double>(M_));
 
         // Bounds check for scales + offsets (count * 4 bytes each)
-        if (offset + count_ * sizeof(float) * 2 > data_size) { count_ = 0; return false; }
+        if (offset + count_ * sizeof(float) * 2 > data_size) return fail();
         scales_.resize(count_);
         offsets_.resize(count_);
         for (size_t i = 0; i < count_; ++i) {
-            if (!safe_read_f32(scales_[i])) { count_ = 0; return false; }
+            if (!safe_read_f32(scales_[i])) return fail();
+            // Bit-level finite check — std::isfinite is unreliable under -ffast-math.
+            uint32_t bits;
+            memcpy(&bits, &scales_[i], 4);
+            if (((bits >> 23) & 0xFF) == 0xFF) return fail(); // NaN or Inf
+            if (scales_[i] < 0.0f || scales_[i] > 1e20f) return fail();
         }
         for (size_t i = 0; i < count_; ++i) {
-            if (!safe_read_f32(offsets_[i])) { count_ = 0; return false; }
+            if (!safe_read_f32(offsets_[i])) return fail();
+            uint32_t bits;
+            memcpy(&bits, &offsets_[i], 4);
+            if (((bits >> 23) & 0xFF) == 0xFF) return fail(); // NaN or Inf
+            if (offsets_[i] > 1e20f || offsets_[i] < -1e20f) return fail();
         }
 
         // Bounds check for quantized data
         size_t qdata_bytes = count_ * dims_;
-        if (offset + qdata_bytes > data_size) { count_ = 0; return false; }
+        if (offset + qdata_bytes > data_size) return fail();
         qdata_.resize(qdata_bytes);
         memcpy(qdata_.data(), data + offset, qdata_bytes);
         offset += qdata_bytes;
 
         neighbors_.resize(count_);
         levels_.resize(count_);
+        int observed_max_level = 0;
         for (size_t i = 0; i < count_; ++i) {
             uint32_t lvl;
-            if (!safe_read_u32(lvl)) { count_ = 0; return false; }
+            if (!safe_read_u32(lvl)) return fail();
+            if (lvl > static_cast<uint32_t>(max_level_)) return fail();
             levels_[i] = static_cast<int>(lvl);
+            observed_max_level = std::max(observed_max_level, levels_[i]);
             neighbors_[i].resize(lvl + 1);
             for (int l = 0; l <= static_cast<int>(lvl); ++l) {
                 uint32_t sz;
-                if (!safe_read_u32(sz)) { count_ = 0; return false; }
-                if (offset + sz * 4 > data_size) { count_ = 0; return false; }
+                size_t max_neighbors = (l == 0) ? M0_ : M_;
+                if (!safe_read_u32(sz)) return fail();
+                if (sz > max_neighbors) return fail();
+                if (offset + sz * 4 > data_size) return fail();
                 neighbors_[i][l].resize(sz);
                 for (uint32_t j = 0; j < sz; ++j) {
-                    if (!safe_read_u32(neighbors_[i][l][j])) { count_ = 0; return false; }
+                    if (!safe_read_u32(neighbors_[i][l][j])) return fail();
+                    if (neighbors_[i][l][j] >= count_) return fail();
                 }
             }
         }
+        if (count_ > 0 && observed_max_level != max_level_) return fail();
 
         deleted_.assign(count_, 0);
         num_deleted_ = 0;
@@ -992,7 +1034,7 @@ private:
 
         prepare_visited();
         float d = dist_func(entry);
-        g_build_profile.dist_calls++;
+        if (!skip_deleted) g_build_profile.dist_calls++;
         candidates.emplace(d, entry);
         g_build_profile.candidate_pushes++;
         results.emplace(d, entry);
@@ -1010,7 +1052,7 @@ private:
                 mark_visited(neighbor);
                 g_build_profile.visited_marks++;
                 float nd = dist_func(neighbor);
-                g_build_profile.dist_calls++;
+                if (!skip_deleted) g_build_profile.dist_calls++;
                 if (nd < results.top().first || results.size() < ef) {
                     candidates.emplace(nd, neighbor);
                     g_build_profile.candidate_pushes++;

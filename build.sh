@@ -32,6 +32,9 @@ if [[ "${WASM_SIMD}" == "1" ]]; then
     SIMD_DESC="WASM SIMD"
 fi
 
+# NOTE: -ffast-math below implies -ffinite-math-only, which makes std::isfinite,
+# std::isnan, and std::isinf always return true. Any float validation in C++ must
+# use bit-level IEEE 754 checks instead (see deserialization in *_hnsw.hpp).
 echo "Compiling with ${SIMD_DESC} + Memory Access (exceptions enabled)..."
 $EMCC $OPT_FLAGS \
     $DEBUG_FLAGS \
@@ -79,3 +82,5 @@ fi
 echo ""
 echo "Build complete!"
 ls -lh "dist/${OUT_BASENAME}.js" "dist/${OUT_BASENAME}.wasm"
+echo "Running test..."
+node run_tests.js

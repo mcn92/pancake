@@ -35,6 +35,11 @@ class PancakeIndex {
         if (f32.length !== this._dim) {
             throw new Error(`Expected vector of length ${this._dim}, got ${f32.length}`);
         }
+        for (let i = 0; i < f32.length; i++) {
+            if (!Number.isFinite(f32[i])) {
+                throw new Error('Vector contains non-finite value (NaN or Infinity)');
+            }
+        }
         this._e.HEAPF32.set(f32, this._vecPtr >> 2);
         const intId = this._e._pancake_add(this._handle, this._vecPtr);
         if (intId === 0xFFFFFFFF || intId < 0) {
@@ -64,6 +69,12 @@ class PancakeIndex {
             const len = (v instanceof Float32Array) ? v.length : (v && v.length);
             if (len !== this._dim) {
                 throw new Error(`Expected vector of length ${this._dim}, got ${len} at index ${i}`);
+            }
+            const f32 = v instanceof Float32Array ? v : new Float32Array(v);
+            for (let j = 0; j < f32.length; j++) {
+                if (!Number.isFinite(f32[j])) {
+                    throw new Error(`Vector at index ${i} contains non-finite value (NaN or Infinity)`);
+                }
             }
         }
 
@@ -100,6 +111,11 @@ class PancakeIndex {
         const f32 = query instanceof Float32Array ? query : new Float32Array(query);
         if (f32.length !== this._dim) {
             throw new Error(`Expected query of length ${this._dim}, got ${f32.length}`);
+        }
+        for (let i = 0; i < f32.length; i++) {
+            if (!Number.isFinite(f32[i])) {
+                throw new Error('Query vector contains non-finite value (NaN or Infinity)');
+            }
         }
         if (k === 0) return [];
         this._ensureSearchCapacity(k);
