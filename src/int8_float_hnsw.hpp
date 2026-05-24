@@ -312,6 +312,65 @@ public:
         return results;
     }
 
+    std::vector<std::pair<uint32_t, float>> search_filtered(
+        const float* query, size_t k,
+        const uint8_t* filter_bitset, size_t bitset_len
+    ) {
+        if (count_ == 0) return {};
+
+        if (metric_ == DistanceMetric::Cosine) {
+            norm_query_.resize(dims_);
+            float norm_sq = 0.0f;
+            for (size_t d = 0; d < dims_; d++) norm_sq += query[d] * query[d];
+            float inv_norm = (norm_sq > 0.0f) ? 1.0f / std::sqrt(norm_sq) : 0.0f;
+            for (size_t d = 0; d < dims_; d++) norm_query_[d] = query[d] * inv_norm;
+            cached_query_ = norm_query_.data();
+        } else {
+            cached_query_ = query;
+        }
+
+        uint32_t curr = entry_point_;
+        float curr_dist = distance_to_query(curr);
+
+        for (int l = max_level_; l > 0; --l) {
+            bool changed = true;
+            while (changed) {
+                changed = false;
+                for (uint32_t neighbor : neighbors_[curr][l]) {
+                    if (deleted_[neighbor]) continue;
+                    float d = distance_to_query(neighbor);
+                    if (d < curr_dist) {
+                        curr = neighbor;
+                        curr_dist = d;
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        size_t initial_ef = std::max(ef_search_, k);
+        size_t max_ef = initial_ef * 4;
+
+        for (size_t current_ef = initial_ef; current_ef <= max_ef; current_ef = std::min(current_ef * 2, max_ef)) {
+            auto candidates = search_layer_query(curr, current_ef, 0);
+
+            std::vector<std::pair<uint32_t, float>> results;
+            for (auto& [dist, id] : candidates) {
+                if (deleted_[id]) continue;
+                size_t byte_idx = id >> 3;
+                if (byte_idx < bitset_len && (filter_bitset[byte_idx] & (1u << (id & 7)))) {
+                    results.emplace_back(id, dist);
+                    if (results.size() >= k) return results;
+                }
+            }
+
+            if (results.size() >= k || candidates.size() < current_ef || current_ef >= max_ef) {
+                return results;
+            }
+        }
+        return {};
+    }
+
     void mark_delete(uint32_t id) {
         if (id >= count_ || deleted_[id] != 0) return;
         deleted_[id] = 1;

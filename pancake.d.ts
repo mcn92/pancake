@@ -29,6 +29,8 @@ export interface PancakeIndex {
   addBatch(vectors: (Float32Array | number[])[]): number[];
   /** Find the k nearest neighbors of a query vector. k must be a non-negative integer. */
   search(query: Float32Array | number[], k: number): SearchResult[];
+  /** Find the k nearest neighbors, restricted to IDs in allowedIds. Uses in-graph filtering with iterative deepening. */
+  searchFiltered(query: Float32Array | number[], k: number, allowedIds: Set<number>): SearchResult[];
   /** Soft-delete a vector by ID. O(1), excluded from future searches. */
   delete(id: number): void;
   /** Reclaim space from soft-deleted vectors via graph rewiring. */
