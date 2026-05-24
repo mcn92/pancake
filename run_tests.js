@@ -1687,6 +1687,81 @@ async function testCompactEntryPointRecovery() {
     }
 }
 
+async function testSearchFiltered() {
+    section('Filtered search');
+
+    for (const quantized of [false, true]) {
+        const label = quantized ? 'int8' : 'float32';
+        const dim = 32;
+        const idx = await Pancake.create({
+            dim, maxElements: 200, metric: 'cosine', quantized,
+        });
+
+        // Insert 50 vectors with deterministic values
+        const vecs = [];
+        const ids = [];
+        for (let i = 0; i < 50; i++) {
+            const v = new Float32Array(dim);
+            for (let d = 0; d < dim; d++) v[d] = Math.sin(i * 17 + d * 7);
+            let norm = 0;
+            for (let d = 0; d < dim; d++) norm += v[d] * v[d];
+            norm = Math.sqrt(norm);
+            for (let d = 0; d < dim; d++) v[d] /= norm;
+            vecs.push(v);
+            ids.push(idx.add(v));
+        }
+
+        const query = vecs[0];
+
+        // Unfiltered baseline
+        const baseline = idx.search(query, 10);
+        assert(baseline.length === 10, `${label}: unfiltered returns 10`);
+
+        // Filter to even IDs only
+        const evenIds = new Set(ids.filter(id => id % 2 === 0));
+        const evenResults = idx.searchFiltered(query, 10, evenIds);
+        assert(evenResults.length > 0, `${label}: even filter returns results`);
+        assert(evenResults.every(r => r.id % 2 === 0), `${label}: all results have even IDs`);
+
+        // Filter to single ID
+        const singleResult = idx.searchFiltered(query, 5, new Set([ids[0]]));
+        assert(singleResult.length === 1, `${label}: single-ID filter returns 1`);
+        assert(singleResult[0].id === ids[0], `${label}: single-ID filter returns correct ID`);
+
+        // Empty filter
+        const emptyResult = idx.searchFiltered(query, 5, new Set());
+        assert(emptyResult.length === 0, `${label}: empty filter returns 0`);
+
+        // Allow all — should match unfiltered
+        const allIds = new Set(ids);
+        const allResult = idx.searchFiltered(query, 10, allIds);
+        assert(allResult.length === baseline.length, `${label}: allow-all matches unfiltered count`);
+        assert(allResult[0].id === baseline[0].id, `${label}: allow-all top result matches unfiltered`);
+
+        // Filter with deleted vectors — deleted IDs should not appear
+        idx.delete(ids[2]);
+        idx.delete(ids[4]);
+        const withDeleted = new Set(ids);
+        const afterDelete = idx.searchFiltered(query, 10, withDeleted);
+        assert(afterDelete.every(r => r.id !== ids[2] && r.id !== ids[4]),
+            `${label}: deleted IDs excluded from filtered results`);
+
+        // Highly selective filter (only 2 IDs) — tests iterative deepening
+        const tinySet = new Set([ids[10], ids[20]]);
+        const tinyResult = idx.searchFiltered(query, 2, tinySet);
+        assert(tinyResult.length === 2, `${label}: selective filter finds both IDs`);
+        assert(tinyResult.every(r => tinySet.has(r.id)), `${label}: selective filter returns only allowed IDs`);
+
+        // Distances should be monotonically non-decreasing
+        for (let i = 1; i < evenResults.length; i++) {
+            assert(evenResults[i].distance >= evenResults[i - 1].distance,
+                `${label}: filtered distances are sorted`);
+        }
+
+        idx.dispose();
+    }
+}
+
 // ─── Runner ───────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -1726,6 +1801,7 @@ async function main() {
         testGoldenSnapshotCompatibility,
         testNonFiniteRejection,
         testCompactEntryPointRecovery,
+        testSearchFiltered,
     ];
 
     for (const suite of suites) {

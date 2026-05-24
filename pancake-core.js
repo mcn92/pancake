@@ -124,6 +124,53 @@ class PancakeIndex {
         return this._readResults(found);
     }
 
+    searchFiltered(query, k, allowedIds) {
+        this._checkDisposed();
+        if (!Number.isInteger(k) || k < 0) {
+            throw new Error('searchFiltered() requires a non-negative integer k');
+        }
+        const f32 = query instanceof Float32Array ? query : new Float32Array(query);
+        if (f32.length !== this._dim) {
+            throw new Error(`Expected query of length ${this._dim}, got ${f32.length}`);
+        }
+        for (let i = 0; i < f32.length; i++) {
+            if (!Number.isFinite(f32[i])) {
+                throw new Error('Query vector contains non-finite value (NaN or Infinity)');
+            }
+        }
+        if (k === 0 || !allowedIds || allowedIds.size === 0) return [];
+        this._ensureSearchCapacity(k);
+
+        // Build bitset over internal IDs
+        const count = this._e._pancake_count(this._handle);
+        const bitsetLen = (count + 7) >> 3;
+        const bitsetPtr = this._e._emsc_malloc(bitsetLen);
+        if (!bitsetPtr) throw new Error('WASM malloc failed for filter bitset');
+
+        try {
+            // Zero the bitset
+            this._e.HEAPU8.fill(0, bitsetPtr, bitsetPtr + bitsetLen);
+
+            // Set bits for allowed internal IDs
+            for (const extId of allowedIds) {
+                const intId = this._extToInt.get(extId);
+                if (intId !== undefined && !this._deletedExt.has(extId)) {
+                    this._e.HEAPU8[bitsetPtr + (intId >> 3)] |= (1 << (intId & 7));
+                }
+            }
+
+            this._e.HEAPF32.set(f32, this._vecPtr >> 2);
+            const found = this._e._pancake_query_filtered(
+                this._handle, this._vecPtr, k,
+                this._idPtr, this._distPtr,
+                bitsetPtr, bitsetLen
+            );
+            return this._readResults(found);
+        } finally {
+            this._e._emsc_free(bitsetPtr);
+        }
+    }
+
     delete(id) {
         this._checkDisposed();
         const intId = this._extToInt.get(id);

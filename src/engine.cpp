@@ -29,6 +29,7 @@ public:
     virtual uint32_t insert(const float* vec) = 0;
     virtual int bulk_insert(const float* vecs, int n) = 0;
     virtual std::vector<std::pair<uint32_t, float>> search(const float* query, size_t k) = 0;
+    virtual std::vector<std::pair<uint32_t, float>> search_filtered(const float* query, size_t k, const uint8_t* bitset, size_t bitset_len) = 0;
     virtual void mark_delete(uint32_t id) = 0;
     virtual void compact() = 0;
     virtual void compact(std::vector<uint32_t>& out_map) = 0;
@@ -63,6 +64,9 @@ public:
     std::vector<std::pair<uint32_t, float>> search(const float* query, size_t k) override {
         return impl_->search(query, k);
     }
+    std::vector<std::pair<uint32_t, float>> search_filtered(const float* query, size_t k, const uint8_t* bitset, size_t bitset_len) override {
+        return impl_->search_filtered(query, k, bitset, bitset_len);
+    }
     void mark_delete(uint32_t id) override { impl_->mark_delete(id); }
     void compact() override { impl_->compact(); }
     void compact(std::vector<uint32_t>& out_map) override { impl_->compact(out_map); }
@@ -72,8 +76,6 @@ public:
     size_t memory_bytes() const override { return impl_->memory_bytes(); }
     std::vector<uint8_t> serialize() const override { return impl_->serialize(); }
     bool deserialize(const uint8_t* data, size_t size) override {
-        // Header: [0] magic [1] dims [2] version [3] count ...
-        // Count is at byte offset 12 (field index 3)
         size_t cnt = 100000;
         if (size >= 16) {
             uint32_t c; memcpy(&c, data + 12, 4);
@@ -101,6 +103,9 @@ public:
     std::vector<std::pair<uint32_t, float>> search(const float* query, size_t k) override {
         return impl_->search(query, k);
     }
+    std::vector<std::pair<uint32_t, float>> search_filtered(const float* query, size_t k, const uint8_t* bitset, size_t bitset_len) override {
+        return impl_->search_filtered(query, k, bitset, bitset_len);
+    }
     void mark_delete(uint32_t id) override { impl_->mark_delete(id); }
     void compact() override { impl_->compact(); }
     void compact(std::vector<uint32_t>& out_map) override { impl_->compact(out_map); }
@@ -110,8 +115,6 @@ public:
     size_t memory_bytes() const override { return impl_->memory_bytes(); }
     std::vector<uint8_t> serialize() const override { return impl_->serialize(); }
     bool deserialize(const uint8_t* data, size_t size) override {
-        // Header: [0] magic [1] dims [2] version [3] count ...
-        // Count is at byte offset 12 (field index 3)
         size_t cnt = 100000;
         if (size >= 16) {
             uint32_t c; memcpy(&c, data + 12, 4);
@@ -210,6 +213,18 @@ int pancake_bulk_insert(uint32_t h, const float* vecs, int n) {
 int pancake_query(uint32_t h, const float* qv, int k, uint64_t* ids, float* dists) {
     if (h >= MAX_HANDLES || !g_handles[h].index) return 0;
     auto res = g_handles[h].index->search(qv, static_cast<size_t>(k));
+    for (size_t j = 0; j < res.size(); ++j) {
+        ids[j] = static_cast<uint64_t>(res[j].first);
+        dists[j] = res[j].second;
+    }
+    return static_cast<int>(res.size());
+}
+
+int pancake_query_filtered(uint32_t h, const float* qv, int k,
+                           uint64_t* ids, float* dists,
+                           const uint8_t* bitset, size_t bitset_len) {
+    if (h >= MAX_HANDLES || !g_handles[h].index) return 0;
+    auto res = g_handles[h].index->search_filtered(qv, static_cast<size_t>(k), bitset, bitset_len);
     for (size_t j = 0; j < res.size(); ++j) {
         ids[j] = static_cast<uint64_t>(res[j].first);
         dists[j] = res[j].second;
