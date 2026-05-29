@@ -23,6 +23,7 @@
 #include <cstring>
 #include <cstdio>
 #include <unordered_set>
+#include <cstdint>
 
 #if defined(__wasm_simd128__)
     #include <wasm_simd128.h>
@@ -106,6 +107,11 @@ struct Int8FloatHNSWConfig {
 
 class Int8FloatHNSW {
 public:
+    struct Edge {
+        uint32_t neighbor;
+        float dist;
+    };
+
     Int8FloatHNSW(size_t dims, const Int8FloatHNSWConfig& config = {})
         : dims_(dims)
         , metric_(config.metric)
@@ -216,14 +222,15 @@ public:
                 bool changed = true;
                 while (changed) {
                     changed = false;
-                    for (uint32_t neighbor : neighbors_[curr_upper][l]) {
+                    for_each_edge(curr_upper, l, [&](const Edge& edge) {
+                        uint32_t neighbor = edge.neighbor;
                         float d = distance_to_insert(neighbor);
                         if (d < curr_dist_upper) {
                             curr_upper = neighbor;
                             curr_dist_upper = d;
                             changed = true;
                         }
-                    }
+                    });
                 }
             }
             insert_entry_ = curr_upper;
@@ -290,7 +297,8 @@ public:
             bool changed = true;
             while (changed) {
                 changed = false;
-                for (uint32_t neighbor : neighbors_[curr][l]) {
+                for_each_edge(curr, l, [&](const Edge& edge) {
+                    uint32_t neighbor = edge.neighbor;
                     if (deleted_[neighbor]) continue;
                     float d = distance_to_query(neighbor);
                     if (d < curr_dist) {
@@ -298,7 +306,7 @@ public:
                         curr_dist = d;
                         changed = true;
                     }
-                }
+                });
             }
         }
 
@@ -336,7 +344,8 @@ public:
             bool changed = true;
             while (changed) {
                 changed = false;
-                for (uint32_t neighbor : neighbors_[curr][l]) {
+                for_each_edge(curr, l, [&](const Edge& edge) {
+                    uint32_t neighbor = edge.neighbor;
                     if (deleted_[neighbor]) continue;
                     float d = distance_to_query(neighbor);
                     if (d < curr_dist) {
@@ -344,31 +353,87 @@ public:
                         curr_dist = d;
                         changed = true;
                     }
-                }
+                });
             }
         }
 
-        size_t initial_ef = std::max(ef_search_, k);
+        size_t initial_ef = std::max(ef_search_, k * 2);
         size_t max_ef = initial_ef * 4;
+        size_t current_ef = initial_ef;
 
-        for (size_t current_ef = initial_ef; current_ef <= max_ef; current_ef = std::min(current_ef * 2, max_ef)) {
-            auto candidates = search_layer_query(curr, current_ef, 0);
+        std::priority_queue<std::pair<float, uint32_t>, std::vector<std::pair<float, uint32_t>>, std::greater<>> candidates;
+        std::priority_queue<std::pair<float, uint32_t>> results;
 
-            std::vector<std::pair<uint32_t, float>> results;
-            for (auto& [dist, id] : candidates) {
-                if (deleted_[id]) continue;
-                size_t byte_idx = id >> 3;
-                if (byte_idx < bitset_len && (filter_bitset[byte_idx] & (1u << (id & 7)))) {
-                    results.emplace_back(id, dist);
-                    if (results.size() >= k) return results;
-                }
-            }
+        prepare_visited();
+        float d = distance_to_query(curr);
+        candidates.emplace(d, curr);
+        mark_visited(curr);
 
-            if (results.size() >= k || candidates.size() < current_ef || current_ef >= max_ef) {
-                return results;
+        size_t filtered_count = 0;
+        float lower_bound = std::numeric_limits<float>::max();
+
+        if (!deleted_[curr]) {
+            size_t byte_idx = curr >> 3;
+            if (byte_idx < bitset_len && (filter_bitset[byte_idx] & (1u << (curr & 7)))) {
+                results.emplace(d, curr);
+                filtered_count++;
+                lower_bound = d;
             }
         }
-        return {};
+
+        while (!candidates.empty()) {
+            auto [cand_dist, cand_id] = candidates.top();
+
+            if (filtered_count >= k && cand_dist > lower_bound) {
+                break;
+            }
+
+            if (filtered_count < k && cand_dist > lower_bound && results.size() >= current_ef) {
+                if (current_ef >= max_ef) break;
+                current_ef = std::min(current_ef * 2, max_ef);
+            }
+
+            candidates.pop();
+
+            for (uint32_t neighbor : neighbors_[cand_id][0]) {
+                if (is_visited(neighbor)) continue;
+                mark_visited(neighbor);
+
+                if (deleted_[neighbor]) continue;
+
+                float nd = distance_to_query(neighbor);
+                bool dominated = (results.size() >= current_ef && nd > lower_bound);
+                if (!dominated) {
+                    candidates.emplace(nd, neighbor);
+
+                    size_t byte_idx = neighbor >> 3;
+                    if (byte_idx < bitset_len && (filter_bitset[byte_idx] & (1u << (neighbor & 7)))) {
+                        results.emplace(nd, neighbor);
+                        filtered_count++;
+
+                        if (results.size() > current_ef) {
+                            results.pop();
+                            filtered_count--;
+                        }
+                        if (!results.empty()) {
+                            lower_bound = results.top().first;
+                        }
+                    }
+                }
+
+                if (filtered_count >= k && candidates.empty()) break;
+            }
+        }
+
+        std::vector<std::pair<uint32_t, float>> out;
+        while (!results.empty()) {
+            auto [dist, id] = results.top();
+            results.pop();
+            out.emplace_back(id, dist);
+        }
+        std::reverse(out.begin(), out.end());
+        if (out.size() > k) out.resize(k);
+        return out;
     }
 
     void mark_delete(uint32_t id) {
@@ -757,6 +822,32 @@ public:
     }
 
 private:
+    template<typename Fn>
+    void for_each_edge(uint32_t id, int level, Fn&& fn) const {
+        for (uint32_t neighbor : neighbors_[id][level]) {
+            fn(Edge{neighbor, 0.0f});
+        }
+    }
+
+    std::vector<Edge> copy_level_edges(uint32_t id, int level) const {
+        std::vector<Edge> edges;
+        const auto& src = neighbors_[id][level];
+        edges.reserve(src.size());
+        for (uint32_t neighbor : src) {
+            edges.push_back(Edge{neighbor, distance(id, neighbor)});
+        }
+        return edges;
+    }
+
+    void write_level_edges(uint32_t node, int level, const std::vector<Edge>& edges) {
+        auto& dst = neighbors_[node][level];
+        dst.clear();
+        dst.reserve(edges.size());
+        for (const Edge& edge : edges) {
+            dst.push_back(edge.neighbor);
+        }
+    }
+
     // =========================================================================
     // Dequantize vector id into dst buffer
     // =========================================================================
@@ -1105,7 +1196,8 @@ private:
             candidates.pop();
             g_build_profile.candidate_pops++;
             if (curr_dist > results.top().first && results.size() >= ef) break;
-            for (uint32_t neighbor : neighbors_[curr][level]) {
+            for_each_edge(curr, level, [&](const Edge& edge) {
+                uint32_t neighbor = edge.neighbor;
                 if (is_visited(neighbor)) continue;
                 if (skip_deleted && deleted_[neighbor]) continue;
                 mark_visited(neighbor);
@@ -1118,7 +1210,7 @@ private:
                     results.emplace(nd, neighbor);
                     if (results.size() > ef) results.pop();
                 }
-            }
+            });
         }
         std::vector<std::pair<float, uint32_t>> res;
         while (!results.empty()) { res.push_back(results.top()); results.pop(); }
@@ -1143,7 +1235,7 @@ private:
     }
 
     void select_neighbors_heuristic(uint32_t node, std::vector<std::pair<float, uint32_t>>& candidates, size_t M, int level) {
-        std::vector<uint32_t> result;
+        std::vector<Edge> result;
         result.reserve(std::min(M, candidates.size()));
         std::vector<size_t> selected_indices;
         selected_indices.reserve(std::min(M, candidates.size()));
@@ -1169,7 +1261,7 @@ private:
                     if (candidate_distance(ci, sel_idx) < cand.first) { keep = false; break; }
                 }
                 if (keep) {
-                    result.push_back(cand.second);
+                    result.push_back(Edge{cand.second, cand.first});
                     selected_indices.push_back(ci);
                 } else if (best_rejected == candidates.size()) {
                     best_rejected = ci;
@@ -1180,26 +1272,26 @@ private:
             // heuristic rejects candidates (prevents disconnected nodes).
             for (size_t ci = best_rejected; ci < candidates.size() && result.size() < M; ci++) {
                 bool already = false;
-                for (uint32_t sel : result) {
-                    if (sel == candidates[ci].second) { already = true; break; }
+                for (const Edge& sel : result) {
+                    if (sel.neighbor == candidates[ci].second) { already = true; break; }
                 }
-                if (!already) result.push_back(candidates[ci].second);
+                if (!already) result.push_back(Edge{candidates[ci].second, candidates[ci].first});
             }
         } else {
             for (auto& cand : candidates) {
                 if (result.size() >= M) break;
-                result.push_back(cand.second);
+                result.push_back(Edge{cand.second, cand.first});
             }
         }
-        neighbors_[node][level] = std::move(result);
+        write_level_edges(node, level, result);
     }
 
     void prune_neighbors(uint32_t node, int level, size_t M) {
-        auto& list = neighbors_[node][level];
+        auto list = copy_level_edges(node, level);
         std::vector<std::pair<float, uint32_t>> candidates;
         candidates.reserve(list.size());
-        for (uint32_t n : list) {
-            candidates.emplace_back(distance(node, n), n);
+        for (const Edge& edge : list) {
+            candidates.emplace_back(edge.dist, edge.neighbor);
         }
         std::sort(candidates.begin(), candidates.end());
         select_neighbors_heuristic(node, candidates, M, level);
