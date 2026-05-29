@@ -14,6 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const goldenSnapshots = require('./test/fixtures/golden_snapshots.js');
+const searchOracles = require('./test/fixtures/search_oracles.js');
 
 // ─── Minimal test harness ────────────────────────────────────────────────────
 
@@ -143,6 +144,167 @@ function wrapV2Envelope(rawBytes, dim, quantized, metric = 1) {
     view.setUint32(16, quantized ? 1 : 0, true);
     result.set(rawBytes, 20);
     return result;
+}
+
+function mulberry32(seed) {
+    let t = seed >>> 0;
+    return function next() {
+        t += 0x6D2B79F5;
+        let r = Math.imul(t ^ (t >>> 15), 1 | t);
+        r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+        return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+function normalizeInPlace(v) {
+    let normSq = 0;
+    for (let i = 0; i < v.length; i++) normSq += v[i] * v[i];
+    const invNorm = normSq > 0 ? 1 / Math.sqrt(normSq) : 0;
+    for (let i = 0; i < v.length; i++) v[i] *= invNorm;
+    return v;
+}
+
+function buildClusteredCosineDataset(spec) {
+    const rand = mulberry32(spec.seed);
+    const centers = [];
+
+    for (let c = 0; c < spec.clusters; c++) {
+        const center = new Float32Array(spec.dim);
+        for (let d = 0; d < spec.dim; d++) center[d] = rand() * 2 - 1;
+        centers.push(normalizeInPlace(center));
+    }
+
+    const makeVec = (clusterId, noiseScale) => {
+        const v = new Float32Array(spec.dim);
+        const center = centers[clusterId];
+        for (let d = 0; d < spec.dim; d++) {
+            v[d] = center[d] + (rand() * 2 - 1) * noiseScale;
+        }
+        return normalizeInPlace(v);
+    };
+
+    const train = [];
+    for (let i = 0; i < spec.trainCount; i++) train.push(makeVec(i % spec.clusters, 0.18));
+
+    const queries = [];
+    for (let i = 0; i < spec.queryCount; i++) queries.push(makeVec((i * 3) % spec.clusters, 0.11));
+
+    return { train, queries };
+}
+
+function bruteForceTopK(vectors, query, k, metric, ids = null) {
+    const distFn = metric === 'l2' ? l2Dist : cosineDist;
+    return vectors
+        .map((vec, idx) => ({
+            id: ids ? ids[idx] : idx,
+            distance: distFn(vec, query),
+        }))
+        .sort((a, b) => a.distance - b.distance || a.id - b.id)
+        .slice(0, k);
+}
+
+function recallAtK(predictedIds, truthIds) {
+    const truthSet = new Set(truthIds);
+    let hits = 0;
+    for (const id of predictedIds) {
+        if (truthSet.has(id)) hits++;
+    }
+    return truthIds.length === 0 ? 1 : hits / truthIds.length;
+}
+
+function averageRecallAgainstGroundTruth(resultsByQuery, groundTruthByQuery) {
+    let total = 0;
+    for (let i = 0; i < resultsByQuery.length; i++) {
+        total += recallAtK(
+            resultsByQuery[i].map(r => r.id),
+            groundTruthByQuery[i].map(r => r.id)
+        );
+    }
+    return total / resultsByQuery.length;
+}
+
+function assertSearchRowsEqualWithTolerance(actualRows, expectedRows, distanceTolerance, label) {
+    assert(actualRows.length === expectedRows.length, `${label}: query count matches golden`);
+    for (let qi = 0; qi < Math.min(actualRows.length, expectedRows.length); qi++) {
+        const actual = actualRows[qi];
+        const expected = expectedRows[qi];
+        assert(actual.ids.length === expected.ids.length, `${label}: q${expected.q} result length matches golden`);
+        for (let ri = 0; ri < Math.min(actual.ids.length, expected.ids.length); ri++) {
+            assert(actual.ids[ri] === expected.ids[ri], `${label}: q${expected.q} id[${ri}] matches golden`);
+            assertNear(actual.dists[ri], expected.dists[ri], distanceTolerance, `${label}: q${expected.q} dist[${ri}] matches golden`);
+        }
+    }
+}
+
+async function evaluateHeldOutOracle(config, oracleSpec) {
+    const dataset = buildClusteredCosineDataset(oracleSpec);
+    const idx = await Pancake.create({
+        dim: oracleSpec.dim,
+        metric: 'cosine',
+        maxElements: 1024,
+        M: 16,
+        efConstruction: 200,
+        efSearch: 120,
+        quantized: config.quantized,
+    });
+    idx.addBatch(dataset.train);
+
+    const baselineResults = dataset.queries.map(query => idx.search(query, oracleSpec.k));
+    const baselineTruth = dataset.queries.map(query => bruteForceTopK(dataset.train, query, oracleSpec.k, 'cosine'));
+    const avgRecallBeforeCompact = averageRecallAgainstGroundTruth(baselineResults, baselineTruth);
+
+    const goldenRows = baselineResults.slice(0, 8).map((rows, q) => ({
+        q,
+        ids: rows.slice(0, 5).map(r => r.id),
+        dists: rows.slice(0, 5).map(r => Number(r.distance.toFixed(6))),
+    }));
+
+    const exported = new Uint8Array(idx.export());
+
+    const deletedSet = new Set(oracleSpec.deletedIdsForCompact);
+    for (const id of oracleSpec.deletedIdsForCompact) idx.delete(id);
+    idx.compact();
+
+    const liveVectors = [];
+    const liveIds = [];
+    for (let id = 0; id < dataset.train.length; id++) {
+        if (deletedSet.has(id)) continue;
+        liveVectors.push(dataset.train[id]);
+        liveIds.push(id);
+    }
+
+    const postCompactResults = dataset.queries.map(query => idx.search(query, oracleSpec.k));
+    const postCompactTruth = dataset.queries.map(query => bruteForceTopK(liveVectors, query, oracleSpec.k, 'cosine', liveIds));
+    const avgRecallAfterCompact = averageRecallAgainstGroundTruth(postCompactResults, postCompactTruth);
+
+    idx.dispose();
+
+    const idx2 = await Pancake.create({
+        dim: oracleSpec.dim,
+        metric: 'cosine',
+        maxElements: 1024,
+        M: 16,
+        efConstruction: 200,
+        efSearch: 120,
+        quantized: config.quantized,
+    });
+    idx2.addBatch(dataset.train);
+    const exported2 = new Uint8Array(idx2.export());
+    const results2 = dataset.queries.slice(0, 8).map(query => idx2.search(query, oracleSpec.k));
+    idx2.dispose();
+
+    return {
+        avgRecallBeforeCompact,
+        avgRecallAfterCompact,
+        goldenRows,
+        exported,
+        exported2,
+        goldenRows2: results2.slice(0, 8).map((rows, q) => ({
+            q,
+            ids: rows.slice(0, 5).map(r => r.id),
+            dists: rows.slice(0, 5).map(r => Number(r.distance.toFixed(6))),
+        })),
+    };
 }
 
 // ─── Default config ───────────────────────────────────────────────────────────
@@ -1762,6 +1924,87 @@ async function testSearchFiltered() {
     }
 }
 
+async function testHeldOutRecallOracle() {
+    section('Held-out recall vs brute-force oracle');
+
+    const oracle = searchOracles.clusteredCosine32;
+    for (const scenario of [
+        { label: 'float32', quantized: false },
+        { label: 'int8', quantized: true },
+    ]) {
+        const probe = await evaluateHeldOutOracle(scenario, oracle);
+        const expected = oracle.recallBaseline[scenario.label].beforeCompact;
+        assertNear(
+            probe.avgRecallBeforeCompact,
+            expected,
+            1e-9,
+            `${scenario.label}: held-out recall matches recorded brute-force baseline`
+        );
+    }
+}
+
+async function testHeldOutRecallAfterCompact() {
+    section('Held-out recall after compact vs brute-force oracle');
+
+    const oracle = searchOracles.clusteredCosine32;
+    for (const scenario of [
+        { label: 'float32', quantized: false },
+        { label: 'int8', quantized: true },
+    ]) {
+        const probe = await evaluateHeldOutOracle(scenario, oracle);
+        const expected = oracle.recallBaseline[scenario.label].afterCompact;
+        assertNear(
+            probe.avgRecallAfterCompact,
+            expected,
+            1e-9,
+            `${scenario.label}: post-compact held-out recall matches recorded brute-force baseline`
+        );
+    }
+}
+
+async function testSearchOutputGoldenOracle() {
+    section('Search output golden oracle');
+
+    const oracle = searchOracles.clusteredCosine32;
+    for (const scenario of [
+        { label: 'float32', quantized: false },
+        { label: 'int8', quantized: true },
+    ]) {
+        const probe = await evaluateHeldOutOracle(scenario, oracle);
+        assertSearchRowsEqualWithTolerance(
+            probe.goldenRows,
+            oracle.searchGolden[scenario.label],
+            1e-6,
+            `${scenario.label}: fixed-query search output`
+        );
+    }
+}
+
+async function testSearchAndSerializationDeterminismOracle() {
+    section('Determinism — serialized graph and fixed queries');
+
+    const oracle = searchOracles.clusteredCosine32;
+    for (const scenario of [
+        { label: 'float32', quantized: false },
+        { label: 'int8', quantized: true },
+    ]) {
+        const probe = await evaluateHeldOutOracle(scenario, oracle);
+        assert(
+            probe.exported.length === probe.exported2.length,
+            `${scenario.label}: identical builds export equal-length snapshots`
+        );
+        const sameBytes = probe.exported.length === probe.exported2.length
+            && probe.exported.every((byte, i) => byte === probe.exported2[i]);
+        assert(sameBytes, `${scenario.label}: identical builds export identical snapshots`);
+        assertSearchRowsEqualWithTolerance(
+            probe.goldenRows2,
+            probe.goldenRows,
+            1e-9,
+            `${scenario.label}: identical rebuilds preserve fixed-query outputs`
+        );
+    }
+}
+
 // ─── Runner ───────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -1802,6 +2045,10 @@ async function main() {
         testNonFiniteRejection,
         testCompactEntryPointRecovery,
         testSearchFiltered,
+        testHeldOutRecallOracle,
+        testHeldOutRecallAfterCompact,
+        testSearchOutputGoldenOracle,
+        testSearchAndSerializationDeterminismOracle,
     ];
 
     for (const suite of suites) {
