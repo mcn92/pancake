@@ -38,7 +38,6 @@
     #include <emscripten/emscripten.h>
 #elif !defined(PANCAKE_EMSCRIPTEN_GET_NOW_DEFINED)
     #define PANCAKE_EMSCRIPTEN_GET_NOW_DEFINED
-    // Fallback for non-Emscripten builds
     #include <chrono>
     static double emscripten_get_now() {
         using namespace std::chrono;
@@ -49,6 +48,7 @@
 namespace pancake {
 namespace wasm {
 
+#if defined(PANCAKE_INT8_HNSW_BUILD_PROFILE)
 struct BuildProfile {
     uint64_t inserts = 0;
 
@@ -92,8 +92,11 @@ static BuildProfile g_build_profile;
     code;                                       \
     g_build_profile.field += emscripten_get_now() - _t0; \
   } while (0)
-
-// Forward: uses DistanceMetric from float_hnsw.hpp (already included in engine.cpp)
+#define PROFILE_COUNT(code) do { code; } while (0)
+#else
+#define PROFILE_BLOCK(field, code) do { code; } while (0)
+#define PROFILE_COUNT(code) do {} while (0)
+#endif
 
 struct Int8FloatHNSWConfig {
     size_t M = 32;
@@ -110,6 +113,11 @@ public:
     struct Edge {
         uint32_t neighbor;
         float dist;
+    };
+    static_assert(sizeof(Edge) == 8, "Edge must pack tight");
+
+    struct UpperLevel {
+        std::vector<Edge> edges;
     };
 
     Int8FloatHNSW(size_t dims, const Int8FloatHNSWConfig& config = {})
@@ -134,13 +142,14 @@ public:
         offsets_.reserve(max_elements_);
         sum_q_.reserve(max_elements_);
         sum_q2_.reserve(max_elements_);
-        neighbors_.reserve(max_elements_);
+        base_edges_.resize(max_elements_ * M0_);
+        base_sizes_.assign(max_elements_, 0);
+        upper_.reserve(max_elements_);
         levels_.reserve(max_elements_);
         deleted_.reserve(max_elements_);
         level_mult_ = 1.0 / std::log(static_cast<double>(M_));
         visited_list_.assign(max_elements_, 0);
         visited_curr_ = 0;
-        // Scratch buffers for symmetric distance during construction
         scratch_norm_.resize(dims_);
     }
 
@@ -148,9 +157,8 @@ public:
         if (count_ >= max_elements_) return UINT32_MAX;
 
         uint32_t id = static_cast<uint32_t>(count_++);
-        g_build_profile.inserts++;
+        PROFILE_COUNT(g_build_profile.inserts++);
 
-        // Normalize if cosine, then quantize
         const float* src = vec;
         {
             double _qt0 = emscripten_get_now();
@@ -195,14 +203,15 @@ public:
             }
             sum_q_.push_back(sq);
             sum_q2_.push_back(sq2);
-            g_build_profile.quantize_ms += emscripten_get_now() - _qt0;
+            PROFILE_COUNT(g_build_profile.quantize_ms += emscripten_get_now() - _qt0);
         }
 
         deleted_.push_back(0);
 
         int level = random_level();
         levels_.push_back(level);
-        neighbors_.push_back(std::vector<std::vector<uint32_t>>(level + 1));
+        base_sizes_[id] = 0;
+        upper_.push_back(std::vector<UpperLevel>(level > 0 ? static_cast<size_t>(level) : 0));
 
         if (entry_point_ == UINT32_MAX) {
             entry_point_ = id;
@@ -210,8 +219,6 @@ public:
             return id;
         }
 
-        // Cache the new vector's float32 data so construction can use
-        // asymmetric distance (float vs int8) instead of dequantizing both sides.
         cached_insert_ = src;
 
         PROFILE_BLOCK(search_layers_ms, {
@@ -223,10 +230,9 @@ public:
                 while (changed) {
                     changed = false;
                     for_each_edge(curr_upper, l, [&](const Edge& edge) {
-                        uint32_t neighbor = edge.neighbor;
-                        float d = distance_to_insert(neighbor);
+                        float d = distance_to_insert(edge.neighbor);
                         if (d < curr_dist_upper) {
-                            curr_upper = neighbor;
+                            curr_upper = edge.neighbor;
                             curr_dist_upper = d;
                             changed = true;
                         }
@@ -237,23 +243,19 @@ public:
         });
 
         uint32_t curr = insert_entry_;
-
         for (int l = std::min(level, max_level_); l >= 0; --l) {
             std::vector<std::pair<float, uint32_t>> candidates;
             PROFILE_BLOCK(search_base_ms, {
-                candidates = search_layer_insert(id, curr, ef_construction_, l);
+                candidates = search_layer_insert(curr, ef_construction_, l);
             });
             size_t max_n = (l == 0) ? M0_ : M_;
             PROFILE_BLOCK(select_neighbors_ms, {
                 select_neighbors_heuristic(id, candidates, max_n, l);
             });
             PROFILE_BLOCK(connect_ms, {
-                for (uint32_t neighbor : neighbors_[id][l]) {
-                    neighbors_[neighbor][l].push_back(id);
-                    if (neighbors_[neighbor][l].size() > max_n) {
-                        prune_neighbors(neighbor, l, max_n);
-                    }
-                }
+                for_each_edge(id, l, [&](const Edge& edge) {
+                    append_edge_with_prune(edge.neighbor, l, Edge{id, edge.dist}, max_n);
+                });
             });
             if (!candidates.empty()) curr = candidates[0].second;
         }
@@ -298,11 +300,10 @@ public:
             while (changed) {
                 changed = false;
                 for_each_edge(curr, l, [&](const Edge& edge) {
-                    uint32_t neighbor = edge.neighbor;
-                    if (deleted_[neighbor]) continue;
-                    float d = distance_to_query(neighbor);
+                    if (deleted_[edge.neighbor]) return;
+                    float d = distance_to_query(edge.neighbor);
                     if (d < curr_dist) {
-                        curr = neighbor;
+                        curr = edge.neighbor;
                         curr_dist = d;
                         changed = true;
                     }
@@ -345,11 +346,10 @@ public:
             while (changed) {
                 changed = false;
                 for_each_edge(curr, l, [&](const Edge& edge) {
-                    uint32_t neighbor = edge.neighbor;
-                    if (deleted_[neighbor]) continue;
-                    float d = distance_to_query(neighbor);
+                    if (deleted_[edge.neighbor]) return;
+                    float d = distance_to_query(edge.neighbor);
                     if (d < curr_dist) {
-                        curr = neighbor;
+                        curr = edge.neighbor;
                         curr_dist = d;
                         changed = true;
                     }
@@ -395,7 +395,10 @@ public:
 
             candidates.pop();
 
-            for (uint32_t neighbor : neighbors_[cand_id][0]) {
+            const Edge* edges = base_slot(cand_id);
+            uint16_t edge_count = base_sizes_[cand_id];
+            for (uint16_t ei = 0; ei < edge_count; ++ei) {
+                uint32_t neighbor = edges[ei].neighbor;
                 if (is_visited(neighbor)) continue;
                 mark_visited(neighbor);
 
@@ -443,16 +446,13 @@ public:
     }
 
     void set_ef_search(size_t ef) { ef_search_ = ef; }
-    
+
     size_t ghost_count() const { return num_deleted_; }
 
     float ghost_ratio() const {
         return count_ > 0 ? static_cast<float>(num_deleted_) / count_ : 0.0f;
     }
 
-    // Compact: remove ghosts with stable remapping, then refine edges.
-    // The overload taking out_map returns the old→new ID mapping so the
-    // caller can remap its own data structures.
     void compact() {
         std::vector<uint32_t> discard;
         compact(discard);
@@ -465,7 +465,6 @@ public:
             return;
         }
 
-        // Phase 1: Build id_map and compact arrays in-place.
         out_map.assign(count_, UINT32_MAX);
         auto& id_map = out_map;
         uint32_t new_id = 0;
@@ -478,84 +477,88 @@ public:
                     offsets_[new_id] = offsets_[old_id];
                     sum_q_[new_id] = sum_q_[old_id];
                     sum_q2_[new_id] = sum_q2_[old_id];
-                    neighbors_[new_id] = std::move(neighbors_[old_id]);
+                    base_sizes_[new_id] = base_sizes_[old_id];
+                    if (base_sizes_[old_id] != 0) {
+                        std::memcpy(base_slot(new_id), base_slot(old_id), static_cast<size_t>(base_sizes_[old_id]) * sizeof(Edge));
+                    }
+                    upper_[new_id] = std::move(upper_[old_id]);
                     levels_[new_id] = levels_[old_id];
                 }
                 new_id++;
             }
         }
 
-        // Phase 2: Remap neighbor IDs and strip ghost references.
         for (uint32_t i = 0; i < new_id; i++) {
-            for (int l = 0; l <= levels_[i]; l++) {
-                auto& nbrs = neighbors_[i][l];
+            Edge* base = base_slot(i);
+            uint16_t base_write = 0;
+            for (uint16_t r = 0; r < base_sizes_[i]; ++r) {
+                uint32_t mapped = id_map[base[r].neighbor];
+                if (mapped != UINT32_MAX) {
+                    base[base_write++] = Edge{mapped, base[r].dist};
+                }
+            }
+            base_sizes_[i] = base_write;
+
+            for (int l = 1; l <= levels_[i]; ++l) {
+                auto& edges = upper_edges(i, l);
                 size_t write = 0;
-                for (size_t r = 0; r < nbrs.size(); r++) {
-                    uint32_t mapped = id_map[nbrs[r]];
+                for (size_t r = 0; r < edges.size(); ++r) {
+                    uint32_t mapped = id_map[edges[r].neighbor];
                     if (mapped != UINT32_MAX) {
-                        nbrs[write++] = mapped;
+                        edges[write++] = Edge{mapped, edges[r].dist};
                     }
                 }
-                nbrs.resize(write);
+                edges.resize(write);
             }
         }
 
-        // Phase 3: Backfill under-connected nodes.
-        // After stripping ghost references, some nodes may have lost neighbors.
-        // For each such node, gather neighbors-of-neighbors as candidates and
-        // re-run the selection heuristic to restore connectivity. New edges are
-        // added bidirectionally (same as the insert path).
         for (uint32_t i = 0; i < new_id; i++) {
             for (int l = 0; l <= levels_[i]; l++) {
                 size_t target = (l == 0) ? M0_ : M_;
-                auto& nbrs = neighbors_[i][l];
-                if (nbrs.size() >= target) continue;
+                if (level_edge_count(i, l) >= target) continue;
 
-                // Snapshot old neighbors before heuristic overwrites them
-                std::vector<uint32_t> old_nbrs(nbrs.begin(), nbrs.end());
-                std::unordered_set<uint32_t> old_set(old_nbrs.begin(), old_nbrs.end());
+                std::vector<Edge> old_nbrs = copy_level_edges(i, l);
+                std::unordered_set<uint32_t> old_set;
+                old_set.reserve(old_nbrs.size());
+                for (const Edge& edge : old_nbrs) old_set.insert(edge.neighbor);
 
-                // Collect candidates: current neighbors + their neighbors (1-hop expansion)
                 std::unordered_set<uint32_t> seen;
                 seen.insert(i);
-                for (uint32_t n : old_nbrs) seen.insert(n);
+                for (const Edge& edge : old_nbrs) seen.insert(edge.neighbor);
 
                 std::vector<uint32_t> expansion;
-                for (uint32_t n : old_nbrs) {
+                for (const Edge& edge : old_nbrs) {
+                    uint32_t n = edge.neighbor;
                     if (n >= new_id) continue;
                     if (l > levels_[n]) continue;
-                    for (uint32_t nn : neighbors_[n][l]) {
+                    for_each_edge(n, l, [&](const Edge& expanded) {
+                        uint32_t nn = expanded.neighbor;
                         if (nn < new_id && seen.find(nn) == seen.end()) {
                             seen.insert(nn);
                             expansion.push_back(nn);
                         }
-                    }
+                    });
                 }
 
                 if (expansion.empty()) continue;
 
-                // Build candidate list: existing neighbors + new candidates, sorted by distance
                 std::vector<std::pair<float, uint32_t>> candidates;
                 candidates.reserve(old_nbrs.size() + expansion.size());
-                for (uint32_t n : old_nbrs) candidates.emplace_back(distance(i, n), n);
+                for (const Edge& edge : old_nbrs) candidates.emplace_back(edge.dist, edge.neighbor);
                 for (uint32_t n : expansion) candidates.emplace_back(distance(i, n), n);
                 std::sort(candidates.begin(), candidates.end());
 
                 select_neighbors_heuristic(i, candidates, target, l);
 
-                // Add reverse edges for newly added neighbors
-                for (uint32_t n : neighbors_[i][l]) {
-                    if (old_set.count(n)) continue; // already connected
-                    if (n >= new_id || l > levels_[n]) continue;
-                    neighbors_[n][l].push_back(i);
-                    if (neighbors_[n][l].size() > target) {
-                        prune_neighbors(n, l, target);
-                    }
+                std::vector<Edge> new_edges = copy_level_edges(i, l);
+                for (const Edge& edge : new_edges) {
+                    if (old_set.count(edge.neighbor)) continue;
+                    if (edge.neighbor >= new_id || l > levels_[edge.neighbor]) continue;
+                    append_edge_with_prune(edge.neighbor, l, Edge{i, edge.dist}, target);
                 }
             }
         }
 
-        // Phase 4: Update entry point.
         if (entry_point_ != UINT32_MAX && id_map[entry_point_] != UINT32_MAX) {
             entry_point_ = id_map[entry_point_];
         } else {
@@ -567,37 +570,31 @@ public:
                     entry_point_ = i;
                 }
             }
-            // All survivors at level 0: pick node 0 as entry point.
-            if (entry_point_ == UINT32_MAX && new_id > 0) {
-                entry_point_ = 0;
-            }
+            if (entry_point_ == UINT32_MAX && new_id > 0) entry_point_ = 0;
         }
 
-        // Shrink arrays.
         qdata_.resize(new_id * dims_);
         scales_.resize(new_id);
         offsets_.resize(new_id);
         sum_q_.resize(new_id);
         sum_q2_.resize(new_id);
-        neighbors_.resize(new_id);
+        upper_.resize(new_id);
         levels_.resize(new_id);
         deleted_.assign(new_id, 0);
         count_ = new_id;
         num_deleted_ = 0;
-
     }
 
     std::vector<uint8_t> serialize() const {
-        // Header: magic + dims + version + count + entry + max_level + M + M0 + metric + ef_construction
-        // Then: scales[count] + offsets[count] + qdata[count * dims]
-        // Then: graph structure
         size_t total_size = 10 * 4;
-        total_size += count_ * sizeof(float) * 2;  // scales + offsets
-        total_size += count_ * dims_;               // qdata
+        total_size += count_ * sizeof(float) * 2;
+        total_size += count_ * dims_;
         for (size_t i = 0; i < count_; ++i) {
             total_size += 4;
-            for (int l = 0; l <= levels_[i]; ++l)
-                total_size += 4 + neighbors_[i][l].size() * 4;
+            total_size += 4 + static_cast<size_t>(base_sizes_[i]) * sizeof(Edge);
+            for (int l = 1; l <= levels_[i]; ++l) {
+                total_size += 4 + upper_edges(i, l).size() * sizeof(Edge);
+            }
         }
 
         std::vector<uint8_t> buffer;
@@ -612,13 +609,9 @@ public:
             buffer.insert(buffer.end(), p, p + 4);
         };
 
-        // Header: 10 x little-endian u32
-        // [0] magic   [1] dims     [2] version  [3] count    [4] entry
-        // [5] max_lvl [6] M        [7] M0       [8] metric   [9] ef_construction
-        // metric: 0=L2, 1=Cosine (see DistanceMetric enum)
-        push_u32(0x49384831);  // "I8H1" magic (v1 format)
+        push_u32(0x49384831);
         push_u32(static_cast<uint32_t>(dims_));
-        push_u32(1);  // Version 1: adds ef_construction
+        push_u32(2);
         push_u32(static_cast<uint32_t>(count_));
         push_u32(entry_point_);
         push_u32(static_cast<uint32_t>(max_level_));
@@ -627,20 +620,26 @@ public:
         push_u32(static_cast<uint32_t>(metric_));
         push_u32(static_cast<uint32_t>(ef_construction_));
 
-        // Scales and offsets
         for (size_t i = 0; i < count_; ++i) push_f32(scales_[i]);
         for (size_t i = 0; i < count_; ++i) push_f32(offsets_[i]);
 
-        // Quantized data
         buffer.insert(buffer.end(), qdata_.begin(), qdata_.begin() + count_ * dims_);
 
-        // Graph
         for (size_t i = 0; i < count_; ++i) {
             push_u32(static_cast<uint32_t>(levels_[i]));
-            for (int l = 0; l <= levels_[i]; ++l) {
-                push_u32(static_cast<uint32_t>(neighbors_[i][l].size()));
-                for (uint32_t neighbor : neighbors_[i][l])
-                    push_u32(neighbor);
+            push_u32(static_cast<uint32_t>(base_sizes_[i]));
+            const Edge* base = base_slot(static_cast<uint32_t>(i));
+            for (uint16_t ei = 0; ei < base_sizes_[i]; ++ei) {
+                push_u32(base[ei].neighbor);
+                push_f32(base[ei].dist);
+            }
+            for (int l = 1; l <= levels_[i]; ++l) {
+                const auto& edges = upper_edges(static_cast<uint32_t>(i), l);
+                push_u32(static_cast<uint32_t>(edges.size()));
+                for (const Edge& edge : edges) {
+                    push_u32(edge.neighbor);
+                    push_f32(edge.dist);
+                }
             }
         }
         return buffer;
@@ -657,7 +656,8 @@ public:
             offsets_.clear();
             sum_q_.clear();
             sum_q2_.clear();
-            neighbors_.clear();
+            std::fill(base_sizes_.begin(), base_sizes_.end(), 0);
+            upper_.clear();
             levels_.clear();
             deleted_.clear();
             num_deleted_ = 0;
@@ -678,13 +678,12 @@ public:
 
         uint32_t magic, dims_val;
         if (!safe_read_u32(magic)) return false;
-        // Accept old "I8HW" (0x49384857) and new "I8H1" (0x49384831) magic
-        bool is_v1 = (magic == 0x49384831);
-        if (magic != 0x49384857 && !is_v1) return false;
+        bool has_version = (magic == 0x49384831);
+        if (magic != 0x49384857 && !has_version) return false;
         if (!safe_read_u32(dims_val) || dims_val != static_cast<uint32_t>(dims_)) return false;
 
         uint32_t version = 0;
-        if (is_v1) {
+        if (has_version) {
             if (!safe_read_u32(version)) return false;
         }
 
@@ -696,7 +695,7 @@ public:
         if (!safe_read_u32(m0_val)) return false;
         if (!safe_read_u32(metric_val)) return false;
 
-        uint32_t ef_construction_val = 200;  // default for old format
+        uint32_t ef_construction_val = 200;
         if (version >= 1) {
             if (!safe_read_u32(ef_construction_val)) return false;
         }
@@ -721,70 +720,105 @@ public:
         }
         level_mult_ = 1.0 / std::log(static_cast<double>(M_));
 
-        // Bounds check for scales + offsets (count * 4 bytes each)
         if (offset + count_ * sizeof(float) * 2 > data_size) return fail();
         scales_.resize(count_);
         offsets_.resize(count_);
         for (size_t i = 0; i < count_; ++i) {
             if (!safe_read_f32(scales_[i])) return fail();
-            // Bit-level finite check — std::isfinite is unreliable under -ffast-math.
             uint32_t bits;
             memcpy(&bits, &scales_[i], 4);
-            if (((bits >> 23) & 0xFF) == 0xFF) return fail(); // NaN or Inf
+            if (((bits >> 23) & 0xFF) == 0xFF) return fail();
             if (scales_[i] < 0.0f || scales_[i] > 1e20f) return fail();
         }
         for (size_t i = 0; i < count_; ++i) {
             if (!safe_read_f32(offsets_[i])) return fail();
             uint32_t bits;
             memcpy(&bits, &offsets_[i], 4);
-            if (((bits >> 23) & 0xFF) == 0xFF) return fail(); // NaN or Inf
+            if (((bits >> 23) & 0xFF) == 0xFF) return fail();
             if (offsets_[i] > 1e20f || offsets_[i] < -1e20f) return fail();
         }
 
-        // Bounds check for quantized data
         size_t qdata_bytes = count_ * dims_;
         if (offset + qdata_bytes > data_size) return fail();
         qdata_.resize(qdata_bytes);
         memcpy(qdata_.data(), data + offset, qdata_bytes);
         offset += qdata_bytes;
 
-        neighbors_.resize(count_);
+        base_edges_.assign(max_elements_ * M0_, Edge{0, 0.0f});
+        base_sizes_.assign(max_elements_, 0);
+        upper_.clear();
+        upper_.resize(count_);
         levels_.resize(count_);
         int observed_max_level = 0;
+        bool recompute_edge_distances = (version < 2);
+
         for (size_t i = 0; i < count_; ++i) {
             uint32_t lvl;
             if (!safe_read_u32(lvl)) return fail();
             if (lvl > static_cast<uint32_t>(max_level_)) return fail();
             levels_[i] = static_cast<int>(lvl);
             observed_max_level = std::max(observed_max_level, levels_[i]);
-            neighbors_[i].resize(lvl + 1);
+            upper_[i].resize(lvl > 0 ? lvl : 0);
+
             for (int l = 0; l <= static_cast<int>(lvl); ++l) {
                 uint32_t sz;
                 size_t max_neighbors = (l == 0) ? M0_ : M_;
                 if (!safe_read_u32(sz)) return fail();
                 if (sz > max_neighbors) return fail();
-                if (offset + sz * 4 > data_size) return fail();
-                neighbors_[i][l].resize(sz);
-                for (uint32_t j = 0; j < sz; ++j) {
-                    if (!safe_read_u32(neighbors_[i][l][j])) return fail();
-                    if (neighbors_[i][l][j] >= count_) return fail();
+
+                if (version >= 2) {
+                    if (offset + static_cast<size_t>(sz) * sizeof(Edge) > data_size) return fail();
+                } else {
+                    if (offset + static_cast<size_t>(sz) * 4 > data_size) return fail();
+                }
+
+                if (l == 0) {
+                    base_sizes_[i] = static_cast<uint16_t>(sz);
+                    Edge* base = base_slot(static_cast<uint32_t>(i));
+                    for (uint32_t j = 0; j < sz; ++j) {
+                        if (!safe_read_u32(base[j].neighbor)) return fail();
+                        if (base[j].neighbor >= count_) return fail();
+                        if (version >= 2) {
+                            if (!safe_read_f32(base[j].dist)) return fail();
+                            uint32_t bits;
+                            memcpy(&bits, &base[j].dist, 4);
+                            if (((bits >> 23) & 0xFF) == 0xFF) return fail();
+                        } else {
+                            base[j].dist = 0.0f;
+                        }
+                    }
+                } else {
+                    auto& edges = upper_edges(static_cast<uint32_t>(i), l);
+                    edges.resize(sz);
+                    for (uint32_t j = 0; j < sz; ++j) {
+                        if (!safe_read_u32(edges[j].neighbor)) return fail();
+                        if (edges[j].neighbor >= count_) return fail();
+                        if (version >= 2) {
+                            if (!safe_read_f32(edges[j].dist)) return fail();
+                            uint32_t bits;
+                            memcpy(&bits, &edges[j].dist, 4);
+                            if (((bits >> 23) & 0xFF) == 0xFF) return fail();
+                        } else {
+                            edges[j].dist = 0.0f;
+                        }
+                    }
                 }
             }
         }
+
         if (count_ > 0 && observed_max_level != max_level_) return fail();
 
         deleted_.assign(count_, 0);
         num_deleted_ = 0;
-        if (max_elements_ > visited_list_.size())
-            visited_list_.assign(max_elements_, 0);
+        if (max_elements_ > visited_list_.size()) visited_list_.assign(max_elements_, 0);
         visited_curr_ = 0;
 
-        // Recompute precomputed per-vector statistics from quantized data
         sum_q_.resize(count_);
         sum_q2_.resize(count_);
         for (size_t i = 0; i < count_; ++i) {
             const uint8_t* row = &qdata_[i * dims_];
-            uint32_t sq = 0, sq2 = 0;
+            uint32_t sq = 0;
+            uint32_t sq2 = 0;
             for (size_t d = 0; d < dims_; d++) {
                 uint32_t v = row[d];
                 sq += v;
@@ -794,6 +828,21 @@ public:
             sum_q2_[i] = sq2;
         }
 
+        if (recompute_edge_distances) {
+            for (uint32_t i = 0; i < count_; ++i) {
+                Edge* base = base_slot(i);
+                for (uint16_t ei = 0; ei < base_sizes_[i]; ++ei) {
+                    base[ei].dist = distance(i, base[ei].neighbor);
+                }
+                for (int l = 1; l <= levels_[i]; ++l) {
+                    auto& edges = upper_edges(i, l);
+                    for (Edge& edge : edges) {
+                        edge.dist = distance(i, edge.neighbor);
+                    }
+                }
+            }
+        }
+
         return true;
     }
 
@@ -801,56 +850,103 @@ public:
     size_t dims() const { return dims_; }
 
     size_t memory_bytes() const {
-        // Quantized vector storage: uint8[dims] + float scale + float offset per vector
-        size_t total = count_ * dims_;                       // qdata
-        total += count_ * sizeof(float) * 2;                 // scales + offsets
-
-        // HNSW graph (logical size, not capacity)
-        for (const auto& node_neighbors : neighbors_) {
-            for (const auto& level : node_neighbors) {
-                total += level.size() * sizeof(uint32_t);
+        size_t total = count_ * dims_;
+        total += count_ * sizeof(float) * 2;
+        total += base_edges_.size() * sizeof(Edge);
+        total += base_sizes_.size() * sizeof(uint16_t);
+        for (const auto& node_levels : upper_) {
+            for (const auto& level : node_levels) {
+                total += level.edges.size() * sizeof(Edge);
             }
         }
-
         total += sizeof(*this);
-
         return total;
     }
 
-    const std::vector<uint32_t>& get_neighbors(uint32_t id) const {
-        return neighbors_[id][0];
+    std::vector<uint32_t> get_neighbors(uint32_t id) const {
+        std::vector<uint32_t> out;
+        out.reserve(base_sizes_[id]);
+        const Edge* edges = base_slot(id);
+        for (uint16_t i = 0; i < base_sizes_[id]; ++i) out.push_back(edges[i].neighbor);
+        return out;
     }
 
 private:
-    template<typename Fn>
-    void for_each_edge(uint32_t id, int level, Fn&& fn) const {
-        for (uint32_t neighbor : neighbors_[id][level]) {
-            fn(Edge{neighbor, 0.0f});
-        }
+    Edge* base_slot(uint32_t id) {
+        return base_edges_.data() + static_cast<size_t>(id) * M0_;
+    }
+
+    const Edge* base_slot(uint32_t id) const {
+        return base_edges_.data() + static_cast<size_t>(id) * M0_;
+    }
+
+    std::vector<Edge>& upper_edges(uint32_t id, int level) {
+        return upper_[id][static_cast<size_t>(level - 1)].edges;
+    }
+
+    const std::vector<Edge>& upper_edges(uint32_t id, int level) const {
+        return upper_[id][static_cast<size_t>(level - 1)].edges;
+    }
+
+    size_t level_edge_count(uint32_t id, int level) const {
+        return (level == 0) ? base_sizes_[id] : upper_edges(id, level).size();
     }
 
     std::vector<Edge> copy_level_edges(uint32_t id, int level) const {
-        std::vector<Edge> edges;
-        const auto& src = neighbors_[id][level];
-        edges.reserve(src.size());
-        for (uint32_t neighbor : src) {
-            edges.push_back(Edge{neighbor, distance(id, neighbor)});
+        if (level == 0) {
+            const Edge* edges = base_slot(id);
+            return std::vector<Edge>(edges, edges + base_sizes_[id]);
         }
-        return edges;
+        return upper_edges(id, level);
+    }
+
+    template<typename Fn>
+    void for_each_edge(uint32_t id, int level, Fn&& fn) const {
+        if (level == 0) {
+            const Edge* edges = base_slot(id);
+            uint16_t sz = base_sizes_[id];
+            for (uint16_t i = 0; i < sz; ++i) fn(edges[i]);
+            return;
+        }
+        for (const Edge& edge : upper_edges(id, level)) fn(edge);
     }
 
     void write_level_edges(uint32_t node, int level, const std::vector<Edge>& edges) {
-        auto& dst = neighbors_[node][level];
-        dst.clear();
-        dst.reserve(edges.size());
-        for (const Edge& edge : edges) {
-            dst.push_back(edge.neighbor);
+        if (level == 0) {
+            uint16_t sz = static_cast<uint16_t>(edges.size());
+            base_sizes_[node] = sz;
+            Edge* slot = base_slot(node);
+            for (uint16_t i = 0; i < sz; ++i) slot[i] = edges[i];
+            return;
         }
+        upper_edges(node, level) = edges;
     }
 
-    // =========================================================================
-    // Dequantize vector id into dst buffer
-    // =========================================================================
+    void append_edge_with_prune(uint32_t node, int level, const Edge& edge, size_t M) {
+        if (level == 0) {
+            uint16_t& sz = base_sizes_[node];
+            Edge* slot = base_slot(node);
+            if (sz < M0_) {
+                slot[sz++] = edge;
+                return;
+            }
+
+            std::vector<std::pair<float, uint32_t>> candidates;
+            candidates.reserve(static_cast<size_t>(sz) + 1);
+            for (uint16_t i = 0; i < sz; ++i) {
+                candidates.emplace_back(slot[i].dist, slot[i].neighbor);
+            }
+            candidates.emplace_back(edge.dist, edge.neighbor);
+            std::sort(candidates.begin(), candidates.end());
+            select_neighbors_heuristic(node, candidates, M, level);
+            return;
+        }
+
+        auto& edges = upper_edges(node, level);
+        edges.push_back(edge);
+        if (edges.size() > M) prune_neighbors(node, level, M);
+    }
+
     void dequantize(uint32_t id, float* dst) const {
         const uint8_t* data = &qdata_[id * dims_];
         float s = scales_[id];
@@ -860,9 +956,6 @@ private:
         }
     }
 
-    // =========================================================================
-    // Float-float distance (used after dequantize for symmetric construction)
-    // =========================================================================
     float l2_float(const float* a, const float* b) const {
         float sum = 0.0f;
         size_t d = 0;
@@ -914,9 +1007,6 @@ private:
         return 1.0f - dot;
     }
 
-    // =========================================================================
-    // Asymmetric distance: float query vs int8 database vector (search hot path)
-    // =========================================================================
     float asymmetric_cosine(const float* query, uint32_t db_id) const {
         const uint8_t* data = &qdata_[db_id * dims_];
         float s = scales_[db_id];
@@ -981,7 +1071,6 @@ private:
         _mm_store_ps(tmp, acc);
         dot = tmp[0] + tmp[1] + tmp[2] + tmp[3];
 #endif
-        // Scalar tail
         for (; d < dims_; d++) {
             dot += query[d] * (o + s * static_cast<float>(data[d]));
         }
@@ -1063,23 +1152,6 @@ private:
         return sum;
     }
 
-    // =========================================================================
-    // Fast symmetric int8 distance using precomputed per-vector statistics.
-    //
-    // For two affine-quantized vectors a, b with per-vector scale/offset:
-    //   a[d] = oa + sa * qa[d],  b[d] = ob + sb * qb[d]
-    //
-    // L2:  ||a-b||² = D*(oa-ob)² + 2*(oa-ob)*(sa*Σqa - sb*Σqb)
-    //                + sa²*Σqa² + sb²*Σqb² - 2*sa*sb*Σ(qa·qb)
-    //
-    // Cosine (pre-normalized): dot(a,b) = D*oa*ob + oa*sb*Σqb
-    //                                   + ob*sa*Σqa + sa*sb*Σ(qa·qb)
-    //
-    // Only Σ(qa·qb) is O(D) and pairwise; everything else is O(1) from
-    // precomputed sum_q_ and sum_q2_. The integer dot product is the hot
-    // loop and gets SIMD acceleration via i16x8_extmul.
-    // =========================================================================
-
     uint32_t int8_dot(uint32_t a, uint32_t b) const {
         const uint8_t* da = &qdata_[a * dims_];
         const uint8_t* db = &qdata_[b * dims_];
@@ -1087,21 +1159,16 @@ private:
         size_t d = 0;
 
 #ifdef INT8_HNSW_WASM_SIMD
-        // Accumulate in i32x4 to avoid overflow.
-        // Each uint8*uint8 <= 65025, and at 1536D we get up to ~99M which fits u32.
         v128_t acc = wasm_i32x4_splat(0);
         for (; d + 16 <= dims_; d += 16) {
             v128_t va = wasm_v128_load(da + d);
             v128_t vb = wasm_v128_load(db + d);
 
-            // Extend u8 → u16, then use unsigned extmul u16→u32
             v128_t lo_a = wasm_u16x8_extend_low_u8x16(va);
             v128_t lo_b = wasm_u16x8_extend_low_u8x16(vb);
             v128_t hi_a = wasm_u16x8_extend_high_u8x16(va);
             v128_t hi_b = wasm_u16x8_extend_high_u8x16(vb);
 
-            // u16 values are 0-255, safe for both signed and unsigned extmul.
-            // Use signed extmul (universally available in WASM SIMD).
             acc = wasm_i32x4_add(acc, wasm_i32x4_extmul_low_i16x8(lo_a, lo_b));
             acc = wasm_i32x4_add(acc, wasm_i32x4_extmul_high_i16x8(lo_a, lo_b));
             acc = wasm_i32x4_add(acc, wasm_i32x4_extmul_low_i16x8(hi_a, hi_b));
@@ -1138,9 +1205,9 @@ private:
         float dot_ab = static_cast<float>(int8_dot(a, b));
 
         float dot = D * oa * ob
-                   + oa * sb * static_cast<float>(sum_q_[b])
-                   + ob * sa * static_cast<float>(sum_q_[a])
-                   + sa * sb * dot_ab;
+                  + oa * sb * static_cast<float>(sum_q_[b])
+                  + ob * sa * static_cast<float>(sum_q_[a])
+                  + sa * sb * dot_ab;
         return 1.0f - dot;
     }
 
@@ -1150,14 +1217,12 @@ private:
             : symmetric_l2_i8(a, b);
     }
 
-    // Asymmetric: float query vs int8 database (search hot path)
     float distance_to_query(uint32_t id) const {
         return (metric_ == DistanceMetric::Cosine)
             ? asymmetric_cosine(cached_query_, id)
             : asymmetric_l2(cached_query_, id);
     }
 
-    // Asymmetric: float insert-vector vs int8 database (construction hot path)
     float distance_to_insert(uint32_t id) const {
         return (metric_ == DistanceMetric::Cosine)
             ? asymmetric_cosine(cached_insert_, id)
@@ -1169,8 +1234,6 @@ private:
         return static_cast<int>(-std::log(dist(rng_)) * level_mult_);
     }
 
-    // Construction: asymmetric float-insert vs int8-db distance
-    // Generic search layer implementation - works with any distance function
     template<typename DistFunc>
     std::vector<std::pair<float, uint32_t>> search_layer_impl(
         DistFunc&& dist_func,
@@ -1184,113 +1247,102 @@ private:
 
         prepare_visited();
         float d = dist_func(entry);
-        if (!skip_deleted) g_build_profile.dist_calls++;
+        if (!skip_deleted) PROFILE_COUNT(g_build_profile.dist_calls++);
         candidates.emplace(d, entry);
-        g_build_profile.candidate_pushes++;
+        PROFILE_COUNT(g_build_profile.candidate_pushes++);
         results.emplace(d, entry);
         mark_visited(entry);
-        g_build_profile.visited_marks++;
+        PROFILE_COUNT(g_build_profile.visited_marks++);
 
         while (!candidates.empty()) {
             auto [curr_dist, curr] = candidates.top();
             candidates.pop();
-            g_build_profile.candidate_pops++;
+            PROFILE_COUNT(g_build_profile.candidate_pops++);
             if (curr_dist > results.top().first && results.size() >= ef) break;
             for_each_edge(curr, level, [&](const Edge& edge) {
                 uint32_t neighbor = edge.neighbor;
-                if (is_visited(neighbor)) continue;
-                if (skip_deleted && deleted_[neighbor]) continue;
+                if (is_visited(neighbor)) return;
+                if (skip_deleted && deleted_[neighbor]) return;
                 mark_visited(neighbor);
-                g_build_profile.visited_marks++;
+                PROFILE_COUNT(g_build_profile.visited_marks++);
                 float nd = dist_func(neighbor);
-                if (!skip_deleted) g_build_profile.dist_calls++;
+                if (!skip_deleted) PROFILE_COUNT(g_build_profile.dist_calls++);
                 if (nd < results.top().first || results.size() < ef) {
                     candidates.emplace(nd, neighbor);
-                    g_build_profile.candidate_pushes++;
+                    PROFILE_COUNT(g_build_profile.candidate_pushes++);
                     results.emplace(nd, neighbor);
                     if (results.size() > ef) results.pop();
                 }
             });
         }
+
         std::vector<std::pair<float, uint32_t>> res;
         while (!results.empty()) { res.push_back(results.top()); results.pop(); }
         std::reverse(res.begin(), res.end());
         return res;
     }
 
-    // Search layer during insertion (symmetric distance for graph construction)
-    std::vector<std::pair<float, uint32_t>> search_layer_insert(uint32_t query_id, uint32_t entry, size_t ef, int level) {
+    std::vector<std::pair<float, uint32_t>> search_layer_insert(uint32_t entry, size_t ef, int level) {
         return search_layer_impl(
             [this](uint32_t id) { return distance_to_insert(id); },
-            entry, ef, level, false  // Don't skip deleted during construction
+            entry, ef, level, false
         );
     }
 
-    // Search layer during query (asymmetric distance for search)
     std::vector<std::pair<float, uint32_t>> search_layer_query(uint32_t entry, size_t ef, int level) {
         return search_layer_impl(
             [this](uint32_t id) { return distance_to_query(id); },
-            entry, ef, level, true  // Skip deleted during search
+            entry, ef, level, true
         );
     }
 
     void select_neighbors_heuristic(uint32_t node, std::vector<std::pair<float, uint32_t>>& candidates, size_t M, int level) {
         std::vector<Edge> result;
         result.reserve(std::min(M, candidates.size()));
-        std::vector<size_t> selected_indices;
-        selected_indices.reserve(std::min(M, candidates.size()));
-        // Pairwise distance cache — uses symmetric int8 distance directly
-        // (integer dot product + precomputed scalar stats), no dequantization.
-        const float uncached = std::numeric_limits<float>::lowest();
-        std::vector<float> pair_cache(candidates.size() * candidates.size(), uncached);
-        auto candidate_distance = [&](size_t a_idx, size_t b_idx) -> float {
-            float& cached = pair_cache[a_idx * candidates.size() + b_idx];
-            if (cached != uncached) return cached;
-            float d = distance(candidates[a_idx].second, candidates[b_idx].second);
-            cached = d;
-            pair_cache[b_idx * candidates.size() + a_idx] = d;
-            return d;
-        };
+
         if (use_heuristic_) {
             size_t best_rejected = candidates.size();
             for (size_t ci = 0; ci < candidates.size(); ci++) {
                 if (result.size() >= M) break;
-                auto& cand = candidates[ci];
+                const auto& cand = candidates[ci];
                 bool keep = true;
-                for (size_t sel_idx : selected_indices) {
-                    if (candidate_distance(ci, sel_idx) < cand.first) { keep = false; break; }
+                for (const Edge& sel : result) {
+                    if (distance(cand.second, sel.neighbor) < cand.first) {
+                        keep = false;
+                        break;
+                    }
                 }
                 if (keep) {
                     result.push_back(Edge{cand.second, cand.first});
-                    selected_indices.push_back(ci);
                 } else if (best_rejected == candidates.size()) {
                     best_rejected = ci;
                 }
             }
-            // Backfill from closest rejected candidates.
-            // WHY: Backfill ensures node reaches minimum connectivity even when
-            // heuristic rejects candidates (prevents disconnected nodes).
             for (size_t ci = best_rejected; ci < candidates.size() && result.size() < M; ci++) {
                 bool already = false;
                 for (const Edge& sel : result) {
-                    if (sel.neighbor == candidates[ci].second) { already = true; break; }
+                    if (sel.neighbor == candidates[ci].second) {
+                        already = true;
+                        break;
+                    }
                 }
                 if (!already) result.push_back(Edge{candidates[ci].second, candidates[ci].first});
             }
         } else {
-            for (auto& cand : candidates) {
+            for (const auto& cand : candidates) {
                 if (result.size() >= M) break;
                 result.push_back(Edge{cand.second, cand.first});
             }
         }
+
         write_level_edges(node, level, result);
     }
 
     void prune_neighbors(uint32_t node, int level, size_t M) {
-        auto list = copy_level_edges(node, level);
+        std::vector<Edge> edges = copy_level_edges(node, level);
         std::vector<std::pair<float, uint32_t>> candidates;
-        candidates.reserve(list.size());
-        for (const Edge& edge : list) {
+        candidates.reserve(edges.size());
+        for (const Edge& edge : edges) {
             candidates.emplace_back(edge.dist, edge.neighbor);
         }
         std::sort(candidates.begin(), candidates.end());
@@ -1299,9 +1351,12 @@ private:
 
     void prepare_visited() {
         visited_curr_++;
-        // Overflow guard: reset all visited markers on counter wraparound
-        if (visited_curr_ == 0) { std::fill(visited_list_.begin(), visited_list_.end(), 0); visited_curr_ = 1; }
+        if (visited_curr_ == 0) {
+            std::fill(visited_list_.begin(), visited_list_.end(), 0);
+            visited_curr_ = 1;
+        }
     }
+
     bool is_visited(uint32_t id) const { return visited_list_[id] == visited_curr_; }
     void mark_visited(uint32_t id) { visited_list_[id] = visited_curr_; }
 
@@ -1315,24 +1370,21 @@ private:
     std::mt19937 rng_;
     bool use_heuristic_;
 
-    // Quantized vector storage
-    std::vector<uint8_t> qdata_;     // count * dims bytes
-    std::vector<float> scales_;      // per-vector scale
-    std::vector<float> offsets_;     // per-vector offset (min_val)
-
-    // Precomputed per-vector statistics for fast symmetric int8 distance.
-    // Avoids dequantization in the heuristic: pairwise L2/cosine reduces to
-    // one integer dot product + O(1) scalar arithmetic from these cached sums.
-    std::vector<uint32_t> sum_q_;    // sum of uint8 values per vector
-    std::vector<uint32_t> sum_q2_;   // sum of uint8² values per vector
+    std::vector<uint8_t> qdata_;
+    std::vector<float> scales_;
+    std::vector<float> offsets_;
+    std::vector<uint32_t> sum_q_;
+    std::vector<uint32_t> sum_q2_;
 
     const float* cached_query_;
-    const float* cached_insert_;  // float32 vector being inserted (avoids dequantize during construction)
-    uint32_t insert_entry_;       // temp: entry point found by upper layer search
+    const float* cached_insert_;
+    uint32_t insert_entry_;
     std::vector<float> norm_query_;
-    mutable std::vector<float> scratch_norm_;  // normalization buffer for cosine metric inserts
+    mutable std::vector<float> scratch_norm_;
 
-    std::vector<std::vector<std::vector<uint32_t>>> neighbors_;
+    std::vector<Edge> base_edges_;
+    std::vector<uint16_t> base_sizes_;
+    std::vector<std::vector<UpperLevel>> upper_;
     std::vector<int> levels_;
     std::vector<uint8_t> deleted_;
     std::vector<uint32_t> visited_list_;
