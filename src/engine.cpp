@@ -313,11 +313,18 @@ void* emsc_malloc(size_t size) { return malloc(size); }
 void emsc_free(void* ptr) { free(ptr); }
 
 void pancake_profile_print(uint32_t range_start, uint32_t range_end) {
+#if defined(PANCAKE_INT8_HNSW_BUILD_PROFILE)
     pancake::wasm::g_build_profile.print(range_start, range_end);
+#else
+    (void)range_start;
+    (void)range_end;
+#endif
 }
 
 void pancake_profile_reset() {
+#if defined(PANCAKE_INT8_HNSW_BUILD_PROFILE)
     pancake::wasm::g_build_profile.reset();
+#endif
 }
 
 // =============================================================================

@@ -161,7 +161,7 @@ public:
 
         const float* src = vec;
         {
-            double _qt0 = emscripten_get_now();
+            PROFILE_COUNT(double _qt0 = emscripten_get_now(););
             if (metric_ == DistanceMetric::Cosine) {
                 float norm_sq = 0.0f;
                 for (size_t d = 0; d < dims_; d++) norm_sq += vec[d] * vec[d];
