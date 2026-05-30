@@ -27,18 +27,19 @@
 const fs = require('fs');
 const path = require('path');
 const Pancake = require('../pancake.js');
+const { parseBenchmarkArgs, resolveSingleValue, resolveSweepValues } = require('./bench_args');
 
-const DBPEDIA_DIR = process.argv.find(a => !a.startsWith('-') && a !== process.argv[0] && a !== process.argv[1])
-  || path.join(__dirname, '..', 'dbpedia');
-const REGENERATE_GT = process.argv.includes('--regenerate-gt');
+const parsedArgs = parseBenchmarkArgs();
+const DBPEDIA_DIR = parsedArgs.args.find(a => !a.startsWith('-')) || path.join(__dirname, '..', 'dbpedia');
+const REGENERATE_GT = parsedArgs.args.includes('--regenerate-gt');
 
 // --- Config ---
 const N_BASE = 50_000;      // Use first 50K from the 100K subset
 const N_QUERIES = 1_000;
 const K = 10;
-const M = 16;
-const EF_CONSTRUCTION = 50;
-const EF_SEARCH_VALUES = [10, 20, 40, 60, 80, 100, 150, 200, 300, 500, 800];
+const M = resolveSingleValue(parsedArgs.m, 16);
+const EF_CONSTRUCTION = resolveSingleValue(parsedArgs.efConstruction, 50);
+const EF_SEARCH_VALUES = resolveSweepValues(parsedArgs, [10, 20, 40, 60, 80, 100, 150, 200, 300, 500, 800]);
 const REPETITIONS = 3;
 const WARMUP_QUERIES = 200;
 

@@ -11,12 +11,18 @@
 'use strict';
 
 const Pancake = require('../pancake.js');
+const { parseBenchmarkArgs, resolveSingleValue } = require('./bench_args');
+
+const parsedArgs = parseBenchmarkArgs();
 
 const DIM = 128;
 const COUNT = 50000;
 const QUERIES = 200;
 const K = 10;
 const WARMUP = 20;
+const M = resolveSingleValue(parsedArgs.m, 16);
+const EF_CONSTRUCTION = resolveSingleValue(parsedArgs.efConstruction, 200);
+const EF_SEARCH = resolveSingleValue(parsedArgs.efSearch, 128);
 
 function normalizedVec(dim, seed) {
     const v = new Float32Array(dim);
@@ -84,6 +90,7 @@ async function run() {
 
         const idx = await Pancake.create({
             dim: DIM, maxElements: COUNT + 100, metric: 'cosine', quantized,
+            M, efConstruction: EF_CONSTRUCTION, efSearch: EF_SEARCH,
         });
 
         // Insert vectors

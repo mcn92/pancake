@@ -5,6 +5,9 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const loadEngine = require('./dist/engine.js');
+const { parseBenchmarkArgs, resolveSingleValue } = require('./bench_args');
+
+const parsedArgs = parseBenchmarkArgs();
 
 const RESULTS_DIR = path.join(__dirname, 'benchmark_results');
 if (!fs.existsSync(RESULTS_DIR)) fs.mkdirSync(RESULTS_DIR);
@@ -12,7 +15,7 @@ const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
 const LOG_PATH = path.join(RESULTS_DIR, `synthetic_${timestamp}.log`);
 const JSON_PATH = path.join(RESULTS_DIR, `synthetic_${timestamp}.json`);
 const logStream = fs.createWriteStream(LOG_PATH);
-const PROFILE_BUILD = process.argv.includes('--profile-build');
+const PROFILE_BUILD = parsedArgs.args.includes('--profile-build');
 
 const DIM = 384;
 const N = 10000;
@@ -21,9 +24,9 @@ const K = 10;
 
 // Compile-time 384D path uses hardcoded HNSW params in the WASM engine:
 //   M=12, efConstruction=150, efSearch=250
-const HNSW_M = 16;
-const HNSW_EF_CONSTRUCTION = 100;
-const HNSW_EF_SEARCH = 100;
+const HNSW_M = resolveSingleValue(parsedArgs.m, 16);
+const HNSW_EF_CONSTRUCTION = resolveSingleValue(parsedArgs.efConstruction, 100);
+const HNSW_EF_SEARCH = resolveSingleValue(parsedArgs.efSearch, 100);
 
 function log(msg = '') {
   console.log(msg);

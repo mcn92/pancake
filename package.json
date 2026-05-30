@@ -42,6 +42,7 @@
   ],
   "scripts": {
     "build": "bash build.sh",
+    "bench": "node benchmarks/run.js",
     "test": "node run_tests.js",
     "test:browser": "node test/browser_smoke.js",
     "test:simd": "node test/simd_parity.js"
