@@ -250,6 +250,14 @@ public:
             });
             size_t max_n = (l == 0) ? M0_ : M_;
             PROFILE_BLOCK(select_neighbors_ms, {
+                // Insert traversal stays asymmetric, but stored edges and the
+                // graph-maintenance heuristic use symmetric node-to-node
+                // distances. Recompute before selection so Edge.dist has one
+                // durable meaning across insert, prune, compact, and import.
+                for (auto& candidate : candidates) {
+                    candidate.first = distance(id, candidate.second);
+                }
+                std::sort(candidates.begin(), candidates.end());
                 select_neighbors_heuristic(id, candidates, max_n, l);
             });
             PROFILE_BLOCK(connect_ms, {
