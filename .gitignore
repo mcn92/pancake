@@ -38,6 +38,13 @@ cuad_data/
 recipe_data/
 dist/cuad_data/
 
+# Local model training / experiment caches
+.cnn-train-cache/
+.codex
+__pycache__/
+archive/
+Trace-*.json
+
 # Auto-generated Doxygen HTML (27MB) — build with `doxygen` if needed
 docs/html/
 !docs/*.md
@@ -47,6 +54,10 @@ dbpedia/
 dist/vectors.bin
 dist/vectors_100k.bin
 sift/
+sift10m_streaming_gt/
+sift10m_streaming_results/
+pancake_gt_snapshot_*.tar.gz
+pancake_gt_snapshot_*.tar.gz.sha256
 
 # Worker build output
 examples/worker/dist/
@@ -66,6 +77,19 @@ examples/demo/test.js
 # Generated binaries — regenerate with emb.py or demo scripts
 /vectors.bin
 examples/demo/loyalty-index.bin
+
+# Generated local demo / model artifacts
+dist/cnn-embed*.bin
+dist/cnn-embed*_best.pt
+dist/fiddle.html
+dist/fiddle2.html
+dist/fuelrewards-cli.js
+dist/fuelrewards.html
+dist/fuelrewards.js
+dist/infra-demo.html
+dist/loyalty-demo.html
+dist/messages.html
+dist/rag.html
 
 # Embedding model excluded from public release
 src/embedding_model.hpp
