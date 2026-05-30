@@ -47,20 +47,23 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const Pancake = require('../pancake.js');
+const { parseBenchmarkArgs, resolveSingleValue, resolveSweepValues } = require('./bench_args');
 
-const HDF5_PATH = process.argv[2] || path.join(__dirname, '..', 'nytimes', 'nytimes-256-angular.hdf5');
+const parsedArgs = parseBenchmarkArgs();
+const HDF5_PATH = parsedArgs.args[0] || path.join(__dirname, '..', 'nytimes', 'nytimes-256-angular.hdf5');
 
 // --- Sweep configuration ---
 const K = 10;
-const M = 16;
-const EF_CONSTRUCTION = 150;
-const EF_SEARCH_VALUES = [20, 40, 60, 80, 100, 150, 200, 300, 500, 800];
+const M = resolveSingleValue(parsedArgs.m, 16);
+const EF_CONSTRUCTION = resolveSingleValue(parsedArgs.efConstruction, 150);
+const EF_SEARCH_VALUES = resolveSweepValues(parsedArgs, [20, 40, 60, 80, 100, 150, 200, 300, 500, 800]);
 const REPETITIONS = 3;
 const WARMUP_QUERIES = 200;
 const PANCAKE_BATCH_SIZE = 16384;
 
 const CONFIGS = [
   { label: 'pancake-i8-wasm',    library: 'pancake',  dtype: 'i8' },
+  { label: 'pancake-f32-wasm',   library: 'pancake',  dtype: 'f32' },
   { label: 'hnswlib-f32-native', library: 'hnswlib',  dtype: 'f32' },
 ];
 

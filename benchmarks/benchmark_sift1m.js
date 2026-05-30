@@ -18,8 +18,10 @@
 const fs = require('fs');
 const path = require('path');
 const Pancake = require('../pancake.js');
+const { parseBenchmarkArgs, resolveSingleValue } = require('./bench_args');
 
-const SIFT_DIR = process.argv[2] || '/mnt/c/pancake_gt/sift';
+const parsedArgs = parseBenchmarkArgs();
+const SIFT_DIR = parsedArgs.args[0] || '/mnt/c/pancake1.0.0/sift';
 
 const RESULTS_DIR = path.join(__dirname, '..', 'benchmark_results');
 if (!fs.existsSync(RESULTS_DIR)) fs.mkdirSync(RESULTS_DIR);
@@ -34,9 +36,9 @@ function log(msg = '') {
 }
 
 const K = 10;
-const M = 16;
-const EF_CONSTRUCTION = 200;
-const EF_SEARCH = 100;
+const M = resolveSingleValue(parsedArgs.m, 16);
+const EF_CONSTRUCTION = resolveSingleValue(parsedArgs.efConstruction, 200);
+const EF_SEARCH = resolveSingleValue(parsedArgs.efSearch, 100);
 
 function readFvecs(filePath) {
   log(`  Loading ${filePath}...`);

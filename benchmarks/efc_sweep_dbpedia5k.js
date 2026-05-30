@@ -10,16 +10,19 @@
 const fs = require('fs');
 const path = require('path');
 const Pancake = require('../pancake.js');
+const { parseBenchmarkArgs, resolveSingleValue } = require('./bench_args');
+
+const parsedArgs = parseBenchmarkArgs();
 
 const DBPEDIA_DIR = path.join(__dirname, '..', 'dbpedia');
 const BASE_PATH = path.join(DBPEDIA_DIR, 'dbpedia_base_5k.fvecs');
 const QUERY_PATH = path.join(DBPEDIA_DIR, 'dbpedia_query.fvecs');
 
 const K = 10;
-const M = 16;
-const EF_SEARCH = 100;
+const M = resolveSingleValue(parsedArgs.m, 16);
+const EF_SEARCH = resolveSingleValue(parsedArgs.efSearch, 100);
 const N_QUERIES = 200;
-const EFC_VALUES = [16, 32, 50, 64, 75];
+const EFC_VALUES = parsedArgs.efConstruction !== undefined ? [parsedArgs.efConstruction] : [16, 32, 50, 64, 75];
 
 function readFvecs(filePath, maxVectors) {
   const buf = fs.readFileSync(filePath);

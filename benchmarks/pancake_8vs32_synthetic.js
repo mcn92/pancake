@@ -22,6 +22,9 @@
 const fs = require('fs');
 const path = require('path');
 const Pancake = require('../pancake.js');
+const { parseBenchmarkArgs, resolveSingleValue, resolveSweepValues } = require('./bench_args');
+
+const parsedArgs = parseBenchmarkArgs();
 
 const RESULTS_DIR = path.join(__dirname, '..', 'benchmark_results');
 const CACHE_DIR = path.join(__dirname, '..', 'benchmark_results', 'cache');
@@ -33,7 +36,7 @@ const JSON_PATH = path.join(RESULTS_DIR, `synthetic_1536_${timestamp}.json`);
 const CSV_PATH = path.join(RESULTS_DIR, `synthetic_1536_${timestamp}.csv`);
 const logStream = fs.createWriteStream(LOG_PATH);
 
-const REGENERATE_GT = process.argv.includes('--regenerate-gt');
+const REGENERATE_GT = parsedArgs.args.includes('--regenerate-gt');
 
 function log(msg = '') {
   console.log(msg);
@@ -46,9 +49,9 @@ const N_VECTORS = 50_000;
 const N_QUERIES = 1000;
 const N_CLUSTERS = 50;
 const K = 10;
-const M = 16;
-const EF_CONSTRUCTION = 200;
-const EF_SEARCH_VALUES = [10, 20, 40, 60, 80, 100, 150, 200, 300, 500, 800];
+const M = resolveSingleValue(parsedArgs.m, 16);
+const EF_CONSTRUCTION = resolveSingleValue(parsedArgs.efConstruction, 200);
+const EF_SEARCH_VALUES = resolveSweepValues(parsedArgs, [10, 20, 40, 60, 80, 100, 150, 200, 300, 500, 800]);
 const REPETITIONS = 3;
 const WARMUP_QUERIES = 200;
 const CLUSTER_SPREAD = 0.02;

@@ -14,8 +14,11 @@
 const fs = require('fs');
 const path = require('path');
 const Pancake = require('../pancake.js');
+const { parseBenchmarkArgs } = require('./bench_args');
 
-const NYTIMES_DIR = process.argv[2] || path.join(__dirname, '..', 'nytimes');
+const parsedArgs = parseBenchmarkArgs();
+
+const NYTIMES_DIR = parsedArgs.args[0] || path.join(__dirname, '..', 'nytimes');
 const RESULTS_DIR = path.join(__dirname, '..', 'benchmark_results');
 if (!fs.existsSync(RESULTS_DIR)) fs.mkdirSync(RESULTS_DIR);
 const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -31,9 +34,10 @@ function log(msg = '') {
 
 // --- Sweep grid ---
 const K = 10;
-const M_VALUES = [8, 12, 16, 32];
-const EF_C_VALUES = [50, 100, 150, 200];
-const EF_SEARCH_VALUES = [50, 100, 150, 200];
+const M_VALUES = parsedArgs.m !== undefined ? [parsedArgs.m] : [8, 12, 16, 32];
+const EF_C_VALUES = parsedArgs.efConstruction !== undefined ? [parsedArgs.efConstruction] : [50, 100, 150, 200];
+const EF_SEARCH_VALUES = parsedArgs.efSearchValues
+  || (parsedArgs.efSearch !== undefined ? [parsedArgs.efSearch] : [50, 100, 150, 200]);
 const REPETITIONS = 3;
 const WARMUP_QUERIES = 200;
 

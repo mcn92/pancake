@@ -27,19 +27,21 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const Pancake = require('../pancake.js');
+const { parseBenchmarkArgs, resolveSingleValue, resolveSweepValues } = require('./bench_args');
 
-const HDF5_PATH = process.argv[2] || path.join(__dirname, '..', 'nytimes', 'nytimes-256-angular.hdf5');
+const parsedArgs = parseBenchmarkArgs();
+const HDF5_PATH = parsedArgs.args[0] || path.join(__dirname, '..', 'nytimes', 'nytimes-256-angular.hdf5');
 
 // --- Sweep configuration ---
 // K, M, and EF_CONSTRUCTION are fixed for fair comparison, but can be changed if desired. 
 // Lower M and EF_CONSTRUCTION will reduce build time, but will also lower recall ceilings.
 const K = 10;
-const M = 16;
-const EF_CONSTRUCTION =  200;
+const M = resolveSingleValue(parsedArgs.m, 16);
+const EF_CONSTRUCTION = resolveSingleValue(parsedArgs.efConstruction, 200);
 // Sweep these ef_search values. Chosen to span low recall (fast) to
 // near-ceiling recall (slow), with more density in the operating region
 // where libraries typically differ.
-const EF_SEARCH_VALUES = [20, 40, 60, 80, 100, 150, 200, 300, 500, 800];
+const EF_SEARCH_VALUES = resolveSweepValues(parsedArgs, [20, 40, 60, 80, 100, 150, 200, 300, 500, 800]);
 const REPETITIONS = 3;        // Each ef_search point measured 3 times
 const WARMUP_QUERIES = 200;   // Warmup per point (hot cache, V8 tier-up)
 

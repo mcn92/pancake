@@ -18,17 +18,19 @@
 
 const fs = require('fs');
 const path = require('path');
+const { parseBenchmarkArgs, resolveSingleValue } = require('./bench_args');
 
-const WORKER_URL = process.argv[2] || 'http://localhost:8787';
-const NYTIMES_DIR = process.argv[3] || path.join(__dirname, '..', 'nytimes');
+const parsedArgs = parseBenchmarkArgs();
+const WORKER_URL = parsedArgs.args[0] || 'http://localhost:8787';
+const NYTIMES_DIR = parsedArgs.args[1] || path.join(__dirname, '..', 'nytimes');
 const K = 10;
 const MAX_VECTORS = parseInt(process.env.N || '30000', 10);
 const BATCH_SIZE = 500;
 
 // HNSW params
-const M = 12;
-const EF_CONSTRUCTION = 100;
-const EF_SEARCH = 100;
+const M = resolveSingleValue(parsedArgs.m, 12);
+const EF_CONSTRUCTION = resolveSingleValue(parsedArgs.efConstruction, 100);
+const EF_SEARCH = resolveSingleValue(parsedArgs.efSearch, 100);
 
 function log(msg = '') { console.log(msg); }
 
