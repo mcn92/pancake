@@ -223,6 +223,16 @@ function averageRecallAgainstGroundTruth(resultsByQuery, groundTruthByQuery) {
     return total / resultsByQuery.length;
 }
 
+function buildAllowedIdSet(count, filterSpec) {
+    const allowedIds = [];
+    for (let id = 0; id < count; id++) {
+        if (id % filterSpec.modulo === filterSpec.remainder) {
+            allowedIds.push(id);
+        }
+    }
+    return allowedIds;
+}
+
 function assertSearchRowsEqualWithTolerance(actualRows, expectedRows, distanceTolerance, label) {
     assert(actualRows.length === expectedRows.length, `${label}: query count matches golden`);
     for (let qi = 0; qi < Math.min(actualRows.length, expectedRows.length); qi++) {
@@ -252,6 +262,23 @@ async function evaluateHeldOutOracle(config, oracleSpec) {
     const baselineResults = dataset.queries.map(query => idx.search(query, oracleSpec.k));
     const baselineTruth = dataset.queries.map(query => bruteForceTopK(dataset.train, query, oracleSpec.k, 'cosine'));
     const avgRecallBeforeCompact = averageRecallAgainstGroundTruth(baselineResults, baselineTruth);
+
+    const filteredRecallBeforeCompact = {};
+    for (const filterSpec of oracleSpec.filteredSpecs || []) {
+        const allowedIds = buildAllowedIdSet(dataset.train.length, filterSpec);
+        const allowedIdSet = new Set(allowedIds);
+        const allowedVectors = allowedIds.map(id => dataset.train[id]);
+        const filteredResults = dataset.queries.map(query => idx.searchFiltered(query, oracleSpec.k, allowedIdSet));
+        const filteredTruth = dataset.queries.map(query => bruteForceTopK(
+            allowedVectors,
+            query,
+            Math.min(oracleSpec.k, allowedIds.length),
+            'cosine',
+            allowedIds
+        ));
+        filteredRecallBeforeCompact[filterSpec.label] =
+            averageRecallAgainstGroundTruth(filteredResults, filteredTruth);
+    }
 
     const goldenRows = baselineResults.slice(0, 8).map((rows, q) => ({
         q,
@@ -296,6 +323,7 @@ async function evaluateHeldOutOracle(config, oracleSpec) {
     return {
         avgRecallBeforeCompact,
         avgRecallAfterCompact,
+        filteredRecallBeforeCompact,
         goldenRows,
         exported,
         exported2,
@@ -1962,6 +1990,27 @@ async function testHeldOutRecallAfterCompact() {
     }
 }
 
+async function testFilteredHeldOutRecallOracle() {
+    section('Held-out filtered recall vs brute-force oracle');
+
+    const oracle = searchOracles.clusteredCosine32;
+    for (const scenario of [
+        { label: 'float32', quantized: false },
+        { label: 'int8', quantized: true },
+    ]) {
+        const probe = await evaluateHeldOutOracle(scenario, oracle);
+        for (const filterSpec of oracle.filteredSpecs) {
+            const expected = oracle.filteredRecallBaseline[scenario.label][filterSpec.label];
+            assertNear(
+                probe.filteredRecallBeforeCompact[filterSpec.label],
+                expected,
+                1e-9,
+                `${scenario.label}: ${filterSpec.label} filtered held-out recall matches recorded brute-force baseline`
+            );
+        }
+    }
+}
+
 async function testSearchOutputGoldenOracle() {
     section('Search output golden oracle');
 
@@ -2047,6 +2096,7 @@ async function main() {
         testSearchFiltered,
         testHeldOutRecallOracle,
         testHeldOutRecallAfterCompact,
+        testFilteredHeldOutRecallOracle,
         testSearchOutputGoldenOracle,
         testSearchAndSerializationDeterminismOracle,
     ];

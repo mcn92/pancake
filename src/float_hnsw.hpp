@@ -192,10 +192,15 @@ public:
         return results;
     }
 
-    // Filtered search: only return results where the corresponding bit is set
-    // in filter_bitset. Uses iterative deepening — doubles ef until k results
-    // pass the filter, capped at 4x initial ef.
-    // filter_bitset layout: bit (id % 8) of byte (id / 8). Null = no filter.
+    // Filtered search with in-traversal filtering.
+    // Only results where the corresponding bit is set in filter_bitset enter the
+    // result queue. Non-matching nodes still participate in navigation (they stay
+    // in the candidate queue) but don't consume result slots. This keeps the
+    // lower bound tight to actual filtered results, allowing the search to explore
+    // further before terminating.
+    // Uses dynamic ef expansion: doubles ef within the same traversal when fewer
+    // than k filtered results are found, capped at 4x initial ef.
+    // filter_bitset layout: bit (id & 7) of byte (id >> 3).
     std::vector<std::pair<uint32_t, float>> search_filtered(
         const float* query, size_t k,
         const uint8_t* filter_bitset, size_t bitset_len
@@ -233,28 +238,93 @@ public:
             }
         }
 
-        // Layer 0: iterative deepening with filter
-        size_t initial_ef = std::max(ef_search_, k);
+        // Layer 0: in-traversal filtered search with dynamic ef expansion
+        size_t initial_ef = std::max(ef_search_, k * 2);
         size_t max_ef = initial_ef * 4;
+        size_t current_ef = initial_ef;
 
-        for (size_t current_ef = initial_ef; current_ef <= max_ef; current_ef = std::min(current_ef * 2, max_ef)) {
-            auto candidates = search_layer_query(curr, current_ef, 0);
+        std::priority_queue<std::pair<float, uint32_t>, std::vector<std::pair<float, uint32_t>>, std::greater<>> candidates;
+        std::priority_queue<std::pair<float, uint32_t>> results; // max-heap: worst filtered result on top
 
-            std::vector<std::pair<uint32_t, float>> results;
-            for (auto& [dist, id] : candidates) {
-                if (deleted_[id]) continue;
-                size_t byte_idx = id >> 3;
-                if (byte_idx < bitset_len && (filter_bitset[byte_idx] & (1u << (id & 7)))) {
-                    results.emplace_back(id, dist);
-                    if (results.size() >= k) return results;
-                }
-            }
+        prepare_visited();
+        float d = distance_to_query(curr);
+        candidates.emplace(d, curr);
+        mark_visited(curr);
 
-            if (results.size() >= k || candidates.size() < current_ef || current_ef >= max_ef) {
-                return results;
+        size_t filtered_count = 0;
+        float lower_bound = std::numeric_limits<float>::max();
+
+        // Check if entry point passes filter
+        if (!deleted_[curr]) {
+            size_t byte_idx = curr >> 3;
+            if (byte_idx < bitset_len && (filter_bitset[byte_idx] & (1u << (curr & 7)))) {
+                results.emplace(d, curr);
+                filtered_count++;
+                lower_bound = d;
             }
         }
-        return {};
+
+        while (!candidates.empty()) {
+            auto [cand_dist, cand_id] = candidates.top();
+
+            // Termination: best candidate is worse than worst filtered result and we have enough
+            if (filtered_count >= k && cand_dist > lower_bound) {
+                break;
+            }
+
+            // Dynamic ef expansion: if we haven't found k filtered results and the
+            // candidate queue is exhausted relative to current_ef, widen the beam.
+            if (filtered_count < k && cand_dist > lower_bound && results.size() >= current_ef) {
+                if (current_ef >= max_ef) break;
+                current_ef = std::min(current_ef * 2, max_ef);
+            }
+
+            candidates.pop();
+
+            for (uint32_t neighbor : neighbors_[cand_id][0]) {
+                if (is_visited(neighbor)) continue;
+                mark_visited(neighbor);
+
+                if (deleted_[neighbor]) continue;
+
+                float nd = distance_to_query(neighbor);
+
+                // Add to candidate queue if promising (for navigation)
+                bool dominated = (results.size() >= current_ef && nd > lower_bound);
+                if (!dominated) {
+                    candidates.emplace(nd, neighbor);
+
+                    // Check filter — only matching nodes enter the result queue
+                    size_t byte_idx = neighbor >> 3;
+                    if (byte_idx < bitset_len && (filter_bitset[byte_idx] & (1u << (neighbor & 7)))) {
+                        results.emplace(nd, neighbor);
+                        filtered_count++;
+
+                        if (results.size() > current_ef) {
+                            results.pop();
+                            filtered_count--;
+                        }
+                        if (!results.empty()) {
+                            lower_bound = results.top().first;
+                        }
+                    }
+                }
+
+                if (filtered_count >= k && candidates.empty()) break;
+            }
+        }
+
+        // Extract filtered results sorted by distance (closest first).
+        // results is a max-heap (worst on top), so drain fully and reverse.
+        std::vector<std::pair<uint32_t, float>> out;
+        while (!results.empty()) {
+            auto [dist, id] = results.top();
+            results.pop();
+            out.emplace_back(id, dist);
+        }
+        std::reverse(out.begin(), out.end());
+        if (out.size() > k) out.resize(k);
+        return out;
     }
 
     void set_ef(size_t ef) { ef_search_ = ef; }
