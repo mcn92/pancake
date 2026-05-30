@@ -1,6 +1,6 @@
 # Pancake WASM Vector Search Engine: System Design Document
 
-**Scope:** The complete Pancake 1.0.0 system — C++ core, WASM compilation, JavaScript wrapper, Cloudflare Worker deployment  
+**Scope:** The complete Pancake 1.0.0 system — C++ core, WASM compilation, JavaScript wrapper, Cloudflare Worker deployment
 **Last Updated:** 2026-05-01
 
 ---
@@ -555,7 +555,7 @@ For each vector v[0..D-1]:
   scale = (max - min) / 255
   offset = min
   quantized[d] = round((v[d] - offset) / scale * 255)
-  
+
 Dequantize:
   v[d] ≈ offset + quantized[d] * scale
 ```
