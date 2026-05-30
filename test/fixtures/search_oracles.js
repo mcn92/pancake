@@ -7,6 +7,11 @@ module.exports = {
         clusters: 6,
         k: 10,
         deletedIdsForCompact: Array.from({ length: 22 }, (_, i) => i * 3),
+        filteredSpecs: [
+            { label: 'half', modulo: 2, remainder: 0 },
+            { label: 'tenth', modulo: 10, remainder: 0 },
+            { label: 'twentieth', modulo: 20, remainder: 0 },
+        ],
         recallBaseline: {
             float32: {
                 beforeCompact: 1.0,
@@ -15,6 +20,18 @@ module.exports = {
             int8: {
                 beforeCompact: 0.9875000000000002,
                 afterCompact: 0.9791666666666665,
+            },
+        },
+        filteredRecallBaseline: {
+            float32: {
+                half: 1.0,
+                tenth: 1.0,
+                twentieth: 1.0,
+            },
+            int8: {
+                half: 0.9916666666666667,
+                tenth: 0.9916666666666667,
+                twentieth: 1.0,
             },
         },
         searchGolden: {
