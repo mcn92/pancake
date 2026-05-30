@@ -33,7 +33,7 @@ const parsedArgs = parseBenchmarkArgs();
 const HDF5_PATH = parsedArgs.args[0] || path.join(__dirname, '..', 'nytimes', 'nytimes-256-angular.hdf5');
 
 // --- Sweep configuration ---
-// K, M, and EF_CONSTRUCTION are fixed for fair comparison, but can be changed if desired. 
+// K, M, and EF_CONSTRUCTION are fixed for fair comparison, but can be changed if desired.
 // Lower M and EF_CONSTRUCTION will reduce build time, but will also lower recall ceilings.
 const K = 10;
 const M = resolveSingleValue(parsedArgs.m, 16);
