@@ -31,13 +31,13 @@ export interface PancakeIndex {
   search(query: Float32Array | number[], k: number): SearchResult[];
   /** Find the k nearest neighbors, restricted to IDs in allowedIds. Uses in-graph filtering with iterative deepening. */
   searchFiltered(query: Float32Array | number[], k: number, allowedIds: Set<number>): SearchResult[];
-  /** Soft-delete a vector by ID. O(1), excluded from future searches. */
+  /** Soft-delete a vector by ID. O(1), excluded from future searches. No-op for unknown IDs. */
   delete(id: number): void;
   /** Reclaim space from soft-deleted vectors via graph rewiring. */
   compact(): void;
-  /** Serialize the index to a Uint8Array for persistence. */
+  /** Serialize the index to a Uint8Array for persistence. Throws if ghostCount > 0; call compact() first. */
   export(): Uint8Array;
-  /** Restore index state from a previous export(). */
+  /** Restore index state from a previous export(). A failed import leaves the index unusable; back up with export() first if recovery matters. */
   import(data: Uint8Array | ArrayBuffer): void;
   /** Free WASM heap buffers. Instance is unusable after this. */
   dispose(): void;
