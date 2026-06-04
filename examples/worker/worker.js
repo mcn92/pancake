@@ -26,6 +26,8 @@ const MAX_DIMS = 4096;
 const MAX_ELEMENTS = 5_000;
 const MAX_EF = 2000;
 const MAX_M = 128;
+const WORKER_EXPORT_MAGIC = 0x57524b31; // "WRK1"
+const WORKER_EXPORT_VERSION = 1;
 
 // ---------------------------------------------------------------------------
 // Rate limiting — per-IP sliding window (in-memory, resets on cold start)
@@ -66,9 +68,11 @@ let persistTimer = null;
 const PERSIST_DEBOUNCE_MS = 2000;
 
 async function persistIndex(env) {
-  console.log("persistIndex called, INDEX_BUCKET=" + !!env.INDEX_BUCKET + " index=" + !!index);
   if (!env.INDEX_BUCKET || !index) return;
   try {
+    if (index.ghostCount() > 0) {
+      index.compact();
+    }
     const bytes = index.exportBinary();
     const metadata = { dims: String(index.dims), count: String(index.count), savedAt: new Date().toISOString() };
     await env.INDEX_BUCKET.put('pancake-index.bin', bytes, {
@@ -95,29 +99,36 @@ async function restoreIndex(env) {
     const obj = await env.INDEX_BUCKET.get('pancake-index.bin');
     if (!obj) return false;
 
-    const dims = parseInt(obj.customMetadata?.dims ?? '0', 10);
-    if (!dims) return false;
-
     const buffer = await obj.arrayBuffer();
     const engine = await initializePancake();
+    const imported = decodeWorkerExportEnvelope(buffer);
 
-    const handle = engine._pancake_init(dims, MAX_ELEMENTS, 1, 1, 8, 150, 100);
+    const dims = imported.metadata?.dims || parseInt(obj.customMetadata?.dims ?? '0', 10);
+    if (!dims) return false;
+    const maxElements = imported.metadata?.maxElements || MAX_ELEMENTS;
+    const initParams = imported.metadata?.initParams || { M: 8, efC: 150, efS: 100 };
+
+    const handle = engine._pancake_init(dims, maxElements, 1, 1, initParams.M, initParams.efC, initParams.efS);
     if (handle === 0xFFFFFFFF) return false;
 
-    const buf = engine._emsc_malloc(buffer.byteLength);
+    const buf = engine._emsc_malloc(imported.bytes.byteLength);
     if (!buf) { engine._pancake_dispose(handle); return false; }
 
     try {
-      engine.HEAPU8.set(new Uint8Array(buffer), buf);
-      const status = engine._pancake_import(handle, buf, buffer.byteLength);
+      engine.HEAPU8.set(imported.bytes, buf);
+      const status = engine._pancake_import(handle, buf, imported.bytes.byteLength);
       if (status !== 0) { engine._pancake_dispose(handle); return false; }
     } finally {
       engine._emsc_free(buf);
     }
 
     const count = engine._pancake_count(handle);
-    index = buildIndexWrapper(engine, dims, MAX_ELEMENTS, handle);
-    for (let i = 0; i < count; i++) index._seedId(i);
+    index = buildIndexWrapper(engine, dims, maxElements, handle, initParams);
+    if (imported.metadata?.mapping?.length) {
+      index._restoreMapping(imported.metadata.mapping, imported.metadata.nextExtId);
+    } else {
+      for (let i = 0; i < count; i++) index._seedId(i);
+    }
     console.log(`Restored index from R2: dims=${dims}, count=${count}`);
     return true;
   } catch (e) {
@@ -245,7 +256,19 @@ function buildIndexWrapper(engine, dims, maxElements, handle, initParams = {}) {
       return { raw, translated, dists, mapSize: _intToExt.size, nextExtId: _nextExtId };
     },
 
+    // The C++ serializer includes ghost entries as regular data, and the
+    // deserializer resets deleted_ to all-zero on load — so ghosts silently
+    // resurrect on import. persistIndex() compacts before calling this;
+    // the guard below enforces the contract rather than relying on callers
+    // to remember.
     exportBinary() {
+      if (this.ghostCount() > 0) {
+        throw new Error(
+          'exportBinary() called with ghosts present; compact() first. ' +
+          'The deserializer resets deleted_ to all-zero, so ghosts would ' +
+          'silently resurrect on restore.'
+        );
+      }
       const sizePtr = engine._emsc_malloc(8);
       if (!sizePtr) throw new Error('Allocation failed');
       try {
@@ -258,7 +281,17 @@ function buildIndexWrapper(engine, dims, maxElements, handle, initParams = {}) {
                     (engine.HEAPU8[sizePtr + 3] << 24);
 
         if (size === 0) throw new Error('Export produced 0 bytes');
-        return engine.HEAPU8.slice(dataPtr, dataPtr + size);
+        const raw = engine.HEAPU8.slice(dataPtr, dataPtr + size);
+        const mapping = Array.from(_intToExt.entries())
+          .sort((a, b) => a[0] - b[0])
+          .map(([intId, extId]) => [intId, extId]);
+        return encodeWorkerExportEnvelope(raw, {
+          dims: this.dims,
+          maxElements: this.maxElements,
+          nextExtId: _nextExtId,
+          initParams: _initParams,
+          mapping
+        });
       } finally {
         engine._emsc_free(sizePtr);
       }
@@ -334,6 +367,19 @@ function buildIndexWrapper(engine, dims, maxElements, handle, initParams = {}) {
       _intToExt.set(intId, extId);
     },
 
+    _restoreMapping(mapping, nextExtId) {
+      _extToInt.clear();
+      _intToExt.clear();
+      _deletedExt.clear();
+      for (const [intId, extId] of mapping) {
+        _intToExt.set(intId, extId);
+        _extToInt.set(extId, intId);
+      }
+      _nextExtId = Number.isInteger(nextExtId) && nextExtId >= 0
+        ? nextExtId
+        : (mapping.reduce((m, [, extId]) => Math.max(m, extId), -1) + 1);
+    },
+
     ghostCount() { return engine._pancake_ghost_count(this.handle); },
     ghostRatio() { return engine._pancake_ghost_ratio(this.handle); },
 
@@ -390,6 +436,47 @@ function validateVector(vector, dims, fieldName) {
 
 function getCorsOrigin(env) {
   return env.ALLOWED_ORIGIN || '*';
+}
+
+
+function encodeWorkerExportEnvelope(rawBytes, metadata) {
+  const jsonBytes = new TextEncoder().encode(JSON.stringify(metadata));
+  const out = new Uint8Array(16 + jsonBytes.byteLength + rawBytes.byteLength);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, WORKER_EXPORT_MAGIC, true);
+  view.setUint32(4, WORKER_EXPORT_VERSION, true);
+  view.setUint32(8, jsonBytes.byteLength, true);
+  view.setUint32(12, rawBytes.byteLength, true);
+  out.set(jsonBytes, 16);
+  out.set(rawBytes, 16 + jsonBytes.byteLength);
+  return out;
+}
+
+function decodeWorkerExportEnvelope(buffer) {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  if (bytes.byteLength < 16) {
+    return { bytes, metadata: null };
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(0, true) !== WORKER_EXPORT_MAGIC) {
+    return { bytes, metadata: null };
+  }
+  const version = view.getUint32(4, true);
+  if (version !== WORKER_EXPORT_VERSION) {
+    throw new Error(`Unsupported worker export version: ${version}`);
+  }
+  const metaLen = view.getUint32(8, true);
+  const rawLen = view.getUint32(12, true);
+  const endMeta = 16 + metaLen;
+  const endRaw = endMeta + rawLen;
+  if (endRaw > bytes.byteLength) {
+    throw new Error('Truncated worker export envelope');
+  }
+  const metadata = JSON.parse(new TextDecoder().decode(bytes.subarray(16, endMeta)));
+  return {
+    metadata,
+    bytes: bytes.slice(endMeta, endRaw)
+  };
 }
 
 
@@ -516,7 +603,7 @@ async function handleRequest(request, env, ctx) {
       }
       throw e;
     }
-    await persistIndex(env);
+    schedulePersist(env, ctx);
     return jsonResponse({ id, count: index.count });
   }
 
@@ -528,7 +615,7 @@ async function handleRequest(request, env, ctx) {
     if (typeof id !== 'number' || !Number.isInteger(id) || id < 0)
       return jsonResponse({ error: 'id must be a non-negative integer' }, 400);
     index.delete(id);
-    await persistIndex(env);
+    schedulePersist(env, ctx);
     return jsonResponse({ deleted: id, ghost_count: index.ghostCount(), ghost_ratio: index.ghostRatio() });
   }
 
@@ -581,7 +668,7 @@ async function handleRequest(request, env, ctx) {
       }
     }
 
-    await persistIndex(env);
+    schedulePersist(env, ctx);
     return jsonResponse({ inserted: ids.length, ids, count: index.count });
   }
 
@@ -639,29 +726,32 @@ async function handleRequest(request, env, ctx) {
   }
 
   if (url.pathname === '/import' && method === 'POST') {
-    const dims = parseInt(url.searchParams.get('dims') ?? '', 10);
+    const envelopeBuffer = await request.arrayBuffer();
+    const imported = decodeWorkerExportEnvelope(envelopeBuffer);
+    const dims = imported.metadata?.dims ?? parseInt(url.searchParams.get('dims') ?? '', 10);
     if (!isPositiveInteger(dims) || dims > MAX_DIMS)
       return jsonResponse({ error: `dims query param required and must be between 1 and ${MAX_DIMS}` }, 400);
 
-    const buffer = await request.arrayBuffer();
     const engine = await initializePancake();
 
     if (index) { index.destroy(); index = null; }
 
-    const handle = engine._pancake_init(dims, MAX_ELEMENTS, 1, 1, 8, 150, 100);
+    const maxElements = imported.metadata?.maxElements || MAX_ELEMENTS;
+    const initParams = imported.metadata?.initParams || { M: 8, efC: 150, efS: 100 };
+    const handle = engine._pancake_init(dims, maxElements, 1, 1, initParams.M, initParams.efC, initParams.efS);
     if (handle === 0xFFFFFFFF) {
       return jsonResponse({ error: 'Backend init failed' }, 500);
     }
 
-    const buf = engine._emsc_malloc(buffer.byteLength);
+    const buf = engine._emsc_malloc(imported.bytes.byteLength);
     if (!buf) {
       engine._pancake_dispose(handle);
       return jsonResponse({ error: 'WASM heap allocation failed' }, 500);
     }
 
     try {
-      engine.HEAPU8.set(new Uint8Array(buffer), buf);
-      const status = engine._pancake_import(handle, buf, buffer.byteLength);
+      engine.HEAPU8.set(imported.bytes, buf);
+      const status = engine._pancake_import(handle, buf, imported.bytes.byteLength);
       if (status !== 0) {
         engine._pancake_dispose(handle);
         return jsonResponse({ error: 'Import failed' }, 500);
@@ -670,9 +760,13 @@ async function handleRequest(request, env, ctx) {
       engine._emsc_free(buf);
     }
 
-    index = buildIndexWrapper(engine, dims, MAX_ELEMENTS, handle);
+    index = buildIndexWrapper(engine, dims, maxElements, handle, initParams);
     const importedCount = index.count;
-    for (let i = 0; i < importedCount; i++) index._seedId(i);
+    if (imported.metadata?.mapping?.length) {
+      index._restoreMapping(imported.metadata.mapping, imported.metadata.nextExtId);
+    } else {
+      for (let i = 0; i < importedCount; i++) index._seedId(i);
+    }
 
     await persistIndex(env);
     return jsonResponse({

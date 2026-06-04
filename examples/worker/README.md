@@ -2,7 +2,22 @@
 
 This directory contains a reference Cloudflare Worker deployment built on top of `pancake-wasm`.
 
-The Worker keeps a Pancake index in-process when hot and persists snapshots to Cloudflare R2. It is best suited to read-mostly, modest-sized indexes where cold restore is acceptable and where the Worker acts as an ephemeral ANN serving layer rather than a durable vector database.
+The Worker keeps a Pancake index in-process when hot and persists snapshots to
+Cloudflare R2. Treat it as a **snapshot-first ANN serving layer** rather than
+as a durable mutable vector database.
+
+Best fit:
+
+- read-heavy search workloads
+- modest-sized indexes that can be restored into Worker memory
+- explicit import/export flows
+- periodic snapshot rebuilds published to R2
+
+Less suitable:
+
+- high-write authoritative online mutation
+- strict cross-isolate read-after-write guarantees
+- relying on in-memory Worker state as the only source of truth
 
 ## Endpoints
 
@@ -54,6 +69,14 @@ At `M=16` this is `(dim + 120)` bytes per vector. Examples: `30k x 256D = 10 MB`
 
 **Cold starts and R2 restore.** Worker isolates are not persistent. On cold start, the Worker fetches the index from R2 and deserializes it lazily on the first request. For a large index, the first request after idle will be slow.
 
-**Persistence.** The current Worker example debounces R2 writes with a 2-second timer and uses `ctx.waitUntil()` to complete writes after the response is sent. If the isolate is terminated before the timer fires, recent mutations may be lost. For workflows where every write must be durable, use `/export` explicitly after critical mutations or redesign the persistence path.
+**Persistence.** The current Worker example writes snapshots to R2 and restores
+from R2 on cold start. This is the durable boundary. In-memory state is only a
+warm cache for the current isolate.
+
+Mutation routes exist for demos, local validation, and administrative flows,
+but they should not be treated as the primary production write path for a
+stateful vector database. If you need stronger mutation semantics, put an
+authoritative layer elsewhere and use the Worker as the search-serving
+frontend.
 
 **Rate limiting.** Rate limiting is in-memory per isolate. Each isolate tracks its own sliding-window counter, so the effective limit across multiple isolates is approximately `limit * number_of_isolates`.
