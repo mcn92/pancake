@@ -210,172 +210,169 @@ class PancakeIndex {
 
         const sizePtr = this._e._emsc_malloc(4);
         if (!sizePtr) throw new Error('WASM malloc failed for export');
+        try {
+            const dataPtr = this._e._pancake_export(this._handle, sizePtr);
+            if (!dataPtr) {
+                throw new Error('Export failed');
+            }
 
-        const dataPtr = this._e._pancake_export(this._handle, sizePtr);
+            const wasmSize = this._e.HEAPU32[sizePtr >> 2];
+            const liveMappings = Array.from(this._intToExt.entries()).sort((a, b) => a[0] - b[0]);
+            const mappingBytes = liveMappings.length * MAPPING_ENTRY_SIZE;
+            const result = new Uint8Array(V3_ENVELOPE_HEADER_SIZE + mappingBytes + wasmSize);
+            const view = new DataView(result.buffer);
+            view.setUint32(0, PANCAKE_MAGIC, true);
+            view.setUint32(4, ENVELOPE_VERSION, true);
+            view.setUint32(8, this._dim, true);
+            view.setUint32(12, this._isL2 ? 0 : 1, true);
+            view.setUint32(16, this._quantized ? 1 : 0, true);
+            view.setUint32(20, this._nextExtId, true);
+            view.setUint32(24, liveMappings.length, true);
+            view.setUint32(28, wasmSize, true);
 
-        if (!dataPtr) {
+            let offset = V3_ENVELOPE_HEADER_SIZE;
+            for (const [intId, extId] of liveMappings) {
+                view.setUint32(offset, intId, true);
+                view.setUint32(offset + 4, extId, true);
+                offset += MAPPING_ENTRY_SIZE;
+            }
+
+            result.set(this._e.HEAPU8.subarray(dataPtr, dataPtr + wasmSize), offset);
+            return result;
+        } finally {
             this._e._emsc_free(sizePtr);
-            throw new Error('Export failed');
         }
-
-        const wasmSize = this._e.HEAPU32[sizePtr >> 2];
-        const liveMappings = Array.from(this._intToExt.entries()).sort((a, b) => a[0] - b[0]);
-        const mappingBytes = liveMappings.length * MAPPING_ENTRY_SIZE;
-        const result = new Uint8Array(V3_ENVELOPE_HEADER_SIZE + mappingBytes + wasmSize);
-        const view = new DataView(result.buffer);
-        view.setUint32(0, PANCAKE_MAGIC, true);
-        view.setUint32(4, ENVELOPE_VERSION, true);
-        view.setUint32(8, this._dim, true);
-        view.setUint32(12, this._isL2 ? 0 : 1, true);
-        view.setUint32(16, this._quantized ? 1 : 0, true);
-        view.setUint32(20, this._nextExtId, true);
-        view.setUint32(24, liveMappings.length, true);
-        view.setUint32(28, wasmSize, true);
-
-        let offset = V3_ENVELOPE_HEADER_SIZE;
-        for (const [intId, extId] of liveMappings) {
-            view.setUint32(offset, intId, true);
-            view.setUint32(offset + 4, extId, true);
-            offset += MAPPING_ENTRY_SIZE;
-        }
-
-        result.set(this._e.HEAPU8.subarray(dataPtr, dataPtr + wasmSize), offset);
-
-        this._e._emsc_free(sizePtr);
-        return result;
     }
 
     import(data) {
-          this._checkDisposed();
-          const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+        this._checkDisposed();
+        const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
 
-          let wasmBytes = bytes;
+        let wasmBytes = bytes;
+        let pendingMappings = null;
+        let pendingNextExtId = null;
 
-          if (bytes.length >= V2_ENVELOPE_HEADER_SIZE) {
-              const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        if (bytes.length >= V2_ENVELOPE_HEADER_SIZE) {
+            const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 
-              if (view.getUint32(0, true) === PANCAKE_MAGIC) {
-                  const version = view.getUint32(4, true);
+            if (view.getUint32(0, true) === PANCAKE_MAGIC) {
+                const version = view.getUint32(4, true);
 
-                  let dim;
-                  let metricVal;
-                  let quantizedVal;
-                  let nextExtId = null;
-                  let mappingCount = null;
-                  let mappingOffset = null;
-                  let wasmOffset = null;
-                  let wasmSize = null;
+                let dim;
+                let metricVal;
+                let quantizedVal;
+                let nextExtId = null;
+                let mappingCount = null;
+                let mappingOffset = null;
+                let wasmOffset = null;
+                let wasmSize = null;
 
-                  if (version === 1) {
-                      const V1_HEADER_SIZE = 24;
-                      if (bytes.length < V1_HEADER_SIZE) {
-                          throw new Error('Import failed: truncated v1 envelope');
-                      }
+                if (version === 1) {
+                    const V1_HEADER_SIZE = 24;
+                    if (bytes.length < V1_HEADER_SIZE) {
+                        throw new Error('Import failed: truncated v1 envelope');
+                    }
 
-                      dim = view.getUint32(8, true);
-                      const compressed = view.getUint32(12, true);
-                      if (compressed !== dim) {
-                          throw new Error('Import failed: DCT/PCA indexes are no longer supported');
-                      }
+                    dim = view.getUint32(8, true);
+                    const compressed = view.getUint32(12, true);
+                    if (compressed !== dim) {
+                        throw new Error('Import failed: DCT/PCA indexes are no longer supported');
+                    }
 
-                      metricVal = view.getUint32(16, true);
-                      quantizedVal = view.getUint32(20, true);
-                  } else if (version === ENVELOPE_VERSION) {
-                      if (bytes.length < V3_ENVELOPE_HEADER_SIZE) {
-                          throw new Error('Import failed: truncated v3 envelope');
-                      }
+                    metricVal = view.getUint32(16, true);
+                    quantizedVal = view.getUint32(20, true);
+                } else if (version === ENVELOPE_VERSION) {
+                    if (bytes.length < V3_ENVELOPE_HEADER_SIZE) {
+                        throw new Error('Import failed: truncated v3 envelope');
+                    }
 
-                      dim = view.getUint32(8, true);
-                      metricVal = view.getUint32(12, true);
-                      quantizedVal = view.getUint32(16, true);
-                      nextExtId = view.getUint32(20, true);
-                      mappingCount = view.getUint32(24, true);
-                      wasmSize = view.getUint32(28, true);
-                      mappingOffset = V3_ENVELOPE_HEADER_SIZE;
-                      wasmOffset = mappingOffset + mappingCount * MAPPING_ENTRY_SIZE;
+                    dim = view.getUint32(8, true);
+                    metricVal = view.getUint32(12, true);
+                    quantizedVal = view.getUint32(16, true);
+                    nextExtId = view.getUint32(20, true);
+                    mappingCount = view.getUint32(24, true);
+                    wasmSize = view.getUint32(28, true);
+                    mappingOffset = V3_ENVELOPE_HEADER_SIZE;
+                    wasmOffset = mappingOffset + mappingCount * MAPPING_ENTRY_SIZE;
 
-                      if (wasmOffset > bytes.length || wasmOffset + wasmSize > bytes.length) {
-                          throw new Error('Import failed: truncated v3 envelope payload');
-                      }
-                  } else {
-                      if (version !== 2) {
-                          throw new Error(`Import failed: unsupported envelope version ${version}`);
-                      }
+                    if (wasmOffset > bytes.length || wasmOffset + wasmSize > bytes.length) {
+                        throw new Error('Import failed: truncated v3 envelope payload');
+                    }
+                } else {
+                    if (version !== 2) {
+                        throw new Error(`Import failed: unsupported envelope version ${version}`);
+                    }
 
-                      dim = view.getUint32(8, true);
-                      metricVal = view.getUint32(12, true);
-                      quantizedVal = view.getUint32(16, true);
-                  }
+                    dim = view.getUint32(8, true);
+                    metricVal = view.getUint32(12, true);
+                    quantizedVal = view.getUint32(16, true);
+                }
 
-                  if (dim !== this._dim) {
-                      throw new Error(`Import failed: dim mismatch (exported ${dim}, expected ${this._dim})`);
-                  }
+                if (dim !== this._dim) {
+                    throw new Error(`Import failed: dim mismatch (exported ${dim}, expected ${this._dim})`);
+                }
 
-                  const exportedL2 = metricVal === 0;
-                  if (exportedL2 !== this._isL2) {
-                      const got = exportedL2 ? 'l2' : 'cosine';
-                      const want = this._isL2 ? 'l2' : 'cosine';
-                      throw new Error(`Import failed: metric mismatch (exported ${got}, expected ${want})`);
-                  }
+                const exportedL2 = metricVal === 0;
+                if (exportedL2 !== this._isL2) {
+                    const got = exportedL2 ? 'l2' : 'cosine';
+                    const want = this._isL2 ? 'l2' : 'cosine';
+                    throw new Error(`Import failed: metric mismatch (exported ${got}, expected ${want})`);
+                }
 
-                  if (!!quantizedVal !== this._quantized) {
-                      throw new Error('Import failed: quantized mismatch');
-                  }
+                if (!!quantizedVal !== this._quantized) {
+                    throw new Error('Import failed: quantized mismatch');
+                }
 
-                  if (version === ENVELOPE_VERSION) {
-                      wasmBytes = bytes.subarray(wasmOffset, wasmOffset + wasmSize);
-
-                      this._intToExt.clear();
-                      this._extToInt.clear();
-                      this._deletedExt.clear();
-
-                      let offset = mappingOffset;
-                      for (let i = 0; i < mappingCount; i++) {
-                          const intId = view.getUint32(offset, true);
-                          const extId = view.getUint32(offset + 4, true);
-                          this._intToExt.set(intId, extId);
-                          this._extToInt.set(extId, intId);
-                          offset += MAPPING_ENTRY_SIZE;
-                      }
-
-                      this._nextExtId = nextExtId;
-                  } else {
-                      wasmBytes = bytes.subarray(V2_ENVELOPE_HEADER_SIZE);
-                  }
-              }
-          }
-
-          const dataPtr = this._e._emsc_malloc(wasmBytes.length);
-          if (!dataPtr) throw new Error('WASM malloc failed for import');
-
-          this._e.HEAPU8.set(wasmBytes, dataPtr);
-
-          const status = this._e._pancake_import(this._handle, dataPtr, wasmBytes.length);
-
-          this._e._emsc_free(dataPtr);
-
-          if (status !== 0) throw new Error('Import failed');
-
-          const count = this._e._pancake_count(this._handle);
-          if (this._intToExt.size === 0 && this._extToInt.size === 0) {
-              this._intToExt.clear();
-              this._extToInt.clear();
-              this._deletedExt.clear();
-              for (let i = 0; i < count; i++) {
-                  this._intToExt.set(i, i);
-                  this._extToInt.set(i, i);
-              }
-              this._nextExtId = count;
-          } else {
-              if (this._intToExt.size !== count || this._extToInt.size !== count) {
-                  throw new Error('Import failed: envelope mapping count mismatch');
-              }
-              this._deletedExt.clear();
-              if (this._nextExtId < count) {
-                  throw new Error('Import failed: envelope nextExtId is invalid');
-              }
-          }
+                if (version === ENVELOPE_VERSION) {
+                    wasmBytes = bytes.subarray(wasmOffset, wasmOffset + wasmSize);
+                    pendingMappings = new Map();
+                    let offset = mappingOffset;
+                    for (let i = 0; i < mappingCount; i++) {
+                        const intId = view.getUint32(offset, true);
+                        const extId = view.getUint32(offset + 4, true);
+                        pendingMappings.set(intId, extId);
+                        offset += MAPPING_ENTRY_SIZE;
+                    }
+                    pendingNextExtId = nextExtId;
+                } else {
+                    wasmBytes = bytes.subarray(V2_ENVELOPE_HEADER_SIZE);
+                }
+            }
         }
+
+        const dataPtr = this._e._emsc_malloc(wasmBytes.length);
+        if (!dataPtr) throw new Error('WASM malloc failed for import');
+
+        let status;
+        try {
+            this._e.HEAPU8.set(wasmBytes, dataPtr);
+            status = this._e._pancake_import(this._handle, dataPtr, wasmBytes.length);
+        } finally {
+            this._e._emsc_free(dataPtr);
+        }
+
+        if (status !== 0) {
+            this._clearMappings();
+            throw new Error('Import failed');
+        }
+
+        const count = this._e._pancake_count(this._handle);
+        if (pendingMappings === null) {
+            this._setIdentityMappings(count);
+            return;
+        }
+
+        if (pendingMappings.size !== count) {
+            this._clearMappings();
+            throw new Error('Import failed: envelope mapping count mismatch');
+        }
+        if (pendingNextExtId < count) {
+            this._clearMappings();
+            throw new Error('Import failed: envelope nextExtId is invalid');
+        }
+
+        this._commitMappings(pendingMappings, pendingNextExtId);
+    }
 
     get count() {
         this._checkDisposed();
@@ -401,11 +398,22 @@ class PancakeIndex {
 
     dispose() {
         if (this._disposed) return;
-        this._e._pancake_dispose(this._handle);
-        this._e._emsc_free(this._vecPtr);
-        this._e._emsc_free(this._idPtr);
-        this._e._emsc_free(this._distPtr);
-        this._disposed = true;
+        let thrown = null;
+        try {
+            this._e._pancake_dispose(this._handle);
+        } catch (err) {
+            thrown = err;
+        } finally {
+            for (const ptr of [this._vecPtr, this._idPtr, this._distPtr]) {
+                try {
+                    this._e._emsc_free(ptr);
+                } catch (err) {
+                    if (thrown === null) thrown = err;
+                }
+            }
+            this._disposed = true;
+        }
+        if (thrown !== null) throw thrown;
     }
 
     _setEfSearch(ef) {
@@ -444,6 +452,31 @@ class PancakeIndex {
             ids[i] = extId;
         }
         return ids;
+    }
+
+    _clearMappings() {
+        this._intToExt.clear();
+        this._extToInt.clear();
+        this._deletedExt.clear();
+        this._nextExtId = 0;
+    }
+
+    _commitMappings(intToExt, nextExtId) {
+        this._clearMappings();
+        for (const [intId, extId] of intToExt) {
+            this._intToExt.set(intId, extId);
+            this._extToInt.set(extId, intId);
+        }
+        this._nextExtId = nextExtId;
+    }
+
+    _setIdentityMappings(count) {
+        this._clearMappings();
+        for (let i = 0; i < count; i++) {
+            this._intToExt.set(i, i);
+            this._extToInt.set(i, i);
+        }
+        this._nextExtId = count;
     }
 
     _readResults(n) {
