@@ -1,10 +1,10 @@
 # Pancake
 
-HNSW vector search in 43 KB of gzipped WebAssembly (113 KB uncompressed). Runs in Node.js and browser-bundled web apps with no native dependencies.
+HNSW vector search in about 45 KB of gzipped WebAssembly (122 KB uncompressed). Runs in Node.js and browser-bundled web apps with no native dependencies.
 
 Most ANN libraries ship as platform-specific native binaries, which means they do not work in browser tabs or JavaScript runtimes without native extensions. Pancake is a single portable WASM module built for JavaScript environments where native addons are not an option.
 
-Pancake ships two backends: an int8 quantized backend that cuts memory ~4x with minimal recall loss, and a full float32 backend for higher precision distances. Both use WASM SIMD acceleration. At high dimensions (1536D), the int8 backend is faster than native hnswlib at low-to-mid recall because quantized vectors fit in CPU cache where float32 vectors don't. The float32 backend matches or exceeds native throughput across the full recall range. At 256D, Pancake Int8 runs at 93-100% of native throughput at matched recall.
+Pancake ships two backends: an int8 quantized backend that cuts memory ~4x with an explicit recall-ceiling tradeoff, and a full float32 backend for higher precision distances. Both use WASM SIMD acceleration. On the current 1536D DBpedia benchmark, the float32 backend is competitive with native hnswlib across the full recall range, while the int8 backend is strongest at lower recall and much lower memory. On the current 256D NYTimes benchmark, Pancake reaches slightly higher recall in the tested sweep but trails native throughput at matched recall.
 
 Pancake is an ANN library -- it doesn't ship an embedding model. Use any embedder (sentence-transformers, OpenAI, Cohere, etc.) and feed the resulting vectors to Pancake.
 
@@ -22,6 +22,9 @@ const Pancake = require('pancake-wasm');
 
 // Node.js ESM
 import Pancake from 'pancake-wasm';
+
+// Explicit Node entry
+import Pancake from 'pancake-wasm/node';
 
 // Browser bundlers and other runtimes that support packaged wasm asset resolution
 import Pancake from 'pancake-wasm/web';
@@ -122,33 +125,34 @@ All benchmarks are single-threaded on an AMD Ryzen 9 4900HS laptop. Pancake Int8
 
 ### DBpedia-50K (50k x 1536D, L2)
 
-Three-way comparison at OpenAI embedding dimension. M=16, efConstruction=50.
+Three-way comparison at OpenAI embedding dimension. M=16, efConstruction=100.
 
 | ef_search | Pancake Int8 recall | Pancake Int8 QPS | Pancake FP32 recall | Pancake FP32 QPS | hnswlib recall | hnswlib QPS |
 |----------:|--------------------:|-----------------:|--------------------:|-----------------:|---------------:|------------:|
-| 10 | 84.1% | 4,877 | 86.5% | 3,584 | 80.0% | 3,049 |
-| 40 | 94.5% | 2,171 | 96.5% | 1,562 | 94.9% | 1,707 |
-| 100 | 96.7% | 1,061 | 98.8% | 790 | 98.2% | 993 |
-| 200 | 97.3% | 623 | 99.4% | 466 | 99.2% | 608 |
-| 500 | 97.6% | 295 | 99.8% | 221 | 99.8% | 300 |
+| 10 | 86.0% | 3,752 | 87.4% | 2,994 | 81.5% | 2,452 |
+| 40 | 95.4% | 1,728 | 97.2% | 1,298 | 95.7% | 1,321 |
+| 100 | 97.1% | 874 | 99.2% | 659 | 98.7% | 763 |
+| 200 | 97.4% | 496 | 99.7% | 380 | 99.5% | 473 |
+| 500 | 97.6% | 239 | 99.96% | 178 | 99.87% | 228 |
+| 800 | 97.6% | 159 | 99.98% | 121 | 99.97% | 156 |
 
-At 1536D, Pancake Int8 is the fastest option at low-to-mid recall because quantized vectors fit in CPU cache where float32 vectors don't. The tradeoff is a recall ceiling around 97.6% where quantization noise dominates. Pancake Float32 matches hnswlib's recall curve almost exactly, running within 95-100% of native throughput.
+On this 1536D L2 workload, Pancake FP32 is the strongest result: it tracks hnswlib's recall curve closely and is slightly ahead on much of the matched-recall frontier. Pancake Int8 is still attractive when memory matters or when target recall is in the low-to-mid `90%` range, but it plateaus at about `97.65%` recall while both float32 systems continue toward full recall.
 
-Build times: Pancake Int8 87s, Pancake FP32 160s, hnswlib 42s. Index memory: Int8 80 MB, FP32 and hnswlib 299 MB.
+Build times from this run: Pancake Int8 `129.3s`, Pancake FP32 `248.3s`, hnswlib `80.8s`. Measured index memory: Int8 `86.3 MB`, Pancake FP32 `299.3 MB`.
 
 ### NYTimes-256 (290k x 256D, cosine)
 
-Pancake Int8 vs native hnswlib. M=16, efConstruction=150.
+Three-way comparison. M=16, efConstruction=100.
 
-| ef_search | Pancake Int8 recall | Pancake Int8 QPS | hnswlib recall | hnswlib QPS |
-|----------:|--------------------:|-----------------:|---------------:|------------:|
-| 20 | 73.4% | 4,883 | 69.7% | 5,827 |
-| 100 | 87.1% | 1,569 | 85.7% | 2,007 |
-| 200 | 89.8% | 917 | 88.8% | 1,157 |
-| 500 | 93.2% | 387 | 92.5% | 485 |
-| 800 | 94.6% | 244 | 94.2% | 324 |
+| ef_search | Pancake Int8 recall | Pancake Int8 QPS | Pancake FP32 recall | Pancake FP32 QPS | hnswlib recall | hnswlib QPS |
+|----------:|--------------------:|-----------------:|--------------------:|-----------------:|---------------:|------------:|
+| 20 | 69.9% | 3,617 | 70.4% | 3,444 | 66.9% | 4,825 |
+| 100 | 85.0% | 1,233 | 85.4% | 1,042 | 83.8% | 1,741 |
+| 200 | 88.5% | 752 | 88.9% | 593 | 87.5% | 1,017 |
+| 500 | 92.2% | 321 | 92.5% | 255 | 91.4% | 448 |
+| 800 | 93.8% | 203 | 94.2% | 157 | 93.3% | 285 |
 
-Pancake reaches 2-3 percentage points higher recall at the same efSearch. At matched recall, Pancake runs at 93-100% of native throughput -- the gap reflects the cost of WASM vs native SIMD, not an algorithmic difference. In this sweep, Pancake Int8 reaches 94.6% recall at `ef_search=800`, while hnswlib reaches 94.2% at the same setting.
+On this 256D cosine workload, Pancake reaches slightly higher recall than hnswlib at the same `ef_search`, but native hnswlib is still faster at matched recall across the overlapping range. Pancake Int8 is roughly `0.84x-0.90x` of native throughput at comparable recall points; Pancake FP32 is slower still. The recall gap suggests competitive graph quality, while the throughput gap is dominated by WASM-vs-native execution cost on lower-dimensional vectors.
 
 ### Deletion tolerance
 
@@ -166,7 +170,15 @@ Recall holds within about 1 point of baseline through 70% ghosts. Search latency
 
 ### Reproducing
 
-Benchmark scripts are in `benchmarks/`. Results depend on dimension, corpus size, HNSW parameters, and hardware.
+Benchmark scripts are in `benchmarks/`. A shared runner and parameter parser are
+included, so you can list and run them with:
+
+```bash
+npm run bench -- --list
+npm run bench -- benchmark_dbpedia_50k --m 16 --ef-construction 50 --ef-search 100
+```
+
+Results depend on dimension, corpus size, HNSW parameters, and hardware.
 
 ## Reference Worker Architecture
 
@@ -190,7 +202,7 @@ Pancake makes sense when native ANN libraries aren't an option:
 - **Node.js without native addons** -- in-process ANN without native binary packaging
 - **Small to medium indexes** -- in-process search without external infrastructure
 
-If you have a server where native dependencies are fine, Faiss, hnswlib, or USearch will generally be faster -- especially at low dimensions where native SIMD width matters most. At high dimensions (1536D), Pancake's float32 backend matches native hnswlib throughput, and the int8 backend beats it at low-to-mid recall. Pancake exists for the places native libraries can't go -- and at high dimensions, it holds its own even where they can.
+If you have a server where native dependencies are fine, Faiss, hnswlib, or USearch will generally be faster -- especially at low dimensions where native SIMD width matters most. On the current 1536D DBpedia run, Pancake's float32 backend is competitive with native hnswlib and the int8 backend offers a strong memory/speed tradeoff up to about `97.6%` recall. Pancake exists for the places native libraries can't go -- and on some high-dimensional workloads, it is still competitive even where they can.
 
 ## How it works
 
@@ -220,10 +232,13 @@ The WASM module exposes a handle-based C API: `pancake_init` returns an opaque h
 
 ## Examples
 
-- `examples/cli/build_index.js` -- build an HNSW index from precomputed embeddings (see [QUICKSTART.md](QUICKSTART.md))
-- `examples/demo/technical_demo_cli.js` -- interactive REPL exercising the full API against 5,000 precomputed 384D embeddings
-- `dist/technical-demo.html` -- in-browser version of the proof suite with live latency chart and adversarial stress tests
+- `examples/cli/build_index.js` -- build an HNSW index from precomputed embeddings
+- `examples/demo/technical_demo_cli.js` -- interactive local proof/demo REPL
+- `examples/demo/technical_demo_worker.js` -- interactive Worker-targeted proof/demo REPL
+- `dist/technical-demo.html` -- browser proof/demo page with latency and stress views
 - `examples/browser-vite/` -- minimal bundled browser consumer fixture used by `npm run test:browser`
+- `examples/demo-portable-search/` -- packaged browser semantic-search demo using exported snapshots
+- `examples/demo-ecommerce/` -- browser demo built on top of the packaged web entry
 - `examples/worker/` -- reference Cloudflare Worker deployment built on top of Pancake
 
 ## Architecture
@@ -242,8 +257,9 @@ See [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) for a detailed design documen
 node run_tests.js
 ```
 
-This covers the core API, Node CJS and ESM entrypoints, and the browser-style `instantiateWasm`
-loading path used by the web runtime.
+This covers the core API, Node CJS and ESM entrypoints, browser-style
+`instantiateWasm` loading, held-out brute-force recall oracles, filtered-search
+oracles, golden search-output checks, and determinism checks.
 
 For a real bundled browser-consumer check of `import Pancake from 'pancake-wasm/web'`, run:
 
@@ -254,7 +270,19 @@ npm run test:browser
 This starts a minimal Vite app in `examples/browser-vite/` and verifies the published web entry
 in Chromium via Playwright.
 
-229 assertions covering insertion, search, deletion, compaction, export/import, batch operations, quantized and float32 modes, error paths, edge cases, runtime entrypoints, and metric correctness.
+For SIMD parity coverage, run:
+
+```bash
+npm run test:simd
+```
+
+For the Worker reference deployment, run:
+
+```bash
+node test/test_worker_features.js
+```
+
+Current core suite status on this tree: **755 passed, 0 failed**.
 
 ## Building from source
 
@@ -269,7 +297,7 @@ Requires an Emscripten toolchain with WASM SIMD support. Produces `dist/engine.j
 ## Tradeoffs
 
 - **Single-threaded by design.** Pancake is meant for runtimes where background threads are unavailable or unreliable. That is a deployment advantage, not just a limitation.
-- **Quantization is a real trade.** The int8 path wins on memory and often on throughput, but tops out around 97.6% recall on 1536D benchmarks. Use float32 when you need >99%.
+- **Quantization is a real trade.** The int8 path wins on memory and can win on throughput at lower recall, but on the current 1536D DBpedia benchmark it tops out around `97.6%` recall. Use float32 when you need `>99%`.
 - **Compaction is rebuild-based.** Deletes are soft deletes. Compaction rewrites the graph rather than patching edges in place. That keeps behavior predictable and avoids relying on background maintenance threads.
 - **Index instances are not a shared-memory concurrency primitive.** Treat a Pancake index like ordinary mutable in-process state: safe within one JavaScript thread/event loop, but not something to share concurrently across Node worker threads or isolates without your own coordination.
 - **This is an index, not an embedding stack.** Pancake does vector search only. Bring your own embedding pipeline.
