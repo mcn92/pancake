@@ -611,6 +611,10 @@ public:
         }
         if (count_ > 0 && observed_max_level != max_level_) return fail();
 
+        // NOTE: this zeroes all soft-delete state on load. Ghost entries were
+        // serialized as regular data, so they come back live. Callers must
+        // compact before serializing if deletes need to survive a round-trip.
+        // (Worker persist path enforces this in exportBinary(); see worker.js.)
         deleted_.assign(count_, 0);
         num_deleted_ = 0;
         if (max_elements_ > visited_list_.size())
