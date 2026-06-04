@@ -31,6 +31,8 @@ const AVG_LATENCY_THRESHOLD_MS = 10;
 const P99_LATENCY_THRESHOLD_MS = 25;
 const VECTORS_PATH = path.join(__dirname, '..', '..', 'dist', 'vectors.bin');
 const DEFAULT_EXPORT_PATH = path.join(__dirname, 'pancake-index.bin');
+const STRESS_BUILD_COUNT = 4000;
+const STRESS_RECALL_QUERIES = 25;
 
 const PROOFS = [
     { id: 'load', text: 'Real embeddings loaded from vectors.bin' },
@@ -137,6 +139,7 @@ class TechnicalDemoWorker {
         this.totalVectors = 0;
         this.latencyHistory = [];
         this.compactionCount = 0;
+        this.liveVectors = new Map();
         this.proofState = Object.fromEntries(PROOFS.map((p) => [p.id, false]));
         this.rl = null;
         this.commandQueue = [];
@@ -194,6 +197,12 @@ class TechnicalDemoWorker {
         return v;
     }
 
+    randomLiveId() {
+        if (this.liveVectors.size === 0) return null;
+        const ids = Array.from(this.liveVectors.keys());
+        return ids[Math.floor(Math.random() * ids.length)];
+    }
+
     // ---- Core operations via HTTP ----
 
     async checkHealth() {
@@ -214,6 +223,7 @@ class TechnicalDemoWorker {
         this.markProof('init');
         this.compactionCount = 0;
         this.latencyHistory = [];
+        this.liveVectors.clear();
         return res.data;
     }
 
@@ -222,6 +232,7 @@ class TechnicalDemoWorker {
         if (res.status === 409 && !throwOnFull) return null;
         if (res.status !== 200) throw new Error(`/add failed: ${JSON.stringify(res.data)}`);
         this.markProof('insert');
+        this.liveVectors.set(res.data.id, Float32Array.from(vec));
         return res.data;
     }
 
@@ -229,6 +240,9 @@ class TechnicalDemoWorker {
         const res = await apiPost('/add_batch', { vectors: vecs });
         if (res.status !== 200) throw new Error(`/add_batch failed: ${JSON.stringify(res.data)}`);
         this.markProof('insert');
+        for (let i = 0; i < res.data.ids.length; i++) {
+            this.liveVectors.set(res.data.ids[i], Float32Array.from(vecs[i]));
+        }
         return res.data;
     }
 
@@ -257,6 +271,7 @@ class TechnicalDemoWorker {
         const res = await apiPost('/delete', { id });
         if (res.status !== 200) throw new Error(`/delete failed: ${JSON.stringify(res.data)}`);
         this.markProof('delete');
+        this.liveVectors.delete(id);
         return res.data;
     }
 
@@ -418,12 +433,13 @@ class TechnicalDemoWorker {
     }
 
     async deleteVectors(count) {
-        const stats = await this.getStats();
-        const total = stats.count;
+        const total = this.liveVectors.size;
         const n = Math.min(count, total);
         this.log(`Deleting ${n} vector${n === 1 ? '' : 's'}...`, 'info');
         for (let i = 0; i < n; i++) {
-            await this.deleteVector(Math.floor(Math.random() * (stats.next_id || total)));
+            const id = this.randomLiveId();
+            if (id === null) break;
+            await this.deleteVector(id);
         }
         const after = await this.getStats();
         if (after.ghost_count > 0) this.markProof('ghosts');
@@ -537,9 +553,9 @@ class TechnicalDemoWorker {
             inserts++;
 
             if (Math.random() < 0.4) {
-                const stats = await this.getStats();
-                if (stats.count > 0) {
-                    await this.deleteVector(Math.floor(Math.random() * (stats.next_id || stats.count)));
+                if (this.liveVectors.size > 0) {
+                    const id = this.randomLiveId();
+                    if (id !== null) await this.deleteVector(id);
                     deletes++;
                 }
             }
@@ -599,35 +615,33 @@ class TechnicalDemoWorker {
         this.log(`Self-recall verified: ${hits}/${trials} rank-1 hits`, 'success');
     }
 
-    async proveRecallAtK() {
-        const queryCount = 50;
-        const topK = 10;
-        this.log(`Check: recall@${topK} vs brute-force (${queryCount} queries)`, 'info');
+    async proveRecallAtK(queryCount = 50, topK = 10, label = null) {
+        const prefix = label ? `${label}: ` : 'Check: ';
+        this.log(`${prefix}recall@${topK} vs brute-force (${queryCount} queries)`, 'info');
 
-        const stats = await this.getStats();
-        const count = stats.count;
-        if (count < topK) throw new Error('not enough vectors indexed');
+        const liveIds = Array.from(this.liveVectors.keys());
+        if (liveIds.length < topK) throw new Error('not enough live vectors indexed');
 
-        const queryIndices = [];
+        const queryIds = [];
         const used = new Set();
-        while (queryIndices.length < queryCount) {
-            const idx = Math.floor(Math.random() * Math.min(count, this.totalVectors));
-            if (!used.has(idx)) {
-                used.add(idx);
-                queryIndices.push(idx);
+        const maxQueries = Math.min(queryCount, liveIds.length);
+        while (queryIds.length < maxQueries) {
+            const id = liveIds[Math.floor(Math.random() * liveIds.length)];
+            if (!used.has(id)) {
+                used.add(id);
+                queryIds.push(id);
             }
         }
 
         let totalRecall = 0;
-        const limit = Math.min(count, this.totalVectors);
+        const corpus = Array.from(this.liveVectors.entries());
 
-        for (let qi = 0; qi < queryCount; qi++) {
-            const qIdx = queryIndices[qi];
-            const qVec = this.getVec(qIdx);
+        for (let qi = 0; qi < queryIds.length; qi++) {
+            const qId = queryIds[qi];
+            const qVec = this.liveVectors.get(qId);
             const scored = [];
 
-            for (let i = 0; i < limit; i++) {
-                const v = this.getVec(i);
+            for (const [candidateId, v] of corpus) {
                 let dot = 0;
                 let na = 0;
                 let nb = 0;
@@ -636,12 +650,12 @@ class TechnicalDemoWorker {
                     na += qVec[d] * qVec[d];
                     nb += v[d] * v[d];
                 }
-                scored.push({ id: i, dist: 1 - dot / (Math.sqrt(na) * Math.sqrt(nb)) });
+                scored.push({ id: candidateId, dist: 1 - dot / (Math.sqrt(na) * Math.sqrt(nb)) });
             }
             scored.sort((a, b) => a.dist - b.dist);
             const trueTopK = new Set(scored.slice(0, topK).map((s) => s.id));
 
-            const res = await this.search(qVec, topK);
+            const res = await this.search(Array.from(qVec), topK);
             const hnswIds = new Set(res.neighbors);
 
             let hits = 0;
@@ -652,10 +666,11 @@ class TechnicalDemoWorker {
             if ((qi + 1) % 10 === 0) await sleep(0);
         }
 
-        const avgRecall = totalRecall / queryCount;
+        const avgRecall = totalRecall / queryIds.length;
         if (avgRecall < 0.95) throw new Error(`recall@${topK}=${(avgRecall * 100).toFixed(1)}%`);
         this.markProof('recall_at_k');
         this.log(`Recall@${topK}: ${(avgRecall * 100).toFixed(1)}%`, 'success');
+        return avgRecall;
     }
 
     async runStress(mode, seconds = 30) {
@@ -664,6 +679,8 @@ class TechnicalDemoWorker {
             throw new Error(`unknown stress mode "${mode}"`);
         }
 
+        this.log(`Preparing fresh baseline index for stress mode "${mode}"...`, 'info');
+        await this.buildIndex(STRESS_BUILD_COUNT);
         this.log(`Stress: ${cfg.name} for ${seconds}s — ${cfg.desc}`, 'info');
         const durationMs = seconds * 1000;
         const start = performance.now();
@@ -686,11 +703,13 @@ class TechnicalDemoWorker {
                     const r = await this.addVector(this.randomSyntheticVec(), false);
                     if (r) inserts++;
                 } else if (roll < cfg.insert + cfg.delete) {
-                    const st = await this.getStats();
-                    if (st.count > 100) {
-                        try {
-                            await this.deleteVector(Math.floor(Math.random() * (st.next_id || st.count)));
-                        } catch {}
+                    if (this.liveVectors.size > 100) {
+                        const id = this.randomLiveId();
+                        if (id !== null) {
+                            try {
+                                await this.deleteVector(id);
+                            } catch {}
+                        }
                         deletes++;
                     }
                 } else {
@@ -729,8 +748,9 @@ class TechnicalDemoWorker {
         const p50 = percentile(sorted, 0.5) || 0;
         const p99 = percentile(sorted, 0.99) || 0;
         const max = sorted[sorted.length - 1] || 0;
+        const recall = await this.proveRecallAtK(STRESS_RECALL_QUERIES, K, `Post-stress recall (${mode})`);
         if (p99 < 100 && max < 300) this.markProof('stress');
-        this.log(`Stress complete — inserts=${inserts}, deletes=${deletes}, searches=${searches}, p50=${p50.toFixed(2)}ms, p99=${p99.toFixed(2)}ms, max=${max.toFixed(2)}ms`, 'success');
+        this.log(`Stress complete — inserts=${inserts}, deletes=${deletes}, searches=${searches}, p50=${p50.toFixed(2)}ms, p99=${p99.toFixed(2)}ms, max=${max.toFixed(2)}ms, recall@${K}=${(recall * 100).toFixed(1)}%`, 'success');
     }
 
     async runFullProofSequence() {
