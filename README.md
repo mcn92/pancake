@@ -180,11 +180,30 @@ npm run bench -- benchmark_dbpedia_50k --m 16 --ef-construction 50 --ef-search 1
 
 Results depend on dimension, corpus size, HNSW parameters, and hardware.
 
-## Reference Worker Architecture
+## Snapshot-first Worker deployment
 
-Pancake can also be used inside Cloudflare Workers. The repository includes a Worker reference deployment in [`examples/worker/`](examples/worker/), but the npm package is scoped first around the core WASM ANN library and its Node/browser entrypoints.
+Pancake can also run inside Cloudflare Workers, but the right mental model is
+**snapshot search at the edge**, not **a durable mutable vector database inside
+one long-lived isolate**.
 
-The Worker example is aimed at read-mostly, modest-sized indexes where snapshot-backed restore from R2 is acceptable. It exposes an HTTP API for search, import/export, and index mutation, and it includes auth, rate limiting, and persistence wiring.
+The reference Worker in [`examples/worker/`](examples/worker/) keeps a Pancake
+index warm in process when possible and restores snapshots from R2 on cold
+start. That makes it a good fit for:
+
+- read-heavy semantic search
+- modest-sized indexes that fit comfortably inside Worker memory limits
+- periodic snapshot rebuilds or explicit import/export admin flows
+- edge serving where cold restore is acceptable
+
+It is a weaker fit for:
+
+- high-write online mutation as the primary production path
+- strict cross-request write durability inside plain Worker memory
+- “one always-live authoritative index instance” semantics
+
+The Worker example still exposes add/delete/compact routes because they are
+useful for demos, admin tooling, and local validation, but the production story
+is snapshot-backed search rather than a fully stateful ANN service.
 
 See [`examples/worker/README.md`](examples/worker/README.md) for:
 
@@ -300,6 +319,7 @@ Requires an Emscripten toolchain with WASM SIMD support. Produces `dist/engine.j
 - **Quantization is a real trade.** The int8 path wins on memory and can win on throughput at lower recall, but on the current 1536D DBpedia benchmark it tops out around `97.6%` recall. Use float32 when you need `>99%`.
 - **Compaction is rebuild-based.** Deletes are soft deletes. Compaction rewrites the graph rather than patching edges in place. That keeps behavior predictable and avoids relying on background maintenance threads.
 - **Index instances are not a shared-memory concurrency primitive.** Treat a Pancake index like ordinary mutable in-process state: safe within one JavaScript thread/event loop, but not something to share concurrently across Node worker threads or isolates without your own coordination.
+- **Workers are best used as snapshot-serving search frontends.** In a Cloudflare Worker, in-memory state is a warm cache, not durable authority. Persist snapshots explicitly and treat isolate reuse as opportunistic.
 - **This is an index, not an embedding stack.** Pancake does vector search only. Bring your own embedding pipeline.
 
 ## License
