@@ -347,6 +347,9 @@ class PancakeIndex {
         try {
             this._e.HEAPU8.set(wasmBytes, dataPtr);
             status = this._e._pancake_import(this._handle, dataPtr, wasmBytes.length);
+        } catch (err) {
+            this._clearMappings();
+            throw err;
         } finally {
             this._e._emsc_free(dataPtr);
         }
