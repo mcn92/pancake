@@ -1,0 +1,8 @@
+name = "pancake-docs-search"
+main = "worker.js"
+compatibility_date = "2025-04-09"
+compatibility_flags = ["nodejs_compat"]
+
+[[r2_buckets]]
+binding = "DOCS_BUCKET"
+bucket_name = "pancake-docs-demo"

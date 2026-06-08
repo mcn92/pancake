@@ -94,6 +94,7 @@ If `ghostCount > 0`, `export()` throws. Call `compact()` first to produce a clea
 | `add(vector)` | `number` | Insert one vector, returns its ID |
 | `addBatch(vectors)` | `number[]` | Insert multiple vectors |
 | `search(query, k)` | `{id, distance}[]` | k-nearest-neighbor search |
+| `searchFiltered(query, k, allowedIds)` | `{id, distance}[]` | k-NN restricted to an ID set |
 | `delete(id)` | -- | Soft-delete by ID |
 | `compact()` | -- | Rebuild graph without soft-deleted entries |
 | `export()` | `Uint8Array` | Serialize index state. Requires `ghostCount === 0`; call `compact()` first after deletions. |
@@ -118,6 +119,36 @@ Pancake picks one of two HNSW backends based on the `quantized` option. This is 
 |-----------|---------|-------|
 | `quantized: true` | Int8 HNSW | Asymmetric distance: queries stay in float32, database vectors stored as int8. Preserves query-side precision at ~4x memory savings. |
 | `quantized: false` | Float32 HNSW | Full precision, any dimension |
+
+## Filtered search
+
+`searchFiltered(query, k, allowedIds)` finds the k nearest neighbors restricted to a caller-supplied `Set<number>` of IDs. Pancake is an index, not a database, so it doesn't store metadata. The caller maintains their own ID-to-metadata mapping and builds the allowed set before searching.
+
+```js
+// Maintain metadata alongside the index
+const metadata = new Map();
+
+const id1 = index.add(embedding1);
+metadata.set(id1, { tenant: 'acme', category: 'shoes' });
+
+const id2 = index.add(embedding2);
+metadata.set(id2, { tenant: 'acme', category: 'hats' });
+
+const id3 = index.add(embedding3);
+metadata.set(id3, { tenant: 'other', category: 'shoes' });
+
+// Filter by tenant, then search within that set
+const acmeIds = new Set();
+for (const [id, meta] of metadata) {
+  if (meta.tenant === 'acme') acmeIds.add(id);
+}
+
+const results = index.searchFiltered(query, 10, acmeIds);
+```
+
+Filtering happens during HNSW layer-0 traversal, not as a post-filter on top of `search()`. Non-matching nodes still participate in graph navigation (they stay in the candidate queue) but are excluded from the result set. The search widens ef dynamically within a single traversal when too few filtered results have been found.
+
+This works well for moderate selectivity (roughly 1% of the index or more). At very low selectivity (< 1%), the graph may not contain enough navigable paths to the sparse target set, and recall drops. For extremely selective filters, brute-force over the allowed set is more reliable than in-graph filtering.
 
 ## Performance
 
@@ -259,6 +290,7 @@ The WASM module exposes a handle-based C API: `pancake_init` returns an opaque h
 - `examples/demo-portable-search/` -- packaged browser semantic-search demo using exported snapshots
 - `examples/demo-ecommerce/` -- browser demo built on top of the packaged web entry
 - `examples/worker/` -- reference Cloudflare Worker deployment built on top of Pancake
+- `examples/worker-semantic-search/` -- flagship snapshot-first semantic docs search demo for Cloudflare Workers
 
 ## Architecture
 
