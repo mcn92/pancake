@@ -64,9 +64,6 @@ function cleanupRateLimits() {
 // R2 persistence helpers
 // ---------------------------------------------------------------------------
 
-let persistTimer = null;
-const PERSIST_DEBOUNCE_MS = 2000;
-
 async function persistIndex(env) {
   if (!env.INDEX_BUCKET || !index) return;
   try {
@@ -86,11 +83,40 @@ async function persistIndex(env) {
 
 function schedulePersist(env, ctx) {
   if (!env.INDEX_BUCKET) return;
-  if (persistTimer) clearTimeout(persistTimer);
-  persistTimer = setTimeout(() => {
-    persistTimer = null;
-    ctx.waitUntil(persistIndex(env));
-  }, PERSIST_DEBOUNCE_MS);
+  ctx.waitUntil(persistIndex(env));
+}
+
+function validateImportConfig(dims, maxElements, initParams, contextLabel) {
+  if (!isPositiveInteger(dims) || dims > MAX_DIMS) {
+    throw new Error(`${contextLabel}: dims must be an integer between 1 and ${MAX_DIMS}`);
+  }
+  if (!isPositiveInteger(maxElements) || maxElements > MAX_ELEMENTS) {
+    throw new Error(`${contextLabel}: maxElements must be an integer between 1 and ${MAX_ELEMENTS}`);
+  }
+
+  const { M, efC, efS } = initParams;
+  if (!isPositiveInteger(M) || M > MAX_M) {
+    throw new Error(`${contextLabel}: M must be an integer between 1 and ${MAX_M}`);
+  }
+  if (!isPositiveInteger(efC) || efC > MAX_EF) {
+    throw new Error(`${contextLabel}: efConstruction must be an integer between 1 and ${MAX_EF}`);
+  }
+  if (!isPositiveInteger(efS) || efS > MAX_EF) {
+    throw new Error(`${contextLabel}: efSearch must be an integer between 1 and ${MAX_EF}`);
+  }
+}
+
+function getImportConfig(imported, fallbackDims, contextLabel) {
+  const dims = imported.metadata?.dims ?? fallbackDims;
+  const maxElements = imported.metadata?.maxElements ?? MAX_ELEMENTS;
+  const rawInitParams = imported.metadata?.initParams ?? {};
+  const initParams = {
+    M: rawInitParams.M ?? 8,
+    efC: rawInitParams.efC ?? 150,
+    efS: rawInitParams.efS ?? 100
+  };
+  validateImportConfig(dims, maxElements, initParams, contextLabel);
+  return { dims, maxElements, initParams };
 }
 
 async function restoreIndex(env) {
@@ -102,11 +128,8 @@ async function restoreIndex(env) {
     const buffer = await obj.arrayBuffer();
     const engine = await initializePancake();
     const imported = decodeWorkerExportEnvelope(buffer);
-
-    const dims = imported.metadata?.dims || parseInt(obj.customMetadata?.dims ?? '0', 10);
-    if (!dims) return false;
-    const maxElements = imported.metadata?.maxElements || MAX_ELEMENTS;
-    const initParams = imported.metadata?.initParams || { M: 8, efC: 150, efS: 100 };
+    const fallbackDims = parseInt(obj.customMetadata?.dims ?? '0', 10);
+    const { dims, maxElements, initParams } = getImportConfig(imported, fallbackDims, 'R2 restore rejected snapshot');
 
     const handle = engine._pancake_init(dims, maxElements, 1, 1, initParams.M, initParams.efC, initParams.efS);
     if (handle === 0xFFFFFFFF) return false;
@@ -728,16 +751,23 @@ async function handleRequest(request, env, ctx) {
   if (url.pathname === '/import' && method === 'POST') {
     const envelopeBuffer = await request.arrayBuffer();
     const imported = decodeWorkerExportEnvelope(envelopeBuffer);
-    const dims = imported.metadata?.dims ?? parseInt(url.searchParams.get('dims') ?? '', 10);
-    if (!isPositiveInteger(dims) || dims > MAX_DIMS)
-      return jsonResponse({ error: `dims query param required and must be between 1 and ${MAX_DIMS}` }, 400);
+    let dims;
+    let maxElements;
+    let initParams;
+    try {
+      ({ dims, maxElements, initParams } = getImportConfig(
+        imported,
+        parseInt(url.searchParams.get('dims') ?? '', 10),
+        'Import rejected snapshot'
+      ));
+    } catch (e) {
+      return jsonResponse({ error: e.message }, 400);
+    }
 
     const engine = await initializePancake();
 
     if (index) { index.destroy(); index = null; }
 
-    const maxElements = imported.metadata?.maxElements || MAX_ELEMENTS;
-    const initParams = imported.metadata?.initParams || { M: 8, efC: 150, efS: 100 };
     const handle = engine._pancake_init(dims, maxElements, 1, 1, initParams.M, initParams.efC, initParams.efS);
     if (handle === 0xFFFFFFFF) {
       return jsonResponse({ error: 'Backend init failed' }, 500);
