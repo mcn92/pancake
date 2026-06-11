@@ -23,6 +23,7 @@
 #include <cstring>
 #include <cstdio>
 #include <unordered_set>
+#include "float_hnsw.hpp"
 #include <cstdint>
 
 #if defined(__wasm_simd128__)
@@ -43,6 +44,17 @@
         using namespace std::chrono;
         return duration<double, std::milli>(steady_clock::now().time_since_epoch()).count();
     }
+#endif
+
+// Fused multiply-add helper: returns acc + a*b.
+// Uses WASM relaxed-SIMD FMA when available (compile with -mrelaxed-simd),
+// otherwise falls back to separate mul+add. Recall-neutral either way.
+#if defined(INT8_HNSW_WASM_SIMD)
+  #if defined(__wasm_relaxed_simd__)
+    #define WFMA(acc, a, b) wasm_f32x4_relaxed_madd((a), (b), (acc))
+  #else
+    #define WFMA(acc, a, b) wasm_f32x4_add((acc), wasm_f32x4_mul((a), (b)))
+  #endif
 #endif
 
 namespace pancake {
@@ -160,8 +172,7 @@ public:
         PROFILE_COUNT(g_build_profile.inserts++);
 
         const float* src = vec;
-        {
-            PROFILE_COUNT(double _qt0 = emscripten_get_now(););
+        PROFILE_BLOCK(quantize_ms, {
             if (metric_ == DistanceMetric::Cosine) {
                 float norm_sq = 0.0f;
                 for (size_t d = 0; d < dims_; d++) norm_sq += vec[d] * vec[d];
@@ -203,8 +214,7 @@ public:
             }
             sum_q_.push_back(sq);
             sum_q2_.push_back(sq2);
-            PROFILE_COUNT(g_build_profile.quantize_ms += emscripten_get_now() - _qt0);
-        }
+        });
 
         deleted_.push_back(0);
 
@@ -1029,7 +1039,10 @@ private:
         size_t d = 0;
 
 #ifdef INT8_HNSW_WASM_SIMD
-        v128_t acc = wasm_f32x4_splat(0.0f);
+        v128_t acc0 = wasm_f32x4_splat(0.0f);
+        v128_t acc1 = wasm_f32x4_splat(0.0f);
+        v128_t acc2 = wasm_f32x4_splat(0.0f);
+        v128_t acc3 = wasm_f32x4_splat(0.0f);
         v128_t v_scale = wasm_f32x4_splat(s);
         v128_t v_offset = wasm_f32x4_splat(o);
 
@@ -1040,26 +1053,31 @@ private:
             v128_t u16_hi = wasm_u16x8_extend_high_u8x16(bytes);
 
             v128_t f0 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_low_u16x8(u16_lo));
-            v128_t val0 = wasm_f32x4_add(v_offset, wasm_f32x4_mul(f0, v_scale));
-            acc = wasm_f32x4_add(acc, wasm_f32x4_mul(wasm_v128_load(query + d), val0));
+            v128_t val0 = WFMA(v_offset, f0, v_scale);
+            acc0 = WFMA(acc0, wasm_v128_load(query + d), val0);
 
             v128_t f1 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_high_u16x8(u16_lo));
-            v128_t val1 = wasm_f32x4_add(v_offset, wasm_f32x4_mul(f1, v_scale));
-            acc = wasm_f32x4_add(acc, wasm_f32x4_mul(wasm_v128_load(query + d + 4), val1));
+            v128_t val1 = WFMA(v_offset, f1, v_scale);
+            acc1 = WFMA(acc1, wasm_v128_load(query + d + 4), val1);
 
             v128_t f2 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_low_u16x8(u16_hi));
-            v128_t val2 = wasm_f32x4_add(v_offset, wasm_f32x4_mul(f2, v_scale));
-            acc = wasm_f32x4_add(acc, wasm_f32x4_mul(wasm_v128_load(query + d + 8), val2));
+            v128_t val2 = WFMA(v_offset, f2, v_scale);
+            acc2 = WFMA(acc2, wasm_v128_load(query + d + 8), val2);
 
             v128_t f3 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_high_u16x8(u16_hi));
-            v128_t val3 = wasm_f32x4_add(v_offset, wasm_f32x4_mul(f3, v_scale));
-            acc = wasm_f32x4_add(acc, wasm_f32x4_mul(wasm_v128_load(query + d + 12), val3));
+            v128_t val3 = WFMA(v_offset, f3, v_scale);
+            acc3 = WFMA(acc3, wasm_v128_load(query + d + 12), val3);
         }
 
+        v128_t acc = wasm_f32x4_add(wasm_f32x4_add(acc0, acc1),
+                                    wasm_f32x4_add(acc2, acc3));
         dot = wasm_f32x4_extract_lane(acc, 0) + wasm_f32x4_extract_lane(acc, 1) +
               wasm_f32x4_extract_lane(acc, 2) + wasm_f32x4_extract_lane(acc, 3);
 #elif defined(INT8_HNSW_SSE2_SIMD)
-        __m128 acc = _mm_setzero_ps();
+        __m128 acc0 = _mm_setzero_ps();
+        __m128 acc1 = _mm_setzero_ps();
+        __m128 acc2 = _mm_setzero_ps();
+        __m128 acc3 = _mm_setzero_ps();
         __m128 v_scale = _mm_set1_ps(s);
         __m128 v_offset = _mm_set1_ps(o);
         __m128i zero = _mm_setzero_si128();
@@ -1069,18 +1087,19 @@ private:
             __m128i u16_lo = _mm_unpacklo_epi8(bytes, zero);
             __m128i u16_hi = _mm_unpackhi_epi8(bytes, zero);
 
-            #define SSE2_ASYM_DOT(u16v, lohi, offset) { \
+            #define SSE2_ASYM_DOT(u16v, lohi, offset, accN) { \
                 __m128 ff = _mm_cvtepi32_ps(_mm_unpack##lohi##_epi16(u16v, zero)); \
                 __m128 val = _mm_add_ps(v_offset, _mm_mul_ps(ff, v_scale)); \
-                acc = _mm_add_ps(acc, _mm_mul_ps(_mm_loadu_ps(query + d + offset), val)); \
+                accN = _mm_add_ps(accN, _mm_mul_ps(_mm_loadu_ps(query + d + offset), val)); \
             }
-            SSE2_ASYM_DOT(u16_lo, lo, 0);
-            SSE2_ASYM_DOT(u16_lo, hi, 4);
-            SSE2_ASYM_DOT(u16_hi, lo, 8);
-            SSE2_ASYM_DOT(u16_hi, hi, 12);
+            SSE2_ASYM_DOT(u16_lo, lo, 0,  acc0);
+            SSE2_ASYM_DOT(u16_lo, hi, 4,  acc1);
+            SSE2_ASYM_DOT(u16_hi, lo, 8,  acc2);
+            SSE2_ASYM_DOT(u16_hi, hi, 12, acc3);
             #undef SSE2_ASYM_DOT
         }
 
+        __m128 acc = _mm_add_ps(_mm_add_ps(acc0, acc1), _mm_add_ps(acc2, acc3));
         alignas(16) float tmp[4];
         _mm_store_ps(tmp, acc);
         dot = tmp[0] + tmp[1] + tmp[2] + tmp[3];
@@ -1099,7 +1118,10 @@ private:
         size_t d = 0;
 
 #ifdef INT8_HNSW_WASM_SIMD
-        v128_t acc = wasm_f32x4_splat(0.0f);
+        v128_t acc0 = wasm_f32x4_splat(0.0f);
+        v128_t acc1 = wasm_f32x4_splat(0.0f);
+        v128_t acc2 = wasm_f32x4_splat(0.0f);
+        v128_t acc3 = wasm_f32x4_splat(0.0f);
         v128_t v_scale = wasm_f32x4_splat(s);
         v128_t v_offset = wasm_f32x4_splat(o);
 
@@ -1109,30 +1131,35 @@ private:
             v128_t u16_hi = wasm_u16x8_extend_high_u8x16(bytes);
 
             v128_t f0 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_low_u16x8(u16_lo));
-            v128_t val0 = wasm_f32x4_add(v_offset, wasm_f32x4_mul(f0, v_scale));
+            v128_t val0 = WFMA(v_offset, f0, v_scale);
             v128_t diff0 = wasm_f32x4_sub(wasm_v128_load(query + d), val0);
-            acc = wasm_f32x4_add(acc, wasm_f32x4_mul(diff0, diff0));
+            acc0 = WFMA(acc0, diff0, diff0);
 
             v128_t f1 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_high_u16x8(u16_lo));
-            v128_t val1 = wasm_f32x4_add(v_offset, wasm_f32x4_mul(f1, v_scale));
+            v128_t val1 = WFMA(v_offset, f1, v_scale);
             v128_t diff1 = wasm_f32x4_sub(wasm_v128_load(query + d + 4), val1);
-            acc = wasm_f32x4_add(acc, wasm_f32x4_mul(diff1, diff1));
+            acc1 = WFMA(acc1, diff1, diff1);
 
             v128_t f2 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_low_u16x8(u16_hi));
-            v128_t val2 = wasm_f32x4_add(v_offset, wasm_f32x4_mul(f2, v_scale));
+            v128_t val2 = WFMA(v_offset, f2, v_scale);
             v128_t diff2 = wasm_f32x4_sub(wasm_v128_load(query + d + 8), val2);
-            acc = wasm_f32x4_add(acc, wasm_f32x4_mul(diff2, diff2));
+            acc2 = WFMA(acc2, diff2, diff2);
 
             v128_t f3 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_high_u16x8(u16_hi));
-            v128_t val3 = wasm_f32x4_add(v_offset, wasm_f32x4_mul(f3, v_scale));
+            v128_t val3 = WFMA(v_offset, f3, v_scale);
             v128_t diff3 = wasm_f32x4_sub(wasm_v128_load(query + d + 12), val3);
-            acc = wasm_f32x4_add(acc, wasm_f32x4_mul(diff3, diff3));
+            acc3 = WFMA(acc3, diff3, diff3);
         }
 
+        v128_t acc = wasm_f32x4_add(wasm_f32x4_add(acc0, acc1),
+                                    wasm_f32x4_add(acc2, acc3));
         sum = wasm_f32x4_extract_lane(acc, 0) + wasm_f32x4_extract_lane(acc, 1) +
               wasm_f32x4_extract_lane(acc, 2) + wasm_f32x4_extract_lane(acc, 3);
 #elif defined(INT8_HNSW_SSE2_SIMD)
-        __m128 acc = _mm_setzero_ps();
+        __m128 acc0 = _mm_setzero_ps();
+        __m128 acc1 = _mm_setzero_ps();
+        __m128 acc2 = _mm_setzero_ps();
+        __m128 acc3 = _mm_setzero_ps();
         __m128 v_scale = _mm_set1_ps(s);
         __m128 v_offset = _mm_set1_ps(o);
         __m128i zero = _mm_setzero_si128();
@@ -1142,19 +1169,20 @@ private:
             __m128i u16_lo = _mm_unpacklo_epi8(bytes, zero);
             __m128i u16_hi = _mm_unpackhi_epi8(bytes, zero);
 
-            #define SSE2_ASYM_L2(u16v, lohi, offset) { \
+            #define SSE2_ASYM_L2(u16v, lohi, offset, accN) { \
                 __m128 ff = _mm_cvtepi32_ps(_mm_unpack##lohi##_epi16(u16v, zero)); \
                 __m128 val = _mm_add_ps(v_offset, _mm_mul_ps(ff, v_scale)); \
                 __m128 diff = _mm_sub_ps(_mm_loadu_ps(query + d + offset), val); \
-                acc = _mm_add_ps(acc, _mm_mul_ps(diff, diff)); \
+                accN = _mm_add_ps(accN, _mm_mul_ps(diff, diff)); \
             }
-            SSE2_ASYM_L2(u16_lo, lo, 0);
-            SSE2_ASYM_L2(u16_lo, hi, 4);
-            SSE2_ASYM_L2(u16_hi, lo, 8);
-            SSE2_ASYM_L2(u16_hi, hi, 12);
+            SSE2_ASYM_L2(u16_lo, lo, 0,  acc0);
+            SSE2_ASYM_L2(u16_lo, hi, 4,  acc1);
+            SSE2_ASYM_L2(u16_hi, lo, 8,  acc2);
+            SSE2_ASYM_L2(u16_hi, hi, 12, acc3);
             #undef SSE2_ASYM_L2
         }
 
+        __m128 acc = _mm_add_ps(_mm_add_ps(acc0, acc1), _mm_add_ps(acc2, acc3));
         alignas(16) float tmp[4];
         _mm_store_ps(tmp, acc);
         sum = tmp[0] + tmp[1] + tmp[2] + tmp[3];
@@ -1191,6 +1219,29 @@ private:
         sum = static_cast<uint32_t>(
             wasm_i32x4_extract_lane(acc, 0) + wasm_i32x4_extract_lane(acc, 1) +
             wasm_i32x4_extract_lane(acc, 2) + wasm_i32x4_extract_lane(acc, 3));
+#elif defined(INT8_HNSW_SSE2_SIMD)
+        __m128i acc = _mm_setzero_si128();
+        __m128i zero = _mm_setzero_si128();
+        for (; d + 16 <= dims_; d += 16) {
+            __m128i va = _mm_loadu_si128(reinterpret_cast<const __m128i*>(da + d));
+            __m128i vb = _mm_loadu_si128(reinterpret_cast<const __m128i*>(db + d));
+
+            __m128i lo_a = _mm_unpacklo_epi8(va, zero);
+            __m128i lo_b = _mm_unpacklo_epi8(vb, zero);
+            __m128i hi_a = _mm_unpackhi_epi8(va, zero);
+            __m128i hi_b = _mm_unpackhi_epi8(vb, zero);
+
+            // _mm_madd_epi16: multiply pairs and horizontally add adjacent
+            // results into 32-bit lanes — one instruction for 8 u16 muls.
+            acc = _mm_add_epi32(acc, _mm_madd_epi16(lo_a, lo_b));
+            acc = _mm_add_epi32(acc, _mm_madd_epi16(hi_a, hi_b));
+        }
+        // Horizontal sum of 4 x i32 lanes
+        __m128i hi64 = _mm_shuffle_epi32(acc, _MM_SHUFFLE(1, 0, 3, 2));
+        acc = _mm_add_epi32(acc, hi64);
+        __m128i hi32 = _mm_shuffle_epi32(acc, _MM_SHUFFLE(0, 0, 0, 1));
+        acc = _mm_add_epi32(acc, hi32);
+        sum = static_cast<uint32_t>(_mm_cvtsi128_si32(acc));
 #endif
         for (; d < dims_; d++) {
             sum += static_cast<uint32_t>(da[d]) * static_cast<uint32_t>(db[d]);
@@ -1395,7 +1446,6 @@ private:
     uint32_t insert_entry_;
     std::vector<float> norm_query_;
     mutable std::vector<float> scratch_norm_;
-
     std::vector<Edge> base_edges_;
     std::vector<uint16_t> base_sizes_;
     std::vector<std::vector<UpperLevel>> upper_;
