@@ -42,9 +42,11 @@ mkdir -p dist
 
 SIMD_FLAGS=""
 SIMD_DESC="scalar"
+NODE_WASM_FLAGS=""
 if [[ "${WASM_SIMD}" == "1" ]]; then
-    SIMD_FLAGS="-msimd128"
-    SIMD_DESC="WASM SIMD"
+    SIMD_FLAGS="-msimd128 -mrelaxed-simd"
+    SIMD_DESC="WASM SIMD + relaxed SIMD"
+    #NODE_WASM_FLAGS="--experimental-wasm-relaxed-simd"
 fi
 
 PROFILE_FLAGS=""
@@ -106,4 +108,4 @@ echo ""
 echo "Build complete!"
 ls -lh "dist/${OUT_BASENAME}.js" "dist/${OUT_BASENAME}.wasm"
 echo "Running test..."
-node run_tests.js
+node ${NODE_WASM_FLAGS} run_tests.js
