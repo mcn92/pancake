@@ -1,0 +1,15 @@
+{
+  "name": "pancake-native",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Native N-API binding for Pancake HNSW engine (SSE2 SIMD)",
+  "main": "index.js",
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "clean": "node-gyp clean"
+  },
+  "dependencies": {
+    "node-addon-api": "^7.0.0",
+    "node-gyp": "^12.4.0"
+  }
+}

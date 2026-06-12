@@ -29,6 +29,9 @@
 #if defined(__wasm_simd128__)
     #include <wasm_simd128.h>
     #define INT8_HNSW_WASM_SIMD 1
+#elif defined(PANCAKE_ENABLE_AVX2_SIMD) && defined(__AVX2__)
+    #include <immintrin.h>
+    #define INT8_HNSW_AVX2_SIMD 1
 #elif defined(PANCAKE_ENABLE_SSE2_SIMD) && defined(__SSE2__)
     #include <xmmintrin.h>
     #include <emmintrin.h>
@@ -1073,6 +1076,90 @@ private:
                                     wasm_f32x4_add(acc2, acc3));
         dot = wasm_f32x4_extract_lane(acc, 0) + wasm_f32x4_extract_lane(acc, 1) +
               wasm_f32x4_extract_lane(acc, 2) + wasm_f32x4_extract_lane(acc, 3);
+#elif defined(INT8_HNSW_AVX2_SIMD)
+        __m256 acc0 = _mm256_setzero_ps();
+        __m256 acc1 = _mm256_setzero_ps();
+        __m256 acc2 = _mm256_setzero_ps();
+        __m256 acc3 = _mm256_setzero_ps();
+        __m256 v_scale = _mm256_set1_ps(s);
+        __m256 v_offset = _mm256_set1_ps(o);
+
+        for (; d + 32 <= dims_; d += 32) {
+            __m128i bytes0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + d));
+            __m256i u16_0 = _mm256_cvtepu8_epi16(bytes0);
+            __m256i i32_0 = _mm256_cvtepu16_epi32(_mm256_castsi256_si128(u16_0));
+            __m256i i32_1 = _mm256_cvtepu16_epi32(_mm256_extracti128_si256(u16_0, 1));
+
+            __m256 ff0 = _mm256_cvtepi32_ps(i32_0);
+            __m256 val0 = _mm256_add_ps(v_offset, _mm256_mul_ps(ff0, v_scale));
+            acc0 = _mm256_add_ps(acc0, _mm256_mul_ps(_mm256_loadu_ps(query + d), val0));
+
+            __m256 ff1 = _mm256_cvtepi32_ps(i32_1);
+            __m256 val1 = _mm256_add_ps(v_offset, _mm256_mul_ps(ff1, v_scale));
+            acc1 = _mm256_add_ps(acc1, _mm256_mul_ps(_mm256_loadu_ps(query + d + 8), val1));
+
+            __m128i bytes1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + d + 16));
+            __m256i u16_1 = _mm256_cvtepu8_epi16(bytes1);
+            __m256i i32_2 = _mm256_cvtepu16_epi32(_mm256_castsi256_si128(u16_1));
+            __m256i i32_3 = _mm256_cvtepu16_epi32(_mm256_extracti128_si256(u16_1, 1));
+
+            __m256 ff2 = _mm256_cvtepi32_ps(i32_2);
+            __m256 val2 = _mm256_add_ps(v_offset, _mm256_mul_ps(ff2, v_scale));
+            acc2 = _mm256_add_ps(acc2, _mm256_mul_ps(_mm256_loadu_ps(query + d + 16), val2));
+
+            __m256 ff3 = _mm256_cvtepi32_ps(i32_3);
+            __m256 val3 = _mm256_add_ps(v_offset, _mm256_mul_ps(ff3, v_scale));
+            acc3 = _mm256_add_ps(acc3, _mm256_mul_ps(_mm256_loadu_ps(query + d + 24), val3));
+        }
+
+        __m256 acc = _mm256_add_ps(_mm256_add_ps(acc0, acc1), _mm256_add_ps(acc2, acc3));
+        alignas(32) float tmp[8];
+        _mm256_store_ps(tmp, acc);
+        dot = tmp[0] + tmp[1] + tmp[2] + tmp[3] + tmp[4] + tmp[5] + tmp[6] + tmp[7];
+#elif defined(INT8_HNSW_AVX2_SIMD)
+        __m256 acc0 = _mm256_setzero_ps();
+        __m256 acc1 = _mm256_setzero_ps();
+        __m256 acc2 = _mm256_setzero_ps();
+        __m256 acc3 = _mm256_setzero_ps();
+        __m256 v_scale = _mm256_set1_ps(s);
+        __m256 v_offset = _mm256_set1_ps(o);
+
+        for (; d + 32 <= dims_; d += 32) {
+            __m128i bytes0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + d));
+            __m256i u16_0 = _mm256_cvtepu8_epi16(bytes0);
+            __m256i i32_0 = _mm256_cvtepu16_epi32(_mm256_castsi256_si128(u16_0));
+            __m256i i32_1 = _mm256_cvtepu16_epi32(_mm256_extracti128_si256(u16_0, 1));
+
+            __m256 ff0 = _mm256_cvtepi32_ps(i32_0);
+            __m256 val0 = _mm256_add_ps(v_offset, _mm256_mul_ps(ff0, v_scale));
+            __m256 diff0 = _mm256_sub_ps(_mm256_loadu_ps(query + d), val0);
+            acc0 = _mm256_add_ps(acc0, _mm256_mul_ps(diff0, diff0));
+
+            __m256 ff1 = _mm256_cvtepi32_ps(i32_1);
+            __m256 val1 = _mm256_add_ps(v_offset, _mm256_mul_ps(ff1, v_scale));
+            __m256 diff1 = _mm256_sub_ps(_mm256_loadu_ps(query + d + 8), val1);
+            acc1 = _mm256_add_ps(acc1, _mm256_mul_ps(diff1, diff1));
+
+            __m128i bytes1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + d + 16));
+            __m256i u16_1 = _mm256_cvtepu8_epi16(bytes1);
+            __m256i i32_2 = _mm256_cvtepu16_epi32(_mm256_castsi256_si128(u16_1));
+            __m256i i32_3 = _mm256_cvtepu16_epi32(_mm256_extracti128_si256(u16_1, 1));
+
+            __m256 ff2 = _mm256_cvtepi32_ps(i32_2);
+            __m256 val2 = _mm256_add_ps(v_offset, _mm256_mul_ps(ff2, v_scale));
+            __m256 diff2 = _mm256_sub_ps(_mm256_loadu_ps(query + d + 16), val2);
+            acc2 = _mm256_add_ps(acc2, _mm256_mul_ps(diff2, diff2));
+
+            __m256 ff3 = _mm256_cvtepi32_ps(i32_3);
+            __m256 val3 = _mm256_add_ps(v_offset, _mm256_mul_ps(ff3, v_scale));
+            __m256 diff3 = _mm256_sub_ps(_mm256_loadu_ps(query + d + 24), val3);
+            acc3 = _mm256_add_ps(acc3, _mm256_mul_ps(diff3, diff3));
+        }
+
+        __m256 acc = _mm256_add_ps(_mm256_add_ps(acc0, acc1), _mm256_add_ps(acc2, acc3));
+        alignas(32) float tmp[8];
+        _mm256_store_ps(tmp, acc);
+        sum = tmp[0] + tmp[1] + tmp[2] + tmp[3] + tmp[4] + tmp[5] + tmp[6] + tmp[7];
 #elif defined(INT8_HNSW_SSE2_SIMD)
         __m128 acc0 = _mm_setzero_ps();
         __m128 acc1 = _mm_setzero_ps();
@@ -1219,6 +1306,24 @@ private:
         sum = static_cast<uint32_t>(
             wasm_i32x4_extract_lane(acc, 0) + wasm_i32x4_extract_lane(acc, 1) +
             wasm_i32x4_extract_lane(acc, 2) + wasm_i32x4_extract_lane(acc, 3));
+#elif defined(INT8_HNSW_AVX2_SIMD)
+        __m256i acc = _mm256_setzero_si256();
+        for (; d + 32 <= dims_; d += 32) {
+            __m128i va0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(da + d));
+            __m128i vb0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(db + d));
+            __m256i u16_a0 = _mm256_cvtepu8_epi16(va0);
+            __m256i u16_b0 = _mm256_cvtepu8_epi16(vb0);
+            acc = _mm256_add_epi32(acc, _mm256_madd_epi16(u16_a0, u16_b0));
+
+            __m128i va1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(da + d + 16));
+            __m128i vb1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(db + d + 16));
+            __m256i u16_a1 = _mm256_cvtepu8_epi16(va1);
+            __m256i u16_b1 = _mm256_cvtepu8_epi16(vb1);
+            acc = _mm256_add_epi32(acc, _mm256_madd_epi16(u16_a1, u16_b1));
+        }
+        alignas(32) uint32_t tmp[8];
+        _mm256_store_si256(reinterpret_cast<__m256i*>(tmp), acc);
+        sum = tmp[0] + tmp[1] + tmp[2] + tmp[3] + tmp[4] + tmp[5] + tmp[6] + tmp[7];
 #elif defined(INT8_HNSW_SSE2_SIMD)
         __m128i acc = _mm_setzero_si128();
         __m128i zero = _mm_setzero_si128();
