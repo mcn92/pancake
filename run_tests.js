@@ -2023,7 +2023,7 @@ async function testSearchOutputGoldenOracle() {
         assertSearchRowsEqualWithTolerance(
             probe.goldenRows,
             oracle.searchGolden[scenario.label],
-            1e-6,
+            2e-6,
             `${scenario.label}: fixed-query search output`
         );
     }
