@@ -5,6 +5,7 @@ EMCC="${EMCC:-python3 $HOME/emsdk/upstream/emscripten/emcc.py}"
 OUT_BASENAME="${OUT_BASENAME:-engine}"
 PATCH_ENGINE_JS="${PATCH_ENGINE_JS:-1}"
 WASM_SIMD="${WASM_SIMD:-1}"
+WASM_RELAXED_SIMD="${WASM_RELAXED_SIMD:-0}"
 INT8_HNSW_PROFILE=0
 
 while [[ $# -gt 0 ]]; do
@@ -44,9 +45,15 @@ SIMD_FLAGS=""
 SIMD_DESC="scalar"
 NODE_WASM_FLAGS=""
 if [[ "${WASM_SIMD}" == "1" ]]; then
-    SIMD_FLAGS="-msimd128 -mrelaxed-simd"
-    SIMD_DESC="WASM SIMD + relaxed SIMD"
-    #NODE_WASM_FLAGS="--experimental-wasm-relaxed-simd"
+    SIMD_FLAGS="-msimd128"
+    SIMD_DESC="WASM SIMD"
+    if [[ "${WASM_RELAXED_SIMD}" == "1" ]]; then
+        SIMD_FLAGS="${SIMD_FLAGS} -mrelaxed-simd"
+        SIMD_DESC="WASM SIMD + relaxed SIMD"
+        if node --v8-options 2>/dev/null | grep -q -- "--experimental-wasm-relaxed-simd"; then
+            NODE_WASM_FLAGS="--experimental-wasm-relaxed-simd"
+        fi
+    fi
 fi
 
 PROFILE_FLAGS=""
