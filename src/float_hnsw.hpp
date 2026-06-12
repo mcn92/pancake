@@ -22,6 +22,9 @@
 #if defined(__wasm_simd128__)
     #include <wasm_simd128.h>
     #define FLOAT_HNSW_WASM_SIMD 1
+#elif defined(PANCAKE_ENABLE_AVX2_SIMD) && defined(__AVX2__)
+    #include <immintrin.h>
+    #define FLOAT_HNSW_AVX2_SIMD 1
 #elif defined(PANCAKE_ENABLE_SSE2_SIMD) && defined(__SSE2__)
     #include <xmmintrin.h>
     #include <emmintrin.h>
@@ -659,6 +662,15 @@ private:
         }
         sum = wasm_f32x4_extract_lane(acc, 0) + wasm_f32x4_extract_lane(acc, 1) +
               wasm_f32x4_extract_lane(acc, 2) + wasm_f32x4_extract_lane(acc, 3);
+#elif defined(FLOAT_HNSW_AVX2_SIMD)
+        __m256 acc = _mm256_setzero_ps();
+        for (; d + 8 <= dims_; d += 8) {
+            __m256 diff = _mm256_sub_ps(_mm256_loadu_ps(a + d), _mm256_loadu_ps(b + d));
+            acc = _mm256_add_ps(acc, _mm256_mul_ps(diff, diff));
+        }
+        alignas(32) float tmp[8];
+        _mm256_store_ps(tmp, acc);
+        sum = tmp[0] + tmp[1] + tmp[2] + tmp[3] + tmp[4] + tmp[5] + tmp[6] + tmp[7];
 #elif defined(FLOAT_HNSW_SSE2_SIMD)
         __m128 acc = _mm_setzero_ps();
         for (; d + 4 <= dims_; d += 4) {
@@ -687,6 +699,14 @@ private:
         }
         dot = wasm_f32x4_extract_lane(acc, 0) + wasm_f32x4_extract_lane(acc, 1) +
               wasm_f32x4_extract_lane(acc, 2) + wasm_f32x4_extract_lane(acc, 3);
+#elif defined(FLOAT_HNSW_AVX2_SIMD)
+        __m256 acc = _mm256_setzero_ps();
+        for (; d + 8 <= dims_; d += 8) {
+            acc = _mm256_add_ps(acc, _mm256_mul_ps(_mm256_loadu_ps(a + d), _mm256_loadu_ps(b + d)));
+        }
+        alignas(32) float tmp[8];
+        _mm256_store_ps(tmp, acc);
+        dot = tmp[0] + tmp[1] + tmp[2] + tmp[3] + tmp[4] + tmp[5] + tmp[6] + tmp[7];
 #elif defined(FLOAT_HNSW_SSE2_SIMD)
         __m128 acc = _mm_setzero_ps();
         for (; d + 4 <= dims_; d += 4) {
