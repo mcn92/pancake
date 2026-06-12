@@ -158,6 +158,9 @@ async function testPersistence(env) {
 async function test1536CapabilityContract(env) {
   section('1536D capability contract');
 
+  // The unified handle-based backend supports delete, compact, and ghosts at
+  // every dimension, including 1536D. This contract guards against a per-
+  // dimension capability gate being reintroduced.
   const auth = env.API_KEY ? { Authorization: `Bearer ${env.API_KEY}` } : {};
   const dims = 1536;
   const vec = new Array(dims).fill(0);
@@ -173,23 +176,24 @@ async function test1536CapabilityContract(env) {
   const health = await fetchJSON('/health', { headers: auth });
   assert(health.status === 200, '/health returns 200 for 1536D index');
   assert(health.json?.dims === 1536, '/health reports dims=1536');
-  assert(health.json?.supports_delete === false, '/health reports delete unsupported for 1536D');
-  assert(health.json?.supports_compact === false, '/health reports compact unsupported for 1536D');
-  assert(health.json?.supports_ghosts === false, '/health reports ghosts unsupported for 1536D');
 
   const del = await fetchJSON('/delete', {
     method: 'POST',
     headers: auth,
     body: { id: 0 }
   });
-  assert(del.status === 405, '/delete returns 405 for 1536D');
+  assert(del.status === 200, '/delete succeeds for 1536D');
 
   const compact = await fetchJSON('/compact', {
     method: 'POST',
     headers: auth,
     body: {}
   });
-  assert(compact.status === 405, '/compact returns 405 for 1536D');
+  assert(compact.status === 200, '/compact succeeds for 1536D');
+
+  const stats = await fetchJSON('/stats', { headers: auth });
+  assert(stats.status === 200, '/stats returns 200 for 1536D index');
+  assert(typeof stats.json?.ghost_count === 'number', '/stats reports numeric ghost_count for 1536D');
 }
 
 // ---------------------------------------------------------------------------

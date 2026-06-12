@@ -7,7 +7,7 @@ compatibility_flags = ["nodejs_compat"]
 # API_KEY = "replace-me-with-a-secret"    # Uncomment to require Bearer token auth
 # ALLOWED_ORIGIN = "https://yourdomain.com" # Uncomment to restrict CORS (default: *)
 # RATE_LIMIT_RPM = "120"                    # Requests per minute per IP (default: no limit)
-
+MAX_ELEMENTS_LIMIT = "5000000"
 # ---------------------------------------------------------------------------
 # R2 bucket — for persisting serialized indexes across deployments.
 # 1. Create the bucket:   wrangler r2 bucket create pancake-indexes

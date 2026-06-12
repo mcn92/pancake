@@ -23,11 +23,19 @@ let pancake = null;
 let index = null;
 const MAX_RESULTS = 100;
 const MAX_DIMS = 4096;
-const MAX_ELEMENTS = 5_000;
+const DEFAULT_MAX_ELEMENTS = 5_000;
 const MAX_EF = 2000;
 const MAX_M = 128;
 const WORKER_EXPORT_MAGIC = 0x57524b31; // "WRK1"
 const WORKER_EXPORT_VERSION = 1;
+const restoreState = {
+  restoreCount: 0,
+  restoredAt: null,
+  lastRestoreMs: null,
+  lastFetchMs: null,
+  lastDeserializeMs: null,
+  lastSnapshotBytes: null
+};
 
 // ---------------------------------------------------------------------------
 // Rate limiting — per-IP sliding window (in-memory, resets on cold start)
@@ -86,12 +94,20 @@ function schedulePersist(env, ctx) {
   ctx.waitUntil(persistIndex(env));
 }
 
-function validateImportConfig(dims, maxElements, initParams, contextLabel) {
+function getMaxElementsLimit(env) {
+  const raw = env?.MAX_ELEMENTS_LIMIT;
+  if (raw === undefined || raw === null || raw === '') return DEFAULT_MAX_ELEMENTS;
+  const parsed = parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_MAX_ELEMENTS;
+  return parsed;
+}
+
+function validateImportConfig(dims, maxElements, initParams, contextLabel, maxElementsLimit) {
   if (!isPositiveInteger(dims) || dims > MAX_DIMS) {
     throw new Error(`${contextLabel}: dims must be an integer between 1 and ${MAX_DIMS}`);
   }
-  if (!isPositiveInteger(maxElements) || maxElements > MAX_ELEMENTS) {
-    throw new Error(`${contextLabel}: maxElements must be an integer between 1 and ${MAX_ELEMENTS}`);
+  if (!isPositiveInteger(maxElements) || maxElements > maxElementsLimit) {
+    throw new Error(`${contextLabel}: maxElements must be an integer between 1 and ${maxElementsLimit}`);
   }
 
   const { M, efC, efS } = initParams;
@@ -106,30 +122,38 @@ function validateImportConfig(dims, maxElements, initParams, contextLabel) {
   }
 }
 
-function getImportConfig(imported, fallbackDims, contextLabel) {
+function getImportConfig(imported, fallbackDims, contextLabel, maxElementsLimit) {
   const dims = imported.metadata?.dims ?? fallbackDims;
-  const maxElements = imported.metadata?.maxElements ?? MAX_ELEMENTS;
+  const maxElements = imported.metadata?.maxElements ?? DEFAULT_MAX_ELEMENTS;
   const rawInitParams = imported.metadata?.initParams ?? {};
   const initParams = {
     M: rawInitParams.M ?? 8,
     efC: rawInitParams.efC ?? 150,
     efS: rawInitParams.efS ?? 100
   };
-  validateImportConfig(dims, maxElements, initParams, contextLabel);
+  validateImportConfig(dims, maxElements, initParams, contextLabel, maxElementsLimit);
   return { dims, maxElements, initParams };
 }
 
 async function restoreIndex(env) {
   if (!env.INDEX_BUCKET || index) return false;
   try {
+    const fetchStart = performance.now();
     const obj = await env.INDEX_BUCKET.get('pancake-index.bin');
     if (!obj) return false;
 
     const buffer = await obj.arrayBuffer();
+    const fetchMs = performance.now() - fetchStart;
+    const deserializeStart = performance.now();
     const engine = await initializePancake();
     const imported = decodeWorkerExportEnvelope(buffer);
     const fallbackDims = parseInt(obj.customMetadata?.dims ?? '0', 10);
-    const { dims, maxElements, initParams } = getImportConfig(imported, fallbackDims, 'R2 restore rejected snapshot');
+    const { dims, maxElements, initParams } = getImportConfig(
+      imported,
+      fallbackDims,
+      'R2 restore rejected snapshot',
+      getMaxElementsLimit(env)
+    );
 
     const handle = engine._pancake_init(dims, maxElements, 1, 1, initParams.M, initParams.efC, initParams.efS);
     if (handle === 0xFFFFFFFF) return false;
@@ -152,6 +176,13 @@ async function restoreIndex(env) {
     } else {
       for (let i = 0; i < count; i++) index._seedId(i);
     }
+    const deserializeMs = performance.now() - deserializeStart;
+    restoreState.restoreCount += 1;
+    restoreState.restoredAt = new Date().toISOString();
+    restoreState.lastFetchMs = fetchMs;
+    restoreState.lastDeserializeMs = deserializeMs;
+    restoreState.lastRestoreMs = fetchMs + deserializeMs;
+    restoreState.lastSnapshotBytes = imported.bytes.byteLength;
     console.log(`Restored index from R2: dims=${dims}, count=${count}`);
     return true;
   } catch (e) {
@@ -541,17 +572,37 @@ async function handleRequest(request, env, ctx) {
     }
   }
 
-  if (!index && env.INDEX_BUCKET) {
+  const shouldAutoRestore = !['/health', '/reset_cache', '/init', '/import'].includes(url.pathname);
+  if (!index && env.INDEX_BUCKET && shouldAutoRestore) {
     await restoreIndex(env);
   }
 
   if (url.pathname === '/health' && method === 'GET') {
     return jsonResponse({
       status: 'ok',
-      initialized: index !== null,
+      loaded: index !== null,
       count: index ? index.count : 0,
-      memory_bytes: index ? index.memory : 0,
-      dims: index ? index.dims : null
+      memory_bytes: index ? index.memory : null,
+      dims: index ? index.dims : null,
+      max_elements_limit: getMaxElementsLimit(env),
+      restore_count: restoreState.restoreCount,
+      restored_at: restoreState.restoredAt,
+      last_restore_ms: restoreState.lastRestoreMs,
+      last_fetch_ms: restoreState.lastFetchMs,
+      last_deserialize_ms: restoreState.lastDeserializeMs,
+      last_snapshot_bytes: restoreState.lastSnapshotBytes
+    });
+  }
+
+  if (url.pathname === '/reset_cache' && method === 'POST') {
+    if (index) {
+      index.destroy();
+      index = null;
+    }
+    return jsonResponse({
+      cleared: true,
+      restore_count: restoreState.restoreCount,
+      last_restore_ms: restoreState.lastRestoreMs
     });
   }
 
@@ -562,8 +613,9 @@ async function handleRequest(request, env, ctx) {
 
     if (!isPositiveInteger(dims) || dims > MAX_DIMS)
       return jsonResponse({ error: `dims must be an integer between 1 and ${MAX_DIMS}` }, 400);
-    if (!isPositiveInteger(maxElements) || maxElements > MAX_ELEMENTS)
-      return jsonResponse({ error: `maxElements must be an integer between 1 and ${MAX_ELEMENTS}` }, 400);
+    const maxElementsLimit = getMaxElementsLimit(env);
+    if (!isPositiveInteger(maxElements) || maxElements > maxElementsLimit)
+      return jsonResponse({ error: `maxElements must be an integer between 1 and ${maxElementsLimit}` }, 400);
     if (!isPositiveInteger(M) || M > MAX_M)
       return jsonResponse({ error: `M must be an integer between 1 and ${MAX_M}` }, 400);
     if (!isPositiveInteger(efConstruction) || efConstruction > MAX_EF)
@@ -758,7 +810,8 @@ async function handleRequest(request, env, ctx) {
       ({ dims, maxElements, initParams } = getImportConfig(
         imported,
         parseInt(url.searchParams.get('dims') ?? '', 10),
-        'Import rejected snapshot'
+        'Import rejected snapshot',
+        getMaxElementsLimit(env)
       ));
     } catch (e) {
       return jsonResponse({ error: e.message }, 400);
@@ -812,6 +865,7 @@ async function handleRequest(request, env, ctx) {
     version: '1.0.0',
     endpoints: {
       'GET  /health':       'Health check and stats',
+      'POST /reset_cache':  'Dispose in-memory index so next query restores from snapshot',
       'GET  /export':       'Export index as binary blob',
       'POST /init':         '{ dims, maxElements, M?, efConstruction?, efSearch?, vectors? }',
       'POST /import':       'Binary body from /export — ?dims=<n> required',
