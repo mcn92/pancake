@@ -79,6 +79,7 @@
   },
   "sideEffects": false,
   "devDependencies": {
+    "faiss-node": "^0.5.1",
     "hnswlib-node": "^3.0.0",
     "playwright": "^1.60.0",
     "usearch": "^2.25.1",
