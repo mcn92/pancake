@@ -196,6 +196,112 @@ async function test1536CapabilityContract(env) {
   assert(typeof stats.json?.ghost_count === 'number', '/stats reports numeric ghost_count for 1536D');
 }
 
+async function testAddBatchValidationIsAtomic(env) {
+  section('/add_batch validates before mutating');
+
+  const auth = env.API_KEY ? { Authorization: `Bearer ${env.API_KEY}` } : {};
+  const dims = 4;
+  const vec = [0.1, 0.2, 0.3, 0.4];
+
+  const init = await fetchJSON('/init', {
+    method: 'POST',
+    headers: auth,
+    body: { dims, maxElements: 10, vectors: [vec] }
+  });
+  assert(init.status === 200, '/init succeeds for add_batch atomicity test');
+
+  const badBatch = await fetchJSON('/add_batch', {
+    method: 'POST',
+    headers: auth,
+    body: {
+      vectors: [
+        [0.4, 0.3, 0.2, 0.1],
+        [1, 2, 3]
+      ]
+    }
+  });
+  assert(badBatch.status === 400, '/add_batch rejects malformed batch');
+
+  const stats = await fetchJSON('/stats', { headers: auth });
+  assert(stats.status === 200, '/stats succeeds after rejected /add_batch');
+  assert(stats.json?.count === 1, 'rejected /add_batch does not partially insert vectors');
+}
+
+async function testRestoreAddCompactPreservesRestoredVectors(env) {
+  section('Restore -> add -> compact keeps restored vectors');
+
+  const auth = env.API_KEY ? { Authorization: `Bearer ${env.API_KEY}` } : {};
+  const dims = 4;
+  const v1 = [1, 0, 0, 0];
+  const v2 = [0, 1, 0, 0];
+  const v3 = [0, 0, 1, 0];
+
+  const init = await fetchJSON('/init', {
+    method: 'POST',
+    headers: auth,
+    body: { dims, maxElements: 10, vectors: [v1, v2] }
+  });
+  assert(init.status === 200, '/init succeeds for restore/compact test');
+
+  const cleared = await fetchJSON('/reset_cache', {
+    method: 'POST',
+    headers: auth
+  });
+  assert(cleared.status === 200, '/reset_cache succeeds');
+
+  const restoredSearch = await fetchJSON('/search', {
+    method: 'POST',
+    headers: auth,
+    body: { query: v1, k: 1, ef: 20 }
+  });
+  assert(restoredSearch.status === 200, '/search restores snapshot after reset');
+
+  const add = await fetchJSON('/add', {
+    method: 'POST',
+    headers: auth,
+    body: { vector: v3 }
+  });
+  assert(add.status === 200, '/add succeeds after restore');
+
+  const compact = await fetchJSON('/compact', {
+    method: 'POST',
+    headers: auth,
+    body: {}
+  });
+  assert(compact.status === 200, '/compact succeeds after restore and add');
+
+  const stats = await fetchJSON('/stats', { headers: auth });
+  assert(stats.status === 200, '/stats succeeds after compact');
+  assert(stats.json?.count === 3, 'compact keeps restored vectors after a later add');
+}
+
+async function testReadOnlyMode(env) {
+  section('Read-only mode');
+
+  const auth = env.API_KEY ? { Authorization: `Bearer ${env.API_KEY}` } : {};
+
+  const health = await fetchJSON('/health');
+  assert(health.status === 200, '/health stays public in read-only mode');
+  assert(health.json?.read_only === true, '/health reports read_only=true');
+
+  const readiness = await fetchJSON('/readiness', { headers: auth });
+  assert(readiness.status === 200, '/readiness succeeds in read-only mode');
+  assert(readiness.json?.read_only === true, '/readiness reports read_only=true');
+
+  const init = await fetchJSON('/init', {
+    method: 'POST',
+    headers: auth,
+    body: { dims: 4, maxElements: 10, vectors: [[0, 0, 0, 1]] }
+  });
+  assert(init.status === 403, '/init is blocked in read-only mode');
+
+  const reset = await fetchJSON('/reset_cache', {
+    method: 'POST',
+    headers: auth
+  });
+  assert(reset.status === 403, '/reset_cache is blocked in read-only mode');
+}
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
@@ -357,6 +463,18 @@ async function main() {
 
   await runSuite('1536D capability contract', {}, [
     test1536CapabilityContract,
+  ]);
+
+  await runSuite('/add_batch atomic validation', {}, [
+    testAddBatchValidationIsAtomic,
+  ]);
+
+  await runSuite('Restore/add/compact regression', {}, [
+    testRestoreAddCompactPreservesRestoredVectors,
+  ]);
+
+  await runSuite('Read-only mode', { API_KEY: TEST_KEY, READ_ONLY: '1' }, [
+    testReadOnlyMode,
   ]);
 
   // Summary

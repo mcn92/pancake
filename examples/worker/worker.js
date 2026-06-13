@@ -28,13 +28,31 @@ const MAX_EF = 2000;
 const MAX_M = 128;
 const WORKER_EXPORT_MAGIC = 0x57524b31; // "WRK1"
 const WORKER_EXPORT_VERSION = 1;
+const SNAPSHOT_KEY_PREFIX = 'pancake-index-';
+const LEGACY_SNAPSHOT_KEY = 'pancake-index.bin';
+const ADMIN_ROUTES = new Set([
+  '/init',
+  '/add',
+  '/add_batch',
+  '/delete',
+  '/compact',
+  '/import',
+  '/export',
+  '/reset_cache',
+  '/search_debug'
+]);
 const restoreState = {
   restoreCount: 0,
   restoredAt: null,
   lastRestoreMs: null,
   lastFetchMs: null,
   lastDeserializeMs: null,
-  lastSnapshotBytes: null
+  lastSnapshotBytes: null,
+  lastSnapshotKey: null
+};
+const persistState = {
+  lastIssuedMs: 0,
+  seqInMs: 0
 };
 
 // ---------------------------------------------------------------------------
@@ -79,11 +97,17 @@ async function persistIndex(env) {
       index.compact();
     }
     const bytes = index.exportBinary();
-    const metadata = { dims: String(index.dims), count: String(index.count), savedAt: new Date().toISOString() };
-    await env.INDEX_BUCKET.put('pancake-index.bin', bytes, {
+    const key = nextSnapshotKey();
+    const metadata = {
+      dims: String(index.dims),
+      count: String(index.count),
+      savedAt: new Date().toISOString()
+    };
+    await env.INDEX_BUCKET.put(key, bytes, {
       customMetadata: metadata,
       httpMetadata: { contentType: 'application/octet-stream' }
     });
+    restoreState.lastSnapshotKey = key;
   } catch (e) {
     console.error('R2 persist failed:', e);
   }
@@ -100,6 +124,39 @@ function getMaxElementsLimit(env) {
   const parsed = parseInt(raw, 10);
   if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_MAX_ELEMENTS;
   return parsed;
+}
+
+function nextSnapshotKey() {
+  const now = Date.now();
+  if (now === persistState.lastIssuedMs) {
+    persistState.seqInMs += 1;
+  } else {
+    persistState.lastIssuedMs = now;
+    persistState.seqInMs = 0;
+  }
+  const ts = String(now).padStart(13, '0');
+  const seq = String(persistState.seqInMs).padStart(6, '0');
+  return `${SNAPSHOT_KEY_PREFIX}${ts}-${seq}.bin`;
+}
+
+async function findLatestSnapshot(env) {
+  if (!env.INDEX_BUCKET) return null;
+
+  const listed = await env.INDEX_BUCKET.list({ prefix: SNAPSHOT_KEY_PREFIX });
+  if (listed.objects && listed.objects.length > 0) {
+    let latest = listed.objects[0];
+    for (const obj of listed.objects) {
+      if (obj.key > latest.key) latest = obj;
+    }
+    return { key: latest.key, customMetadata: latest.customMetadata || {} };
+  }
+
+  const legacy = await env.INDEX_BUCKET.head(LEGACY_SNAPSHOT_KEY);
+  if (legacy) {
+    return { key: LEGACY_SNAPSHOT_KEY, customMetadata: legacy.customMetadata || {} };
+  }
+
+  return null;
 }
 
 function validateImportConfig(dims, maxElements, initParams, contextLabel, maxElementsLimit) {
@@ -139,7 +196,9 @@ async function restoreIndex(env) {
   if (!env.INDEX_BUCKET || index) return false;
   try {
     const fetchStart = performance.now();
-    const obj = await env.INDEX_BUCKET.get('pancake-index.bin');
+    const latest = await findLatestSnapshot(env);
+    if (!latest) return false;
+    const obj = await env.INDEX_BUCKET.get(latest.key);
     if (!obj) return false;
 
     const buffer = await obj.arrayBuffer();
@@ -183,6 +242,7 @@ async function restoreIndex(env) {
     restoreState.lastDeserializeMs = deserializeMs;
     restoreState.lastRestoreMs = fetchMs + deserializeMs;
     restoreState.lastSnapshotBytes = imported.bytes.byteLength;
+    restoreState.lastSnapshotKey = latest.key;
     console.log(`Restored index from R2: dims=${dims}, count=${count}`);
     return true;
   } catch (e) {
@@ -360,58 +420,24 @@ function buildIndexWrapper(engine, dims, maxElements, handle, initParams = {}) {
     },
 
     compact() {
-      const survivors = [];
-      for (const [extId, vec] of _vectors) {
-        if (!_deletedExt.has(extId)) {
-          survivors.push({ extId, vec });
-        }
+      const oldSurvivors = [];
+      for (const [extId, intId] of _extToInt) {
+        if (!_deletedExt.has(extId)) oldSurvivors.push({ extId, intId });
       }
+      oldSurvivors.sort((a, b) => a.intId - b.intId);
 
-      if (_vectors.size === 0) {
-        const oldSurvivors = [];
-        for (const [extId, intId] of _extToInt) {
-          if (!_deletedExt.has(extId)) oldSurvivors.push({ extId, intId });
-        }
-        oldSurvivors.sort((a, b) => a.intId - b.intId);
-        engine._pancake_compact(this.handle);
-        _extToInt.clear();
-        _intToExt.clear();
-        _deletedExt.clear();
-        for (let newInt = 0; newInt < oldSurvivors.length; newInt++) {
-          _extToInt.set(oldSurvivors[newInt].extId, newInt);
-          _intToExt.set(newInt, oldSurvivors[newInt].extId);
-        }
-        return;
-      }
-
-      if (survivors.length === 0) {
-        engine._pancake_compact(this.handle);
-        _extToInt.clear();
-        _intToExt.clear();
-        _deletedExt.clear();
-        _vectors.clear();
-        return;
-      }
-
-      // Dispose old handle and create fresh one for rebuild
-      engine._pancake_dispose(this.handle);
-      this.handle = engine._pancake_init(
-        dims, maxElements, 1, 1, _initParams.M, _initParams.efC, _initParams.efS);
+      engine._pancake_compact(this.handle);
 
       _extToInt.clear();
       _intToExt.clear();
       _deletedExt.clear();
-
-      for (const { extId, vec } of survivors) {
-        engine.HEAPF32.set(vec, this._vecBuffer >> 2);
-        const newIntId = engine._pancake_add(this.handle, this._vecBuffer);
-        _extToInt.set(extId, newIntId);
-        _intToExt.set(newIntId, extId);
+      for (let newInt = 0; newInt < oldSurvivors.length; newInt++) {
+        _extToInt.set(oldSurvivors[newInt].extId, newInt);
+        _intToExt.set(newInt, oldSurvivors[newInt].extId);
       }
 
-      _vectors.clear();
-      for (const { extId, vec } of survivors) {
-        _vectors.set(extId, vec);
+      for (const extId of Array.from(_vectors.keys())) {
+        if (!_extToInt.has(extId)) _vectors.delete(extId);
       }
     },
 
@@ -490,6 +516,15 @@ function validateVector(vector, dims, fieldName) {
 
 function getCorsOrigin(env) {
   return env.ALLOWED_ORIGIN || '*';
+}
+
+function isReadOnly(env) {
+  const value = String(env.READ_ONLY || '').trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
+function isAdminRoute(pathname) {
+  return ADMIN_ROUTES.has(pathname);
 }
 
 
@@ -572,9 +607,13 @@ async function handleRequest(request, env, ctx) {
     }
   }
 
-  const shouldAutoRestore = !['/health', '/reset_cache', '/init', '/import'].includes(url.pathname);
+  const shouldAutoRestore = !['/health', '/readiness', '/reset_cache', '/init', '/import'].includes(url.pathname);
   if (!index && env.INDEX_BUCKET && shouldAutoRestore) {
     await restoreIndex(env);
+  }
+
+  if (isReadOnly(env) && isAdminRoute(url.pathname)) {
+    return jsonResponse({ error: 'Worker is in read-only mode.' }, 403);
   }
 
   if (url.pathname === '/health' && method === 'GET') {
@@ -590,7 +629,25 @@ async function handleRequest(request, env, ctx) {
       last_restore_ms: restoreState.lastRestoreMs,
       last_fetch_ms: restoreState.lastFetchMs,
       last_deserialize_ms: restoreState.lastDeserializeMs,
-      last_snapshot_bytes: restoreState.lastSnapshotBytes
+      last_snapshot_bytes: restoreState.lastSnapshotBytes,
+      read_only: isReadOnly(env)
+    });
+  }
+
+  if (url.pathname === '/readiness' && method === 'GET') {
+    const latestSnapshot = env.INDEX_BUCKET ? await findLatestSnapshot(env) : null;
+    return jsonResponse({
+      ready: index !== null || latestSnapshot !== null,
+      loaded: index !== null,
+      snapshot_available: latestSnapshot !== null,
+      snapshot_key: latestSnapshot?.key || restoreState.lastSnapshotKey,
+      restore_count: restoreState.restoreCount,
+      restored_at: restoreState.restoredAt,
+      last_restore_ms: restoreState.lastRestoreMs,
+      last_fetch_ms: restoreState.lastFetchMs,
+      last_deserialize_ms: restoreState.lastDeserializeMs,
+      last_snapshot_bytes: restoreState.lastSnapshotBytes,
+      read_only: isReadOnly(env)
     });
   }
 
@@ -723,13 +780,26 @@ async function handleRequest(request, env, ctx) {
     const { vectors } = body;
     if (!Array.isArray(vectors) || vectors.length === 0)
       return jsonResponse({ error: 'vectors must be a non-empty array' }, 400);
+    if (index.count + vectors.length > index.maxElements) {
+      return jsonResponse({
+        error: 'Index is at capacity',
+        inserted: 0,
+        ids: [],
+        count: index.count
+      }, 409);
+    }
 
-    const ids = [];
+    const prepared = [];
     for (let i = 0; i < vectors.length; i++) {
       const err = validateVector(vectors[i], index.dims, `vectors[${i}]`);
       if (err) return jsonResponse({ error: err }, 400);
+      prepared.push(new Float32Array(vectors[i]));
+    }
+
+    const ids = [];
+    for (let i = 0; i < prepared.length; i++) {
       try {
-        ids.push(index.add(new Float32Array(vectors[i])));
+        ids.push(index.add(prepared[i]));
       } catch (e) {
         if (e.message.includes('Insert failed')) {
           return jsonResponse({
@@ -865,6 +935,7 @@ async function handleRequest(request, env, ctx) {
     version: '1.0.0',
     endpoints: {
       'GET  /health':       'Health check and stats',
+      'GET  /readiness':    'Authenticated readiness check and snapshot visibility',
       'POST /reset_cache':  'Dispose in-memory index so next query restores from snapshot',
       'GET  /export':       'Export index as binary blob',
       'POST /init':         '{ dims, maxElements, M?, efConstruction?, efSearch?, vectors? }',
