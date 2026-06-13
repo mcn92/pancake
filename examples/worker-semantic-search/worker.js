@@ -31,6 +31,7 @@ let state = {
   restoredAt: null,
   lastRestoreMs: null,
 };
+const ADMIN_ROUTES = new Set(['/readiness', '/reset_cache']);
 
 function formatMs(value) {
   if (!Number.isFinite(value) || value <= 0) return 0.01;
@@ -45,6 +46,21 @@ function jsonResponse(data, status = 200) {
       'access-control-allow-origin': '*'
     }
   });
+}
+
+function isReadOnly(env) {
+  const value = String(env.READ_ONLY || '').trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
+function requireAdminAuth(request, env) {
+  if (!env.API_KEY) return null;
+  const authHeader = request.headers.get('Authorization') || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  if (token !== env.API_KEY) {
+    return jsonResponse({ error: 'Unauthorized' }, 401);
+  }
+  return null;
 }
 
 function htmlResponse(body) {
@@ -544,6 +560,7 @@ function renderPage() {
               <div class="stat"><span class="stat-k">Chunks</span><span class="stat-v">-</span></div>
               <div class="stat"><span class="stat-k">Dim</span><span class="stat-v">256</span></div>
               <div class="stat"><span class="stat-k">Quantized</span><span class="stat-v">Yes</span></div>
+              <div class="stat"><span class="stat-k">Mode</span><span class="stat-v">Public search</span></div>
               <div class="stat"><span class="stat-k">Restores</span><span class="stat-v">0</span></div>
               <div class="stat"><span class="stat-k">Last restore</span><span class="stat-v">-</span></div>
             </div>
@@ -599,12 +616,17 @@ function renderPage() {
         ['Chunks', payload.corpus_chunks ?? '-'],
         ['Dim', payload.dim ?? '256'],
         ['Quantized', payload.quantized ? 'Yes' : 'No'],
+        ['Mode', payload.read_only ? 'Read-only' : 'Admin-capable'],
         ['Restores', payload.restore_count ?? 0],
         ['Last restore', payload.last_restore_ms ? payload.last_restore_ms.toFixed(2) + 'ms' : '-'],
       ];
       statsGrid.innerHTML = rows.map(([k, v]) =>
         '<div class="stat"><span class="stat-k">' + escapeHtml(k) + '</span><span class="stat-v">' + escapeHtml(v) + '</span></div>'
       ).join('');
+      resetButton.disabled = !!payload.read_only;
+      resetButton.title = payload.read_only
+        ? 'Read-only mode blocks cache reset.'
+        : 'Drop the warm in-memory cache so the next query restores from R2.';
     }
 
     async function refreshStats() {
@@ -772,6 +794,22 @@ async function ensureLoaded(env) {
   };
 }
 
+async function getSnapshotAvailability(env) {
+  if (!env.DOCS_BUCKET) {
+    return { available: false, missing: ['DOCS_BUCKET binding'] };
+  }
+  const [manifestObj, corpusObj, indexObj] = await Promise.all([
+    env.DOCS_BUCKET.head(MANIFEST_KEY),
+    env.DOCS_BUCKET.head(CORPUS_KEY),
+    env.DOCS_BUCKET.head(INDEX_KEY)
+  ]);
+  const missing = [];
+  if (!manifestObj) missing.push(MANIFEST_KEY);
+  if (!corpusObj) missing.push(CORPUS_KEY);
+  if (!indexObj) missing.push(INDEX_KEY);
+  return { available: missing.length === 0, missing };
+}
+
 function buildResult(hit) {
   const chunk = corpusById.get(hit.id);
   return {
@@ -859,6 +897,11 @@ export default {
       return htmlResponse(renderPage());
     }
 
+    if (ADMIN_ROUTES.has(url.pathname)) {
+      const authError = requireAdminAuth(request, env);
+      if (authError) return authError;
+    }
+
     if (url.pathname === '/health') {
       return jsonResponse({
         loaded: !!index,
@@ -870,6 +913,7 @@ export default {
         restore_count: state.restoreCount,
         restored_at: state.restoredAt,
         last_restore_ms: state.lastRestoreMs ? formatMs(state.lastRestoreMs) : null,
+        read_only: isReadOnly(env),
         sources: Array.from(sourceFilters.keys()).map((source) => ({
           value: source,
           label: sourceLabelFromPath(source),
@@ -878,7 +922,24 @@ export default {
       });
     }
 
+    if (url.pathname === '/readiness') {
+      const snapshot = await getSnapshotAvailability(env);
+      return jsonResponse({
+        ready: !!index || snapshot.available,
+        loaded: !!index,
+        snapshot_available: snapshot.available,
+        missing_assets: snapshot.missing,
+        restore_count: state.restoreCount,
+        restored_at: state.restoredAt,
+        last_restore_ms: state.lastRestoreMs ? formatMs(state.lastRestoreMs) : null,
+        read_only: isReadOnly(env)
+      });
+    }
+
     if (url.pathname === '/reset_cache' && request.method === 'POST') {
+      if (isReadOnly(env)) {
+        return jsonResponse({ error: 'Worker is in read-only mode.' }, 403);
+      }
       if (index) {
         index.dispose();
       }
@@ -903,8 +964,10 @@ export default {
       endpoints: {
         'GET /': 'Minimal docs-search UI',
         'GET /health': 'Restore state and cache status',
+        'GET /readiness': 'Authenticated snapshot visibility and warm-load state',
         'GET /search?q=...': 'Search repo docs using the prebuilt snapshot',
-        'POST /search': '{ query: string, k?: number }'
+        'POST /search': '{ query: string, k?: number }',
+        'POST /reset_cache': 'Authenticated admin cache reset'
       }
     }, 404);
   }

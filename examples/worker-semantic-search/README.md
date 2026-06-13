@@ -11,6 +11,13 @@ This is the cleanest demonstration of `pancake-wasm` plus Cloudflare Workers:
 The Worker is intentionally a **snapshot-serving search frontend**, not the
 source of truth. That is the point of the demo.
 
+The safest deployment shape for this demo is still read-only search:
+
+- publish the snapshot assets to R2
+- serve `/search` and `/health` publicly
+- keep `/readiness` and `/reset_cache` as admin-only routes
+- set `READ_ONLY=1` if you want to disable even admin cache resets
+
 ## Why this demo
 
 It demonstrates the parts of Workers that fit Pancake well:
@@ -93,8 +100,10 @@ wrangler deploy
 
 - `GET /` minimal interactive UI
 - `GET /health` cache/restore status
+- `GET /readiness` authenticated snapshot visibility and warm-load state
 - `GET /search?q=...&k=5`
 - `POST /search` with `{ query, k? }`
+- `POST /reset_cache` authenticated admin cache reset
 
 Search responses include:
 
@@ -102,6 +111,11 @@ Search responses include:
 - restore latency
 - search latency
 - the top matching doc chunks
+
+`/search` stays public because the point of the demo is the snapshot-serving
+read path. `/readiness` and `/reset_cache` are the admin-facing routes. If
+`API_KEY` is set, those routes require `Authorization: Bearer ...`. If
+`READ_ONLY=1` is set, `/reset_cache` returns `403`.
 
 ## Good demo queries
 
