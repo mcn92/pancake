@@ -717,6 +717,8 @@ private:
         dot = tmp[0] + tmp[1] + tmp[2] + tmp[3];
 #endif
         for (; d < dims_; d++) dot += a[d] * b[d];
+        if (dot > 1.0f) dot = 1.0f;
+        else if (dot < -1.0f) dot = -1.0f;
         return 1.0f - dot;
     }
 
