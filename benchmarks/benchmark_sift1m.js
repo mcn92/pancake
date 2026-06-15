@@ -21,7 +21,7 @@ const Pancake = require('../pancake.js');
 const { parseBenchmarkArgs, resolveSingleValue } = require('./bench_args');
 
 const parsedArgs = parseBenchmarkArgs();
-const SIFT_DIR = parsedArgs.args[0] || '/mnt/c/pancake1.0.0/sift';
+const SIFT_DIR = parsedArgs.args[0] || path.join(__dirname, '..', 'sift');
 
 const RESULTS_DIR = path.join(__dirname, '..', 'benchmark_results');
 if (!fs.existsSync(RESULTS_DIR)) fs.mkdirSync(RESULTS_DIR);
