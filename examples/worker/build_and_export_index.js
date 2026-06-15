@@ -4,7 +4,7 @@
  *
  * Usage:
  *   node build-and-export-index.js \
- *     --vectors /mnt/c/pancake1.0.0/dist/vectors.bin \
+ *     --vectors ./dist/vectors.bin \
  *     --dims 384 \
  *     --count 5000 \
  *     --out /tmp/pancake-index.bin
@@ -35,7 +35,7 @@ function parseArgs(argv) {
 }
 const args = parseArgs(process.argv);
 
-const ENGINE_DIR  = args.engineDir || '/mnt/c/pancake1.0.0/dist';
+const ENGINE_DIR  = args.engineDir || path.resolve(__dirname, '..', '..', 'dist');
 const VECTORS_PATH = args.vectors  || path.join(ENGINE_DIR, 'vectors.bin');
 const DIMS         = parseInt(args.dims  || '384', 10);
 const COUNT        = parseInt(args.count || '5000', 10);

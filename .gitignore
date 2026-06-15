@@ -62,6 +62,12 @@ pancake_gt_snapshot_*.tar.gz.sha256
 
 # Worker build output
 examples/worker/dist/
+examples/worker/.dev.vars
+examples/worker-semantic-search/.dev.vars
+
+# Local benchmark/analysis artifacts
+pareto/
+pancake_sift1m_pareto.png
 
 # nytimes/ — commit scripts, exclude data and outputs
 nytimes/*.fvecs
