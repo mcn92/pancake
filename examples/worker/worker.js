@@ -24,6 +24,7 @@ let index = null;
 const MAX_RESULTS = 100;
 const MAX_DIMS = 4096;
 const DEFAULT_MAX_ELEMENTS = 5_000;
+const DEFAULT_MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 const MAX_EF = 2000;
 const MAX_M = 128;
 const WORKER_EXPORT_MAGIC = 0x57524b31; // "WRK1"
@@ -50,6 +51,12 @@ const restoreState = {
   lastSnapshotBytes: null,
   lastSnapshotKey: null
 };
+
+function logWorkerError(event, error) {
+  const name = error && typeof error.name === 'string' ? error.name : 'Error';
+  const message = error && typeof error.message === 'string' ? error.message : '';
+  console.error(`${event} (${name})${message ? ': ' + message : ''}`);
+}
 const persistState = {
   lastIssuedMs: 0,
   seqInMs: 0
@@ -109,7 +116,7 @@ async function persistIndex(env) {
     });
     restoreState.lastSnapshotKey = key;
   } catch (e) {
-    console.error('R2 persist failed:', e);
+    logWorkerError('R2 persist failed', e);
   }
 }
 
@@ -123,6 +130,14 @@ function getMaxElementsLimit(env) {
   if (raw === undefined || raw === null || raw === '') return DEFAULT_MAX_ELEMENTS;
   const parsed = parseInt(raw, 10);
   if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_MAX_ELEMENTS;
+  return parsed;
+}
+
+function getMaxSnapshotBytes(env) {
+  const raw = env?.MAX_SNAPSHOT_BYTES;
+  if (raw === undefined || raw === null || raw === '') return DEFAULT_MAX_SNAPSHOT_BYTES;
+  const parsed = parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_MAX_SNAPSHOT_BYTES;
   return parsed;
 }
 
@@ -200,12 +215,22 @@ async function restoreIndex(env) {
     if (!latest) return false;
     const obj = await env.INDEX_BUCKET.get(latest.key);
     if (!obj) return false;
+    const maxSnapshotBytes = getMaxSnapshotBytes(env);
+    if (Number.isInteger(obj.size) && obj.size > maxSnapshotBytes) {
+      throw new Error(`Snapshot exceeds MAX_SNAPSHOT_BYTES (${obj.size} > ${maxSnapshotBytes})`);
+    }
 
     const buffer = await obj.arrayBuffer();
+    if (buffer.byteLength > maxSnapshotBytes) {
+      throw new Error(`Snapshot exceeds MAX_SNAPSHOT_BYTES (${buffer.byteLength} > ${maxSnapshotBytes})`);
+    }
     const fetchMs = performance.now() - fetchStart;
     const deserializeStart = performance.now();
     const engine = await initializePancake();
     const imported = decodeWorkerExportEnvelope(buffer);
+    if (imported.bytes.byteLength > maxSnapshotBytes) {
+      throw new Error(`Snapshot payload exceeds MAX_SNAPSHOT_BYTES (${imported.bytes.byteLength} > ${maxSnapshotBytes})`);
+    }
     const fallbackDims = parseInt(obj.customMetadata?.dims ?? '0', 10);
     const { dims, maxElements, initParams } = getImportConfig(
       imported,
@@ -246,7 +271,7 @@ async function restoreIndex(env) {
     console.log(`Restored index from R2: dims=${dims}, count=${count}`);
     return true;
   } catch (e) {
-    console.error('R2 restore failed:', e);
+    logWorkerError('R2 restore failed', e);
     return false;
   }
 }
@@ -448,16 +473,36 @@ function buildIndexWrapper(engine, dims, maxElements, handle, initParams = {}) {
     },
 
     _restoreMapping(mapping, nextExtId) {
+      if (!Array.isArray(mapping)) {
+        throw new Error('Import failed: envelope mapping must be an array');
+      }
+      const count = engine._pancake_count(this.handle);
+      if (mapping.length !== count) {
+        throw new Error('Import failed: envelope mapping count mismatch');
+      }
+
       _extToInt.clear();
       _intToExt.clear();
       _deletedExt.clear();
+      let maxExtId = -1;
       for (const [intId, extId] of mapping) {
+        if (!Number.isInteger(intId) || intId < 0 || intId >= count) {
+          throw new Error('Import failed: envelope mapping contains invalid internal ID');
+        }
+        if (!Number.isInteger(extId) || extId < 0) {
+          throw new Error('Import failed: envelope mapping contains invalid external ID');
+        }
+        if (_intToExt.has(intId) || _extToInt.has(extId)) {
+          throw new Error('Import failed: envelope mapping contains duplicates');
+        }
         _intToExt.set(intId, extId);
         _extToInt.set(extId, intId);
+        if (extId > maxExtId) maxExtId = extId;
       }
-      _nextExtId = Number.isInteger(nextExtId) && nextExtId >= 0
-        ? nextExtId
-        : (mapping.reduce((m, [, extId]) => Math.max(m, extId), -1) + 1);
+      if (!Number.isInteger(nextExtId) || nextExtId < count || nextExtId <= maxExtId) {
+        throw new Error('Import failed: envelope nextExtId is invalid');
+      }
+      _nextExtId = nextExtId;
     },
 
     ghostCount() { return engine._pancake_ghost_count(this.handle); },
@@ -857,6 +902,12 @@ async function handleRequest(request, env, ctx) {
   if (url.pathname === '/export' && method === 'GET') {
     if (!index) return jsonResponse({ error: 'No index to export' }, 503);
 
+    // The engine cannot serialize soft-deleted ghosts (deletion state is not
+    // serialized), so exportBinary() throws when ghosts are present. Compact
+    // first — same as the R2 persist path (persistIndex) — so /export is robust
+    // to any prior deletes instead of 500ing.
+    if (index.ghostCount() > 0) index.compact();
+
     const bytes = index.exportBinary();
     return new Response(bytes, {
       status: 200,
@@ -871,8 +922,20 @@ async function handleRequest(request, env, ctx) {
   }
 
   if (url.pathname === '/import' && method === 'POST') {
+    const maxSnapshotBytes = getMaxSnapshotBytes(env);
+    const contentLength = parseInt(request.headers.get('content-length') || '', 10);
+    if (Number.isInteger(contentLength) && contentLength > maxSnapshotBytes) {
+      return jsonResponse({ error: `Import failed: snapshot exceeds MAX_SNAPSHOT_BYTES (${contentLength} > ${maxSnapshotBytes})` }, 413);
+    }
+
     const envelopeBuffer = await request.arrayBuffer();
+    if (envelopeBuffer.byteLength > maxSnapshotBytes) {
+      return jsonResponse({ error: `Import failed: snapshot exceeds MAX_SNAPSHOT_BYTES (${envelopeBuffer.byteLength} > ${maxSnapshotBytes})` }, 413);
+    }
     const imported = decodeWorkerExportEnvelope(envelopeBuffer);
+    if (imported.bytes.byteLength > maxSnapshotBytes) {
+      return jsonResponse({ error: `Import failed: snapshot payload exceeds MAX_SNAPSHOT_BYTES (${imported.bytes.byteLength} > ${maxSnapshotBytes})` }, 413);
+    }
     let dims;
     let maxElements;
     let initParams;
@@ -915,10 +978,16 @@ async function handleRequest(request, env, ctx) {
 
     index = buildIndexWrapper(engine, dims, maxElements, handle, initParams);
     const importedCount = index.count;
-    if (imported.metadata?.mapping?.length) {
-      index._restoreMapping(imported.metadata.mapping, imported.metadata.nextExtId);
-    } else {
-      for (let i = 0; i < importedCount; i++) index._seedId(i);
+    try {
+      if (imported.metadata?.mapping?.length) {
+        index._restoreMapping(imported.metadata.mapping, imported.metadata.nextExtId);
+      } else {
+        for (let i = 0; i < importedCount; i++) index._seedId(i);
+      }
+    } catch (e) {
+      index.destroy();
+      index = null;
+      return jsonResponse({ error: e.message || 'Import failed' }, 400);
     }
 
     await persistIndex(env);
@@ -951,7 +1020,7 @@ export default {
     try {
       return await handleRequest(request, env, ctx);
     } catch (error) {
-      console.error('Unhandled error:', error);
+      logWorkerError('Unhandled error', error);
       return jsonResponse({ error: 'Internal server error' }, 500);
     }
   }

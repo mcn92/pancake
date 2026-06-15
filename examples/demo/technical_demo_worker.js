@@ -578,6 +578,12 @@ class TechnicalDemoWorker {
 
     async proveExportImport() {
         this.log('Check: export/import round-trip', 'info');
+        // A clean export contains only live survivors — the engine does not
+        // serialize soft-deleted ghosts, so /export compacts them away first.
+        // Compact here too, so countBefore reflects the survivor set the export
+        // actually carries; otherwise the count would drop by the ghost count
+        // across the round-trip and the equality below would spuriously fail.
+        await this.compact();
         const healthBefore = await this.checkHealth();
         const countBefore = healthBefore.count;
         if (countBefore === 0) throw new Error('index is empty');
