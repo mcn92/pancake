@@ -1,37 +1,40 @@
-# Pancake Flagship Demo: Semantic Docs Search on Workers
+# Semantic Docs Search on Workers
 
-This is the cleanest demonstration of `pancake-wasm` plus Cloudflare Workers:
+> **Note:** `pancake-wasm` is not yet published to npm. This demo runs from the
+> repository checkout (build the engine with `./build.sh` at the repo root
+> first). npm publishing is coming soon. See the [root README](../../README.md#install).
 
-- build a search index offline from markdown docs
-- export a Pancake snapshot
-- store the snapshot and corpus metadata in R2
-- let the Worker restore on cold start
-- serve semantic-ish text queries from hot in-memory state
+A `pancake-wasm` + Cloudflare Workers example that:
 
-The Worker is intentionally a **snapshot-serving search frontend**, not the
-source of truth. That is the point of the demo.
+- builds a search index offline from markdown docs
+- exports a Pancake snapshot
+- stores the snapshot and corpus metadata in R2
+- lets the Worker restore on cold start
+- serves text queries from in-memory state
 
-The safest deployment shape for this demo is still read-only search:
+The Worker is a snapshot-serving search frontend, not the source of truth.
+
+The recommended deployment shape is read-only search:
 
 - publish the snapshot assets to R2
 - serve `/search` and `/health` publicly
 - keep `/readiness` and `/reset_cache` as admin-only routes
 - set `READ_ONLY=1` if you want to disable even admin cache resets
 
-## Why this demo
+## Scope
 
-It demonstrates the parts of Workers that fit Pancake well:
+This demo covers the Worker usage patterns that fit Pancake:
 
 - read-heavy semantic search
 - low-latency hot-path retrieval
 - explicit restore from durable object storage
-- honest cold-start semantics
+- cold-start restore from R2
 
-It avoids the confusing parts:
+It does not cover:
 
 - live mutable authoritative edge state
-- strict read-after-write expectations across isolates
-- treating Worker memory like a database
+- read-after-write across isolates
+- using Worker memory as the system of record
 
 ## How it works
 
@@ -44,9 +47,9 @@ It avoids the confusing parts:
 4. Upload those files to R2.
 5. The Worker fetches them on first query, restores the index, and serves `/search`.
 
-The local embedder is intentionally simple. It exists so the demo is runnable
-without API keys. In a real deployment, replace it with your normal embedding
-pipeline and keep the same snapshot-serving Worker shape.
+The local embedder is a hash-based stand-in so the demo runs without API keys.
+In a real deployment, replace it with your embedding pipeline and keep the same
+snapshot-serving Worker shape.
 
 ## Build demo assets
 
@@ -112,8 +115,8 @@ Search responses include:
 - search latency
 - the top matching doc chunks
 
-`/search` stays public because the point of the demo is the snapshot-serving
-read path. `/readiness` and `/reset_cache` are the admin-facing routes. If
+`/search` is public; it is the snapshot-serving read path. `/readiness` and
+`/reset_cache` are the admin-facing routes. If
 `API_KEY` is set, those routes require `Authorization: Bearer ...`. If
 `READ_ONLY=1` is set, `/reset_cache` returns `403`.
 
@@ -124,13 +127,9 @@ read path. `/readiness` and `/reset_cache` are the admin-facing routes. If
 - `How does filtered search work in Pancake?`
 - `What are the memory tradeoffs for quantized indexes?`
 
-## Mental model
+## Architecture summary
 
-The important thing to demonstrate is not “look, the Worker owns the index.”
-
-It is:
-
-- R2 holds a durable snapshot
-- the Worker restores a query-optimized copy from that snapshot
-- hot memory serves search fast
-- eviction is acceptable because the copy can be restored again
+- R2 holds the durable snapshot
+- the Worker restores a copy from that snapshot
+- in-memory state serves search
+- on eviction, the copy is restored again from R2

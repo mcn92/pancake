@@ -10,15 +10,32 @@ Pancake is an ANN library -- it doesn't ship an embedding model. Use any embedde
 
 ## Install
 
+> **Not yet on npm.** The `pancake-wasm` package has not been published to the
+> registry yet — `npm install pancake-wasm` will not work today. For now, use
+> Pancake from a repository checkout (see below). npm publishing is coming soon;
+> once it lands, the package install and the `pancake-wasm` import specifiers in
+> this README will work as written.
+
+Clone the repository and import the engine directly from the checkout:
+
 ```bash
-npm install pancake-wasm
+git clone https://github.com/mcn92/pancake.git
+cd pancake
+./build.sh          # produces dist/engine.js and dist/engine.wasm
+node run_tests.js   # optional: verify the build
 ```
 
-The native addon under `native/` is not part of the npm package. It is an
-opt-in benchmarking tool used in this repo to separate runtime overhead from
+The root `pancake.js` / `pancake.node.mjs` / `pancake.web.mjs` entry points are
+the same files that will ship in the npm package, so code written against the
+repo checkout will work unchanged once the package is published.
+
+The native addon under `native/` is not part of the (future) npm package. It is
+an opt-in benchmarking tool used in this repo to separate runtime overhead from
 graph quality.
 
 ## Runtime entry points
+
+Once the package is published, the entry points are imported by name:
 
 ```js
 // Node.js CJS
@@ -34,11 +51,30 @@ import Pancake from 'pancake-wasm/node';
 import Pancake from 'pancake-wasm/web';
 ```
 
-The `pancake-wasm/web` entry expects a bundler or runtime that can resolve the packaged
+Until then, from a repository checkout, import the same entry points by relative
+path instead:
+
+```js
+// Node.js CJS
+const Pancake = require('./pancake.js');
+
+// Node.js ESM
+import Pancake from './pancake.node.mjs';
+
+// Browser bundlers
+import Pancake from './pancake.web.mjs';
+```
+
+The `pancake-wasm/web` entry (`./pancake.web.mjs` in a checkout) expects a bundler or runtime that can resolve the packaged
 `./dist/engine.wasm` asset. This is tested with a bundled Vite + Chromium flow. For raw
 no-bundler demos, see `dist/technical-demo.html`.
 
 ## Quick start
+
+The examples below import `pancake-wasm` by name for when the package is
+published. From a repository checkout today, replace that import with a relative
+path — `import Pancake from './pancake.node.mjs'` (ESM) or
+`const Pancake = require('./pancake.js')` (CJS). The API is identical either way.
 
 ```js
 import Pancake from 'pancake-wasm';
