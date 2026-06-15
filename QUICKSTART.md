@@ -4,9 +4,12 @@ End-to-end repository workflow for building an HNSW index from your own embeddin
 
 ## What This Guide Covers
 
-This guide is for the repository checkout, not just the published npm package. It uses the example CLI scripts in `examples/cli/` and the Worker/demo files in `examples/worker/` and `examples/demo/`.
+This guide is for the repository checkout. It uses the example CLI scripts in `examples/cli/` and the Worker/demo files in `examples/worker/` and `examples/demo/`.
 
-If you only want the published JS API, start with [README.md](README.md).
+> **Note:** Pancake is not yet published to npm — there is no `npm install
+> pancake-wasm` today. Everything in this guide runs from a repository checkout,
+> which is currently the supported way to use Pancake. npm publishing is coming
+> soon. See [README.md](README.md#install) for details.
 
 ## Prerequisites
 
@@ -99,7 +102,7 @@ This produces a serialized index binary that can be imported via the JS API or t
 
 ### 3. Search The Index
 
-The repo exposes the same JS API as the published npm package via `pancake.js` at the root:
+The repo exposes the same JS API that will ship in the npm package via `pancake.js` at the root:
 
 ```js
 const Pancake = require('./pancake.js');

@@ -2,6 +2,11 @@
 
 This directory contains a reference Cloudflare Worker deployment built on top of `pancake-wasm`.
 
+> **Note:** `pancake-wasm` is not yet published to npm. This example runs from
+> the repository checkout and loads the engine from the repo's built
+> `dist/` artifacts (run `./build.sh` at the repo root first). npm publishing is
+> coming soon. See the [root README](../../README.md#install).
+
 The Worker keeps a Pancake index in-process when hot and persists snapshots to
 Cloudflare R2. Treat it as a **snapshot-first ANN serving layer** rather than
 as a durable mutable vector database.
@@ -21,15 +26,13 @@ Less suitable:
 
 ## Recommended deployment shape
 
-The safest default is:
-
 1. build or update the index outside the Worker
 2. publish a clean snapshot to R2
 3. deploy the Worker in `READ_ONLY=1`
 4. expose `/search` and `/health` publicly
 5. keep mutation routes for admin-only workflows or local development
 
-That keeps the Worker in the role it fits best: snapshot-backed search at the edge.
+This runs the Worker as a snapshot-backed search endpoint at the edge.
 
 ## Endpoints
 
