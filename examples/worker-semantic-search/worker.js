@@ -7,6 +7,7 @@ const INDEX_KEY = 'docs-index.bin';
 const CORPUS_KEY = 'docs-corpus.json';
 const MANIFEST_KEY = 'docs-manifest.json';
 const MAX_RESULTS = 8;
+const DEFAULT_MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 const Pancake = createPancakeApi(() =>
   loadEngine({
     instantiateWasm(imports, successCallback) {
@@ -61,6 +62,14 @@ function requireAdminAuth(request, env) {
     return jsonResponse({ error: 'Unauthorized' }, 401);
   }
   return null;
+}
+
+function getMaxSnapshotBytes(env) {
+  const raw = env?.MAX_SNAPSHOT_BYTES;
+  if (raw === undefined || raw === null || raw === '') return DEFAULT_MAX_SNAPSHOT_BYTES;
+  const parsed = parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_MAX_SNAPSHOT_BYTES;
+  return parsed;
 }
 
 function htmlResponse(body) {
@@ -743,6 +752,10 @@ async function restoreFromR2(env) {
   if (!manifestObj || !corpusObj || !indexObj) {
     throw new Error(`Expected ${MANIFEST_KEY}, ${CORPUS_KEY}, and ${INDEX_KEY} in R2`);
   }
+  const maxSnapshotBytes = getMaxSnapshotBytes(env);
+  if (Number.isInteger(indexObj.size) && indexObj.size > maxSnapshotBytes) {
+    throw new Error(`Index snapshot exceeds MAX_SNAPSHOT_BYTES (${indexObj.size} > ${maxSnapshotBytes})`);
+  }
 
   const loadedManifest = await loadJson(manifestObj);
   if (loadedManifest.dim !== DEMO_DIM) {
@@ -753,6 +766,9 @@ async function restoreFromR2(env) {
     loadJson(corpusObj),
     indexObj.arrayBuffer()
   ]);
+  if (snapshotBuffer.byteLength > maxSnapshotBytes) {
+    throw new Error(`Index snapshot exceeds MAX_SNAPSHOT_BYTES (${snapshotBuffer.byteLength} > ${maxSnapshotBytes})`);
+  }
 
   const restored = await Pancake.create({
     dim: loadedManifest.dim,
