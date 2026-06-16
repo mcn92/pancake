@@ -971,7 +971,9 @@ export default {
       try {
         return await handleSearch(request, env);
       } catch (err) {
-        return jsonResponse({ error: err.message || String(err) }, 500);
+        const message = err && typeof err.message === 'string' ? err.message : String(err);
+        console.error(`semantic-search /search failed: ${message}`);
+        return jsonResponse({ error: 'Internal server error' }, 500);
       }
     }
 
