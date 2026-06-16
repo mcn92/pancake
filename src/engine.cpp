@@ -1,11 +1,5 @@
 #include "float_hnsw.hpp"
 #include "int8_float_hnsw.hpp"
-#if __has_include("embedding_model.hpp")
-#include "embedding_model.hpp"
-#define PANCAKE_HAS_EMBEDDING 1
-#else
-#define PANCAKE_HAS_EMBEDDING 0
-#endif
 #include <unordered_map>
 #include <algorithm>
 #include <cstdlib>
@@ -407,66 +401,6 @@ void normalize(float* vec, int dim) {
 }
 
 // =============================================================================
-// Embedding Model Integration
-// =============================================================================
-
-#if PANCAKE_HAS_EMBEDDING
-
-static embedding::EmbeddingModel* g_embedder = nullptr;
-static std::vector<float> g_embedding_buf;
-
-int emb_init(int vocab_size) {
-    if (g_embedder) { delete g_embedder; g_embedder = nullptr; }
-    g_embedder = new embedding::EmbeddingModel(static_cast<size_t>(vocab_size));
-    g_embedding_buf.clear();
-    return 0;
-}
-
-const float* emb_encode(const char* text, size_t* out_size) {
-    if (!g_embedder || !text) return nullptr;
-    std::string str(text);
-    g_embedding_buf = g_embedder->encode(str);
-    if (out_size) *out_size = g_embedding_buf.size();
-    return g_embedding_buf.data();
-}
-
-int emb_encode_batch(const char** texts, int count, float* out_buffer) {
-    if (!g_embedder || !texts || !out_buffer || count <= 0) return 0;
-    constexpr size_t kEmbeddingDims = embedding::EmbeddingModel::D_MODEL;
-    for (int i = 0; i < count; ++i) {
-        if (!texts[i]) continue;
-        std::string str(texts[i]);
-        auto embedding = g_embedder->encode(str);
-        std::memcpy(out_buffer + static_cast<size_t>(i) * kEmbeddingDims,
-                    embedding.data(),
-                    kEmbeddingDims * sizeof(float));
-    }
-    return count;
-}
-
-int emb_dimension() { return embedding::EmbeddingModel::D_MODEL; }
-
-void emb_free() {
-    if (g_embedder) { delete g_embedder; g_embedder = nullptr; }
-    g_embedding_buf.clear();
-}
-
-uint32_t emb_add(const char*) { return 0xFFFFFFFF; }
-int emb_search(const char*, int, uint64_t*, float*) { return 0; }
-
-#else
-
-int emb_init(int) { return -1; }
-const float* emb_encode(const char*, size_t*) { return nullptr; }
-int emb_encode_batch(const char**, int, float*) { return 0; }
-int emb_dimension() { return 0; }
-void emb_free() {}
-uint32_t emb_add(const char*) { return 0xFFFFFFFF; }
-int emb_search(const char*, int, uint64_t*, float*) { return 0; }
-
-#endif
-
-// =============================================================================
 // Global cleanup
 // =============================================================================
 
@@ -475,12 +409,6 @@ void pancake_shutdown_all() {
     for (uint32_t i = 0; i < MAX_HANDLES; i++) {
         free_handle(i);
     }
-
-
-#if PANCAKE_HAS_EMBEDDING
-    if (g_embedder) { delete g_embedder; g_embedder = nullptr; }
-    g_embedding_buf.clear();
-#endif
 }
 
 void shutdown_all() {

@@ -349,10 +349,9 @@ Beyond the index API, the ABI exports `emsc_malloc`/`emsc_free` (heap for
 marshalling), `dense_matmul`/`sparse_matmul`/`normalize` (SIMD helpers),
 `pancake_profile_print`/`pancake_profile_reset` (no-ops unless built with
 `PANCAKE_INT8_HNSW_BUILD_PROFILE`), and `pancake_shutdown_all` (frees all
-handles). An embedding model (`embedding_model.hpp`) is conditionally compiled in
-via `__has_include`; when present it adds `emb_*` exports, when absent those are
-stubbed to return failure. The embedding path is not part of the core index and
-is not used by the JS wrapper.
+handles). The WASM ABI no longer exposes the earlier experimental `emb_*`
+embedding-model path; the public surface is the index API plus the small set of
+numeric/test helpers above.
 
 The complete export list is in [Appendix A](#appendix-a-wasm-export-inventory).
 
