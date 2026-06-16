@@ -92,10 +92,28 @@ function assertSearchResultsNear(actual, expected, tolerance, label) {
     }
 }
 
+function newestMtimeMs(paths) {
+    let newest = 0;
+    for (const file of paths) {
+        const stat = fs.statSync(file);
+        if (stat.mtimeMs > newest) newest = stat.mtimeMs;
+    }
+    return newest;
+}
+
 function ensureScalarBuild() {
     const scalarJs = path.join(DIST, `${SCALAR_BASENAME}.js`);
     const scalarWasm = path.join(DIST, `${SCALAR_BASENAME}.wasm`);
-    if (fs.existsSync(scalarJs) && fs.existsSync(scalarWasm)) return;
+    const buildInputs = [
+        path.join(ROOT, 'build.sh'),
+        path.join(ROOT, 'src', 'engine.cpp'),
+        path.join(ROOT, 'src', 'float_hnsw.hpp'),
+        path.join(ROOT, 'src', 'int8_float_hnsw.hpp'),
+    ];
+    if (fs.existsSync(scalarJs) && fs.existsSync(scalarWasm)) {
+        const scalarMtime = Math.min(fs.statSync(scalarJs).mtimeMs, fs.statSync(scalarWasm).mtimeMs);
+        if (scalarMtime >= newestMtimeMs(buildInputs)) return;
+    }
 
     const result = spawnSync('bash', ['build.sh'], {
         cwd: ROOT,
