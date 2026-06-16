@@ -23,8 +23,9 @@
  *
  */
 
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const Pancake = require('../pancake.js');
 const { parseBenchmarkArgs, resolveSingleValue, resolveSweepValues } = require('./bench_args');
@@ -68,15 +69,18 @@ function log(msg = '') {
 // --- Data loading ---
 function loadDataset(hdf5Path) {
   log(`Loading dataset from ${hdf5Path}...`);
+  const tmpBin = path.join(os.tmpdir(), `nytimes_sweep_${process.pid}.bin`);
+  const tmpPy = path.join(os.tmpdir(), `nytimes_sweep_${process.pid}.py`);
   const script = `
 import h5py, json, sys, struct
-f = h5py.File("${hdf5Path}", "r")
+src, dst = sys.argv[1], sys.argv[2]
+f = h5py.File(src, "r")
 train = f["train"][:]
 test = f["test"][:]
 neighbors = f["neighbors"][:, :${K}]
 info = {"n_train": int(train.shape[0]), "n_test": int(test.shape[0]),
         "dim": int(train.shape[1])}
-with open("/tmp/nytimes_sweep.bin", "wb") as out:
+with open(dst, "wb") as out:
     info_bytes = json.dumps(info).encode()
     out.write(struct.pack("<I", len(info_bytes)))
     out.write(info_bytes)
@@ -85,11 +89,12 @@ with open("/tmp/nytimes_sweep.bin", "wb") as out:
     out.write(neighbors.astype("int32").tobytes())
 print(json.dumps(info))
 `;
-  const info = JSON.parse(execSync(`python3 -c '${script}'`, { encoding: 'utf8' }));
+  fs.writeFileSync(tmpPy, script);
+  const info = JSON.parse(execFileSync('python3', [tmpPy, hdf5Path, tmpBin], { encoding: 'utf8' }));
   log(`  Train: ${info.n_train} vectors, ${info.dim}D`);
   log(`  Test:  ${info.n_test} queries`);
 
-  const buf = fs.readFileSync('/tmp/nytimes_sweep.bin');
+  const buf = fs.readFileSync(tmpBin);
   let offset = 0;
   const infoLen = buf.readUInt32LE(offset); offset += 4;
   offset += infoLen;
@@ -113,6 +118,9 @@ print(json.dumps(info))
   const groundTruth = new Array(info.n_test);
   for (let i = 0; i < info.n_test; i++)
     groundTruth[i] = Array.from(neighborsInt.subarray(i * K, (i + 1) * K));
+
+  try { fs.unlinkSync(tmpBin); } catch (_) {}
+  try { fs.unlinkSync(tmpPy); } catch (_) {}
 
   return { train, test, groundTruth, dim, info };
 }
