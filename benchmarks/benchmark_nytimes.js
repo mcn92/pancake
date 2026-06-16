@@ -42,7 +42,7 @@
  *   node benchmark_nytimes.js [path-to-hdf5]
  */
 
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -132,8 +132,11 @@ with open(dst, "wb") as out:
 print(json.dumps(info))
 `;
   fs.writeFileSync(tmpPy, script);
-  const cmd = `python3 ${JSON.stringify(tmpPy)} ${JSON.stringify(hdf5Path)} ${JSON.stringify(tmpBin)} ${K}`;
-  const info = JSON.parse(execSync(cmd, { encoding: 'utf8' }));
+  const info = JSON.parse(execFileSync(
+    'python3',
+    [tmpPy, hdf5Path, tmpBin, String(K)],
+    { encoding: 'utf8' }
+  ));
   log(`  Train: ${info.n_train} vectors, ${info.dim}D`);
   log(`  Test:  ${info.n_test} queries`);
 
