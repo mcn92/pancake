@@ -318,6 +318,10 @@ function buildIndexWrapper(engine, dims, maxElements, handle, initParams = {}) {
   const distsBuffer = engine._emsc_malloc(MAX_RESULTS * 4);
 
   if (!vecBuffer || !idsBuffer || !distsBuffer) {
+    if (vecBuffer) engine._emsc_free(vecBuffer);
+    if (idsBuffer) engine._emsc_free(idsBuffer);
+    if (distsBuffer) engine._emsc_free(distsBuffer);
+    engine._pancake_dispose(handle);
     throw new Error('WASM heap allocation failed');
   }
 
@@ -951,8 +955,7 @@ async function handleRequest(request, env, ctx) {
     }
 
     const engine = await initializePancake();
-
-    if (index) { index.destroy(); index = null; }
+    const previousIndex = index;
 
     const handle = engine._pancake_init(dims, maxElements, 1, 1, initParams.M, initParams.efC, initParams.efS);
     if (handle === 0xFFFFFFFF) {
@@ -976,19 +979,22 @@ async function handleRequest(request, env, ctx) {
       engine._emsc_free(buf);
     }
 
-    index = buildIndexWrapper(engine, dims, maxElements, handle, initParams);
-    const importedCount = index.count;
+    let nextIndex;
     try {
+      nextIndex = buildIndexWrapper(engine, dims, maxElements, handle, initParams);
+      const importedCount = nextIndex.count;
       if (imported.metadata?.mapping?.length) {
-        index._restoreMapping(imported.metadata.mapping, imported.metadata.nextExtId);
+        nextIndex._restoreMapping(imported.metadata.mapping, imported.metadata.nextExtId);
       } else {
-        for (let i = 0; i < importedCount; i++) index._seedId(i);
+        for (let i = 0; i < importedCount; i++) nextIndex._seedId(i);
       }
     } catch (e) {
-      index.destroy();
-      index = null;
+      if (nextIndex) nextIndex.destroy();
       return jsonResponse({ error: e.message || 'Import failed' }, 400);
     }
+
+    if (previousIndex) previousIndex.destroy();
+    index = nextIndex;
 
     await persistIndex(env);
     return jsonResponse({

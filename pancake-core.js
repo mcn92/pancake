@@ -365,16 +365,13 @@ class PancakeIndex {
             return;
         }
 
-        if (pendingMappings.size !== count) {
+        try {
+            this._validateV3Mappings(pendingMappings, pendingNextExtId, count);
+            this._commitMappings(pendingMappings, pendingNextExtId);
+        } catch (err) {
             this._clearMappings();
-            throw new Error('Import failed: envelope mapping count mismatch');
+            throw err;
         }
-        if (pendingNextExtId < count) {
-            this._clearMappings();
-            throw new Error('Import failed: envelope nextExtId is invalid');
-        }
-
-        this._commitMappings(pendingMappings, pendingNextExtId);
     }
 
     get count() {
@@ -473,6 +470,34 @@ class PancakeIndex {
         this._nextExtId = nextExtId;
     }
 
+    _validateV3Mappings(intToExt, nextExtId, count) {
+        if (intToExt.size !== count) {
+            throw new Error('Import failed: envelope mapping count mismatch');
+        }
+        if (!Number.isInteger(nextExtId) || nextExtId < count) {
+            throw new Error('Import failed: envelope nextExtId is invalid');
+        }
+
+        const extIds = new Set();
+        let maxExtId = -1;
+        for (const [intId, extId] of intToExt) {
+            if (!Number.isInteger(intId) || intId < 0 || intId >= count) {
+                throw new Error('Import failed: envelope mapping contains invalid internal ID');
+            }
+            if (!Number.isInteger(extId) || extId < 0) {
+                throw new Error('Import failed: envelope mapping contains invalid external ID');
+            }
+            if (extIds.has(extId)) {
+                throw new Error('Import failed: envelope mapping contains duplicates');
+            }
+            extIds.add(extId);
+            if (extId > maxExtId) maxExtId = extId;
+        }
+        if (nextExtId <= maxExtId) {
+            throw new Error('Import failed: envelope nextExtId is invalid');
+        }
+    }
+
     _setIdentityMappings(count) {
         this._clearMappings();
         for (let i = 0; i < count; i++) {
@@ -530,6 +555,9 @@ function createPancakeApi(loadEngineImpl) {
         const distPtr = e._emsc_malloc(initialBufferCapacity * 4);
 
         if (!vecPtr || !idPtr || !distPtr) {
+            if (vecPtr) e._emsc_free(vecPtr);
+            if (idPtr) e._emsc_free(idPtr);
+            if (distPtr) e._emsc_free(distPtr);
             throw new Error('WASM malloc failed');
         }
 

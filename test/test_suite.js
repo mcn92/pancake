@@ -868,6 +868,25 @@ async function testErrorPaths() {
         assert(msg.includes('mapping count mismatch'), 'import rejects v3 envelope with mapping-count mismatch');
         dst.dispose();
     }
+
+    // Import of v3 envelope with duplicate external IDs is rejected
+    {
+        const src = await Pancake.create(DEFAULT_CONFIG);
+        src.addBatch(Array.from({ length: 5 }, () => normalizedVec(DIM)));
+        const exported = new Uint8Array(src.export());
+        src.dispose();
+
+        const view = new DataView(exported.buffer, exported.byteOffset, exported.byteLength);
+        const mappingOffset = 32;
+        const firstExtId = view.getUint32(mappingOffset + 4, true);
+        view.setUint32(mappingOffset + 12, firstExtId, true);
+
+        const dst = await Pancake.create(DEFAULT_CONFIG);
+        let msg = '';
+        try { dst.import(exported); } catch (e) { msg = e.message; }
+        assert(msg.includes('mapping contains duplicates'), 'import rejects v3 envelope with duplicate external IDs');
+        dst.dispose();
+    }
 }
 
 
