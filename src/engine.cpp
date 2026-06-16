@@ -19,6 +19,24 @@
 
 using namespace pancake::wasm;
 
+namespace {
+
+size_t serialized_index_count_hint(const uint8_t* data, size_t size, uint32_t versioned_magic) {
+    if (!data || size < 12) return 100000;
+
+    uint32_t magic = 0;
+    std::memcpy(&magic, data, sizeof(magic));
+
+    size_t count_offset = (magic == versioned_magic) ? 12 : 8;
+    if (size < count_offset + 4) return 100000;
+
+    uint32_t count = 0;
+    std::memcpy(&count, data + count_offset, sizeof(count));
+    return static_cast<size_t>(count);
+}
+
+} // namespace
+
 // =============================================================================
 // Handle-based index system
 // =============================================================================
@@ -76,11 +94,7 @@ public:
     size_t memory_bytes() const override { return impl_->memory_bytes(); }
     std::vector<uint8_t> serialize() const override { return impl_->serialize(); }
     bool deserialize(const uint8_t* data, size_t size) override {
-        size_t cnt = 100000;
-        if (size >= 16) {
-            uint32_t c; memcpy(&c, data + 12, 4);
-            cnt = static_cast<size_t>(c);
-        }
+        size_t cnt = serialized_index_count_hint(data, size, 0x464C4831);
         FloatHNSWConfig cfg = cfg_;
         cfg.max_elements = std::max(static_cast<size_t>(cnt * 1.2), static_cast<size_t>(100000));
         impl_ = std::make_unique<FloatHNSW>(dims_, cfg);
@@ -115,11 +129,7 @@ public:
     size_t memory_bytes() const override { return impl_->memory_bytes(); }
     std::vector<uint8_t> serialize() const override { return impl_->serialize(); }
     bool deserialize(const uint8_t* data, size_t size) override {
-        size_t cnt = 100000;
-        if (size >= 16) {
-            uint32_t c; memcpy(&c, data + 12, 4);
-            cnt = static_cast<size_t>(c);
-        }
+        size_t cnt = serialized_index_count_hint(data, size, 0x49384831);
         Int8FloatHNSWConfig cfg = cfg_;
         cfg.max_elements = std::max(static_cast<size_t>(cnt * 1.2), static_cast<size_t>(100000));
         impl_ = std::make_unique<Int8FloatHNSW>(dims_, cfg);
@@ -422,11 +432,14 @@ const float* emb_encode(const char* text, size_t* out_size) {
 
 int emb_encode_batch(const char** texts, int count, float* out_buffer) {
     if (!g_embedder || !texts || !out_buffer || count <= 0) return 0;
+    constexpr size_t kEmbeddingDims = embedding::EmbeddingModel::D_MODEL;
     for (int i = 0; i < count; ++i) {
         if (!texts[i]) continue;
         std::string str(texts[i]);
         auto embedding = g_embedder->encode(str);
-        std::memcpy(out_buffer + i * 384, embedding.data(), 384 * sizeof(float));
+        std::memcpy(out_buffer + static_cast<size_t>(i) * kEmbeddingDims,
+                    embedding.data(),
+                    kEmbeddingDims * sizeof(float));
     }
     return count;
 }
