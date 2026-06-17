@@ -542,7 +542,7 @@ function createPancakeApi(loadEngineImpl) {
         const isQuantized = opts.quantized !== undefined ? !!opts.quantized : true;
         const quantized = isQuantized ? 1 : 0;
         const M = opts.M || 16;
-        const efConstruction = opts.efConstruction || 200;
+        const efConstruction = opts.efConstruction || 50;
         const efSearch = opts.efSearch || 100;
 
         const resolvedOpts = { ...opts, quantized: isQuantized, M, efConstruction, efSearch };

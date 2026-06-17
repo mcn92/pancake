@@ -9,7 +9,7 @@ export interface CreateOptions {
   quantized?: boolean;
   /** HNSW graph connectivity (default: 16). Higher improves recall but uses more memory. */
   M?: number;
-  /** Build-time search breadth (default: 200). Higher improves index quality. */
+  /** Build-time search breadth (default: 50). Higher improves index quality. */
   efConstruction?: number;
   /** Query-time search breadth (default: 100). Tune for speed vs recall tradeoff. */
   efSearch?: number;

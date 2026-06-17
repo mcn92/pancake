@@ -185,18 +185,18 @@ uint32_t pancake_init(int dim, int max_elem, int quantized, int metric,
     if (quantized) {
         Int8FloatHNSWConfig i8cfg;
         i8cfg.max_elements = static_cast<size_t>(max_elem);
-        i8cfg.M = (M > 0) ? static_cast<size_t>(M) : 32;
-        i8cfg.ef_construction = (ef_c > 0) ? static_cast<size_t>(ef_c) : 200;
-        i8cfg.ef_search = (ef_s > 0) ? static_cast<size_t>(ef_s) : 128;
+        i8cfg.M = (M > 0) ? static_cast<size_t>(M) : 16;
+        i8cfg.ef_construction = (ef_c > 0) ? static_cast<size_t>(ef_c) : 50;
+        i8cfg.ef_search = (ef_s > 0) ? static_cast<size_t>(ef_s) : 100;
         i8cfg.metric = use_cosine ? DistanceMetric::Cosine : DistanceMetric::L2;
         i8cfg.use_heuristic = true;
         g_handles[h].index = new Int8FloatHNSWWrapper(dim, i8cfg);
     } else {
         FloatHNSWConfig cfg;
         cfg.max_elements = static_cast<size_t>(max_elem);
-        cfg.M = (M > 0) ? static_cast<size_t>(M) : 32;
-        cfg.ef_construction = (ef_c > 0) ? static_cast<size_t>(ef_c) : 200;
-        cfg.ef_search = (ef_s > 0) ? static_cast<size_t>(ef_s) : 128;
+        cfg.M = (M > 0) ? static_cast<size_t>(M) : 16;
+        cfg.ef_construction = (ef_c > 0) ? static_cast<size_t>(ef_c) : 50;
+        cfg.ef_search = (ef_s > 0) ? static_cast<size_t>(ef_s) : 100;
         cfg.metric = use_cosine ? DistanceMetric::Cosine : DistanceMetric::L2;
         g_handles[h].index = new FloatHNSWWrapper(dim, cfg);
     }
