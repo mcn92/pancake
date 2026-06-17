@@ -128,7 +128,7 @@ payload in a small `WRK1` envelope so it can persist Worker-specific metadata su
 | `metric` | string | `'cosine'` | `'cosine'` or `'l2'` |
 | `quantized` | boolean | `true` | Use int8 storage. Cuts memory by about `3.5x` on the current 1536D runs, with roughly a 1-2 point recall-ceiling tradeoff versus float32. Set to `false` for full float32 storage. |
 | `M` | number | `16` | HNSW connectivity |
-| `efConstruction` | number | `200` | Build-time beam width |
+| `efConstruction` | number | `50` | Build-time beam width |
 | `efSearch` | number | `100` | Query-time beam width |
 
 ### Methods

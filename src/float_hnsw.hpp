@@ -48,9 +48,9 @@ namespace wasm {
 enum class DistanceMetric : uint8_t { L2 = 0, Cosine = 1 };
 
 struct FloatHNSWConfig {
-    size_t M = 32;               // Max neighbors per layer (higher = better recall, more memory)
-    size_t ef_construction = 200; // Construction beam width (higher = better quality, slower build)
-    size_t ef_search = 128;      // Search beam width (higher = better recall, slower search)
+    size_t M = 16;               // Max neighbors per layer (higher = better recall, more memory)
+    size_t ef_construction = 50; // Construction beam width (higher = better quality, slower build)
+    size_t ef_search = 100;      // Search beam width (higher = better recall, slower search)
     size_t max_elements = 100000;
     uint32_t seed = 42;
     DistanceMetric metric = DistanceMetric::L2;

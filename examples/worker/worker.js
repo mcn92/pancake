@@ -199,8 +199,8 @@ function getImportConfig(imported, fallbackDims, contextLabel, maxElementsLimit)
   const maxElements = imported.metadata?.maxElements ?? DEFAULT_MAX_ELEMENTS;
   const rawInitParams = imported.metadata?.initParams ?? {};
   const initParams = {
-    M: rawInitParams.M ?? 8,
-    efC: rawInitParams.efC ?? 150,
+    M: rawInitParams.M ?? 16,
+    efC: rawInitParams.efC ?? 50,
     efS: rawInitParams.efS ?? 100
   };
   validateImportConfig(dims, maxElements, initParams, contextLabel, maxElementsLimit);
@@ -325,7 +325,7 @@ function buildIndexWrapper(engine, dims, maxElements, handle, initParams = {}) {
     throw new Error('WASM heap allocation failed');
   }
 
-  const _initParams = { M: initParams.M || 8, efC: initParams.efC || 150, efS: initParams.efS || 100 };
+  const _initParams = { M: initParams.M || 16, efC: initParams.efC || 50, efS: initParams.efS || 100 };
 
   const _extToInt = new Map();
   const _intToExt = new Map();
@@ -715,7 +715,7 @@ async function handleRequest(request, env, ctx) {
   if (url.pathname === '/init' && method === 'POST') {
     const body = await safeParseJson(request);
     if (!body) return jsonResponse({ error: 'Invalid JSON' }, 400);
-    const { dims, maxElements, M = 8, efConstruction = 150, efSearch = 100, vectors = [] } = body;
+    const { dims, maxElements, M = 16, efConstruction = 50, efSearch = 100, vectors = [] } = body;
 
     if (!isPositiveInteger(dims) || dims > MAX_DIMS)
       return jsonResponse({ error: `dims must be an integer between 1 and ${MAX_DIMS}` }, 400);

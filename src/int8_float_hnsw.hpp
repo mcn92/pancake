@@ -114,9 +114,9 @@ static BuildProfile g_build_profile;
 #endif
 
 struct Int8FloatHNSWConfig {
-    size_t M = 32;
-    size_t ef_construction = 200;
-    size_t ef_search = 128;
+    size_t M = 16;
+    size_t ef_construction = 50;
+    size_t ef_search = 100;
     size_t max_elements = 100000;
     uint32_t seed = 42;
     DistanceMetric metric = DistanceMetric::L2;

@@ -318,14 +318,11 @@ else           g_handles[h].index = new FloatHNSWWrapper(dim, cfg);
 
 (`engine.cpp:171`.)
 
-> **Default divergence — important.** The C ABI's *fallback* defaults (used only
-> when a non-positive value reaches it) are `M=32`, `ef_construction=200`,
-> `ef_search=128` (`engine.cpp:184`, `:193`). The JavaScript `create()` always
-> passes explicit values with its *own* defaults — `M=16`, `efConstruction=200`,
-> `efSearch=100` (`pancake-core.js:519`) — so for any caller going through the
-> JS API, the **effective defaults are the JS ones**. The C fallbacks only apply
-> to direct ABI callers (e.g. the native addon when given 0). Document and reason
-> about the JS defaults for normal use.
+> **Defaults.** The library defaults are `M=16`, `efConstruction=50`,
+> `efSearch=100`, and the JavaScript wrapper passes them explicitly. The C ABI
+> only falls back to its internal defaults when a direct caller passes
+> non-positive values to `pancake_init`; normal JS callers use the canonical
+> library defaults.
 
 ### 6.3 Result marshalling
 
@@ -654,15 +651,15 @@ write endpoints.
 | `metric` | `'cosine'` | `'cosine'` or `'l2'` |
 | `quantized` | `true` | int8 backend when true |
 | `M` | `16` | |
-| `efConstruction` | `200` | |
+| `efConstruction` | `50` | |
 | `efSearch` | `100` | mutable via `_setEfSearch` |
 
 Removed options (`compressed`, `varianceSample`) throw if passed.
 
 ### 12.2 C ABI fallback defaults (direct-ABI callers only)
 
-`M=32`, `ef_construction=200`, `ef_search=128`, applied only when a non-positive
-value reaches `pancake_init`. Normal JS callers never hit these.
+`M=16`, `ef_construction=50`, `ef_search=100`, applied only when a non-positive
+value reaches `pancake_init`. Normal JS callers already pass these explicitly.
 
 ### 12.3 Worker limits and env
 
