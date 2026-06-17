@@ -37,6 +37,8 @@
     "pancake.d.ts",
     "dist/engine.js",
     "dist/engine.wasm",
+    "dist/engine.scalar.js",
+    "dist/engine.scalar.wasm",
     "LICENSE",
     "README.md"
   ],
