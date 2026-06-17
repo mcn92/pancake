@@ -512,13 +512,29 @@ async function testRuntimeEntryPoints() {
     {
         const loadEngine = require('../dist/engine.js');
         const createPancakeApi = require('../pancake-core.js');
-        const wasmBinary = fs.readFileSync(path.join(process.cwd(), 'dist', 'engine.wasm'));
-        const compiled = await WebAssembly.compile(
-            wasmBinary.buffer.slice(
-                wasmBinary.byteOffset,
-                wasmBinary.byteOffset + wasmBinary.byteLength
-            )
-        );
+        async function compileWasmWithFallback() {
+            const entries = [
+                ['engine.wasm', 'simd'],
+                ['engine.scalar.wasm', 'scalar'],
+            ];
+            let lastError = null;
+            for (const [fileName, label] of entries) {
+                try {
+                    const wasmBinary = fs.readFileSync(path.join(process.cwd(), 'dist', fileName));
+                    const compiled = await WebAssembly.compile(
+                        wasmBinary.buffer.slice(
+                            wasmBinary.byteOffset,
+                            wasmBinary.byteOffset + wasmBinary.byteLength
+                        )
+                    );
+                    return { compiled, label };
+                } catch (error) {
+                    lastError = error;
+                }
+            }
+            throw lastError;
+        }
+        const { compiled, label } = await compileWasmWithFallback();
 
         const BrowserStylePancake = createPancakeApi(() => loadEngine({
             instantiateWasm(imports, successCallback) {
@@ -532,7 +548,7 @@ async function testRuntimeEntryPoints() {
         const idx = await BrowserStylePancake.create({ dim: 4, maxElements: 10 });
         idx.add(new Float32Array([1, 0, 0, 0]));
         const results = idx.search(new Float32Array([1, 0, 0, 0]), 1);
-        assert(results.length === 1 && results[0].id === 0, 'browser-style instantiateWasm path works');
+        assert(results.length === 1 && results[0].id === 0, `browser-style instantiateWasm path works (${label})`);
         idx.dispose();
     }
 }
