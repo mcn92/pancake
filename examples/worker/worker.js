@@ -332,8 +332,6 @@ function buildIndexWrapper(engine, dims, maxElements, handle, initParams = {}) {
   const _deletedExt = new Set();
   let _nextExtId = 0;
 
-  const _vectors = new Map();
-
   return {
     engine,
     dims,
@@ -352,7 +350,6 @@ function buildIndexWrapper(engine, dims, maxElements, handle, initParams = {}) {
       const extId = _nextExtId++;
       _extToInt.set(extId, intId);
       _intToExt.set(intId, extId);
-      _vectors.set(extId, new Float32Array(vec));
       return extId;
     },
 
@@ -445,7 +442,6 @@ function buildIndexWrapper(engine, dims, maxElements, handle, initParams = {}) {
       if (intId === undefined) return;
       engine._pancake_delete(this.handle, intId);
       _deletedExt.add(extId);
-      _vectors.delete(extId);
     },
 
     compact() {
@@ -463,10 +459,6 @@ function buildIndexWrapper(engine, dims, maxElements, handle, initParams = {}) {
       for (let newInt = 0; newInt < oldSurvivors.length; newInt++) {
         _extToInt.set(oldSurvivors[newInt].extId, newInt);
         _intToExt.set(newInt, oldSurvivors[newInt].extId);
-      }
-
-      for (const extId of Array.from(_vectors.keys())) {
-        if (!_extToInt.has(extId)) _vectors.delete(extId);
       }
     },
 
