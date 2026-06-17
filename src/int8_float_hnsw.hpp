@@ -72,11 +72,18 @@ struct BuildProfile {
     double search_base_ms = 0;
     double select_neighbors_ms = 0;
     double connect_ms = 0;
+    double prune_sort_ms = 0;
+    double prune_select_ms = 0;
 
     uint64_t dist_calls = 0;
     uint64_t candidate_pushes = 0;
     uint64_t candidate_pops = 0;
     uint64_t visited_marks = 0;
+    uint64_t base_append_fast = 0;
+    uint64_t base_prune_calls = 0;
+    uint64_t upper_prune_calls = 0;
+    uint64_t base_prune_candidates = 0;
+    uint64_t upper_prune_candidates = 0;
 
     void reset() { *this = BuildProfile{}; }
 
@@ -91,10 +98,19 @@ struct BuildProfile {
         printf("  base layer search:  %.2f ms total (%.4f ms/ins)\n", search_base_ms, search_base_ms / n);
         printf("  select neighbors:   %.2f ms total (%.4f ms/ins)\n", select_neighbors_ms, select_neighbors_ms / n);
         printf("  connect/rewire:     %.2f ms total (%.4f ms/ins)\n", connect_ms, connect_ms / n);
+        printf("    prune sort:       %.2f ms total (%.4f ms/ins)\n", prune_sort_ms, prune_sort_ms / n);
+        printf("    prune heuristic:  %.2f ms total (%.4f ms/ins)\n", prune_select_ms, prune_select_ms / n);
         printf("  dist calls/insert:  %.1f\n", (double)dist_calls / n);
         printf("  cand pushes/insert: %.1f\n", (double)candidate_pushes / n);
         printf("  cand pops/insert:   %.1f\n", (double)candidate_pops / n);
         printf("  visited marks/ins:  %.1f\n", (double)visited_marks / n);
+        printf("  base fast appends:  %.1f\n", (double)base_append_fast / n);
+        printf("  base prune calls:   %.1f (avg cand %.1f)\n",
+               (double)base_prune_calls / n,
+               base_prune_calls ? (double)base_prune_candidates / base_prune_calls : 0.0);
+        printf("  upper prune calls:  %.1f (avg cand %.1f)\n",
+               (double)upper_prune_calls / n,
+               upper_prune_calls ? (double)upper_prune_candidates / upper_prune_calls : 0.0);
         printf("================================================\n");
     }
 };
@@ -954,8 +970,33 @@ private:
             uint16_t& sz = base_sizes_[node];
             Edge* slot = base_slot(node);
             if (sz < M0_) {
+                PROFILE_COUNT(g_build_profile.base_append_fast++);
                 slot[sz++] = edge;
                 return;
+            }
+
+            // Fast reject: when the base layer is already full, a new reciprocal
+            // edge that is no better than the current worst edge and is already
+            // dominated by one of the kept neighbors cannot survive the full
+            // heuristic rerun. In that case skip the allocation/sort/heuristic
+            // path entirely.
+            float worst_dist = slot[0].dist;
+            bool duplicate = false;
+            for (uint16_t i = 0; i < sz; ++i) {
+                worst_dist = std::max(worst_dist, slot[i].dist);
+                if (slot[i].neighbor == edge.neighbor) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (duplicate) return;
+
+            if (edge.dist >= worst_dist) {
+                for (uint16_t i = 0; i < sz; ++i) {
+                    if (distance(edge.neighbor, slot[i].neighbor) < edge.dist) {
+                        return;
+                    }
+                }
             }
 
             std::vector<std::pair<float, uint32_t>> candidates;
@@ -964,14 +1005,33 @@ private:
                 candidates.emplace_back(slot[i].dist, slot[i].neighbor);
             }
             candidates.emplace_back(edge.dist, edge.neighbor);
+            PROFILE_COUNT({
+                g_build_profile.base_prune_calls++;
+                g_build_profile.base_prune_candidates += candidates.size();
+            });
+#if defined(PANCAKE_INT8_HNSW_BUILD_PROFILE)
+            double sort_t0 = emscripten_get_now();
+            std::sort(candidates.begin(), candidates.end());
+            g_build_profile.prune_sort_ms += emscripten_get_now() - sort_t0;
+            double select_t0 = emscripten_get_now();
+            select_neighbors_heuristic(node, candidates, M, level);
+            g_build_profile.prune_select_ms += emscripten_get_now() - select_t0;
+#else
             std::sort(candidates.begin(), candidates.end());
             select_neighbors_heuristic(node, candidates, M, level);
+#endif
             return;
         }
 
         auto& edges = upper_edges(node, level);
         edges.push_back(edge);
-        if (edges.size() > M) prune_neighbors(node, level, M);
+        if (edges.size() > M) {
+            PROFILE_COUNT({
+                g_build_profile.upper_prune_calls++;
+                g_build_profile.upper_prune_candidates += edges.size();
+            });
+            prune_neighbors(node, level, M);
+        }
     }
 
     void dequantize(uint32_t id, float* dst) const {
@@ -1477,8 +1537,17 @@ private:
         for (const Edge& edge : edges) {
             candidates.emplace_back(edge.dist, edge.neighbor);
         }
+#if defined(PANCAKE_INT8_HNSW_BUILD_PROFILE)
+        double sort_t0 = emscripten_get_now();
+        std::sort(candidates.begin(), candidates.end());
+        g_build_profile.prune_sort_ms += emscripten_get_now() - sort_t0;
+        double select_t0 = emscripten_get_now();
+        select_neighbors_heuristic(node, candidates, M, level);
+        g_build_profile.prune_select_ms += emscripten_get_now() - select_t0;
+#else
         std::sort(candidates.begin(), candidates.end());
         select_neighbors_heuristic(node, candidates, M, level);
+#endif
     }
 
     void prepare_visited() {
