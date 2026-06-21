@@ -2,6 +2,7 @@
 
 const assert = require('assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const createPancakeApi = require('../pancake-core.js');
@@ -122,7 +123,7 @@ function ensureScalarBuild() {
             OUT_BASENAME: SCALAR_BASENAME,
             WASM_SIMD: '0',
             PATCH_ENGINE_JS: '0',
-            EM_CACHE: process.env.EM_CACHE || '/tmp/pancake-emscripten-cache',
+            EM_CACHE: process.env.EM_CACHE || path.join(os.tmpdir(), 'pancake-emscripten-cache'),
         },
         encoding: 'utf8',
     });
