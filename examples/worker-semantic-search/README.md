@@ -20,6 +20,10 @@ The recommended deployment shape is read-only search:
 - serve `/search` and `/health` publicly
 - keep `/readiness` and `/reset_cache` as admin-only routes
 - set `READ_ONLY=1` if you want to disable even admin cache resets
+- set `API_KEY` for `/readiness` and `/reset_cache`, or explicitly opt into
+  unauthenticated admin access with `ALLOW_INSECURE_ADMIN=1` for local demos
+- set `ALLOWED_ORIGIN` if you need cross-origin browser access; unset means the
+  Worker omits CORS headers by default
 
 ## Scope
 

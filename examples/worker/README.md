@@ -74,15 +74,22 @@ wrangler deploy
 See [`wrangler.toml`](wrangler.toml) for the full configuration. Key env vars:
 
 - `API_KEY` for bearer auth
-- `ALLOWED_ORIGIN` for CORS
+- `ALLOWED_ORIGIN` for browser CORS access
 - `RATE_LIMIT_RPM` for per-IP rate limiting
+- `MAX_JSON_BYTES` to cap JSON request bodies
 - `READ_ONLY=1` to reject mutation/admin routes
+- `ALLOW_INSECURE_ADMIN=1` only for local/demo deployments where you explicitly want unauthenticated admin routes
 
 For a safer internet-facing deployment, set at least:
 
 - `API_KEY`
 - `ALLOWED_ORIGIN`
 - `READ_ONLY=1`
+
+By default, admin routes now fail closed unless `API_KEY` is set or
+`ALLOW_INSECURE_ADMIN=1` is explicitly enabled. CORS also fails closed by
+default: if `ALLOWED_ORIGIN` is unset, the Worker omits `Access-Control-Allow-Origin`
+instead of returning `*`.
 
 ## Deployment notes
 

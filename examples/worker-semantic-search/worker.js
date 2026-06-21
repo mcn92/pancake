@@ -8,6 +8,7 @@ const CORPUS_KEY = 'docs-corpus.json';
 const MANIFEST_KEY = 'docs-manifest.json';
 const MAX_RESULTS = 8;
 const DEFAULT_MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
+const DEFAULT_MAX_JSON_BYTES = 256 * 1024;
 const Pancake = createPancakeApi(() =>
   loadEngine({
     instantiateWasm(imports, successCallback) {
@@ -42,10 +43,7 @@ function formatMs(value) {
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
-    headers: {
-      'content-type': 'application/json; charset=utf-8',
-      'access-control-allow-origin': '*'
-    }
+    headers: corsHeaders({ 'content-type': 'application/json; charset=utf-8' })
   });
 }
 
@@ -55,6 +53,9 @@ function isReadOnly(env) {
 }
 
 function requireAdminAuth(request, env) {
+  if (!env.API_KEY && !allowInsecureAdmin(env)) {
+    return jsonResponse({ error: 'Admin routes require API_KEY or explicit ALLOW_INSECURE_ADMIN=1' }, 403);
+  }
   if (!env.API_KEY) return null;
   const authHeader = request.headers.get('Authorization') || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
@@ -70,6 +71,49 @@ function getMaxSnapshotBytes(env) {
   const parsed = parseInt(raw, 10);
   if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_MAX_SNAPSHOT_BYTES;
   return parsed;
+}
+
+function getMaxJsonBytes(env) {
+  const raw = env?.MAX_JSON_BYTES;
+  if (raw === undefined || raw === null || raw === '') return DEFAULT_MAX_JSON_BYTES;
+  const parsed = parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_MAX_JSON_BYTES;
+  return parsed;
+}
+
+function getCorsOrigin() {
+  const value = String(globalThis.__PANCAKE_ALLOWED_ORIGIN__ || '').trim();
+  return value || null;
+}
+
+function corsHeaders(extraHeaders = {}) {
+  const origin = getCorsOrigin();
+  return origin
+    ? { 'access-control-allow-origin': origin, ...extraHeaders }
+    : { ...extraHeaders };
+}
+
+function allowInsecureAdmin(env) {
+  const value = String(env.ALLOW_INSECURE_ADMIN || '').trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
+async function parseJsonBody(request, env) {
+  const maxJsonBytes = getMaxJsonBytes(env);
+  const contentLength = parseInt(request.headers.get('content-length') || '', 10);
+  if (Number.isInteger(contentLength) && contentLength > maxJsonBytes) {
+    return { error: `JSON body exceeds MAX_JSON_BYTES (${contentLength} > ${maxJsonBytes})`, status: 413 };
+  }
+  try {
+    const text = await request.text();
+    const size = new TextEncoder().encode(text).byteLength;
+    if (size > maxJsonBytes) {
+      return { error: `JSON body exceeds MAX_JSON_BYTES (${size} > ${maxJsonBytes})`, status: 413 };
+    }
+    return { body: JSON.parse(text) };
+  } catch {
+    return { error: 'Invalid JSON', status: 400 };
+  }
 }
 
 function htmlResponse(body) {
@@ -846,7 +890,11 @@ async function handleSearch(request, env) {
   let source = url.searchParams.get('source') || '';
 
   if (request.method === 'POST') {
-    const body = await request.json().catch(() => null);
+    const parsed = await parseJsonBody(request, env);
+    if (parsed.error) {
+      return jsonResponse({ error: parsed.error }, parsed.status);
+    }
+    const body = parsed.body;
     if (!body || typeof body.query !== 'string') {
       return jsonResponse({ error: 'POST /search requires JSON body { query: string, k?: number }' }, 400);
     }
@@ -897,12 +945,16 @@ async function handleSearch(request, env) {
 
 export default {
   async fetch(request, env) {
+    globalThis.__PANCAKE_ALLOWED_ORIGIN__ = String(env.ALLOWED_ORIGIN || '').trim();
     const url = new URL(request.url);
 
     if (request.method === 'OPTIONS') {
+      if (!getCorsOrigin()) {
+        return new Response(null, { status: 403 });
+      }
       return new Response(null, {
         headers: {
-          'access-control-allow-origin': '*',
+          ...corsHeaders(),
           'access-control-allow-methods': 'GET, POST, OPTIONS',
           'access-control-allow-headers': 'content-type'
         }

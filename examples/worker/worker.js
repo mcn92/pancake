@@ -25,6 +25,7 @@ const MAX_RESULTS = 100;
 const MAX_DIMS = 4096;
 const DEFAULT_MAX_ELEMENTS = 5_000;
 const DEFAULT_MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
+const DEFAULT_MAX_JSON_BYTES = 1 * 1024 * 1024;
 const MAX_EF = 2000;
 const MAX_M = 128;
 const WORKER_EXPORT_MAGIC = 0x57524b31; // "WRK1"
@@ -138,6 +139,14 @@ function getMaxSnapshotBytes(env) {
   if (raw === undefined || raw === null || raw === '') return DEFAULT_MAX_SNAPSHOT_BYTES;
   const parsed = parseInt(raw, 10);
   if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_MAX_SNAPSHOT_BYTES;
+  return parsed;
+}
+
+function getMaxJsonBytes(env) {
+  const raw = env?.MAX_JSON_BYTES;
+  if (raw === undefined || raw === null || raw === '') return DEFAULT_MAX_JSON_BYTES;
+  const parsed = parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_MAX_JSON_BYTES;
   return parsed;
 }
 
@@ -523,11 +532,19 @@ function buildIndexWrapper(engine, dims, maxElements, handle, initParams = {}) {
 
 let _corsEnv = null; // set per-request in handleRequest
 
+function corsHeaders(env, extraHeaders = {}) {
+  const origin = getCorsOrigin(env);
+  return origin
+    ? { 'Access-Control-Allow-Origin': origin, ...extraHeaders }
+    : { ...extraHeaders };
+}
+
 function jsonResponse(body, status = 200, extraHeaders = {}) {
-  const cors = _corsEnv ? { 'Access-Control-Allow-Origin': getCorsOrigin(_corsEnv) } : {};
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json', ...cors, ...extraHeaders }
+    headers: _corsEnv
+      ? corsHeaders(_corsEnv, { 'Content-Type': 'application/json', ...extraHeaders })
+      : { 'Content-Type': 'application/json', ...extraHeaders }
   });
 }
 
@@ -535,11 +552,21 @@ function isPositiveInteger(v) {
   return Number.isInteger(v) && v > 0;
 }
 
-async function safeParseJson(request) {
+async function safeParseJson(request, env) {
+  const maxJsonBytes = getMaxJsonBytes(env);
+  const contentLength = parseInt(request.headers.get('content-length') || '', 10);
+  if (Number.isInteger(contentLength) && contentLength > maxJsonBytes) {
+    return { error: `JSON body exceeds MAX_JSON_BYTES (${contentLength} > ${maxJsonBytes})`, status: 413 };
+  }
   try {
-    return await request.json();
+    const text = await request.text();
+    const size = new TextEncoder().encode(text).byteLength;
+    if (size > maxJsonBytes) {
+      return { error: `JSON body exceeds MAX_JSON_BYTES (${size} > ${maxJsonBytes})`, status: 413 };
+    }
+    return { body: JSON.parse(text) };
   } catch {
-    return null;
+    return { error: 'Invalid JSON', status: 400 };
   }
 }
 
@@ -556,7 +583,8 @@ function validateVector(vector, dims, fieldName) {
 }
 
 function getCorsOrigin(env) {
-  return env.ALLOWED_ORIGIN || '*';
+  const value = String(env.ALLOWED_ORIGIN || '').trim();
+  return value || null;
 }
 
 function isReadOnly(env) {
@@ -566,6 +594,11 @@ function isReadOnly(env) {
 
 function isAdminRoute(pathname) {
   return ADMIN_ROUTES.has(pathname);
+}
+
+function allowInsecureAdmin(env) {
+  const value = String(env.ALLOW_INSECURE_ADMIN || '').trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
 }
 
 
@@ -621,6 +654,9 @@ async function handleRequest(request, env, ctx) {
   const origin = getCorsOrigin(env);
 
   if (method === 'OPTIONS') {
+    if (!origin) {
+      return new Response(null, { status: 403 });
+    }
     return new Response(null, {
       status: 204,
       headers: {
@@ -629,6 +665,12 @@ async function handleRequest(request, env, ctx) {
         'Access-Control-Allow-Headers': 'Content-Type, Authorization'
       }
     });
+  }
+
+  if (isAdminRoute(url.pathname) && !env.API_KEY && !allowInsecureAdmin(env)) {
+    return jsonResponse({
+      error: 'Admin routes require API_KEY or explicit ALLOW_INSECURE_ADMIN=1'
+    }, 403);
   }
 
   if (env.API_KEY && url.pathname !== '/health') {
@@ -705,8 +747,9 @@ async function handleRequest(request, env, ctx) {
   }
 
   if (url.pathname === '/init' && method === 'POST') {
-    const body = await safeParseJson(request);
-    if (!body) return jsonResponse({ error: 'Invalid JSON' }, 400);
+    const parsed = await safeParseJson(request, env);
+    if (parsed.error) return jsonResponse({ error: parsed.error }, parsed.status);
+    const body = parsed.body;
     const { dims, maxElements, M = 16, efConstruction = 50, efSearch = 100, vectors = [] } = body;
 
     if (!isPositiveInteger(dims) || dims > MAX_DIMS)
@@ -762,8 +805,9 @@ async function handleRequest(request, env, ctx) {
     if (index.count >= index.maxElements)
       return jsonResponse({ error: 'Index is at capacity' }, 409);
 
-    const body = await safeParseJson(request);
-    if (!body) return jsonResponse({ error: 'Invalid JSON' }, 400);
+    const parsed = await safeParseJson(request, env);
+    if (parsed.error) return jsonResponse({ error: parsed.error }, parsed.status);
+    const body = parsed.body;
     const err = validateVector(body.vector, index.dims, 'vector');
     if (err) return jsonResponse({ error: err }, 400);
 
@@ -782,8 +826,9 @@ async function handleRequest(request, env, ctx) {
 
   if (url.pathname === '/delete' && method === 'POST') {
     if (!index) return jsonResponse({ error: 'Index not initialized.' }, 503);
-    const body = await safeParseJson(request);
-    if (!body) return jsonResponse({ error: 'Invalid JSON' }, 400);
+    const parsed = await safeParseJson(request, env);
+    if (parsed.error) return jsonResponse({ error: parsed.error }, parsed.status);
+    const body = parsed.body;
     const { id } = body;
     if (typeof id !== 'number' || !Number.isInteger(id) || id < 0)
       return jsonResponse({ error: 'id must be a non-negative integer' }, 400);
@@ -816,8 +861,9 @@ async function handleRequest(request, env, ctx) {
   if (url.pathname === '/add_batch' && method === 'POST') {
     if (!index) return jsonResponse({ error: 'Index not initialized. Call /init first.' }, 503);
 
-    const body = await safeParseJson(request);
-    if (!body) return jsonResponse({ error: 'Invalid JSON' }, 400);
+    const parsed = await safeParseJson(request, env);
+    if (parsed.error) return jsonResponse({ error: parsed.error }, parsed.status);
+    const body = parsed.body;
     const { vectors } = body;
     if (!Array.isArray(vectors) || vectors.length === 0)
       return jsonResponse({ error: 'vectors must be a non-empty array' }, 400);
@@ -862,8 +908,9 @@ async function handleRequest(request, env, ctx) {
     if (!index) return jsonResponse({ error: 'Index not initialized. Call /init first.' }, 503);
 
     const t0 = performance.now();
-    const body = await safeParseJson(request);
-    if (!body) return jsonResponse({ error: 'Invalid JSON' }, 400);
+    const parsed = await safeParseJson(request, env);
+    if (parsed.error) return jsonResponse({ error: parsed.error }, parsed.status);
+    const body = parsed.body;
     const { query, k = 10, ef = 100 } = body;
 
     const err = validateVector(query, index.dims, 'query');
@@ -882,8 +929,9 @@ async function handleRequest(request, env, ctx) {
 
   if (url.pathname === '/search_debug' && method === 'POST') {
     if (!index) return jsonResponse({ error: 'Index not initialized.' }, 503);
-    const body = await safeParseJson(request);
-    if (!body) return jsonResponse({ error: 'Invalid JSON' }, 400);
+    const parsed = await safeParseJson(request, env);
+    if (parsed.error) return jsonResponse({ error: parsed.error }, parsed.status);
+    const body = parsed.body;
     const { query, k = 5 } = body;
 
     const err = validateVector(query, index.dims, 'query');
@@ -907,13 +955,12 @@ async function handleRequest(request, env, ctx) {
     const bytes = index.exportBinary();
     return new Response(bytes, {
       status: 200,
-      headers: {
+      headers: corsHeaders(env, {
         'Content-Type': 'application/octet-stream',
         'Content-Length': String(bytes.byteLength),
         'X-Pancake-Dims': String(index.dims),
-        'X-Pancake-Count': String(index.count),
-        'Access-Control-Allow-Origin': getCorsOrigin(env)
-      }
+        'X-Pancake-Count': String(index.count)
+      })
     });
   }
 
