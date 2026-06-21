@@ -6,6 +6,10 @@ const ENVELOPE_VERSION = 3;
 const V2_ENVELOPE_HEADER_SIZE = 20; // magic(4) + version(4) + dim(4) + metric(4) + quantized(4)
 const V3_ENVELOPE_HEADER_SIZE = 32; // v2 + nextExtId(4) + mappingCount(4) + wasmSize(4)
 const MAPPING_ENTRY_SIZE = 8; // intId(4) + extId(4)
+const FLOAT_HNSW_MAGIC_V0 = 0x464C4857; // "FLHW"
+const FLOAT_HNSW_MAGIC_V1 = 0x464C4831; // "FLH1"
+const INT8_HNSW_MAGIC_V0 = 0x49384857; // "I8HW"
+const INT8_HNSW_MAGIC_V1 = 0x49384831; // "I8H1"
 
 class PancakeIndex {
     constructor(engine, opts, handle, vecPtr, idPtr, distPtr, bufferCapacity) {
@@ -137,6 +141,9 @@ class PancakeIndex {
             if (!Number.isFinite(f32[i])) {
                 throw new Error('Query vector contains non-finite value (NaN or Infinity)');
             }
+        }
+        if (!(allowedIds instanceof Set)) {
+            throw new Error('searchFiltered() requires allowedIds to be a Set<number>');
         }
         if (k === 0 || !allowedIds || allowedIds.size === 0) return [];
         this._ensureSearchCapacity(k);
@@ -325,6 +332,10 @@ class PancakeIndex {
 
                 if (version === ENVELOPE_VERSION) {
                     wasmBytes = bytes.subarray(wasmOffset, wasmOffset + wasmSize);
+                    const metadata = parseRawSnapshotMetadata(wasmBytes);
+                    if (metadata === null) {
+                        throw new Error('Import failed: unsupported raw snapshot format');
+                    }
                     pendingMappings = new Map();
                     let offset = mappingOffset;
                     for (let i = 0; i < mappingCount; i++) {
@@ -333,11 +344,20 @@ class PancakeIndex {
                         pendingMappings.set(intId, extId);
                         offset += MAPPING_ENTRY_SIZE;
                     }
+                    this._validateV3Mappings(pendingMappings, nextExtId, metadata.count);
                     pendingNextExtId = nextExtId;
                 } else {
                     wasmBytes = bytes.subarray(V2_ENVELOPE_HEADER_SIZE);
                 }
             }
+        }
+
+        if (wasmBytes === bytes) {
+            const metadata = parseRawSnapshotMetadata(wasmBytes);
+            if (metadata === null) {
+                throw new Error('Import failed: unsupported raw snapshot format');
+            }
+            this._validateRawSnapshotMetadata(metadata);
         }
 
         const dataPtr = this._e._emsc_malloc(wasmBytes.length);
@@ -366,7 +386,6 @@ class PancakeIndex {
         }
 
         try {
-            this._validateV3Mappings(pendingMappings, pendingNextExtId, count);
             this._commitMappings(pendingMappings, pendingNextExtId);
         } catch (err) {
             this._clearMappings();
@@ -507,6 +526,23 @@ class PancakeIndex {
         this._nextExtId = count;
     }
 
+    _validateRawSnapshotMetadata(metadata) {
+        if (metadata.dim !== this._dim) {
+            throw new Error(`Import failed: dim mismatch (exported ${metadata.dim}, expected ${this._dim})`);
+        }
+
+        const exportedL2 = metadata.metric === 0;
+        if (exportedL2 !== this._isL2) {
+            const got = exportedL2 ? 'l2' : 'cosine';
+            const want = this._isL2 ? 'l2' : 'cosine';
+            throw new Error(`Import failed: metric mismatch (exported ${got}, expected ${want})`);
+        }
+
+        if (metadata.quantized !== this._quantized) {
+            throw new Error('Import failed: quantized mismatch');
+        }
+    }
+
     _readResults(n) {
         const dv = new DataView(this._e.HEAPU8.buffer);
         const results = new Array(n);
@@ -535,15 +571,30 @@ function createPancakeApi(loadEngineImpl) {
         if ('varianceSample' in opts) {
             throw new Error('opts.varianceSample has been removed');
         }
+        if (opts.metric !== undefined && opts.metric !== 'cosine' && opts.metric !== 'l2') {
+            throw new Error("opts.metric must be 'cosine' or 'l2'");
+        }
+        if (opts.maxElements !== undefined && (!Number.isInteger(opts.maxElements) || opts.maxElements <= 0)) {
+            throw new Error('opts.maxElements must be a positive integer');
+        }
+        if (opts.M !== undefined && (!Number.isInteger(opts.M) || opts.M <= 1 || opts.M > 128)) {
+            throw new Error('opts.M must be an integer between 2 and 128');
+        }
+        if (opts.efConstruction !== undefined && (!Number.isInteger(opts.efConstruction) || opts.efConstruction <= 0 || opts.efConstruction > 4096)) {
+            throw new Error('opts.efConstruction must be an integer between 1 and 4096');
+        }
+        if (opts.efSearch !== undefined && (!Number.isInteger(opts.efSearch) || opts.efSearch <= 0)) {
+            throw new Error('opts.efSearch must be a positive integer');
+        }
 
         const dim = opts.dim;
         const metric = (opts.metric === 'l2') ? 0 : 1;
-        const maxElements = opts.maxElements || 100000;
+        const maxElements = opts.maxElements ?? 100000;
         const isQuantized = opts.quantized !== undefined ? !!opts.quantized : true;
         const quantized = isQuantized ? 1 : 0;
-        const M = opts.M || 16;
-        const efConstruction = opts.efConstruction || 50;
-        const efSearch = opts.efSearch || 100;
+        const M = opts.M ?? 16;
+        const efConstruction = opts.efConstruction ?? 50;
+        const efSearch = opts.efSearch ?? 100;
 
         const resolvedOpts = { ...opts, quantized: isQuantized, M, efConstruction, efSearch };
 
@@ -574,6 +625,35 @@ function createPancakeApi(loadEngineImpl) {
     }
 
     return { create };
+}
+
+function parseRawSnapshotMetadata(bytes) {
+    if (!bytes || bytes.length < 12) return null;
+
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const magic = view.getUint32(0, true);
+
+    if (magic === FLOAT_HNSW_MAGIC_V1 || magic === INT8_HNSW_MAGIC_V1) {
+        if (bytes.length < 40) return null;
+        return {
+            dim: view.getUint32(4, true),
+            count: view.getUint32(12, true),
+            metric: view.getUint32(32, true),
+            quantized: magic === INT8_HNSW_MAGIC_V1,
+        };
+    }
+
+    if (magic === FLOAT_HNSW_MAGIC_V0 || magic === INT8_HNSW_MAGIC_V0) {
+        if (bytes.length < 36) return null;
+        return {
+            dim: view.getUint32(4, true),
+            count: view.getUint32(8, true),
+            metric: view.getUint32(28, true),
+            quantized: magic === INT8_HNSW_MAGIC_V0,
+        };
+    }
+
+    return null;
 }
 
 module.exports = createPancakeApi;
