@@ -79,7 +79,9 @@ public:
         , cached_query_(nullptr)
     {
         vectors_.reserve(max_elements_ * dims_);
-        neighbors_.reserve(max_elements_);
+        base_neighbors_.resize(max_elements_ * M0_);
+        base_sizes_.assign(max_elements_, 0);
+        upper_.reserve(max_elements_);
         levels_.reserve(max_elements_);
         deleted_.reserve(max_elements_);
         level_mult_ = 1.0 / std::log(static_cast<double>(M_));
@@ -106,7 +108,8 @@ public:
 
         int level = random_level();
         levels_.push_back(level);
-        neighbors_.push_back(std::vector<std::vector<uint32_t>>(level + 1));
+        base_sizes_[id] = 0;
+        upper_.push_back(std::vector<std::vector<uint32_t>>(level > 0 ? static_cast<size_t>(level) : 0));
 
         if (entry_point_ == UINT32_MAX) {
             entry_point_ = id;
@@ -121,14 +124,14 @@ public:
             bool changed = true;
             while (changed) {
                 changed = false;
-                for (uint32_t neighbor : neighbors_[curr][l]) {
+                for_each_edge(curr, l, [&](uint32_t neighbor) {
                     float d = distance(id, neighbor);
                     if (d < curr_dist) {
                         curr = neighbor;
                         curr_dist = d;
                         changed = true;
                     }
-                }
+                });
             }
         }
 
@@ -136,12 +139,12 @@ public:
             auto candidates = search_layer(id, curr, ef_construction_, l);
             size_t max_n = (l == 0) ? M0_ : M_;
             select_neighbors_heuristic(id, candidates, max_n, l);
-            for (uint32_t neighbor : neighbors_[id][l]) {
-                neighbors_[neighbor][l].push_back(id);
-                if (neighbors_[neighbor][l].size() > max_n) {
+            for_each_edge(id, l, [&](uint32_t neighbor) {
+                append_neighbor(neighbor, l, id);
+                if (level_edge_count(neighbor, l) > max_n) {
                     prune_neighbors(neighbor, l, max_n);
                 }
-            }
+            });
             if (!candidates.empty()) curr = candidates[0].second;
         }
 
@@ -173,15 +176,15 @@ public:
             bool changed = true;
             while (changed) {
                 changed = false;
-                for (uint32_t neighbor : neighbors_[curr][l]) {
-                    if (deleted_[neighbor]) continue;
+                for_each_edge(curr, l, [&](uint32_t neighbor) {
+                    if (deleted_[neighbor]) return;
                     float d = distance_to_query(neighbor);
                     if (d < curr_dist) {
                         curr = neighbor;
                         curr_dist = d;
                         changed = true;
                     }
-                }
+                });
             }
         }
 
@@ -229,15 +232,15 @@ public:
             bool changed = true;
             while (changed) {
                 changed = false;
-                for (uint32_t neighbor : neighbors_[curr][l]) {
-                    if (deleted_[neighbor]) continue;
+                for_each_edge(curr, l, [&](uint32_t neighbor) {
+                    if (deleted_[neighbor]) return;
                     float d = distance_to_query(neighbor);
                     if (d < curr_dist) {
                         curr = neighbor;
                         curr_dist = d;
                         changed = true;
                     }
-                }
+                });
             }
         }
 
@@ -284,11 +287,13 @@ public:
 
             candidates.pop();
 
-            for (uint32_t neighbor : neighbors_[cand_id][0]) {
-                if (is_visited(neighbor)) continue;
+            bool stop_expansion = false;
+            for_each_edge(cand_id, 0, [&](uint32_t neighbor) {
+                if (stop_expansion) return;
+                if (is_visited(neighbor)) return;
                 mark_visited(neighbor);
 
-                if (deleted_[neighbor]) continue;
+                if (deleted_[neighbor]) return;
 
                 float nd = distance_to_query(neighbor);
 
@@ -313,8 +318,8 @@ public:
                     }
                 }
 
-                if (filtered_count >= k && candidates.empty()) break;
-            }
+                if (filtered_count >= k && candidates.empty()) stop_expansion = true;
+            });
         }
 
         // Extract filtered results sorted by distance (closest first).
@@ -367,7 +372,11 @@ public:
                 id_map[old_id] = new_id;
                 if (new_id != old_id) {
                     std::memcpy(&vectors_[new_id * dims_], &vectors_[old_id * dims_], dims_ * sizeof(float));
-                    neighbors_[new_id] = std::move(neighbors_[old_id]);
+                    base_sizes_[new_id] = base_sizes_[old_id];
+                    if (base_sizes_[old_id] != 0) {
+                        std::memcpy(base_slot(new_id), base_slot(old_id), static_cast<size_t>(base_sizes_[old_id]) * sizeof(uint32_t));
+                    }
+                    upper_[new_id] = std::move(upper_[old_id]);
                     levels_[new_id] = levels_[old_id];
                 }
                 new_id++;
@@ -377,15 +386,16 @@ public:
         // Phase 2: Remap all neighbor IDs and strip ghost references.
         for (uint32_t i = 0; i < new_id; i++) {
             for (int l = 0; l <= levels_[i]; l++) {
-                auto& nbrs = neighbors_[i][l];
-                size_t write = 0;
-                for (size_t r = 0; r < nbrs.size(); r++) {
-                    uint32_t mapped = id_map[nbrs[r]];
+                std::vector<uint32_t> nbrs = copy_level_edges(i, l);
+                std::vector<uint32_t> remapped;
+                remapped.reserve(nbrs.size());
+                for (uint32_t neighbor : nbrs) {
+                    uint32_t mapped = id_map[neighbor];
                     if (mapped != UINT32_MAX) {
-                        nbrs[write++] = mapped;
+                        remapped.push_back(mapped);
                     }
                 }
-                nbrs.resize(write);
+                write_level_edges(i, l, remapped);
             }
         }
 
@@ -393,10 +403,9 @@ public:
         for (uint32_t i = 0; i < new_id; i++) {
             for (int l = 0; l <= levels_[i]; l++) {
                 size_t target = (l == 0) ? M0_ : M_;
-                auto& nbrs = neighbors_[i][l];
-                if (nbrs.size() >= target) continue;
+                if (level_edge_count(i, l) >= target) continue;
 
-                std::vector<uint32_t> old_nbrs(nbrs.begin(), nbrs.end());
+                std::vector<uint32_t> old_nbrs = copy_level_edges(i, l);
                 std::unordered_set<uint32_t> old_set(old_nbrs.begin(), old_nbrs.end());
 
                 std::unordered_set<uint32_t> seen;
@@ -407,12 +416,12 @@ public:
                 for (uint32_t n : old_nbrs) {
                     if (n >= new_id) continue;
                     if (l > levels_[n]) continue;
-                    for (uint32_t nn : neighbors_[n][l]) {
+                    for_each_edge(n, l, [&](uint32_t nn) {
                         if (nn < new_id && seen.find(nn) == seen.end()) {
                             seen.insert(nn);
                             expansion.push_back(nn);
                         }
-                    }
+                    });
                 }
 
                 if (expansion.empty()) continue;
@@ -425,38 +434,69 @@ public:
 
                 select_neighbors_heuristic(i, candidates, target, l);
 
-                for (uint32_t n : neighbors_[i][l]) {
-                    if (old_set.count(n)) continue;
-                    if (n >= new_id || l > levels_[n]) continue;
-                    neighbors_[n][l].push_back(i);
-                    if (neighbors_[n][l].size() > target) {
+                for_each_edge(i, l, [&](uint32_t n) {
+                    if (old_set.count(n)) return;
+                    if (n >= new_id || l > levels_[n]) return;
+                    append_neighbor(n, l, i);
+                    if (level_edge_count(n, l) > target) {
                         prune_neighbors(n, l, target);
                     }
+                });
+            }
+        }
+
+        // Phase 3b: if a survivor lost all base-layer neighbors, reconnect it
+        // against the live pool so compaction cannot serialize an unreachable node.
+        if (new_id > 1) {
+            for (uint32_t i = 0; i < new_id; i++) {
+                if (level_edge_count(i, 0) != 0) continue;
+
+                std::vector<std::pair<float, uint32_t>> candidates;
+                candidates.reserve(new_id - 1);
+                for (uint32_t j = 0; j < new_id; ++j) {
+                    if (j == i) continue;
+                    candidates.emplace_back(distance(i, j), j);
+                }
+                std::sort(candidates.begin(), candidates.end());
+                select_neighbors_heuristic(i, candidates, M0_, 0);
+
+                uint32_t anchor = UINT32_MAX;
+                float anchor_dist = std::numeric_limits<float>::max();
+                for_each_edge(i, 0, [&](uint32_t n) {
+                    append_neighbor(n, 0, i);
+                    if (level_edge_count(n, 0) > M0_) {
+                        prune_neighbors(n, 0, M0_);
+                    }
+                    if (has_neighbor(n, 0, i)) {
+                        anchor = UINT32_MAX;
+                        return;
+                    }
+                    float d = distance(i, n);
+                    if (d < anchor_dist) {
+                        anchor = n;
+                        anchor_dist = d;
+                    }
+                });
+                if (anchor != UINT32_MAX) {
+                    ensure_base_neighbor(anchor, i);
                 }
             }
         }
 
-        // Phase 4: Update entry point.
-        if (entry_point_ != UINT32_MAX && id_map[entry_point_] != UINT32_MAX) {
-            entry_point_ = id_map[entry_point_];
-        } else {
-            entry_point_ = UINT32_MAX;
-            max_level_ = 0;
-            for (uint32_t i = 0; i < new_id; i++) {
-                if (levels_[i] > max_level_) {
-                    max_level_ = levels_[i];
-                    entry_point_ = i;
-                }
-            }
-            // All survivors at level 0: pick node 0 as entry point.
-            if (entry_point_ == UINT32_MAX && new_id > 0) {
-                entry_point_ = 0;
+        // Phase 4: Recompute a valid entry point / max-level pair from survivors.
+        entry_point_ = UINT32_MAX;
+        max_level_ = 0;
+        for (uint32_t i = 0; i < new_id; i++) {
+            if (entry_point_ == UINT32_MAX || levels_[i] > max_level_) {
+                max_level_ = levels_[i];
+                entry_point_ = i;
             }
         }
+        if (entry_point_ == UINT32_MAX && new_id > 0) entry_point_ = 0;
 
         // Shrink arrays.
         vectors_.resize(new_id * dims_);
-        neighbors_.resize(new_id);
+        upper_.resize(new_id);
         levels_.resize(new_id);
         deleted_.assign(new_id, 0);
         count_ = new_id;
@@ -468,8 +508,9 @@ public:
         size_t total_size = 10 * 4 + count_ * dims_ * sizeof(float);
         for (size_t i = 0; i < count_; ++i) {
             total_size += 4;
-            for (int l = 0; l <= levels_[i]; ++l)
-                total_size += 4 + neighbors_[i][l].size() * 4;
+            for (int l = 0; l <= levels_[i]; ++l) {
+                total_size += 4 + level_edge_count(static_cast<uint32_t>(i), l) * 4;
+            }
         }
 
         std::vector<uint8_t> buffer;
@@ -502,9 +543,9 @@ public:
         for (size_t i = 0; i < count_; ++i) {
             push_u32(static_cast<uint32_t>(levels_[i]));
             for (int l = 0; l <= levels_[i]; ++l) {
-                push_u32(static_cast<uint32_t>(neighbors_[i][l].size()));
-                for (uint32_t neighbor : neighbors_[i][l])
-                    push_u32(neighbor);
+                std::vector<uint32_t> edges = copy_level_edges(static_cast<uint32_t>(i), l);
+                push_u32(static_cast<uint32_t>(edges.size()));
+                for (uint32_t neighbor : edges) push_u32(neighbor);
             }
         }
         return buffer;
@@ -517,7 +558,8 @@ public:
             entry_point_ = UINT32_MAX;
             max_level_ = 0;
             vectors_.clear();
-            neighbors_.clear();
+            std::fill(base_sizes_.begin(), base_sizes_.end(), 0);
+            upper_.clear();
             levels_.clear();
             deleted_.clear();
             num_deleted_ = 0;
@@ -589,7 +631,9 @@ public:
             if (((bits >> 23) & 0xFF) == 0xFF) return fail();
         }
 
-        neighbors_.resize(count_);
+        base_neighbors_.assign(max_elements_ * M0_, 0);
+        base_sizes_.assign(max_elements_, 0);
+        upper_.resize(count_);
         levels_.resize(count_);
         int observed_max_level = 0;
         for (size_t i = 0; i < count_; ++i) {
@@ -598,17 +642,27 @@ public:
             if (lvl > static_cast<uint32_t>(max_level_)) return fail();
             levels_[i] = static_cast<int>(lvl);
             observed_max_level = std::max(observed_max_level, levels_[i]);
-            neighbors_[i].resize(lvl + 1);
+            upper_[i].resize(lvl > 0 ? lvl : 0);
             for (int l = 0; l <= static_cast<int>(lvl); ++l) {
                 uint32_t sz;
                 size_t max_neighbors = (l == 0) ? M0_ : M_;
                 if (!safe_read_u32(sz)) return fail();
                 if (sz > max_neighbors) return fail();
                 if (offset + sz * 4 > data_size) return fail();
-                neighbors_[i][l].resize(sz);
-                for (uint32_t j = 0; j < sz; ++j) {
-                    if (!safe_read_u32(neighbors_[i][l][j])) return fail();
-                    if (neighbors_[i][l][j] >= count_) return fail();
+                if (l == 0) {
+                    base_sizes_[i] = static_cast<uint16_t>(sz);
+                    uint32_t* base = base_slot(static_cast<uint32_t>(i));
+                    for (uint32_t j = 0; j < sz; ++j) {
+                        if (!safe_read_u32(base[j])) return fail();
+                        if (base[j] >= count_) return fail();
+                    }
+                } else {
+                    auto& edges = upper_[i][static_cast<size_t>(l - 1)];
+                    edges.resize(sz);
+                    for (uint32_t j = 0; j < sz; ++j) {
+                        if (!safe_read_u32(edges[j])) return fail();
+                        if (edges[j] >= count_) return fail();
+                    }
                 }
             }
         }
@@ -633,10 +687,10 @@ public:
         size_t total = count_ * dims_ * sizeof(float);
 
         // HNSW graph structure (logical size, not capacity)
-        for (const auto& node_neighbors : neighbors_) {
-            for (const auto& level : node_neighbors) {
-                total += level.size() * sizeof(uint32_t);
-            }
+        total += static_cast<size_t>(count_) * M0_ * sizeof(uint32_t);
+        total += base_sizes_.size() * sizeof(uint16_t);
+        for (const auto& node_levels : upper_) {
+            for (const auto& level : node_levels) total += level.size() * sizeof(uint32_t);
         }
 
         // Class overhead
@@ -646,11 +700,69 @@ public:
     }
 
     // Return layer-0 neighbor list for a node (for graph quality metrics)
-    const std::vector<uint32_t>& get_neighbors(uint32_t id) const {
-        return neighbors_[id][0];
+    std::vector<uint32_t> get_neighbors(uint32_t id) const {
+        return copy_level_edges(id, 0);
     }
 
 private:
+    uint32_t* base_slot(uint32_t id) {
+        return base_neighbors_.data() + static_cast<size_t>(id) * M0_;
+    }
+
+    const uint32_t* base_slot(uint32_t id) const {
+        return base_neighbors_.data() + static_cast<size_t>(id) * M0_;
+    }
+
+    std::vector<uint32_t>& upper_edges(uint32_t id, int level) {
+        return upper_[id][static_cast<size_t>(level - 1)];
+    }
+
+    const std::vector<uint32_t>& upper_edges(uint32_t id, int level) const {
+        return upper_[id][static_cast<size_t>(level - 1)];
+    }
+
+    size_t level_edge_count(uint32_t id, int level) const {
+        return (level == 0) ? base_sizes_[id] : upper_edges(id, level).size();
+    }
+
+    std::vector<uint32_t> copy_level_edges(uint32_t id, int level) const {
+        if (level == 0) {
+            const uint32_t* edges = base_slot(id);
+            return std::vector<uint32_t>(edges, edges + base_sizes_[id]);
+        }
+        return upper_edges(id, level);
+    }
+
+    template<typename Fn>
+    void for_each_edge(uint32_t id, int level, Fn&& fn) const {
+        if (level == 0) {
+            const uint32_t* edges = base_slot(id);
+            uint16_t sz = base_sizes_[id];
+            for (uint16_t i = 0; i < sz; ++i) fn(edges[i]);
+            return;
+        }
+        for (uint32_t edge : upper_edges(id, level)) fn(edge);
+    }
+
+    void write_level_edges(uint32_t node, int level, const std::vector<uint32_t>& edges) {
+        if (level == 0) {
+            uint16_t sz = static_cast<uint16_t>(edges.size());
+            base_sizes_[node] = sz;
+            uint32_t* slot = base_slot(node);
+            for (uint16_t i = 0; i < sz; ++i) slot[i] = edges[i];
+            return;
+        }
+        upper_edges(node, level) = edges;
+    }
+
+    void append_neighbor(uint32_t node, int level, uint32_t neighbor) {
+        if (level == 0) {
+            base_slot(node)[base_sizes_[node]++] = neighbor;
+            return;
+        }
+        upper_edges(node, level).push_back(neighbor);
+    }
+
     float l2(const float* a, const float* b) const {
         float sum = 0.0f;
         size_t d = 0;
@@ -753,8 +865,8 @@ private:
             auto [curr_dist, curr] = candidates.top();
             candidates.pop();
             if (curr_dist > results.top().first && results.size() >= ef) break;
-            for (uint32_t neighbor : neighbors_[curr][level]) {
-                if (is_visited(neighbor)) continue;
+            for_each_edge(curr, level, [&](uint32_t neighbor) {
+                if (is_visited(neighbor)) return;
                 mark_visited(neighbor);
                 float nd = distance(query_id, neighbor);
                 if (nd < results.top().first || results.size() < ef) {
@@ -762,7 +874,7 @@ private:
                     results.emplace(nd, neighbor);
                     if (results.size() > ef) results.pop();
                 }
-            }
+            });
         }
         std::vector<std::pair<float, uint32_t>> res;
         while (!results.empty()) { res.push_back(results.top()); results.pop(); }
@@ -785,8 +897,8 @@ private:
             auto [curr_dist, curr] = candidates.top();
             candidates.pop();
             if (curr_dist > results.top().first && results.size() >= ef) break;
-            for (uint32_t neighbor : neighbors_[curr][level]) {
-                if (is_visited(neighbor) || deleted_[neighbor]) continue;
+            for_each_edge(curr, level, [&](uint32_t neighbor) {
+                if (is_visited(neighbor) || deleted_[neighbor]) return;
                 mark_visited(neighbor);
                 float nd = distance_to_query(neighbor);
                 if (nd < results.top().first || results.size() < ef) {
@@ -794,7 +906,7 @@ private:
                     results.emplace(nd, neighbor);
                     if (results.size() > ef) results.pop();
                 }
-            }
+            });
         }
         std::vector<std::pair<float, uint32_t>> res;
         while (!results.empty()) { res.push_back(results.top()); results.pop(); }
@@ -850,15 +962,53 @@ private:
                 result.push_back(cand.second);
             }
         }
-        neighbors_[node][level] = std::move(result);
+        write_level_edges(node, level, result);
     }
 
     void prune_neighbors(uint32_t node, int level, size_t M) {
-        auto& list = neighbors_[node][level];
         std::vector<std::pair<float, uint32_t>> candidates;
-        for (uint32_t n : list) candidates.emplace_back(distance(node, n), n);
+        for_each_edge(node, level, [&](uint32_t n) {
+            candidates.emplace_back(distance(node, n), n);
+        });
         std::sort(candidates.begin(), candidates.end());
         select_neighbors_heuristic(node, candidates, M, level);
+    }
+
+    bool has_neighbor(uint32_t node, int level, uint32_t neighbor) const {
+        std::vector<uint32_t> nbrs = copy_level_edges(node, level);
+        for (uint32_t n : nbrs) {
+            if (n == neighbor) return true;
+        }
+        return false;
+    }
+
+    void ensure_base_neighbor(uint32_t node, uint32_t neighbor) {
+        std::vector<uint32_t> nbrs = copy_level_edges(node, 0);
+        for (uint32_t n : nbrs) {
+            if (n == neighbor) return;
+        }
+
+        nbrs.push_back(neighbor);
+        if (nbrs.size() <= M0_) {
+            write_level_edges(node, 0, nbrs);
+            return;
+        }
+
+        write_level_edges(node, 0, nbrs);
+        prune_neighbors(node, 0, M0_);
+        if (has_neighbor(node, 0, neighbor)) return;
+
+        size_t worst = 0;
+        float worst_dist = distance(node, nbrs[0]);
+        for (size_t i = 1; i < nbrs.size(); ++i) {
+            float d = distance(node, nbrs[i]);
+            if (d > worst_dist) {
+                worst = i;
+                worst_dist = d;
+            }
+        }
+        nbrs[worst] = neighbor;
+        write_level_edges(node, 0, nbrs);
     }
 
     void prepare_visited() {
@@ -881,7 +1031,9 @@ private:
     std::vector<float> vectors_;
     const float* cached_query_;
     std::vector<float> norm_query_;  // scratch buffer for normalized query (cosine)
-    std::vector<std::vector<std::vector<uint32_t>>> neighbors_;
+    std::vector<uint32_t> base_neighbors_;
+    std::vector<uint16_t> base_sizes_;
+    std::vector<std::vector<std::vector<uint32_t>>> upper_;
     std::vector<int> levels_;
     std::vector<uint8_t> deleted_;
     std::vector<uint32_t> visited_list_;
