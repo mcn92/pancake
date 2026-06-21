@@ -7,17 +7,18 @@
  *     --vectors ./dist/vectors.bin \
  *     --dims 384 \
  *     --count 5000 \
- *     --out /tmp/pancake-index.bin
+ *     --out <temp-dir>/pancake-index.bin
  *
  * Defaults match the technical_demo_worker.js dataset (5000 x 384D from vectors.bin).
  *
  * After this finishes, upload to R2 with:
- *   npx wrangler r2 object put pancake-indexes/pancake-index.bin --file=/tmp/pancake-index.bin --remote
+ *   npx wrangler r2 object put pancake-indexes/pancake-index.bin --file=<temp-dir>/pancake-index.bin --remote
  *
  * The cloudflare worker will then auto-restore from R2 on its next cold start.
  */
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 // ------------------ args ------------------
@@ -39,7 +40,7 @@ const ENGINE_DIR  = args.engineDir || path.resolve(__dirname, '..', '..', 'dist'
 const VECTORS_PATH = args.vectors  || path.join(ENGINE_DIR, 'vectors.bin');
 const DIMS         = parseInt(args.dims  || '384', 10);
 const COUNT        = parseInt(args.count || '5000', 10);
-const OUT_PATH     = args.out      || '/tmp/pancake-index.bin';
+const OUT_PATH     = args.out      || path.join(os.tmpdir(), 'pancake-index.bin');
 
 // init params (mirror worker.js restore-path defaults: int8 backend, M=8, efC=150, efS=100)
 const M             = parseInt(args.M  || '8',   10);

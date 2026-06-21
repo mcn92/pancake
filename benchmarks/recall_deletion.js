@@ -2,6 +2,7 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const Pancake = require('../dist/engine.js');
 const { parseBenchmarkArgs, resolveSingleValue } = require('./bench_args');
@@ -272,7 +273,7 @@ function cosineDist(a, b) {
         }
     }
 
-    fs.writeFileSync('/tmp/recall_dbpedia_1536d.json', JSON.stringify({
+    fs.writeFileSync(path.join(os.tmpdir(), 'recall_dbpedia_1536d.json'), JSON.stringify({
         pancakeBuildSec: buildSec,
         hnswlibBuildSec: hnswBuildSec,
         pancake: results,

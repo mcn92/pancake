@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Pancake from '../../pancake.node.mjs';
@@ -10,7 +11,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
-const DEFAULT_OUT_DIR = '/tmp/pancake-docs-demo';
+const DEFAULT_OUT_DIR = path.join(os.tmpdir(), 'pancake-docs-demo');
 const TARGET_CHARS = 700;
 
 const DOC_SOURCES = [
