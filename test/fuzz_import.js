@@ -15,6 +15,7 @@
  *   - Corrupted graph structure (bad level values, oversized neighbor lists)
  *   - NaN/Infinity in float fields (scales, offsets, vectors)
  *   - Envelope corruption (bad magic, version, dimension mismatch, truncated)
+ *   - JS-layer envelope bookkeeping corruption (nextExtId, mappingCount, mappings)
  *   - Zero-length and minimal payloads
  *   - Valid snapshot followed by post-search to verify index is still usable
  *
@@ -437,6 +438,54 @@ async function fuzzEnvelopeCorruption() {
     await tryImport('envelope-huge-mappingCount', buf7, dim, true);
 }
 
+async function fuzzEnvelopeBookkeeping(snapshot, label) {
+    console.log(`\n  Envelope bookkeeping corruption (${label})`);
+    const exported = new Uint8Array(snapshot.exported);
+    const view = new DataView(exported.buffer, exported.byteOffset, exported.byteLength);
+    const nextExtId = view.getUint32(20, true);
+    const mappingCount = view.getUint32(24, true);
+    const mappingOffset = 32;
+    const maxLiveExtId = mappingCount > 0
+        ? view.getUint32(mappingOffset + (mappingCount - 1) * 8 + 4, true)
+        : -1;
+
+    // nextExtId is JS-layer state, so it bypasses the raw-engine validators.
+    // We still know certain values are impossible for this envelope: anything
+    // below the live mapping count or at/below the max live external ID.
+    for (const badNextExtId of new Set([0, 1, snapshot.count - 1, nextExtId - 1, maxLiveExtId])) {
+        if (badNextExtId < 0) continue;
+        const mutated = mutateU32(exported, 20, badNextExtId);
+        await mustReject(`envelope:nextExtId=${badNextExtId}/${label}`, mutated, snapshot.dim, snapshot.quantized);
+    }
+
+    // mappingCount smaller than the live raw count should be rejected even if
+    // the payload itself remains valid.
+    if (mappingCount > 0) {
+        const shrunkCount = mappingCount - 1;
+        const mutated = new Uint8Array(exported);
+        const mv = new DataView(mutated.buffer, mutated.byteOffset, mutated.byteLength);
+        mv.setUint32(24, shrunkCount, true);
+
+        const oldWasmOffset = 32 + mappingCount * 8;
+        const newWasmOffset = 32 + shrunkCount * 8;
+        const wasmBytes = mutated.slice(oldWasmOffset);
+        mutated.set(wasmBytes, newWasmOffset);
+        mv.setUint32(28, wasmBytes.byteLength, true);
+
+        await mustReject(`envelope:mappingCount=${shrunkCount}/${label}`, mutated, snapshot.dim, snapshot.quantized);
+    }
+
+    // Duplicate external IDs in the JS envelope mapping should be rejected
+    // before the raw engine sees the payload.
+    if (mappingCount > 1) {
+        const mutated = new Uint8Array(exported);
+        const mv = new DataView(mutated.buffer, mutated.byteOffset, mutated.byteLength);
+        const firstExtId = mv.getUint32(mappingOffset + 4, true);
+        mv.setUint32(mappingOffset + 12, firstExtId, true);
+        await mustReject(`envelope:duplicate-ext-id/${label}`, mutated, snapshot.dim, snapshot.quantized);
+    }
+}
+
 async function fuzzMultiBitCorruption(snapshot, label, rounds) {
     console.log(`\n  Multi-bit corruption (${label})`);
     const raw = extractWasmPayload(snapshot.exported);
@@ -808,6 +857,8 @@ async function main() {
     await fuzzMultiBitCorruption(int8Snap, 'int8', rounds);
 
     await fuzzEnvelopeCorruption();
+    await fuzzEnvelopeBookkeeping(floatSnap, 'float32');
+    await fuzzEnvelopeBookkeeping(int8Snap, 'int8');
     await fuzzPostImportStability();
     await fuzzInputValidation();
     await fuzzQuantizedScaleCorruption(int8Snap);
