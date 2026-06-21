@@ -3,6 +3,7 @@
 const fs = require('fs');
 const { spawn } = require('child_process');
 const { execFileSync } = require('child_process');
+const os = require('os');
 const path = require('path');
 const { chromium, webkit, firefox } = require('playwright');
 
@@ -13,9 +14,10 @@ const PORT = 4173;
 const URL = `http://${HOST}:${PORT}`;
 
 function prepareFixtureDependency() {
+  const npmCacheDir = path.join(os.tmpdir(), '.npm-pack-cache');
   const packJson = execFileSync(
     'npm',
-    ['pack', '--json', '--cache', '/tmp/.npm-pack-cache'],
+    ['pack', '--json', '--ignore-scripts', '--cache', npmCacheDir],
     { cwd: ROOT_DIR, encoding: 'utf8' }
   );
 
