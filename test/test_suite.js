@@ -154,6 +154,46 @@ async function testCreation() {
         () => Pancake.create({ metric: 'cosine', maxElements: 100 }),
         'create() without dim throws'
     );
+
+    await assertThrowsAsync(
+        () => Pancake.create({ ...DEFAULT_CONFIG, metric: 'dot' }),
+        'create() with invalid metric throws'
+    );
+
+    await assertThrowsAsync(
+        () => Pancake.create({ ...DEFAULT_CONFIG, maxElements: 0 }),
+        'create() with maxElements=0 throws'
+    );
+
+    await assertThrowsAsync(
+        () => Pancake.create({ ...DEFAULT_CONFIG, M: 0 }),
+        'create() with M=0 throws'
+    );
+
+    await assertThrowsAsync(
+        () => Pancake.create({ ...DEFAULT_CONFIG, M: 1 }),
+        'create() with M=1 throws'
+    );
+
+    await assertThrowsAsync(
+        () => Pancake.create({ ...DEFAULT_CONFIG, M: 129 }),
+        'create() with M=129 throws'
+    );
+
+    await assertThrowsAsync(
+        () => Pancake.create({ ...DEFAULT_CONFIG, efConstruction: 0 }),
+        'create() with efConstruction=0 throws'
+    );
+
+    await assertThrowsAsync(
+        () => Pancake.create({ ...DEFAULT_CONFIG, efConstruction: 5000 }),
+        'create() with efConstruction=5000 throws'
+    );
+
+    await assertThrowsAsync(
+        () => Pancake.create({ ...DEFAULT_CONFIG, efSearch: 0 }),
+        'create() with efSearch=0 throws'
+    );
 }
 
 
@@ -831,6 +871,87 @@ async function testErrorPaths() {
         dst.dispose();
     }
 
+    // Unsupported raw snapshot bytes are rejected before mutating destination state
+    {
+        const dst = await Pancake.create(DEFAULT_CONFIG);
+        const vecs = Array.from({ length: 3 }, () => normalizedVec(DIM));
+        const ids = dst.addBatch(vecs);
+        const before = dst.search(vecs[0], 1);
+
+        let msg = '';
+        try { dst.import(new Uint8Array([1, 2, 3, 4])); } catch (e) { msg = e.message; }
+
+        assert(msg.includes('unsupported raw snapshot format'), 'import rejects unsupported raw snapshot bytes before backend mutation');
+        assert(dst.count === 3, 'unsupported raw snapshot import preserves existing destination count');
+        const after = dst.search(vecs[0], 1);
+        assert(after.length === 1 && after[0].id === ids[0], 'unsupported raw snapshot import preserves existing destination search state');
+        assert(before[0].id === after[0].id, 'unsupported raw snapshot import preserves stable IDs');
+        dst.dispose();
+    }
+
+    // Raw snapshot metric mismatch is rejected before mutating destination state
+    {
+        const src = await Pancake.create({ ...DEFAULT_CONFIG, metric: 'cosine', quantized: false });
+        src.addBatch(Array.from({ length: 2 }, () => normalizedVec(DIM)));
+        const wrapped = src.export();
+        const raw = wrapped.subarray(32 + 2 * 8);
+        src.dispose();
+
+        const dst = await Pancake.create({ ...DEFAULT_CONFIG, metric: 'l2', quantized: false });
+        const vecs = Array.from({ length: 3 }, () => normalizedVec(DIM));
+        const ids = dst.addBatch(vecs);
+        let msg = '';
+        try { dst.import(raw); } catch (e) { msg = e.message; }
+
+        assert(msg.includes('metric mismatch'), 'raw snapshot metric mismatch is rejected before backend mutation');
+        assert(dst.count === 3, 'raw snapshot metric mismatch preserves existing destination count');
+        const after = dst.search(vecs[0], 1);
+        assert(after.length === 1 && after[0].id === ids[0], 'raw snapshot metric mismatch preserves destination search state');
+        dst.dispose();
+    }
+
+    // Raw snapshot dimension mismatch is rejected before mutating destination state
+    {
+        const src = await Pancake.create({ ...DEFAULT_CONFIG, dim: 4 });
+        src.add(new Float32Array([1, 0, 0, 0]));
+        const wrapped = src.export();
+        const raw = wrapped.subarray(32 + 8);
+        src.dispose();
+
+        const dst = await Pancake.create({ ...DEFAULT_CONFIG, dim: 8 });
+        const vec = normalizedVec(8);
+        const id = dst.add(vec);
+        let msg = '';
+        try { dst.import(raw); } catch (e) { msg = e.message; }
+
+        assert(msg.includes('dim mismatch'), 'raw snapshot dim mismatch is rejected before backend mutation');
+        assert(dst.count === 1, 'raw snapshot dim mismatch preserves existing destination count');
+        const after = dst.search(vec, 1);
+        assert(after.length === 1 && after[0].id === id, 'raw snapshot dim mismatch preserves destination data');
+        dst.dispose();
+    }
+
+    // Raw snapshot quantized mismatch is rejected before mutating destination state
+    {
+        const src = await Pancake.create({ ...DEFAULT_CONFIG, quantized: false });
+        src.addBatch(Array.from({ length: 2 }, () => normalizedVec(DIM)));
+        const wrapped = src.export();
+        const raw = wrapped.subarray(32 + 2 * 8);
+        src.dispose();
+
+        const dst = await Pancake.create({ ...DEFAULT_CONFIG, quantized: true });
+        const vecs = Array.from({ length: 2 }, () => normalizedVec(DIM));
+        const ids = dst.addBatch(vecs);
+        let msg = '';
+        try { dst.import(raw); } catch (e) { msg = e.message; }
+
+        assert(msg.includes('quantized mismatch'), 'raw snapshot quantized mismatch is rejected before backend mutation');
+        assert(dst.count === 2, 'raw snapshot quantized mismatch preserves existing destination count');
+        const after = dst.search(vecs[0], 1);
+        assert(after.length === 1 && after[0].id === ids[0], 'raw snapshot quantized mismatch preserves destination search state');
+        dst.dispose();
+    }
+
     // Import of truncated v3 envelope is rejected
     {
         const src = await Pancake.create(DEFAULT_CONFIG);
@@ -860,6 +981,7 @@ async function testErrorPaths() {
         let msg = '';
         try { dst.import(exported); } catch (e) { msg = e.message; }
         assert(msg.includes('nextExtId is invalid'), 'import rejects v3 envelope with invalid nextExtId');
+        assert(dst.count === 0, 'failed import with invalid nextExtId leaves empty target index empty');
         dst.dispose();
     }
 
@@ -901,6 +1023,33 @@ async function testErrorPaths() {
         let msg = '';
         try { dst.import(exported); } catch (e) { msg = e.message; }
         assert(msg.includes('mapping contains duplicates'), 'import rejects v3 envelope with duplicate external IDs');
+        dst.dispose();
+    }
+
+    // Import validation failure must not corrupt an existing destination index
+    {
+        const src = await Pancake.create(DEFAULT_CONFIG);
+        src.addBatch(Array.from({ length: 5 }, () => normalizedVec(DIM)));
+        const exported = new Uint8Array(src.export());
+        src.dispose();
+
+        const dst = await Pancake.create(DEFAULT_CONFIG);
+        const liveVecs = Array.from({ length: 3 }, () => normalizedVec(DIM));
+        const liveIds = dst.addBatch(liveVecs);
+        const beforeCount = dst.count;
+        const beforeTop = dst.search(liveVecs[0], 1)[0];
+
+        const view = new DataView(exported.buffer, exported.byteOffset, exported.byteLength);
+        view.setUint32(20, 1, true);
+
+        let msg = '';
+        try { dst.import(exported); } catch (e) { msg = e.message; }
+        assert(msg.includes('nextExtId is invalid'), 'failed import reports validation error before mutation');
+        assert(dst.count === beforeCount, 'failed import preserves existing destination count');
+
+        const afterTop = dst.search(liveVecs[0], 1)[0];
+        assert(afterTop.id === liveIds[0], 'failed import preserves existing destination ID mappings');
+        assert(beforeTop.id === afterTop.id, 'failed import preserves search identity for existing destination data');
         dst.dispose();
     }
 }
@@ -1439,6 +1588,39 @@ async function testMetricCorrectnessDCT() {
 }
 
 
+async function testSearchFilteredInputContract() {
+    section('Filtered search input contract');
+
+    const idx = await Pancake.create(DEFAULT_CONFIG);
+    idx.addBatch([
+        normalizedVec(DIM),
+        normalizedVec(DIM),
+        normalizedVec(DIM),
+    ]);
+
+    const query = normalizedVec(DIM);
+    const ok = idx.searchFiltered(query, 2, new Set([0, 1]));
+    assert(Array.isArray(ok), 'searchFiltered() accepts Set<number>');
+
+    assertThrows(
+        () => idx.searchFiltered(query, 2, [0, 1]),
+        'searchFiltered() rejects array allowedIds'
+    );
+
+    assertThrows(
+        () => idx.searchFiltered(query, 2, '01'),
+        'searchFiltered() rejects string allowedIds'
+    );
+
+    assertThrows(
+        () => idx.searchFiltered(query, 2, { size: 2, values: () => [0, 1][Symbol.iterator]() }),
+        'searchFiltered() rejects non-Set set-like objects'
+    );
+
+    idx.dispose();
+}
+
+
 // ─── Runner ───────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -1475,6 +1657,7 @@ async function main() {
         testDeterminismIds,
         testMetricCorrectnessQuantized,
         testMetricCorrectnessDCT,
+        testSearchFilteredInputContract,
     ];
 
     for (const suite of suites) {

@@ -37,7 +37,7 @@ export interface PancakeIndex {
   compact(): void;
   /** Serialize the index to a Uint8Array for persistence. Throws if ghostCount > 0; call compact() first. */
   export(): Uint8Array;
-  /** Restore index state from a previous export(). A failed import leaves the index unusable; back up with export() first if recovery matters. */
+  /** Restore index state from a previous export(). Envelope/config validation failures leave the index unchanged, but backend-level import failures may leave it unusable; back up with export() first if recovery matters. */
   import(data: Uint8Array | ArrayBuffer): void;
   /** Free WASM heap buffers. Instance is unusable after this. */
   dispose(): void;
