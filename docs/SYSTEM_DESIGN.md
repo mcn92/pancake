@@ -581,10 +581,13 @@ and a bucket is bound, the Worker lazily **restores from R2** before serving
 | `/reset_cache` | POST | — → drops warm index, forces cold restore | yes |
 | `/search_debug` | POST | `{query,k?}` → raw vs translated ids | yes |
 
-Cross-cutting: optional bearer-token auth (`API_KEY`; `/health` always exempt),
-optional per-IP sliding-window rate limit (`RATE_LIMIT_RPM`, 60 s window,
-per-isolate so the effective global limit is `limit × isolates`), and CORS
-(`ALLOWED_ORIGIN`, default `*`).
+Cross-cutting: `/health` always stays public, but admin routes now fail closed
+unless `API_KEY` is set or `ALLOW_INSECURE_ADMIN=1` is explicitly enabled for a
+local/demo deployment; optional per-IP sliding-window rate limiting
+(`RATE_LIMIT_RPM`, 60 s window, per-isolate so the effective global limit is
+`limit × isolates`); request-body caps for JSON (`MAX_JSON_BYTES`) and binary
+snapshot import (`MAX_SNAPSHOT_BYTES`); and opt-in CORS via `ALLOWED_ORIGIN`
+(unset => no `Access-Control-Allow-Origin` header).
 
 ### 11.3 R2 persistence
 
@@ -665,12 +668,14 @@ value reaches `pancake_init`. Normal JS callers already pass these explicitly.
 
 | Constant | Value | | Env var | Default | Purpose |
 |----------|-------|---|---------|---------|---------|
-| `MAX_RESULTS` | 100 | | `API_KEY` | (unset → no auth) | bearer token |
-| `MAX_DIMS` | 4096 | | `ALLOWED_ORIGIN` | `*` | CORS |
+| `MAX_RESULTS` | 100 | | `API_KEY` | required for admin routes unless `ALLOW_INSECURE_ADMIN=1` | bearer token |
+| `MAX_DIMS` | 4096 | | `ALLOWED_ORIGIN` | unset | opt-in CORS |
 | `MAX_EF` | 2000 | | `RATE_LIMIT_RPM` | 0 (off) | per-IP/min |
 | `MAX_M` | 128 | | `READ_ONLY` | off | reject admin routes |
 | `DEFAULT_MAX_ELEMENTS` | 5000 | | `MAX_ELEMENTS_LIMIT` | 5,000,000 | capacity ceiling |
+| `DEFAULT_MAX_JSON_BYTES` | 1 MiB | | `MAX_JSON_BYTES` | 1 MiB | JSON body cap |
 | `RATE_LIMIT_WINDOW_MS` | 60000 | | | | |
+| | | | `ALLOW_INSECURE_ADMIN` | off | local/demo opt-in for unauthenticated admin routes |
 
 ### 12.4 Build constants
 
