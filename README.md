@@ -10,13 +10,13 @@ Pancake is an ANN library -- it doesn't ship an embedding model. Use any embedde
 
 ## Install
 
-> **Not yet on npm.** The `pancake-wasm` package has not been published to the
-> registry yet — `npm install pancake-wasm` will not work today. For now, use
-> Pancake from a repository checkout (see below). npm publishing is coming soon;
-> once it lands, the package install and the `pancake-wasm` import specifiers in
-> this README will work as written.
+Install from npm:
 
-Clone the repository and import the engine directly from the checkout:
+```bash
+npm install pancake-wasm
+```
+
+Or work from a repository checkout:
 
 ```bash
 git clone https://github.com/mcn92/pancake.git
@@ -35,7 +35,7 @@ graph quality.
 
 ## Runtime entry points
 
-Once the package is published, the entry points are imported by name:
+From the published package, import the entry points by name:
 
 ```js
 // Node.js CJS
@@ -51,8 +51,8 @@ import Pancake from 'pancake-wasm/node';
 import Pancake from 'pancake-wasm/web';
 ```
 
-Until then, from a repository checkout, import the same entry points by relative
-path instead:
+From a repository checkout, import the same entry points by relative path
+instead:
 
 ```js
 // Node.js CJS
@@ -66,15 +66,16 @@ import Pancake from './pancake.web.mjs';
 ```
 
 The `pancake-wasm/web` entry (`./pancake.web.mjs` in a checkout) expects a bundler or runtime that can resolve the packaged
-`./dist/engine.wasm` asset. This is tested with a bundled Vite + Chromium flow. For raw
-no-bundler demos, see `dist/technical-demo.html`.
+`./dist/engine.wasm` asset. This is tested with a bundled Vite + Chromium flow. For a raw
+no-bundler demo, see the repo copy of
+[`dist/technical-demo.html`](https://github.com/mcn92/pancake/blob/main/dist/technical-demo.html).
 
 ## Quick start
 
-The examples below import `pancake-wasm` by name for when the package is
-published. From a repository checkout today, replace that import with a relative
-path — `import Pancake from './pancake.node.mjs'` (ESM) or
-`const Pancake = require('./pancake.js')` (CJS). The API is identical either way.
+The examples below import `pancake-wasm` by name. From a repository checkout,
+replace that import with a relative path — `import Pancake from './pancake.node.mjs'`
+(ESM) or `const Pancake = require('./pancake.js')` (CJS). The API is identical
+either way.
 
 ```js
 import Pancake from 'pancake-wasm';
@@ -112,10 +113,22 @@ restored.import(snapshot);
 
 If `ghostCount > 0`, `export()` throws. Call `compact()` first to produce a clean snapshot.
 `import()` also requires the target index config to match the export's `dim`, `metric`, and `quantized` mode.
+Envelope/config validation failures reject the snapshot before mutating the destination index, but backend-level import failures may still leave the destination unusable. If recovery matters, export a backup first.
 
-The core package export is the raw engine snapshot. The Cloudflare Worker example wraps that
-payload in a small `WRK1` envelope so it can persist Worker-specific metadata such as
-`maxElements`, init params, and external/internal ID mappings.
+`compact()` is a stop-the-world rebuild of the surviving graph. Its cost scales
+with the number of live vectors that remain after deletions, not just the
+number of ghosts removed, so treat it as maintenance work rather than something
+to run in a latency-sensitive path. On the current DBpedia 50K int8 benchmark
+(`1536D`, `M=16`, `efConstruction=50`, `efSearch=100`), compacting after 20%,
+50%, and 80% deletions took `23.7s`, `14.3s`, and `4.4s` respectively, while
+recall stayed within `0.14` points of baseline.
+
+The JavaScript package `export()` returns a `PNCK` envelope, not the bare raw engine payload.
+That wrapper preserves package-level metadata such as stable external IDs across
+`compact()`/`import()` round-trips. The underlying raw engine snapshot is stored inside that
+envelope. The Cloudflare Worker example wraps the package export again in a small `WRK1`
+envelope so it can persist Worker-specific metadata such as `maxElements`, init params, and
+deployment state alongside the packaged snapshot.
 
 ## API
 
@@ -196,108 +209,101 @@ This works well for moderate selectivity (roughly 1% of the index or more). At v
 
 ## Performance
 
-All benchmarks are single-threaded on an AMD Ryzen 9 4900HS laptop. Pancake's
-default package path is WASM. The native addon rows below come from an
-experimental internal benchmarking tool in this repo, not from the installed
-npm package. External baselines in the current harness are hnswlib, USearch,
-and Faiss.
+The primary benchmark is DBpedia-50K (`50,000 × 1536D`, L2), the operating
+point Pancake is built for: in-process ANN at moderate scale across portable
+JavaScript runtimes. Pancake's default package path is WASM; the native addon
+is an experimental in-repo tool, included here to separate runtime overhead
+from graph quality, and is not part of the npm package.
 
-### DBpedia-50K full comparison (50k x 1536D, efSearch=100)
+### DBpedia-50K: WASM vs native (50k x 1536D, L2)
 
-This is the current unified 50K comparison run across Pancake WASM/native,
-hnswlib, USearch, and Faiss. Parameters are `M=16`, `efConstruction=50`,
-`efSearch=100` where the library exposes them.
+Single-threaded on an AMD Ryzen 9 4900HS laptop. Parameters `M=16`,
+`efConstruction=50`, `efSearch=100`; `k=10`, 1,000 held-out queries, 3
+repetitions, brute-force L2 ground truth. `pmax` is the worst observed query
+latency (reported instead of p999 because at 1,000 queries the 99.9th
+percentile is just the single slowest sample).
 
-| Library | Mode | Build | Recall@10 | QPS | P50 | P99 | Memory |
-|:--------|:-----|------:|----------:|----:|----:|----:|-------:|
-| Pancake | int8 WASM | 75.61s | 96.70% | 1107 | 0.914ms | 1.422ms | 86.3 MB |
-| Pancake | int8 native | 40.87s | 96.69% | 1305 | 0.772ms | 1.282ms | 86.3 MB |
-| Pancake | f32 WASM | 162.89s | 98.83% | 771 | 1.307ms | 2.102ms | 299.3 MB |
-| Pancake | f32 native | 97.43s | 98.83% | 1002 | 1.013ms | 1.543ms | 299.3 MB |
-| hnswlib | f32 native | 43.01s | 98.20% | 928 | 1.091ms | 1.575ms | — |
-| USearch | i8 native | 15.40s | 88.91% | 1633 | 0.617ms | 0.948ms | — |
-| USearch | f32 native | 45.16s | 98.19% | 769 | 1.329ms | 1.859ms | — |
-| Faiss HNSW | native | 35.88s | 85.99% | 2251 | 0.428ms | 0.705ms | — |
+| Mode | Build | Recall@10 | QPS | p50 | p99 | pmax | Memory |
+|:-----|------:|----------:|----:|----:|----:|-----:|-------:|
+| int8 WASM | 67.93s | 96.70% | 1130 | 0.898ms | 1.381ms | 1.612ms | 86.3 MB |
+| f32 WASM | 158.06s | 98.83% | 802 | 1.268ms | 1.927ms | 3.129ms | 299.3 MB |
+| int8 native | 38.09s | 96.69% | 1455 | 0.699ms | 1.066ms | 1.270ms | 86.3 MB |
+| f32 native | 94.98s | 98.83% | 988 | 1.025ms | 1.603ms | 2.068ms | 299.3 MB |
 
 Takeaways:
 
-- At the mid-recall operating point, `pancake-int8-native` reaches
-  `1305 QPS` at `96.69%` recall.
-- At the high-recall operating point, `pancake-f32-native` reaches
-  `1002 QPS` at `98.83%` recall.
-- At matched-or-better recall, `pancake-f32-wasm` lands within about `15-20%`
-  of native hnswlib throughput, while `pancake-f32-native` edges ahead.
-- Native Pancake now beats WASM Pancake clearly in both int8 and float32
-  modes, which is useful for separating engine quality from runtime overhead.
-- `usearch-i8` and `faiss-hnsw` win raw QPS, but only at materially lower
-  recall than the comparable Pancake operating points.
+- **int8 is the memory/throughput operating point:** `96.70%` recall at
+  `1130 QPS` in WASM, using `3.5x` less memory than float32 (`86 MB` vs
+  `299 MB`).
+- **float32 is the high-recall operating point:** `98.83%` recall, at the cost
+  of memory and a slower build.
+- **Native vs WASM isolates runtime overhead:** the native addon runs the same
+  engine and reaches the same recall at roughly `25-30%` higher QPS (int8) and
+  `~20%` higher (f32) — the gap is WASM runtime cost, not graph quality.
 
-Important caveat: `faiss-node` does not expose the same `efConstruction` and
-`efSearch` controls as the other libraries in this harness, so the Faiss row
-is informative but not perfectly parameter-matched.
+### QPS-recall frontier vs other libraries
 
-### DBpedia-5K sanity run (50K harness, count=5000, efSearch=40)
+Sweeping `efSearch` (10–800) traces each engine's QPS-recall frontier on the
+same DBpedia-50K data (`M=16`, `efConstruction=50`, single-threaded). The
+int8 results sit above native hnswlib and USearch through the mid-recall band,
+while the float32 line stays close to hnswlib across most of the curve.
 
-The same full-comparison harness is also useful as a smaller smoke benchmark:
+- int8 (left): Pancake int8 (WASM) is above native hnswlib and USearch through
+  the mid-recall band — around `95%` recall it reaches `~2200 QPS` versus
+  `~1700` (hnswlib) and `~1500` (USearch f32). It tops out near `97.6%` recall;
+  the int8 quantization ceiling sets that limit. USearch's int8 mode does not
+  exceed `~90%` recall at any `efSearch` in this run.
+- float32 (right): Pancake f32 (WASM) and native hnswlib are close across the
+  range. Above `~99%` recall hnswlib is faster at matched recall.
 
-| Library | Mode | Build | Recall@10 | QPS | P50 | P99 | Memory |
-|:--------|:-----|------:|----------:|----:|----:|----:|-------:|
-| Pancake | int8 WASM | 5.54s | 96.67% | 3219 | 0.308ms | 0.484ms | 8.6 MB |
-| Pancake | int8 native | 2.65s | 96.67% | 4088 | 0.235ms | 0.456ms | 8.6 MB |
-| Pancake | f32 WASM | 13.16s | 98.83% | 2031 | 0.488ms | 0.761ms | 29.9 MB |
-| Pancake | f32 native | 7.53s | 98.83% | 2615 | 0.378ms | 0.600ms | 29.9 MB |
-| hnswlib | f32 native | 3.16s | 97.73% | 1977 | 0.499ms | 0.729ms | — |
-| USearch | i8 native | 0.72s | 88.97% | 6100 | 0.155ms | 0.289ms | — |
-| USearch | f32 native | 3.03s | 97.68% | 1996 | 0.496ms | 0.703ms | — |
-| Faiss HNSW | native | 2.08s | 91.27% | 2447 | 0.382ms | 0.905ms | — |
-
-This run is not the main benchmark, but it is a useful quick check
-that the harness, native addon, and external baselines are all behaving.
-
-### NYTimes-256 (290k x 256D, cosine)
-
-On the lower-dimensional NYTimes cosine sweep, Pancake still reaches slightly
-higher recall than hnswlib at the same `ef_search`, but native hnswlib remains
-faster at matched recall across the overlapping range. This is the more typical
-“portability costs throughput” picture at lower dimensions, where native SIMD
-width matters more than it does on 1536D vectors.
+These are WASM Pancake rows against native baselines. Numbers depend on each
+library's version and build flags, so the harness runs them live rather than
+quoting fixed figures — run `pareto_frontier` and `benchmark_dbpedia_50k_full`
+to reproduce or extend this (see [Reproducing](#reproducing)).
 
 ### Deletion tolerance
 
-DBpedia 5K x 1536D, cosine, int8, M=12, 100 held-out queries, brute-force ground truth recomputed against the live set at each step.
-
-This sweep predates the current `M=16` comparison harness. Keep it as a
-ghost-tolerance shape check rather than a directly comparable row against the
-main 50K tables.
+DBpedia 5K x 1536D, L2, int8, `M=16`, `efConstruction=50`, `efSearch=100`, 100
+held-out queries. Vectors are progressively soft-deleted; brute-force ground
+truth is recomputed against the live set at each step.
 
 | Ghost % | Live Vectors | Recall@10 | p50 Latency |
 |---:|---:|---:|---:|
-| 0% | 4,900 | 97.0% | 1.16ms |
-| 30% | 3,430 | 96.9% | 0.92ms |
-| 50% | 2,450 | 96.9% | 0.73ms |
-| 70% | 1,470 | 96.0% | 0.53ms |
-| 90% | 490 | 84.1% | 0.27ms |
+| 0% | 4,900 | 96.8% | 0.71ms |
+| 30% | 3,430 | 97.5% | 0.56ms |
+| 50% | 2,450 | 96.5% | 0.43ms |
+| 70% | 1,470 | 95.5% | 0.32ms |
+| 90% | 490 | 81.4% | 0.17ms |
 
-Recall holds within about 1 point of baseline through 70% ghosts. Search latency drops as ghosts accumulate (fewer live nodes to visit). The cliff beyond 90% is graph disconnection: the live subgraph is no longer well-connected enough to preserve recall. Compaction can be deferred until the main thread is idle.
+Recall holds within about 1.5 points of baseline through 70% ghosts. Search latency drops as ghosts accumulate (fewer live nodes to visit). The cliff beyond 90% is graph disconnection: the live subgraph is no longer well-connected enough to preserve recall. Compaction can be deferred until the main thread is idle.
 
 ### Reproducing
 
-Benchmark scripts are in `benchmarks/`. A shared runner and parameter parser are
-included, so you can list and run them with:
+Benchmark scripts are in `benchmarks/`. A shared runner discovers them by name,
+so you can list and run them with:
 
 ```bash
 npm run bench -- --list
+
+# The Pancake-only WASM vs native comparison:
+npm run bench -- benchmark_native
+
+# Full comparison including hnswlib, USearch, and Faiss on the same data:
 npm run bench -- benchmark_dbpedia_50k_full --count 50000 --m 16 --ef-construction 50 --ef-search 100
-npm run bench -- benchmark_dbpedia_100k --m 16 --ef-construction 50 --ef-search 100
+
+# QPS-recall frontier (efSearch sweep) behind the plot above:
+npm run bench -- pareto_frontier
 ```
 
-Results depend on dimension, corpus size, HNSW parameters, and hardware.
+The first run computes brute-force ground truth and caches it under
+`benchmark_results/cache/`; later runs reuse it. Results depend on dimension,
+corpus size, HNSW parameters, and hardware.
 
-Recent benchmark additions include:
+Other useful scripts:
 
-- `benchmark_dbpedia_50k_full` — unified 50K comparison across Pancake WASM/native, hnswlib, USearch, and Faiss
+- `benchmark_dbpedia_50k_full` — unified comparison vs hnswlib, USearch, and Faiss
+- `pareto_frontier` — efSearch sweep producing the QPS-recall frontier CSVs
 - `benchmark_native` — direct Pancake native-vs-WASM comparison
-- `benchmark_usearch` and `benchmark_faiss` — external baseline runners
 - `worker_restore_sweep` — cold/warm restore measurements through the Worker API
 
 ## Snapshot-first Worker deployment
@@ -346,7 +352,7 @@ Pancake makes sense when you want one engine that spans browser, Worker, and Nod
 - **Node.js without native addons** -- in-process ANN without native binary packaging
 - **Small to medium indexes** -- in-process search without external infrastructure
 
-If you only care about native server throughput and do not need portability, Faiss, hnswlib, or USearch are good baselines to compare against. On the current 1536D DBpedia run, `pancake-f32-wasm` lands within about `15-20%` of native hnswlib throughput at matched-or-better recall, and `pancake-f32-native` edges ahead. The int8 backend offers a lower-memory operating point with about a 1-2 point recall-ceiling tradeoff versus float32 in the current 50K sweep. The native addon in this repo is there to help separate runtime overhead from graph quality.
+If you only care about native server throughput and do not need portability, Faiss, hnswlib, or USearch are good baselines to compare against — run `benchmark_dbpedia_50k_full` to see how they land against Pancake on your own hardware. On the DBpedia-50K run above, the int8 backend offers a lower-memory operating point with about a 1-2 point recall-ceiling tradeoff versus float32 (`96.70%` vs `98.83%`). The native addon in this repo is there to help separate runtime overhead from graph quality.
 
 ## How it works
 
@@ -376,13 +382,13 @@ The WASM module exposes a handle-based C API: `pancake_init` returns an opaque h
 
 ## Examples
 
-- `examples/cli/build_index.js` -- build an HNSW index from precomputed embeddings
-- `examples/demo/technical_demo_cli.js` -- interactive local REPL
-- `examples/demo/technical_demo_worker.js` -- interactive Worker-targeted REPL
-- `dist/technical-demo.html` -- browser demo page with latency and stress views
-- `examples/browser-vite/` -- minimal bundled browser consumer fixture used by `npm run test:browser`
-- `examples/worker/` -- reference Cloudflare Worker deployment built on top of Pancake
-- `examples/worker-semantic-search/` -- snapshot-first semantic docs search demo for Cloudflare Workers
+- [`examples/cli/build_index.js`](https://github.com/mcn92/pancake/blob/main/examples/cli/build_index.js) -- build an HNSW index from precomputed embeddings
+- [`examples/demo/technical_demo_cli.js`](https://github.com/mcn92/pancake/blob/main/examples/demo/technical_demo_cli.js) -- interactive local REPL
+- [`examples/demo/technical_demo_worker.js`](https://github.com/mcn92/pancake/blob/main/examples/demo/technical_demo_worker.js) -- interactive Worker-targeted REPL
+- [`dist/technical-demo.html`](https://github.com/mcn92/pancake/blob/main/dist/technical-demo.html) -- browser demo page with latency and stress views
+- [`examples/browser-vite/`](https://github.com/mcn92/pancake/tree/main/examples/browser-vite) -- minimal bundled browser consumer fixture used by `npm run test:browser`
+- [`examples/worker/`](https://github.com/mcn92/pancake/tree/main/examples/worker) -- reference Cloudflare Worker deployment built on top of Pancake
+- [`examples/worker-semantic-search/`](https://github.com/mcn92/pancake/tree/main/examples/worker-semantic-search) -- snapshot-first semantic docs search demo for Cloudflare Workers
 
 ## Architecture
 
@@ -425,7 +431,7 @@ For the Worker reference deployment, run:
 node test/test_worker_features.js
 ```
 
-Current core suite status on this tree: **755 passed, 0 failed**.
+Current core suite status on this tree: **756 passed, 0 failed**.
 
 ## Building from source
 
@@ -453,6 +459,8 @@ The script auto-detects whether the current Node runtime still needs
 
 - **Single-threaded by design.** Pancake is meant for runtimes where background threads are unavailable or unreliable. That is a deployment advantage, not just a limitation.
 - **Quantization is a real trade.** On the current 1536D DBpedia benchmark, the int8 path uses about `3.5x` less memory than float32 and gives up roughly 1-2 points of recall ceiling (`96.7%` vs `98.8%` in the 50K sweep at `efSearch=100`). Use float32 when you need the higher ceiling.
+- **Deterministic means per target/build.** Given the same inputs, the same build target will produce stable graph structure and query results, but bitwise-identical distances are not guaranteed across WASM SIMD, scalar WASM, AVX2, and SSE2 backends because their reduction orders differ. Treat tiny cross-backend floating-point deltas as expected, not as correctness bugs.
+- **One WASM instance can hold at most 64 live indexes.** The handle table in the shipped WASM engine is fixed at `MAX_HANDLES = 64`. If you need more concurrent indexes than that, dispose unused ones or spin up another module instance.
 - **Compaction is rebuild-based.** Deletes are soft deletes. Compaction rewrites the graph rather than patching edges in place. That keeps behavior predictable and avoids relying on background maintenance threads.
 - **Index instances are not a shared-memory concurrency primitive.** Treat a Pancake index like ordinary mutable in-process state: safe within one JavaScript thread/event loop, but not something to share concurrently across Node worker threads or isolates without your own coordination.
 - **Workers are best used as snapshot-serving search frontends.** In a Cloudflare Worker, in-memory state is a warm cache, not durable authority. Persist snapshots explicitly and treat isolate reuse as opportunistic.
