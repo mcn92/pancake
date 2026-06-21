@@ -438,6 +438,83 @@ async function testCompact() {
 }
 
 
+async function testCompactReconnectsIsolatedSurvivors() {
+    section('Compact reconnects isolated survivors');
+
+    const makeRng = (seed) => {
+        let state = seed >>> 0;
+        return () => {
+            state = (state * 1664525 + 1013904223) >>> 0;
+            return state / 0x100000000;
+        };
+    };
+
+    const runCase = async (quantized) => {
+        const rand = makeRng(30);
+        const config = {
+            dim: 4,
+            metric: 'l2',
+            maxElements: 90,
+            M: 4,
+            efConstruction: 64,
+            efSearch: 200,
+            quantized,
+        };
+
+        const idx = await Pancake.create(config);
+        const vecs = [];
+        const ids = [];
+        for (let i = 0; i < 80; i++) {
+            const vec = new Float32Array([
+                rand() * 10,
+                rand() * 10,
+                rand() * 10,
+                rand() * 10,
+            ]);
+            vecs.push(vec);
+            ids.push(idx.add(vec));
+        }
+
+        const deleted = new Set();
+        for (let i = 0; i < 80; i++) {
+            if (rand() < 0.65) deleted.add(i);
+        }
+
+        const survivors = [];
+        for (let i = 0; i < 80; i++) {
+            if (!deleted.has(i)) survivors.push(i);
+        }
+
+        for (const i of survivors) {
+            const before = idx.search(vecs[i], 1);
+            assert(before.length > 0 && before[0].id === ids[i], `${quantized ? 'quantized' : 'float'}: survivor ${i} finds itself before delete`);
+        }
+
+        for (const i of deleted) idx.delete(ids[i]);
+
+        for (const i of survivors) {
+            const preCompact = idx.search(vecs[i], 1);
+            assert(preCompact.length > 0 && preCompact[0].id === ids[i], `${quantized ? 'quantized' : 'float'}: survivor ${i} finds itself before compact`);
+        }
+
+        idx.compact();
+
+        for (const i of survivors) {
+            const postCompact = idx.search(vecs[i], 1);
+            assert(
+                postCompact.length > 0 && postCompact[0].id === ids[i],
+                `${quantized ? 'quantized' : 'float'}: survivor ${i} still finds itself after compact`
+            );
+        }
+
+        idx.dispose();
+    };
+
+    await runCase(false);
+    await runCase(true);
+}
+
+
 async function testMemory() {
     section('Memory');
 
@@ -1637,6 +1714,7 @@ async function main() {
         testDelete,
         testGhostRatio,
         testCompact,
+        testCompactReconnectsIsolatedSurvivors,
         testMemory,
         testDispose,
         testDeterminism,

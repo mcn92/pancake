@@ -596,19 +596,50 @@ public:
             }
         }
 
-        if (entry_point_ != UINT32_MAX && id_map[entry_point_] != UINT32_MAX) {
-            entry_point_ = id_map[entry_point_];
-        } else {
-            entry_point_ = UINT32_MAX;
-            max_level_ = 0;
+        // If local repair still leaves a survivor isolated at the base layer,
+        // reconnect it against the live pool before finalizing compaction.
+        if (new_id > 1) {
             for (uint32_t i = 0; i < new_id; i++) {
-                if (levels_[i] > max_level_) {
-                    max_level_ = levels_[i];
-                    entry_point_ = i;
+                if (level_edge_count(i, 0) != 0) continue;
+
+                std::vector<std::pair<float, uint32_t>> candidates;
+                candidates.reserve(new_id - 1);
+                for (uint32_t j = 0; j < new_id; ++j) {
+                    if (j == i) continue;
+                    candidates.emplace_back(distance(i, j), j);
+                }
+                std::sort(candidates.begin(), candidates.end());
+                select_neighbors_heuristic(i, candidates, M0_, 0);
+
+                std::vector<Edge> new_edges = copy_level_edges(i, 0);
+                uint32_t anchor = UINT32_MAX;
+                float anchor_dist = std::numeric_limits<float>::max();
+                for (const Edge& edge : new_edges) {
+                    append_edge_with_prune(edge.neighbor, 0, Edge{i, edge.dist}, M0_);
+                    if (has_level_neighbor(edge.neighbor, 0, i)) {
+                        anchor = UINT32_MAX;
+                        break;
+                    }
+                    if (edge.dist < anchor_dist) {
+                        anchor = edge.neighbor;
+                        anchor_dist = edge.dist;
+                    }
+                }
+                if (anchor != UINT32_MAX) {
+                    ensure_base_neighbor(anchor, Edge{i, anchor_dist});
                 }
             }
-            if (entry_point_ == UINT32_MAX && new_id > 0) entry_point_ = 0;
         }
+
+        entry_point_ = UINT32_MAX;
+        max_level_ = 0;
+        for (uint32_t i = 0; i < new_id; i++) {
+            if (entry_point_ == UINT32_MAX || levels_[i] > max_level_) {
+                max_level_ = levels_[i];
+                entry_point_ = i;
+            }
+        }
+        if (entry_point_ == UINT32_MAX && new_id > 0) entry_point_ = 0;
 
         qdata_.resize(new_id * dims_);
         scales_.resize(new_id);
@@ -943,6 +974,20 @@ private:
         return upper_edges(id, level);
     }
 
+    bool has_level_neighbor(uint32_t id, int level, uint32_t neighbor) const {
+        if (level == 0) {
+            const Edge* edges = base_slot(id);
+            for (uint16_t i = 0; i < base_sizes_[id]; ++i) {
+                if (edges[i].neighbor == neighbor) return true;
+            }
+            return false;
+        }
+        for (const Edge& edge : upper_edges(id, level)) {
+            if (edge.neighbor == neighbor) return true;
+        }
+        return false;
+    }
+
     template<typename Fn>
     void for_each_edge(uint32_t id, int level, Fn&& fn) const {
         if (level == 0) {
@@ -1032,6 +1077,31 @@ private:
             });
             prune_neighbors(node, level, M);
         }
+    }
+
+    void ensure_base_neighbor(uint32_t node, const Edge& edge) {
+        uint16_t& sz = base_sizes_[node];
+        Edge* slot = base_slot(node);
+        for (uint16_t i = 0; i < sz; ++i) {
+            if (slot[i].neighbor == edge.neighbor) {
+                slot[i].dist = edge.dist;
+                return;
+            }
+        }
+
+        append_edge_with_prune(node, 0, edge, M0_);
+        if (has_level_neighbor(node, 0, edge.neighbor)) return;
+
+        if (sz < M0_) {
+            slot[sz++] = edge;
+            return;
+        }
+
+        uint16_t worst = 0;
+        for (uint16_t i = 1; i < sz; ++i) {
+            if (slot[i].dist > slot[worst].dist) worst = i;
+        }
+        slot[worst] = edge;
     }
 
     void dequantize(uint32_t id, float* dst) const {
