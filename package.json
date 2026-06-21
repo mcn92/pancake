@@ -43,11 +43,15 @@
     "README.md"
   ],
   "scripts": {
-    "build": "bash build.sh",
+    "build": "node scripts/build-engine.mjs",
+    "build:scalar": "node scripts/build-all.mjs --scalar-only",
+    "build:all": "node scripts/build-all.mjs",
     "bench": "node benchmarks/run.js",
     "test": "node run_tests.js",
     "test:browser": "node test/browser_smoke.js",
-    "test:simd": "node test/simd_parity.js"
+    "test:simd": "node test/simd_parity.js",
+    "pack:dry-run": "node scripts/pack-dry-run.mjs",
+    "prepublishOnly": "npm test && npm run test:browser && npm run pack:dry-run"
   },
   "keywords": [
     "vector-search",
@@ -76,6 +80,9 @@
   "homepage": "https://github.com/mcn92/pancake#readme",
   "author": "Matthew Noonan",
   "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=16"
   },
