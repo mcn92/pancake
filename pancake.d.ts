@@ -1,17 +1,21 @@
+export type Metric = 'cosine' | 'l2';
+
+export type VectorInput = Float32Array | readonly number[];
+
 export interface CreateOptions {
   /** Input vector dimension (required). */
   dim: number;
   /** Maximum index capacity (default: 100000). */
   maxElements?: number;
   /** Distance metric (default: 'cosine'). */
-  metric?: 'cosine' | 'l2';
-  /** Use int8 quantized storage — ~1 byte/dim vs 4 bytes for float32 (default: true). */
+  metric?: Metric;
+  /** Use int8 quantized storage (default: true). */
   quantized?: boolean;
-  /** HNSW graph connectivity (default: 16). Higher improves recall but uses more memory. */
+  /** HNSW graph connectivity (default: 16). Valid range: 2-128. */
   M?: number;
-  /** Build-time search breadth (default: 50). Higher improves index quality. */
+  /** Build-time search breadth (default: 50). Valid range: 1-4096. */
   efConstruction?: number;
-  /** Query-time search breadth (default: 100). Tune for speed vs recall tradeoff. */
+  /** Query-time search breadth (default: 100). Must be a positive integer. */
   efSearch?: number;
 }
 
@@ -23,39 +27,44 @@ export interface SearchResult {
 }
 
 export interface PancakeIndex {
-  /** Insert a single vector. Returns its ID. */
-  add(vector: Float32Array | number[]): number;
-  /** Insert multiple vectors. Returns array of IDs. */
-  addBatch(vectors: (Float32Array | number[])[]): number[];
-  /** Find the k nearest neighbors of a query vector. k must be a non-negative integer. */
-  search(query: Float32Array | number[], k: number): SearchResult[];
-  /** Find the k nearest neighbors, restricted to IDs in allowedIds. Uses in-graph filtering with iterative deepening. */
-  searchFiltered(query: Float32Array | number[], k: number, allowedIds: Set<number>): SearchResult[];
-  /** Soft-delete a vector by ID. O(1), excluded from future searches. No-op for unknown IDs. */
+  /** Insert a single vector. Returns its stable external ID. */
+  add(vector: VectorInput): number;
+  /** Insert multiple vectors. Returns stable external IDs in insertion order. */
+  addBatch(vectors: readonly VectorInput[]): number[];
+  /** Find the k nearest neighbors of a query vector. */
+  search(query: VectorInput, k: number): SearchResult[];
+  /** Find the k nearest neighbors restricted to IDs in allowedIds. */
+  searchFiltered(query: VectorInput, k: number, allowedIds: Set<number>): SearchResult[];
+  /** Soft-delete a vector by ID. Unknown IDs are ignored. */
   delete(id: number): void;
-  /** Reclaim space from soft-deleted vectors via graph rewiring. */
+  /** Rebuild the graph without soft-deleted entries. */
   compact(): void;
-  /** Serialize the index to a Uint8Array for persistence. Throws if ghostCount > 0; call compact() first. */
+  /** Serialize index state. Throws if ghostCount > 0; call compact() first after deletions. */
   export(): Uint8Array;
-  /** Restore index state from a previous export(). Envelope/config validation failures leave the index unchanged, but backend-level import failures may leave it unusable; back up with export() first if recovery matters. */
-  import(data: Uint8Array | ArrayBuffer): void;
-  /** Free WASM heap buffers. Instance is unusable after this. */
+  /**
+   * Restore index state from a previous export().
+   * Validation failures leave the target index unchanged.
+   */
+  import(data: Uint8Array | ArrayBufferLike): void;
+  /** Free WASM buffers. The instance is unusable after this. */
   dispose(): void;
-  /** Number of vectors currently stored by the backend, including soft-deleted entries until compact(). */
+  /** Vectors stored by the backend, including soft-deleted entries until compact(). */
   readonly count: number;
-  /** Number of soft-deleted vectors awaiting compaction. */
+  /** Soft-deleted vectors awaiting compaction. */
   readonly ghostCount: number;
   /** Ratio reported by the backend; after soft deletes this behaves as ghostCount / count. */
   readonly ghostRatio: number;
-  /** WASM heap bytes used by the index. */
+  /** Estimated index memory in bytes. */
   readonly memory: number;
   /** Input vector dimension. */
   readonly dim: number;
 }
 
-declare const Pancake: {
-  /** Create a new Pancake vector search index using the runtime-specific packaged entrypoint. */
+export interface PancakeApi {
+  /** Create a new Pancake index using the runtime-specific packaged entrypoint. */
   create(opts: CreateOptions): Promise<PancakeIndex>;
-};
+}
+
+declare const Pancake: PancakeApi;
 
 export default Pancake;
