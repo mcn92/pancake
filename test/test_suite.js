@@ -11,6 +11,7 @@
 
 const Pancake = require('../pancake.js');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { pathToFileURL } = require('url');
 
@@ -709,6 +710,157 @@ async function testExportImport() {
     assert(newId === extraId + 1, 'new IDs continue from nextExtId after import');
 
     idx2.dispose();
+}
+
+
+async function testConvenienceLoaders() {
+    section('Convenience loaders');
+
+    {
+        const rows = [
+            unitVec(4, 0),
+            unitVec(4, 1),
+            unitVec(4, 2),
+        ];
+        const { index, ids, idMap } = await Pancake.fromVectors(rows, {
+            metric: 'cosine',
+            quantized: false,
+        });
+        assert(ids.length === 3, 'fromVectors() returns one Pancake ID per raw vector');
+        assert(index.dim === 4, 'fromVectors() infers dim from raw vectors');
+        assert(index.count === 3, 'fromVectors() populates the index from raw vectors');
+        assert(idMap.size === 0, 'fromVectors() leaves idMap empty for raw vectors');
+        const results = index.search(unitVec(4, 0), 1);
+        assert(results.length === 1 && results[0].id === ids[0], 'fromVectors() search works for raw vectors');
+        index.dispose();
+    }
+
+    {
+        const rows = [
+            { id: 'doc-a', vector: unitVec(4, 0) },
+            { id: 'doc-b', vector: unitVec(4, 1) },
+        ];
+        const { index, ids, idMap } = await Pancake.fromVectors(rows, {
+            metric: 'cosine',
+            quantized: false,
+        });
+        assert(ids.length === 2, 'fromVectors() accepts { id, vector } records');
+        assert(idMap.get(ids[0]) === 'doc-a', 'fromVectors() maps first record back to caller ID');
+        assert(idMap.get(ids[1]) === 'doc-b', 'fromVectors() maps second record back to caller ID');
+        index.dispose();
+    }
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pancake-loaders-'));
+    try {
+        {
+            const jsonPath = path.join(tmpDir, 'vectors.json');
+            fs.writeFileSync(jsonPath, JSON.stringify([
+                { docId: 'alpha', embedding: Array.from(unitVec(4, 0)) },
+                { docId: 'beta', embedding: Array.from(unitVec(4, 1)) },
+            ]));
+
+            const { index, ids, idMap } = await Pancake.loadJsonFile(jsonPath, {
+                metric: 'cosine',
+                quantized: false,
+                vectorKey: 'embedding',
+                idKey: 'docId',
+            });
+            assert(index.count === 2, 'loadJsonFile() loads JSON arrays into an index');
+            assert(idMap.get(ids[0]) === 'alpha', 'loadJsonFile() preserves custom ID field for first row');
+            assert(idMap.get(ids[1]) === 'beta', 'loadJsonFile() preserves custom ID field for second row');
+            index.dispose();
+        }
+
+        {
+            const jsonlPath = path.join(tmpDir, 'vectors.jsonl');
+            fs.writeFileSync(jsonlPath, [
+                JSON.stringify({ id: 'gamma', vector: Array.from(unitVec(4, 2)) }),
+                JSON.stringify({ id: 'delta', vector: Array.from(unitVec(4, 3)) }),
+            ].join('\n'));
+
+            const { index, ids, idMap } = await Pancake.loadJsonFile(jsonlPath, {
+                metric: 'cosine',
+                quantized: false,
+            });
+            assert(index.count === 2, 'loadJsonFile() loads JSONL into an index');
+            assert(idMap.get(ids[0]) === 'gamma', 'loadJsonFile() preserves JSONL ID for first row');
+            assert(idMap.get(ids[1]) === 'delta', 'loadJsonFile() preserves JSONL ID for second row');
+            index.dispose();
+        }
+
+        {
+            const txtPath = path.join(tmpDir, 'vectors.txt');
+            fs.writeFileSync(txtPath, JSON.stringify([
+                { id: 'epsilon', vector: Array.from(unitVec(4, 0)) },
+            ]));
+
+            await assertThrowsAsync(
+                () => Pancake.loadJsonFile(txtPath, {
+                    metric: 'cosine',
+                    quantized: false,
+                }),
+                'loadJsonFile() rejects unsupported file extensions unless format is explicit'
+            );
+        }
+
+        {
+            const jsonPath = path.join(tmpDir, 'oversized.json');
+            fs.writeFileSync(jsonPath, JSON.stringify([
+                { id: 'zeta', vector: Array.from(unitVec(4, 0)) },
+            ]));
+
+            await assertThrowsAsync(
+                () => Pancake.loadJsonFile(jsonPath, {
+                    metric: 'cosine',
+                    quantized: false,
+                    maxFileBytes: 8,
+                }),
+                'loadJsonFile() rejects files that exceed maxFileBytes'
+            );
+        }
+
+        {
+            const src = await Pancake.create({
+                dim: 4,
+                metric: 'cosine',
+                quantized: false,
+                maxElements: 8,
+            });
+            const vec = unitVec(4, 0);
+            const id = src.add(vec);
+            const snapshotPath = path.join(tmpDir, 'index.pnck');
+            fs.writeFileSync(snapshotPath, src.export());
+            src.dispose();
+
+            const restored = await Pancake.loadSnapshotFile(snapshotPath, {
+                dim: 4,
+                metric: 'cosine',
+                quantized: false,
+                maxElements: 8,
+            });
+            const results = restored.search(vec, 1);
+            assert(restored.count === 1, 'loadSnapshotFile() restores snapshot count from disk');
+            assert(results.length === 1 && results[0].id === id, 'loadSnapshotFile() restores searchable IDs');
+            restored.dispose();
+        }
+
+        {
+            const badSnapshotPath = path.join(tmpDir, 'bad.pnck');
+            fs.writeFileSync(badSnapshotPath, Buffer.from('not-a-pancake-snapshot'));
+
+            await assertThrowsAsync(
+                () => Pancake.loadSnapshotFile(badSnapshotPath, {
+                    dim: 4,
+                    metric: 'cosine',
+                    quantized: false,
+                    maxElements: 8,
+                }),
+                'loadSnapshotFile() rejects unsupported snapshot magic before import'
+            );
+        }
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
 }
 
 
@@ -1721,6 +1873,7 @@ async function main() {
         testSearchDuringMutation,
         testRuntimeEntryPoints,
         testExportImport,
+        testConvenienceLoaders,
         testLargeIndex,
         testQuantized,
         testDCTCompression,

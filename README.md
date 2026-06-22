@@ -111,6 +111,43 @@ const restored = await Pancake.create({
 restored.import(snapshot);
 ```
 
+If you already have vectors in memory, `fromVectors()` is the easiest ingest path:
+
+```js
+const rows = [
+  { id: 'doc-1', vector: embedding1 },
+  { id: 'doc-2', vector: embedding2 },
+];
+
+const { index, ids, idMap } = await Pancake.fromVectors(rows, {
+  metric: 'cosine',
+  quantized: true,
+});
+
+const hits = index.search(queryEmbedding, 5);
+console.log(idMap.get(hits[0].id)); // -> 'doc-1'
+```
+
+On the Node.js entrypoints, there are file helpers for JSON/JSONL vectors and
+Pancake snapshots:
+
+```js
+const { index, idMap } = await Pancake.loadJsonFile('vectors.jsonl', {
+  metric: 'cosine',
+  vectorKey: 'embedding', // default: 'vector'
+  idKey: 'docId',         // default: 'id'
+  maxFileBytes: 64 * 1024 * 1024,
+});
+
+const restored = await Pancake.loadSnapshotFile('index.pnck', {
+  dim: 384,
+  maxElements: 100000,
+  metric: 'cosine',
+  quantized: true,
+  maxFileBytes: 512 * 1024 * 1024,
+});
+```
+
 If `ghostCount > 0`, `export()` throws. Call `compact()` first to produce a clean snapshot.
 `import()` also requires the target index config to match the export's `dim`, `metric`, and `quantized` mode.
 Envelope/config validation failures reject the snapshot before mutating the destination index, but backend-level import failures may still leave the destination unusable. If recovery matters, export a backup first.
@@ -144,6 +181,21 @@ deployment state alongside the packaged snapshot.
 | `efConstruction` | number | `50` | Build-time beam width |
 | `efSearch` | number | `100` | Query-time beam width |
 
+### `await Pancake.fromVectors(rows, opts)`
+
+Creates an index and bulk-loads either:
+
+- `Float32Array[]` / `number[][]`
+- `{ id?, vector }[]`
+
+Returns:
+
+- `index` — the populated `PancakeIndex`
+- `ids` — Pancake's stable numeric IDs in insertion order
+- `idMap` — `Map<number, sourceId>` for rows that supplied caller IDs
+
+`dim` defaults to the first vector's length. `maxElements` defaults to `rows.length`.
+
 ### Methods
 
 | Method | Returns | Description |
@@ -157,6 +209,20 @@ deployment state alongside the packaged snapshot.
 | `export()` | `Uint8Array` | Serialize index state. Requires `ghostCount === 0`; call `compact()` first after deletions. |
 | `import(data)` | -- | Restore a previous export |
 | `dispose()` | -- | Free WASM buffers |
+
+### Node-only file helpers
+
+| Helper | Returns | Description |
+|--------|---------|-------------|
+| `loadJsonFile(path, opts)` | `{ index, ids, idMap }` | Build an index from a JSON array or JSONL file |
+| `loadSnapshotFile(path, opts)` | `PancakeIndex` | Restore a previous `export()` from disk |
+
+File-helper notes:
+
+- `loadJsonFile()` only auto-detects `.json`, `.jsonl`, and `.ndjson`. For other extensions, pass `opts.format`.
+- `loadJsonFile()` defaults `maxFileBytes` to `64 MiB`.
+- `loadSnapshotFile()` defaults `maxFileBytes` to `512 MiB`.
+- `loadSnapshotFile()` checks the file header before import and rejects files that do not look like a Pancake envelope or raw engine snapshot.
 
 ### Properties
 

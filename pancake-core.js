@@ -560,6 +560,22 @@ class PancakeIndex {
 }
 
 function createPancakeApi(loadEngineImpl) {
+    function isVectorInput(value) {
+        return value instanceof Float32Array || Array.isArray(value);
+    }
+
+    function extractVectorRecord(item) {
+        if (isVectorInput(item)) {
+            return { vector: item, hasSourceId: false, sourceId: undefined };
+        }
+        if (!item || typeof item !== 'object' || !('vector' in item)) {
+            throw new Error('fromVectors() requires vectors or { vector, id? } records');
+        }
+        const sourceId = item.id;
+        const hasSourceId = Object.prototype.hasOwnProperty.call(item, 'id');
+        return { vector: item.vector, hasSourceId, sourceId };
+    }
+
     async function create(opts) {
         if (!opts || !opts.dim) throw new Error('opts.dim is required');
         if (!Number.isInteger(opts.dim) || opts.dim <= 0) {
@@ -624,7 +640,67 @@ function createPancakeApi(loadEngineImpl) {
         return new PancakeIndex(e, resolvedOpts, handle, vecPtr, idPtr, distPtr, initialBufferCapacity);
     }
 
-    return { create };
+    async function fromVectors(items, opts = {}) {
+        if (!Array.isArray(items)) {
+            throw new Error('fromVectors() requires an array');
+        }
+        if (items.length === 0) {
+            throw new Error('fromVectors() requires at least one vector');
+        }
+
+        const vectors = new Array(items.length);
+        const sourceIds = new Array(items.length);
+        const hasSourceIds = new Array(items.length);
+
+        let inferredDim = null;
+        for (let i = 0; i < items.length; i++) {
+            const { vector, hasSourceId, sourceId } = extractVectorRecord(items[i]);
+            if (!isVectorInput(vector)) {
+                throw new Error(`fromVectors() expected a vector at index ${i}`);
+            }
+            const dim = vector.length;
+            if (!Number.isInteger(dim) || dim <= 0) {
+                throw new Error(`fromVectors() expected a non-empty vector at index ${i}`);
+            }
+            if (inferredDim === null) {
+                inferredDim = dim;
+            } else if (dim !== inferredDim) {
+                throw new Error(`fromVectors() found mixed vector dimensions (${inferredDim} and ${dim})`);
+            }
+            vectors[i] = vector;
+            sourceIds[i] = sourceId;
+            hasSourceIds[i] = hasSourceId;
+        }
+
+        if (opts.dim !== undefined && opts.dim !== inferredDim) {
+            throw new Error(`fromVectors() dim mismatch (inferred ${inferredDim}, got opts.dim=${opts.dim})`);
+        }
+
+        const createOpts = {
+            ...opts,
+            dim: opts.dim ?? inferredDim,
+            maxElements: opts.maxElements ?? items.length,
+        };
+
+        const index = await create(createOpts);
+        try {
+            const ids = index.addBatch(vectors);
+            const idMap = new Map();
+            for (let i = 0; i < ids.length; i++) {
+                if (hasSourceIds[i]) {
+                    idMap.set(ids[i], sourceIds[i]);
+                }
+            }
+            return { index, ids, idMap };
+        } catch (err) {
+            try {
+                index.dispose();
+            } catch {}
+            throw err;
+        }
+    }
+
+    return { create, fromVectors };
 }
 
 function parseRawSnapshotMetadata(bytes) {

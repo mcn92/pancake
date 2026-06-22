@@ -2,6 +2,12 @@ export type Metric = 'cosine' | 'l2';
 
 export type VectorInput = Float32Array | readonly number[];
 
+export interface VectorRecord<Id = unknown> {
+  id?: Id;
+  vector: VectorInput;
+  [key: string]: unknown;
+}
+
 export interface CreateOptions {
   /** Input vector dimension (required). */
   dim: number;
@@ -17,6 +23,31 @@ export interface CreateOptions {
   efConstruction?: number;
   /** Query-time search breadth (default: 100). Must be a positive integer. */
   efSearch?: number;
+}
+
+export interface FromVectorsResult<Id = unknown> {
+  /** Created and populated index. Caller owns dispose(). */
+  index: PancakeIndex;
+  /** Stable Pancake IDs returned in insertion order. */
+  ids: number[];
+  /** Mapping from Pancake IDs back to caller-provided source IDs. */
+  idMap: Map<number, Id>;
+}
+
+export interface JsonFileOptions extends CreateOptions {
+  /** Force JSON or JSONL parsing. Default: inferred from file extension. */
+  format?: 'json' | 'jsonl';
+  /** Record field holding the vector. Default: 'vector'. */
+  vectorKey?: string;
+  /** Record field holding the caller's source ID. Default: 'id'. */
+  idKey?: string;
+  /** Maximum JSON/JSONL file size in bytes. Default: 64 MiB. */
+  maxFileBytes?: number;
+}
+
+export interface SnapshotFileOptions extends CreateOptions {
+  /** Maximum snapshot file size in bytes. Default: 512 MiB. */
+  maxFileBytes?: number;
 }
 
 export interface SearchResult {
@@ -63,6 +94,14 @@ export interface PancakeIndex {
 export interface PancakeApi {
   /** Create a new Pancake index using the runtime-specific packaged entrypoint. */
   create(opts: CreateOptions): Promise<PancakeIndex>;
+  /** Create and populate an index from raw vectors. Infers dim and maxElements by default. */
+  fromVectors(vectors: readonly VectorInput[], opts?: Omit<CreateOptions, 'dim'> & Partial<Pick<CreateOptions, 'dim'>>): Promise<FromVectorsResult<never>>;
+  /** Create and populate an index from { id, vector } records. */
+  fromVectors<Id = unknown>(records: readonly VectorRecord<Id>[], opts?: Omit<CreateOptions, 'dim'> & Partial<Pick<CreateOptions, 'dim'>>): Promise<FromVectorsResult<Id>>;
+  /** Load vectors from a JSON/JSONL file and build an index. Node.js entrypoints only. */
+  loadJsonFile<Id = unknown>(filePath: string, opts?: JsonFileOptions): Promise<FromVectorsResult<Id>>;
+  /** Load a previously exported Pancake snapshot from disk. Node.js entrypoints only. */
+  loadSnapshotFile(filePath: string, opts: SnapshotFileOptions): Promise<PancakeIndex>;
 }
 
 declare const Pancake: PancakeApi;
