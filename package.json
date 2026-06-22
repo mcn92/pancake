@@ -7,7 +7,7 @@
   "exports": {
     ".": {
       "types": "./pancake.d.ts",
-      "workerd": "./pancake.web.mjs",
+      "workerd": "./pancake.workerd.mjs",
       "browser": "./pancake.web.mjs",
       "import": "./pancake.node.mjs",
       "require": "./pancake.js",
@@ -15,7 +15,7 @@
     },
     "./web": {
       "types": "./pancake.d.ts",
-      "workerd": "./pancake.web.mjs",
+      "workerd": "./pancake.workerd.mjs",
       "browser": "./pancake.web.mjs",
       "import": "./pancake.web.mjs",
       "default": "./pancake.web.mjs"
@@ -33,6 +33,7 @@
     "pancake.js",
     "pancake.node.mjs",
     "pancake.web.mjs",
+    "pancake.workerd.mjs",
     "pancake-core.js",
     "pancake.d.ts",
     "dist/engine.js",
@@ -49,9 +50,10 @@
     "bench": "node benchmarks/run.js",
     "test": "node run_tests.js",
     "test:browser": "node test/browser_smoke.js",
+    "test:worker-web": "node test/test_worker_web_entry.js",
     "test:simd": "node test/simd_parity.js",
     "pack:dry-run": "node scripts/pack-dry-run.mjs",
-    "prepublishOnly": "npm test && npm run test:browser && npm run pack:dry-run"
+    "prepublishOnly": "npm test && npm run test:browser && npm run test:worker-web && npm run pack:dry-run"
   },
   "keywords": [
     "vector-search",
