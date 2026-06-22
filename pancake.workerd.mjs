@@ -1,17 +1,14 @@
 import loadEngine from './dist/engine.js';
 import loadScalarEngine from './dist/engine.scalar.js';
-import simdWasmAsset from './dist/engine.wasm?url';
-import scalarWasmAsset from './dist/engine.scalar.wasm?url';
+import simdWasmAsset from './dist/engine.wasm';
+import scalarWasmAsset from './dist/engine.scalar.wasm';
 import createPancakeApi from './pancake-core.js';
+
 let engineVariant = null;
 
 function makeLoadError(message, error) {
   const detail = error && error.message ? error.message : String(error);
   return new Error(`${message}: ${detail}`);
-}
-
-function isUrlLikeWasmAsset(asset) {
-  return typeof asset === 'string' || asset instanceof URL;
 }
 
 function toWasmSource(asset) {
@@ -23,19 +20,7 @@ function toWasmSource(asset) {
   throw new Error(`Unsupported WASM asset type: ${typeof asset}`);
 }
 
-function instantiateEngineWithAsset(factory, expectedFileName, asset) {
-  if (isUrlLikeWasmAsset(asset)) {
-    const href = asset instanceof URL ? asset.href : asset;
-    return factory({
-      locateFile(path) {
-        if (path === expectedFileName) {
-          return href;
-        }
-        return path;
-      }
-    });
-  }
-
+function instantiateEngineWithAsset(factory, asset) {
   return factory({
     instantiateWasm(imports, successCallback) {
       WebAssembly.instantiate(toWasmSource(asset), imports)
@@ -52,42 +37,20 @@ function instantiateEngineWithAsset(factory, expectedFileName, asset) {
   });
 }
 
-async function detectEngineVariant(simdAsset) {
-  if (!isUrlLikeWasmAsset(simdAsset)) {
-    return 'simd';
-  }
-
-  try {
-    const href = simdAsset instanceof URL ? simdAsset.href : simdAsset;
-    const response = await fetch(href, { credentials: 'same-origin' });
-    if (!response.ok) {
-      throw new Error(`${response.status} ${response.statusText}`.trim());
-    }
-    const binary = await response.arrayBuffer();
-    return WebAssembly.validate(binary) ? 'simd' : 'scalar';
-  } catch (error) {
-    throw makeLoadError('Failed to probe Pancake SIMD WASM support', error);
-  }
-}
-
-async function loadWebEngine() {
-  if (engineVariant === null) {
-    engineVariant = await detectEngineVariant(simdWasmAsset);
-  }
-
+async function loadWorkerdEngine() {
   if (engineVariant === 'scalar') {
     try {
-      return await instantiateEngineWithAsset(loadScalarEngine, 'engine.scalar.wasm', scalarWasmAsset);
+      return await instantiateEngineWithAsset(loadScalarEngine, scalarWasmAsset);
     } catch (error) {
       throw makeLoadError('Pancake failed to load the scalar WASM engine', error);
     }
   }
 
   try {
-    return await instantiateEngineWithAsset(loadEngine, 'engine.wasm', simdWasmAsset);
+    return await instantiateEngineWithAsset(loadEngine, simdWasmAsset);
   } catch (simdError) {
     try {
-      const engine = await instantiateEngineWithAsset(loadScalarEngine, 'engine.scalar.wasm', scalarWasmAsset);
+      const engine = await instantiateEngineWithAsset(loadScalarEngine, scalarWasmAsset);
       engineVariant = 'scalar';
       return engine;
     } catch (scalarError) {
@@ -99,7 +62,7 @@ async function loadWebEngine() {
   }
 }
 
-const Pancake = createPancakeApi(loadWebEngine);
+const Pancake = createPancakeApi(loadWorkerdEngine);
 
 function unsupportedNodeFileHelper(name) {
   return async function unsupported() {
