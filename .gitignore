@@ -20,6 +20,10 @@ Thumbs.db
 # Local benchmark output
 benchmark_results/
 **/benchmark_results/
+!benchmark_results/
+benchmark_results/*
+!benchmark_results/release/
+!benchmark_results/release/**
 
 # Pre-refactor backups
 .backup/
