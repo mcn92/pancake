@@ -1,0 +1,74 @@
+[
+  {
+    "id": "jacket-rain-shell",
+    "title": "North Ridge Ultralight Rain Shell",
+    "category": "jackets",
+    "description": "Lightweight waterproof hiking jacket for wet trail days.",
+    "priceCents": 14900,
+    "inventory": 12,
+    "url": "/products/jacket-rain-shell"
+  },
+  {
+    "id": "jacket-insulated-parka",
+    "title": "Alpine Basecamp Insulated Parka",
+    "category": "jackets",
+    "description": "Warm insulated winter parka for cold weather and camp use.",
+    "priceCents": 22900,
+    "inventory": 7,
+    "url": "/products/jacket-insulated-parka"
+  },
+  {
+    "id": "boot-waterproof-trail",
+    "title": "Summit Waterproof Trail Boot",
+    "category": "boots",
+    "description": "Waterproof mid-height hiking boot for rocky trails.",
+    "priceCents": 16800,
+    "inventory": 18,
+    "url": "/products/boot-waterproof-trail"
+  },
+  {
+    "id": "boot-lightweight-runner",
+    "title": "Canyon Fastpack Runner",
+    "category": "boots",
+    "description": "Lightweight trail runner for fast day hikes and mixed terrain.",
+    "priceCents": 13200,
+    "inventory": 10,
+    "url": "/products/boot-lightweight-runner"
+  },
+  {
+    "id": "pack-day-hike",
+    "title": "Pine Loop Daypack 22L",
+    "category": "packs",
+    "description": "Compact hiking backpack for day trips and trail essentials.",
+    "priceCents": 8900,
+    "inventory": 24,
+    "url": "/products/pack-day-hike"
+  },
+  {
+    "id": "pack-expedition-45l",
+    "title": "Granite Pass Expedition Pack 45L",
+    "category": "packs",
+    "description": "Larger backpacking pack for overnight trips and extra layers.",
+    "priceCents": 17900,
+    "inventory": 5,
+    "url": "/products/pack-expedition-45l"
+  },
+  {
+    "id": "tent-backpacking-2p",
+    "title": "Cloud Mesa Backpacking Tent 2P",
+    "category": "tents",
+    "description": "Compact two-person tent for lightweight backpacking trips.",
+    "priceCents": 25900,
+    "inventory": 8,
+    "url": "/products/tent-backpacking-2p"
+  },
+  {
+    "id": "tent-basecamp-4p",
+    "title": "Timberline Basecamp Tent 4P",
+    "category": "tents",
+    "description": "Roomy four-person shelter for car camping and basecamp setups.",
+    "priceCents": 31900,
+    "inventory": 4,
+    "url": "/products/tent-basecamp-4p"
+  }
+]
