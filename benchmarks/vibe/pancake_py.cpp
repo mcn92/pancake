@@ -1,0 +1,121 @@
+// pancake_py.cpp — pybind11 wrapper around the header-only Pancake HNSW engine.
+//
+// This exposes the SAME C++ engine used by the WASM and N-API builds
+// (src/int8_float_hnsw.hpp / src/float_hnsw.hpp) to Python, so VIBE can
+// benchmark the native engine on neutral turf.
+//
+// Build (out of the pancake repo root, with the headers on the include path):
+//   c++ -O3 -std=c++17 -shared -fPIC -DPANCAKE_ENABLE_AVX2_SIMD -mavx2 \
+//       $(python3 -m pybind11 --includes) \
+//       -Isrc pancake_py.cpp -o pancake_py$(python3-config --extension-suffix)
+//
+// Notes:
+//  * We accept float32 vectors and let the engine do its OWN asymmetric
+//    int8 quantization internally (quantized=true). This is the whole point
+//    of pancake — see the int8 header's "WHY ASYMMETRIC" comment — so we do
+//    NOT consume VIBE's pre-quantized uint8 datasets. The Python wrapper only
+//    handles the float32 path; the VIBE config declares pancake under `float:`.
+//  * Single-threaded build/query to match VIBE's measurement convention
+//    (OMP_NUM_THREADS=1 etc. are set in the base image).
+
+#include <pybind11/pybind11.h>
+#include <pybind11/numpy.h>
+#include <pybind11/stl.h>
+#include <vector>
+#include <cstdint>
+
+#include "int8_float_hnsw.hpp"
+#include "float_hnsw.hpp"
+
+namespace py = pybind11;
+using pancake::wasm::DistanceMetric;
+using pancake::wasm::Int8FloatHNSW;
+using pancake::wasm::Int8FloatHNSWConfig;
+using pancake::wasm::FloatHNSW;
+using pancake::wasm::FloatHNSWConfig;
+
+class PancakeIndex {
+public:
+    PancakeIndex(size_t dim, size_t max_elements, bool quantized,
+                 const std::string& metric, size_t M, size_t ef_construction)
+        : dim_(dim), quantized_(quantized)
+    {
+        DistanceMetric m = (metric == "cosine") ? DistanceMetric::Cosine
+                                                 : DistanceMetric::L2;
+        if (quantized_) {
+            Int8FloatHNSWConfig cfg;
+            cfg.max_elements = max_elements;
+            cfg.M = M;
+            cfg.ef_construction = ef_construction;
+            cfg.ef_search = 100;
+            cfg.metric = m;
+            cfg.use_heuristic = true;
+            i8_ = new Int8FloatHNSW(dim, cfg);
+        } else {
+            FloatHNSWConfig cfg;
+            cfg.max_elements = max_elements;
+            cfg.M = M;
+            cfg.ef_construction = ef_construction;
+            cfg.ef_search = 100;
+            cfg.metric = m;
+            cfg.use_heuristic = true;
+            f32_ = new FloatHNSW(dim, cfg);
+        }
+    }
+
+    ~PancakeIndex() { delete i8_; delete f32_; }
+
+    // X: (n, dim) float32, C-contiguous.
+    void fit(py::array_t<float, py::array::c_style | py::array::forcecast> X) {
+        auto buf = X.request();
+        size_t n = static_cast<size_t>(buf.shape[0]);
+        const float* data = static_cast<const float*>(buf.ptr);
+        for (size_t i = 0; i < n; ++i) {
+            const float* vec = data + i * dim_;
+            if (quantized_) i8_->insert(vec);
+            else            f32_->insert(vec);
+        }
+    }
+
+    void set_ef(size_t ef) {
+        if (quantized_) i8_->set_ef_search(ef);
+        else            f32_->set_ef(ef);
+    }
+
+    // Returns the neighbor IDs only — VIBE recomputes distances itself.
+    py::array_t<int64_t> query(py::array_t<float, py::array::c_style | py::array::forcecast> v,
+                               int k) {
+        auto buf = v.request();
+        const float* q = static_cast<const float*>(buf.ptr);
+        std::vector<std::pair<uint32_t, float>> res =
+            quantized_ ? i8_->search(q, static_cast<size_t>(k))
+                       : f32_->search(q, static_cast<size_t>(k));
+        py::array_t<int64_t> out(static_cast<py::ssize_t>(res.size()));
+        auto ob = out.request();
+        int64_t* op = static_cast<int64_t*>(ob.ptr);
+        for (size_t i = 0; i < res.size(); ++i) op[i] = static_cast<int64_t>(res[i].first);
+        return out;
+    }
+
+    size_t memory_bytes() const {
+        return quantized_ ? i8_->memory_bytes() : f32_->memory_bytes();
+    }
+
+private:
+    size_t dim_;
+    bool quantized_;
+    Int8FloatHNSW* i8_ = nullptr;
+    FloatHNSW*     f32_ = nullptr;
+};
+
+PYBIND11_MODULE(pancake_py, m) {
+    m.doc() = "Native Python binding for the Pancake HNSW engine (VIBE).";
+    py::class_<PancakeIndex>(m, "PancakeIndex")
+        .def(py::init<size_t, size_t, bool, const std::string&, size_t, size_t>(),
+             py::arg("dim"), py::arg("max_elements"), py::arg("quantized"),
+             py::arg("metric"), py::arg("M"), py::arg("ef_construction"))
+        .def("fit", &PancakeIndex::fit)
+        .def("set_ef", &PancakeIndex::set_ef)
+        .def("query", &PancakeIndex::query)
+        .def("memory_bytes", &PancakeIndex::memory_bytes);
+}
