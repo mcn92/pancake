@@ -90,9 +90,12 @@ public:
     bool deserialize(const uint8_t* data, size_t size) override {
         size_t cnt = serialized_index_count_hint(data, size, 0x464C4831);
         FloatHNSWConfig cfg = cfg_;
-        cfg.max_elements = std::max(static_cast<size_t>(cnt * 1.2), static_cast<size_t>(100000));
-        impl_ = std::make_unique<FloatHNSW>(dims_, cfg);
-        return impl_->deserialize(data, size);
+        if (cnt > cfg.max_elements) return false;
+
+        auto next = std::make_unique<FloatHNSW>(dims_, cfg);
+        if (!next->deserialize(data, size)) return false;
+        impl_ = std::move(next);
+        return true;
     }
     void set_ef_search(size_t ef) override { impl_->set_ef(ef); }
     size_t dimension() const override { return dims_; }
@@ -125,9 +128,12 @@ public:
     bool deserialize(const uint8_t* data, size_t size) override {
         size_t cnt = serialized_index_count_hint(data, size, 0x49384831);
         Int8FloatHNSWConfig cfg = cfg_;
-        cfg.max_elements = std::max(static_cast<size_t>(cnt * 1.2), static_cast<size_t>(100000));
-        impl_ = std::make_unique<Int8FloatHNSW>(dims_, cfg);
-        return impl_->deserialize(data, size);
+        if (cnt > cfg.max_elements) return false;
+
+        auto next = std::make_unique<Int8FloatHNSW>(dims_, cfg);
+        if (!next->deserialize(data, size)) return false;
+        impl_ = std::move(next);
+        return true;
     }
     void set_ef_search(size_t ef) override { impl_->set_ef_search(ef); }
     size_t dimension() const override { return dims_; }
@@ -251,6 +257,7 @@ void pancake_compact(uint32_t h) {
 // Returns the number of entries written (= pre-compaction count).
 size_t pancake_compact_remap(uint32_t h, uint32_t* out_buf, size_t out_capacity) {
     if (h >= MAX_HANDLES || !g_handles[h].index) return 0;
+    if (!out_buf || out_capacity == 0) return 0;
     std::vector<uint32_t> map;
     g_handles[h].index->compact(map);
     size_t n = std::min(map.size(), out_capacity);
