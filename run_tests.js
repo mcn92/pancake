@@ -983,6 +983,60 @@ async function testErrorPaths() {
         idx.dispose();
     }
 
+    // Import rejects snapshots larger than the destination maxElements.
+    {
+        const src = await Pancake.create({ ...DEFAULT_CONFIG, maxElements: 6 });
+        const srcVecs = Array.from({ length: 6 }, () => normalizedVec(DIM));
+        src.addBatch(srcVecs);
+        const exported = src.export();
+        src.dispose();
+
+        const dst = await Pancake.create({ ...DEFAULT_CONFIG, maxElements: 5 });
+        const liveVecs = Array.from({ length: 2 }, () => normalizedVec(DIM));
+        const liveIds = dst.addBatch(liveVecs);
+        const beforeTop = dst.search(liveVecs[0], 1)[0];
+
+        let msg = '';
+        try { dst.import(exported); } catch (e) { msg = e.message; }
+        assert(msg.includes('Import failed'), 'import rejects snapshot count greater than maxElements');
+        assert(dst.count === 2, 'over-capacity import preserves existing destination count');
+        const afterTop = dst.search(liveVecs[0], 1)[0];
+        assert(afterTop.id === liveIds[0], 'over-capacity import preserves existing destination ID mapping');
+        assert(afterTop.id === beforeTop.id, 'over-capacity import preserves existing destination search identity');
+        dst.dispose();
+    }
+
+    // Backend-level import failure preserves an existing destination index.
+    {
+        const src = await Pancake.create(DEFAULT_CONFIG);
+        src.addBatch(Array.from({ length: 5 }, () => normalizedVec(DIM)));
+        const exported = new Uint8Array(src.export());
+        src.dispose();
+
+        const rawSizeOffset = 28;
+        const view = new DataView(exported.buffer, exported.byteOffset, exported.byteLength);
+        view.setUint32(rawSizeOffset, 40, true); // valid raw header, truncated backend payload
+
+        const dst = await Pancake.create(DEFAULT_CONFIG);
+        const liveVecs = Array.from({ length: 4 }, () => normalizedVec(DIM));
+        const liveIds = dst.addBatch(liveVecs);
+        dst.delete(liveIds[0]);
+        dst.compact();
+        const extraId = dst.add(liveVecs[0]);
+        const beforeCount = dst.count;
+        const beforeTop = dst.search(liveVecs[1], 1)[0];
+
+        let msg = '';
+        try { dst.import(exported); } catch (e) { msg = e.message; }
+        assert(msg.includes('Import failed'), 'backend-level import failure throws Import failed');
+        assert(dst.count === beforeCount, 'backend-level failed import preserves destination count');
+        const afterTop = dst.search(liveVecs[1], 1)[0];
+        assert(afterTop.id === liveIds[1], 'backend-level failed import preserves compacted ID mapping');
+        assert(beforeTop.id === afterTop.id, 'backend-level failed import preserves search identity');
+        assert(dst.search(liveVecs[0], 1)[0].id === extraId, 'backend-level failed import preserves later added ID mapping');
+        dst.dispose();
+    }
+
     // add() with wrong dimension after successful adds
     {
         const idx = await Pancake.create(DEFAULT_CONFIG);
@@ -1200,6 +1254,28 @@ async function testEdgeCases() {
             if (results.length > 0 && results[0].id === ids[i]) recall++;
         }
         assert(recall === 20, `recall intact after no-op compact (${recall}/20)`);
+        idx.dispose();
+    }
+
+    // Engine compact_remap validates output before mutating.
+    {
+        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const ids = idx.addBatch(Array.from({ length: 3 }, () => normalizedVec(DIM)));
+        idx.delete(ids[1]);
+        assert(idx.ghostCount === 1, 'compact_remap guard setup has one ghost');
+
+        const nullResult = idx._e._pancake_compact_remap(idx._handle, 0, 3);
+        assert(nullResult === 0, 'compact_remap with null output returns 0');
+        assert(idx.count === 3, 'compact_remap with null output does not compact');
+        assert(idx.ghostCount === 1, 'compact_remap with null output preserves ghost count');
+
+        const ptr = idx._e._emsc_malloc(4);
+        const zeroCapacityResult = idx._e._pancake_compact_remap(idx._handle, ptr, 0);
+        idx._e._emsc_free(ptr);
+        assert(zeroCapacityResult === 0, 'compact_remap with zero capacity returns 0');
+        assert(idx.count === 3, 'compact_remap with zero capacity does not compact');
+        assert(idx.ghostCount === 1, 'compact_remap with zero capacity preserves ghost count');
+
         idx.dispose();
     }
 
