@@ -1,0 +1,9 @@
+label,build_s,recall,qps,p50_ms,p99_ms,mem_mb,params
+pancake-int8-wasm,28.552,0.951100,1785.27,0.5690,0.8368,80.26,M=8 efC=50 efS=100
+pancake-int8-native,17.017,0.951900,2267.79,0.4470,0.6731,80.26,M=8 efC=50 efS=100
+pancake-f32-wasm,53.729,0.947500,1227.76,0.8328,1.1348,296.34,M=8 efC=50 efS=100
+pancake-f32-native,35.276,0.967600,1551.36,0.6540,0.9433,296.24,M=8 efC=50 efS=100
+hnswlib-f32-native,30.813,0.951000,1426.64,0.7076,0.9723,,M=8 efC=50 efS=100
+usearch-i8-native,10.532,0.869800,2429.79,0.4059,0.6956,,M=8 efC=50 efS=100
+usearch-f32-native,30.733,0.952300,1208.28,0.8410,1.1833,,M=8 efC=50 efS=100
+faiss-hnsw,34.102,0.790800,2607.35,0.3683,0.5995,,M=8 efC=40(default) efS=16(default)

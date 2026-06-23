@@ -9,6 +9,15 @@ Usage:
 import sys
 import pandas as pd
 import numpy as np
+
+# Matplotlib < 3.6 still reaches for legacy NumPy aliases like np.Inf and
+# np.NaN, which were removed in NumPy 2.x. Provide the aliases here so the
+# plotting helper remains usable on mixed older-matplotlib/newer-numpy setups.
+if not hasattr(np, 'Inf'):
+    np.Inf = np.inf
+if not hasattr(np, 'NaN'):
+    np.NaN = np.nan
+
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 

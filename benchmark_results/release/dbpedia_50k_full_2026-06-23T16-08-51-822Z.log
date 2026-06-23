@@ -1,0 +1,76 @@
+======================================================================
+Full DBpedia Benchmark (50K, L2, 1536D)
+======================================================================
+
+Loading dataset...
+  Loading /mnt/c/pancake1.0.0/dbpedia/dbpedia_base_100k.fvecs (first 50,000)...
+  Loading /mnt/c/pancake1.0.0/dbpedia/dbpedia_query.fvecs (first 1,000)...
+  Base:    50,000 vectors, 1536D
+  Queries: 1,000
+  k=10, M=8, ef_construction=50, ef_search=100
+  Faiss note: HNSW efConstruction/efSearch are library defaults in faiss-node
+
+Loaded cached ground truth (1000 queries)
+
+--- Pancake Int8 WASM ---
+    10,000/50,000
+    20,000/50,000
+    30,000/50,000
+    40,000/50,000
+    50,000/50,000
+--- Pancake Int8 Native ---
+    10,000/50,000
+    20,000/50,000
+    30,000/50,000
+    40,000/50,000
+    50,000/50,000
+--- Pancake FP32 WASM ---
+    10,000/50,000
+    20,000/50,000
+    30,000/50,000
+    40,000/50,000
+    50,000/50,000
+--- Pancake FP32 Native ---
+    10,000/50,000
+    20,000/50,000
+    30,000/50,000
+    40,000/50,000
+    50,000/50,000
+--- hnswlib FP32 ---
+    10,000/50,000
+    20,000/50,000
+    30,000/50,000
+    40,000/50,000
+    50,000/50,000
+--- USearch Int8 ---
+    10,000/50,000
+    20,000/50,000
+    30,000/50,000
+    40,000/50,000
+    50,000/50,000
+--- USearch FP32 ---
+    10,000/50,000
+    20,000/50,000
+    30,000/50,000
+    40,000/50,000
+    50,000/50,000
+--- Faiss HNSW ---
+
+==========================================================================================
+Results
+==========================================================================================
+Library                 Build(s)    Recall       QPS   p50(ms)   p99(ms)   Mem(MB)  Params
+------------------------------------------------------------------------------------------
+pancake-int8-wasm          28.55    95.11%      1785     0.569     0.837      80.3  M=8 efC=50 efS=100
+pancake-int8-native        17.02    95.19%      2268     0.447     0.673      80.3  M=8 efC=50 efS=100
+pancake-f32-wasm           53.73    94.75%      1228     0.833     1.135     296.3  M=8 efC=50 efS=100
+pancake-f32-native         35.28    96.76%      1551     0.654     0.943     296.2  M=8 efC=50 efS=100
+hnswlib-f32-native         30.81    95.10%      1427     0.708     0.972         -  M=8 efC=50 efS=100
+usearch-i8-native          10.53    86.98%      2430     0.406     0.696         -  M=8 efC=50 efS=100
+usearch-f32-native         30.73    95.23%      1208     0.841     1.183         -  M=8 efC=50 efS=100
+faiss-hnsw                 34.10    79.08%      2607     0.368     0.600         -  M=8 efC=40(default) efS=16(default)
+
+Outputs:
+  log:  /mnt/c/pancake1.0.0/benchmark_results/dbpedia_50k_full_2026-06-23T16-08-51-822Z.log
+  json: /mnt/c/pancake1.0.0/benchmark_results/dbpedia_50k_full_2026-06-23T16-08-51-822Z.json
+  csv:  /mnt/c/pancake1.0.0/benchmark_results/dbpedia_50k_full_2026-06-23T16-08-51-822Z.csv
