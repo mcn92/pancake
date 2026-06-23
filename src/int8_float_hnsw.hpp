@@ -1607,24 +1607,40 @@ private:
         result.reserve(std::min(M, candidates.size()));
 
         if (use_heuristic_) {
-            size_t best_rejected = candidates.size();
-            for (size_t ci = 0; ci < candidates.size(); ci++) {
+            const size_t nc = candidates.size();
+            const size_t selected_capacity = std::min(M, nc);
+            const float uncached = std::numeric_limits<float>::lowest();
+            std::vector<float> selected_cache(nc * selected_capacity, uncached);
+            std::vector<size_t> selected_indices;
+            selected_indices.reserve(selected_capacity);
+            auto cached_distance = [&](size_t cand_idx, size_t selected_pos) -> float {
+                float& cached = selected_cache[cand_idx * selected_capacity + selected_pos];
+                if (cached != uncached) return cached;
+                size_t selected_idx = selected_indices[selected_pos];
+                float d = distance(candidates[cand_idx].second, candidates[selected_idx].second);
+                cached = d;
+                return d;
+            };
+
+            size_t best_rejected = nc;
+            for (size_t ci = 0; ci < nc; ci++) {
                 if (result.size() >= M) break;
                 const auto& cand = candidates[ci];
                 bool keep = true;
-                for (const Edge& sel : result) {
-                    if (distance(cand.second, sel.neighbor) < cand.first) {
+                for (size_t sel_pos = 0; sel_pos < selected_indices.size(); sel_pos++) {
+                    if (cached_distance(ci, sel_pos) < cand.first) {
                         keep = false;
                         break;
                     }
                 }
                 if (keep) {
                     result.push_back(Edge{cand.second, cand.first});
-                } else if (best_rejected == candidates.size()) {
+                    selected_indices.push_back(ci);
+                } else if (best_rejected == nc) {
                     best_rejected = ci;
                 }
             }
-            for (size_t ci = best_rejected; ci < candidates.size() && result.size() < M; ci++) {
+            for (size_t ci = best_rejected; ci < nc && result.size() < M; ci++) {
                 bool already = false;
                 for (const Edge& sel : result) {
                     if (sel.neighbor == candidates[ci].second) {

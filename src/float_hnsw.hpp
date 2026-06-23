@@ -917,29 +917,28 @@ private:
     void select_neighbors_heuristic(uint32_t node, std::vector<std::pair<float, uint32_t>>& candidates, size_t M, int level) {
         std::vector<uint32_t> result;
         if (use_heuristic_) {
-            // Pairwise distance cache — avoids recomputing the same float L2/cosine
-            // distance when a candidate is compared against multiple selected neighbors.
             const size_t nc = candidates.size();
+            const size_t selected_capacity = std::min(M, nc);
             const float uncached = std::numeric_limits<float>::lowest();
-            std::vector<float> pair_cache(nc * nc, uncached);
-            auto cached_distance = [&](size_t a_idx, size_t b_idx) -> float {
-                float& cached = pair_cache[a_idx * nc + b_idx];
+            std::vector<float> selected_cache(nc * selected_capacity, uncached);
+            std::vector<size_t> selected_indices;
+            selected_indices.reserve(selected_capacity);
+            auto cached_distance = [&](size_t cand_idx, size_t selected_pos) -> float {
+                float& cached = selected_cache[cand_idx * selected_capacity + selected_pos];
                 if (cached != uncached) return cached;
-                float d = distance(candidates[a_idx].second, candidates[b_idx].second);
+                size_t selected_idx = selected_indices[selected_pos];
+                float d = distance(candidates[cand_idx].second, candidates[selected_idx].second);
                 cached = d;
-                pair_cache[b_idx * nc + a_idx] = d;
                 return d;
             };
 
-            std::vector<size_t> selected_indices;
-            selected_indices.reserve(std::min(M, nc));
             size_t best_rejected = nc;
             for (size_t ci = 0; ci < nc; ci++) {
                 if (result.size() >= M) break;
                 auto& cand = candidates[ci];
                 bool keep = true;
-                for (size_t sel_idx : selected_indices) {
-                    if (cached_distance(ci, sel_idx) < cand.first) { keep = false; break; }
+                for (size_t sel_pos = 0; sel_pos < selected_indices.size(); sel_pos++) {
+                    if (cached_distance(ci, sel_pos) < cand.first) { keep = false; break; }
                 }
                 if (keep) {
                     result.push_back(cand.second);
