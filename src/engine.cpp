@@ -303,7 +303,15 @@ uint8_t* pancake_export(uint32_t h, size_t* out_size) {
 
 int pancake_import(uint32_t h, const uint8_t* data, size_t size) {
     if (h >= MAX_HANDLES || !g_handles[h].index) return -1;
-    return g_handles[h].index->deserialize(data, size) ? 0 : -1;
+    // deserialize() parses an untrusted buffer. Bounds and level/scale caps make
+    // a hostile snapshot fail closed, but a remaining oversized resize() could
+    // still throw; catch it here so import returns an error instead of aborting
+    // the whole WASM instance.
+    try {
+        return g_handles[h].index->deserialize(data, size) ? 0 : -1;
+    } catch (...) {
+        return -1;
+    }
 }
 
 void pancake_dispose(uint32_t h) {

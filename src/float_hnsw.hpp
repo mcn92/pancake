@@ -17,6 +17,7 @@
 #include <cmath>
 #include <limits>
 #include <cstring>
+#include <cstdint>
 #include <unordered_set>
 
 #if defined(__wasm_simd128__)
@@ -61,6 +62,11 @@ struct FloatHNSWConfig {
 
 class FloatHNSW {
 public:
+    // Upper bound on the HNSW level count accepted from an untrusted snapshot.
+    // Real graphs never approach this; it caps attacker-controlled allocations
+    // during deserialize(). 64 levels covers >10^18 elements at any sane M.
+    static constexpr uint32_t MAX_DESERIALIZE_LEVEL = 64;
+
     FloatHNSW(size_t dims, const FloatHNSWConfig& config = {})
         : dims_(dims)
         , metric_(config.metric)
@@ -609,6 +615,10 @@ public:
         if (metric_val > static_cast<uint32_t>(DistanceMetric::Cosine)) return fail();
         if (M_ <= 1 || M_ > 128 || M0_ == 0 || M0_ > 256) return fail();
         if (ef_construction_ == 0 || ef_construction_ > 4096) return fail();
+        // Cap the level count read from an untrusted snapshot. Without this an
+        // attacker-controlled level_val drives a multi-gigabyte upper_[i].resize()
+        // below, throwing std::length_error/bad_alloc and aborting the instance.
+        if (level_val > MAX_DESERIALIZE_LEVEL) return fail();
         if (count_ == 0) {
             if (entry_point_ != UINT32_MAX) return fail();
             max_level_ = 0;
@@ -617,15 +627,20 @@ public:
         }
         level_mult_ = 1.0 / std::log(static_cast<double>(M_));
 
-        size_t vec_bytes = count_ * dims_ * sizeof(float);
-        if (offset + vec_bytes > data_size) return fail();
-        vectors_.resize(count_ * dims_);
+        // count_ <= max_elements_ and dims_ is trusted, but compute the byte size
+        // and the end offset without 32-bit wraparound (size_t is 32-bit on wasm32):
+        // check the multiply and use subtraction for the bounds test.
+        if (dims_ != 0 && count_ > (SIZE_MAX / sizeof(float)) / dims_) return fail();
+        size_t vec_count = count_ * dims_;
+        size_t vec_bytes = vec_count * sizeof(float);
+        if (offset > data_size || data_size - offset < vec_bytes) return fail();
+        vectors_.resize(vec_count);
         memcpy(vectors_.data(), data + offset, vec_bytes);
         offset += vec_bytes;
 
         // Reject non-finite vector components (NaN, Inf).
         // Bit-level check required — std::isfinite is unreliable under -ffast-math.
-        for (size_t i = 0; i < count_ * dims_; ++i) {
+        for (size_t i = 0; i < vec_count; ++i) {
             uint32_t bits;
             memcpy(&bits, &vectors_[i], 4);
             if (((bits >> 23) & 0xFF) == 0xFF) return fail();
@@ -648,7 +663,7 @@ public:
                 size_t max_neighbors = (l == 0) ? M0_ : M_;
                 if (!safe_read_u32(sz)) return fail();
                 if (sz > max_neighbors) return fail();
-                if (offset + sz * 4 > data_size) return fail();
+                if (offset > data_size || data_size - offset < static_cast<size_t>(sz) * 4) return fail();
                 if (l == 0) {
                     base_sizes_[i] = static_cast<uint16_t>(sz);
                     uint32_t* base = base_slot(static_cast<uint32_t>(i));
@@ -757,6 +772,28 @@ private:
 
     void append_neighbor(uint32_t node, int level, uint32_t neighbor) {
         if (level == 0) {
+            // Each base slot holds exactly M0_ entries with no headroom between
+            // slots, so appending past M0_ would corrupt the next node's slot
+            // (or overrun the buffer for the last node). When the node is already
+            // saturated, run the heuristic over the existing edges plus the new
+            // candidate and re-select within M0_, rather than the (unsafe) eager
+            // append-then-prune the caller would otherwise rely on.
+            uint16_t sz = base_sizes_[node];
+            if (sz >= M0_) {
+                const uint32_t* slot = base_slot(node);
+                for (uint16_t i = 0; i < sz; ++i) {
+                    if (slot[i] == neighbor) return;  // already linked
+                }
+                std::vector<std::pair<float, uint32_t>> candidates;
+                candidates.reserve(static_cast<size_t>(sz) + 1);
+                for (uint16_t i = 0; i < sz; ++i) {
+                    candidates.emplace_back(distance(node, slot[i]), slot[i]);
+                }
+                candidates.emplace_back(distance(node, neighbor), neighbor);
+                std::sort(candidates.begin(), candidates.end());
+                select_neighbors_heuristic(node, candidates, M0_, 0);
+                return;
+            }
             base_slot(node)[base_sizes_[node]++] = neighbor;
             return;
         }

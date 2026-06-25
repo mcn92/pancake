@@ -151,6 +151,10 @@ public:
         std::vector<Edge> edges;
     };
 
+    // Upper bound on the HNSW level count accepted from an untrusted snapshot;
+    // caps attacker-controlled allocations during deserialize(). See float_hnsw.
+    static constexpr uint32_t MAX_DESERIALIZE_LEVEL = 64;
+
     Int8FloatHNSW(size_t dims, const Int8FloatHNSWConfig& config = {})
         : dims_(dims)
         , metric_(config.metric)
@@ -780,6 +784,10 @@ public:
         if (metric_val > static_cast<uint32_t>(DistanceMetric::Cosine)) return fail();
         if (M_ <= 1 || M_ > 128 || M0_ == 0 || M0_ > 256) return fail();
         if (ef_construction_ == 0 || ef_construction_ > 4096) return fail();
+        // Cap the level count read from an untrusted snapshot. Without this an
+        // attacker-controlled level_val drives a multi-gigabyte upper_[i].resize()
+        // below, throwing std::length_error/bad_alloc and aborting the instance.
+        if (level_val > MAX_DESERIALIZE_LEVEL) return fail();
         if (count_ == 0) {
             if (entry_point_ != UINT32_MAX) return fail();
             max_level_ = 0;
@@ -788,7 +796,9 @@ public:
         }
         level_mult_ = 1.0 / std::log(static_cast<double>(M_));
 
-        if (offset + count_ * sizeof(float) * 2 > data_size) return fail();
+        // count_ <= max_elements_, so count_*sizeof(float)*2 cannot overflow a
+        // 32-bit size_t; use subtraction so a near-SIZE_MAX offset can't wrap.
+        if (offset > data_size || data_size - offset < count_ * sizeof(float) * 2) return fail();
         scales_.resize(count_);
         offsets_.resize(count_);
         for (size_t i = 0; i < count_; ++i) {
@@ -796,7 +806,10 @@ public:
             uint32_t bits;
             memcpy(&bits, &scales_[i], 4);
             if (((bits >> 23) & 0xFF) == 0xFF) return fail();
-            if (scales_[i] < 0.0f || scales_[i] > 1e20f) return fail();
+            // A zero/negative scale collapses a vector to a constant and poisons
+            // every distance to it; insert() never produces one (it guards
+            // range < 1e-30f), so reject it from snapshots too.
+            if (scales_[i] <= 0.0f || scales_[i] > 1e20f) return fail();
         }
         for (size_t i = 0; i < count_; ++i) {
             if (!safe_read_f32(offsets_[i])) return fail();
@@ -806,8 +819,10 @@ public:
             if (offsets_[i] > 1e20f || offsets_[i] < -1e20f) return fail();
         }
 
+        // count_ <= max_elements_ and dims_ is trusted, so count_*dims_ stays
+        // within 32-bit size_t; use subtraction to avoid offset+len wraparound.
         size_t qdata_bytes = count_ * dims_;
-        if (offset + qdata_bytes > data_size) return fail();
+        if (offset > data_size || data_size - offset < qdata_bytes) return fail();
         qdata_.resize(qdata_bytes);
         memcpy(qdata_.data(), data + offset, qdata_bytes);
         offset += qdata_bytes;
@@ -835,9 +850,9 @@ public:
                 if (sz > max_neighbors) return fail();
 
                 if (version >= 2) {
-                    if (offset + static_cast<size_t>(sz) * sizeof(Edge) > data_size) return fail();
+                    if (offset > data_size || data_size - offset < static_cast<size_t>(sz) * sizeof(Edge)) return fail();
                 } else {
-                    if (offset + static_cast<size_t>(sz) * 4 > data_size) return fail();
+                    if (offset > data_size || data_size - offset < static_cast<size_t>(sz) * 4) return fail();
                 }
 
                 if (l == 0) {
