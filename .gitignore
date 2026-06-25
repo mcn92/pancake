@@ -88,6 +88,12 @@ examples/demo/test.js
 /vectors.bin
 examples/demo/loyalty-index.bin
 
+# Experimental engine build variants (OUT_BASENAME=<name> builds). The shipped
+# artifacts are dist/engine.{js,wasm} and dist/engine.scalar.{js,wasm}; anything
+# with an underscore (engine_querydot, engine_heap, ...) is a throwaway A/B build.
+dist/engine_*.js
+dist/engine_*.wasm
+
 # Generated local demo / model artifacts
 dist/cnn-embed*.bin
 dist/cnn-embed*_best.pt
