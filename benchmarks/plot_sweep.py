@@ -37,20 +37,31 @@ elif 'nytimes' in _base or 'hnswlib' in _base:
 else:
     DATASET_NAME = 'Sweep'
 
-# Identify pancake and baseline labels from data
+# Identify pancake and baseline labels from data. There can be several pancake
+# configs (i8/f32 x wasm/native); treat them all as the highlighted family
+# (warm, solid) and everything else as baselines (cool, dashed).
 labels = df['label'].unique().tolist()
-pancake_label = next((l for l in labels if 'pancake' in l.lower()), None)
-baseline_labels = [l for l in labels if l != pancake_label]
+pancake_labels = [l for l in labels if 'pancake' in l.lower()]
+baseline_labels = [l for l in labels if l not in pancake_labels]
+# Primary pancake line used for ef annotations: prefer the shipped i8-wasm
+# default, else the first pancake config present.
+pancake_label = next((l for l in pancake_labels if l == 'pancake-i8-wasm'),
+                     pancake_labels[0] if pancake_labels else None)
 
-# Color palette: pancake warm, baselines cool
-COLORS = ['#d9480f', '#0c8599', '#495057', '#5c940d', '#862e9c']
-MARKERS = ['o', 's', '^', 'D', 'v']
+# Marker pool (cycled) + per-family colormaps sized to the actual config counts,
+# so any number of configs renders without running off a fixed-length palette.
+MARKERS = ['o', 's', '^', 'D', 'v', 'P', 'X', '*', '<', '>']
+def _palette(cmap_name, n):
+    cmap = plt.get_cmap(cmap_name)
+    return [cmap(0.35 + 0.5 * (i / max(1, n - 1))) for i in range(n)]
+warm = _palette('autumn', len(pancake_labels))
+cool = _palette('winter', len(baseline_labels))
 
 style_map = {}
-if pancake_label:
-    style_map[pancake_label] = {'color': COLORS[0], 'marker': MARKERS[0], 'linestyle': '-'}
+for i, pl in enumerate(pancake_labels):
+    style_map[pl] = {'color': warm[i], 'marker': MARKERS[i % len(MARKERS)], 'linestyle': '-'}
 for i, bl in enumerate(baseline_labels):
-    style_map[bl] = {'color': COLORS[1 + i], 'marker': MARKERS[1 + i], 'linestyle': '--'}
+    style_map[bl] = {'color': cool[i], 'marker': MARKERS[i % len(MARKERS)], 'linestyle': '--'}
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 

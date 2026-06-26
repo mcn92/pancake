@@ -1,0 +1,607 @@
+Loading dataset from /mnt/c/pancake1.0.0/nytimes/nytimes-256-angular.hdf5...
+  Train: 290000 vectors, 256D
+  Test:  10000 queries
+
+============================================================
+Recall-QPS sweep on NYTimes-256 (Pancake vs USearch vs hnswlib)
+290000 vectors, 256D, 10000 queries
+k=10, M=16, ef_construction=50
+ef_search sweep: [20, 40, 60, 80, 100, 150, 200, 300, 500, 800]
+Repetitions: 3, Warmup: 200
+============================================================
+
+============================================================
+Config: pancake-i8-wasm
+============================================================
+  [pancake-i8] building index (M=16, ef_c=50)...
+  [pancake-i8] build: 182.0s, memory: 147 MB
+
+  ef_search=20
+    rep 1: recall=58.98%  qps=6371  p50=0.148ms  p99=0.313ms
+    rep 2: recall=58.98%  qps=6408  p50=0.147ms  p99=0.311ms
+    rep 3: recall=58.98%  qps=6397  p50=0.148ms  p99=0.311ms
+    summary: recall=58.98% (±0.00) qps=6392 (±16)
+
+  ef_search=40
+    rep 1: recall=68.41%  qps=3921  p50=0.243ms  p99=0.488ms
+    rep 2: recall=68.41%  qps=3921  p50=0.244ms  p99=0.496ms
+    rep 3: recall=68.41%  qps=3888  p50=0.246ms  p99=0.499ms
+    summary: recall=68.41% (±0.00) qps=3910 (±16)
+
+  ef_search=60
+    rep 1: recall=73.20%  qps=2907  p50=0.330ms  p99=0.659ms
+    rep 2: recall=73.20%  qps=2899  p50=0.332ms  p99=0.661ms
+    rep 3: recall=73.20%  qps=2905  p50=0.332ms  p99=0.646ms
+    summary: recall=73.20% (±0.00) qps=2904 (±4)
+
+  ef_search=80
+    rep 1: recall=76.08%  qps=2339  p50=0.415ms  p99=0.799ms
+    rep 2: recall=76.08%  qps=2339  p50=0.413ms  p99=0.793ms
+    rep 3: recall=76.08%  qps=2348  p50=0.414ms  p99=0.793ms
+    summary: recall=76.08% (±0.00) qps=2342 (±4)
+
+  ef_search=100
+    rep 1: recall=78.30%  qps=1972  p50=0.496ms  p99=0.917ms
+    rep 2: recall=78.30%  qps=1971  p50=0.495ms  p99=0.917ms
+    rep 3: recall=78.30%  qps=1968  p50=0.496ms  p99=0.918ms
+    summary: recall=78.30% (±0.00) qps=1970 (±1)
+
+  ef_search=150
+    rep 1: recall=81.55%  qps=1379  p50=0.719ms  p99=1.296ms
+    rep 2: recall=81.55%  qps=1410  p50=0.708ms  p99=1.219ms
+    rep 3: recall=81.55%  qps=1402  p50=0.710ms  p99=1.239ms
+    summary: recall=81.55% (±0.00) qps=1397 (±13)
+
+  ef_search=200
+    rep 1: recall=83.40%  qps=1106  p50=0.912ms  p99=1.503ms
+    rep 2: recall=83.40%  qps=1106  p50=0.912ms  p99=1.500ms
+    rep 3: recall=83.40%  qps=1109  p50=0.909ms  p99=1.492ms
+    summary: recall=83.40% (±0.00) qps=1107 (±1)
+
+  ef_search=300
+    rep 1: recall=85.66%  qps=773  p50=1.327ms  p99=1.988ms
+    rep 2: recall=85.66%  qps=773  p50=1.327ms  p99=1.984ms
+    rep 3: recall=85.66%  qps=772  p50=1.329ms  p99=1.996ms
+    summary: recall=85.66% (±0.00) qps=773 (±0)
+
+  ef_search=500
+    rep 1: recall=88.15%  qps=483  p50=2.166ms  p99=2.978ms
+    rep 2: recall=88.15%  qps=484  p50=2.161ms  p99=2.973ms
+    rep 3: recall=88.15%  qps=487  p50=2.151ms  p99=2.956ms
+    summary: recall=88.15% (±0.00) qps=485 (±2)
+
+  ef_search=800
+    rep 1: recall=90.39%  qps=306  p50=3.464ms  p99=4.472ms
+    rep 2: recall=90.39%  qps=307  p50=3.455ms  p99=4.428ms
+    rep 3: recall=90.39%  qps=306  p50=3.468ms  p99=4.462ms
+    summary: recall=90.39% (±0.00) qps=306 (±1)
+
+============================================================
+Config: pancake-f32-wasm
+============================================================
+  [pancake-f32] building index (M=16, ef_c=50)...
+  [pancake-f32] build: 281.5s, memory: 320 MB
+
+  ef_search=20
+    rep 1: recall=59.55%  qps=4486  p50=0.211ms  p99=0.432ms
+    rep 2: recall=59.55%  qps=4488  p50=0.211ms  p99=0.434ms
+    rep 3: recall=59.55%  qps=4497  p50=0.211ms  p99=0.431ms
+    summary: recall=59.55% (±0.00) qps=4490 (±5)
+
+  ef_search=40
+    rep 1: recall=69.03%  qps=2751  p50=0.349ms  p99=0.687ms
+    rep 2: recall=69.03%  qps=2754  p50=0.348ms  p99=0.695ms
+    rep 3: recall=69.03%  qps=2754  p50=0.348ms  p99=0.694ms
+    summary: recall=69.03% (±0.00) qps=2753 (±2)
+
+  ef_search=60
+    rep 1: recall=73.72%  qps=2040  p50=0.475ms  p99=0.908ms
+    rep 2: recall=73.72%  qps=2029  p50=0.476ms  p99=0.921ms
+    rep 3: recall=73.72%  qps=2042  p50=0.472ms  p99=0.915ms
+    summary: recall=73.72% (±0.00) qps=2037 (±5)
+
+  ef_search=80
+    rep 1: recall=76.61%  qps=1639  p50=0.595ms  p99=1.114ms
+    rep 2: recall=76.61%  qps=1639  p50=0.596ms  p99=1.116ms
+    rep 3: recall=76.61%  qps=1644  p50=0.592ms  p99=1.110ms
+    summary: recall=76.61% (±0.00) qps=1640 (±2)
+
+  ef_search=100
+    rep 1: recall=78.82%  qps=1381  p50=0.712ms  p99=1.294ms
+    rep 2: recall=78.82%  qps=1379  p50=0.713ms  p99=1.296ms
+    rep 3: recall=78.82%  qps=1378  p50=0.715ms  p99=1.291ms
+    summary: recall=78.82% (±0.00) qps=1379 (±1)
+
+  ef_search=150
+    rep 1: recall=81.86%  qps=1001  p50=1.000ms  p99=1.688ms
+    rep 2: recall=81.86%  qps=996  p50=1.005ms  p99=1.707ms
+    rep 3: recall=81.86%  qps=1000  p50=1.005ms  p99=1.705ms
+    summary: recall=81.86% (±0.00) qps=999 (±2)
+
+  ef_search=200
+    rep 1: recall=83.71%  qps=787  p50=1.290ms  p99=2.048ms
+    rep 2: recall=83.71%  qps=787  p50=1.290ms  p99=2.047ms
+    rep 3: recall=83.71%  qps=787  p50=1.290ms  p99=2.051ms
+    summary: recall=83.71% (±0.00) qps=787 (±0)
+
+  ef_search=300
+    rep 1: recall=85.94%  qps=554  p50=1.869ms  p99=2.751ms
+    rep 2: recall=85.94%  qps=554  p50=1.866ms  p99=2.761ms
+    rep 3: recall=85.94%  qps=544  p50=1.893ms  p99=2.889ms
+    summary: recall=85.94% (±0.00) qps=551 (±5)
+
+  ef_search=500
+    rep 1: recall=88.81%  qps=345  p50=3.054ms  p99=4.132ms
+    rep 2: recall=88.81%  qps=346  p50=3.054ms  p99=4.094ms
+    rep 3: recall=88.81%  qps=345  p50=3.055ms  p99=4.129ms
+    summary: recall=88.81% (±0.00) qps=346 (±0)
+
+  ef_search=800
+    rep 1: recall=91.02%  qps=219  p50=4.865ms  p99=6.231ms
+    rep 2: recall=91.02%  qps=219  p50=4.868ms  p99=6.159ms
+    rep 3: recall=91.02%  qps=220  p50=4.855ms  p99=6.136ms
+    summary: recall=91.02% (±0.00) qps=219 (±0)
+
+============================================================
+Config: usearch-i8-native
+============================================================
+  [usearch-i8] building index (M=16, ef_c=50, metric=cos, quantization=i8)...
+    50,000/290,000
+    100,000/290,000
+    150,000/290,000
+    200,000/290,000
+    250,000/290,000
+  [usearch-i8] build: 85.1s (saved to /mnt/c/pancake1.0.0/benchmark_results/_usearch_nyt_i8_temp.bin)
+
+  ef_search=20
+    rep 1: recall=56.27%  qps=6182  p50=0.153ms  p99=0.317ms
+    rep 2: recall=56.27%  qps=6387  p50=0.148ms  p99=0.309ms
+    rep 3: recall=56.27%  qps=6288  p50=0.151ms  p99=0.303ms
+    summary: recall=56.27% (±0.00) qps=6286 (±83)
+
+  ef_search=40
+    rep 1: recall=65.64%  qps=3899  p50=0.248ms  p99=0.471ms
+    rep 2: recall=65.64%  qps=3928  p50=0.245ms  p99=0.476ms
+    rep 3: recall=65.64%  qps=3895  p50=0.247ms  p99=0.483ms
+    summary: recall=65.64% (±0.00) qps=3907 (±15)
+
+  ef_search=60
+    rep 1: recall=69.98%  qps=2786  p50=0.345ms  p99=0.677ms
+    rep 2: recall=69.98%  qps=2923  p50=0.331ms  p99=0.631ms
+    rep 3: recall=69.98%  qps=2866  p50=0.338ms  p99=0.653ms
+    summary: recall=69.98% (±0.00) qps=2858 (±56)
+
+  ef_search=80
+    rep 1: recall=72.73%  qps=2297  p50=0.424ms  p99=0.790ms
+    rep 2: recall=72.73%  qps=2301  p50=0.423ms  p99=0.793ms
+    rep 3: recall=72.73%  qps=2295  p50=0.425ms  p99=0.798ms
+    summary: recall=72.73% (±0.00) qps=2298 (±2)
+
+  ef_search=100
+    rep 1: recall=74.85%  qps=1964  p50=0.500ms  p99=0.918ms
+    rep 2: recall=74.85%  qps=1928  p50=0.506ms  p99=1.020ms
+    rep 3: recall=74.85%  qps=1946  p50=0.505ms  p99=0.927ms
+    summary: recall=74.85% (±0.00) qps=1946 (±15)
+
+  ef_search=150
+    rep 1: recall=77.99%  qps=1376  p50=0.721ms  p99=1.257ms
+    rep 2: recall=77.99%  qps=1389  p50=0.716ms  p99=1.230ms
+    rep 3: recall=77.99%  qps=1412  p50=0.704ms  p99=1.212ms
+    summary: recall=77.99% (±0.00) qps=1392 (±15)
+
+  ef_search=200
+    rep 1: recall=79.89%  qps=1117  p50=0.900ms  p99=1.463ms
+    rep 2: recall=79.89%  qps=1085  p50=0.929ms  p99=1.488ms
+    rep 3: recall=79.89%  qps=1093  p50=0.923ms  p99=1.490ms
+    summary: recall=79.89% (±0.00) qps=1098 (±14)
+
+  ef_search=300
+    rep 1: recall=82.03%  qps=764  p50=1.344ms  p99=1.988ms
+    rep 2: recall=82.03%  qps=774  p50=1.329ms  p99=1.937ms
+    rep 3: recall=82.03%  qps=774  p50=1.325ms  p99=1.968ms
+    summary: recall=82.03% (±0.00) qps=771 (±5)
+
+  ef_search=500
+    rep 1: recall=84.47%  qps=476  p50=2.182ms  p99=3.011ms
+    rep 2: recall=84.47%  qps=480  p50=2.162ms  p99=3.027ms
+    rep 3: recall=84.47%  qps=446  p50=2.335ms  p99=3.198ms
+    summary: recall=84.47% (±0.00) qps=467 (±15)
+
+  ef_search=800
+    rep 1: recall=86.60%  qps=310  p50=3.391ms  p99=4.409ms
+    rep 2: recall=86.60%  qps=309  p50=3.399ms  p99=4.401ms
+    rep 3: recall=86.60%  qps=316  p50=3.328ms  p99=4.268ms
+    summary: recall=86.60% (±0.00) qps=312 (±3)
+
+============================================================
+Config: usearch-f32-native
+============================================================
+  [usearch-f32] building index (M=16, ef_c=50, metric=cos, quantization=f32)...
+    50,000/290,000
+    100,000/290,000
+    150,000/290,000
+    200,000/290,000
+    250,000/290,000
+  [usearch-f32] build: 154.4s (saved to /mnt/c/pancake1.0.0/benchmark_results/_usearch_nyt_f32_temp.bin)
+
+  ef_search=20
+    rep 1: recall=57.40%  qps=4040  p50=0.233ms  p99=0.491ms
+    rep 2: recall=57.40%  qps=4155  p50=0.229ms  p99=0.463ms
+    rep 3: recall=57.40%  qps=4072  p50=0.233ms  p99=0.474ms
+    summary: recall=57.40% (±0.00) qps=4089 (±48)
+
+  ef_search=40
+    rep 1: recall=67.25%  qps=2537  p50=0.379ms  p99=0.739ms
+    rep 2: recall=67.25%  qps=2473  p50=0.388ms  p99=0.770ms
+    rep 3: recall=67.25%  qps=2511  p50=0.382ms  p99=0.742ms
+    summary: recall=67.25% (±0.00) qps=2507 (±27)
+
+  ef_search=60
+    rep 1: recall=72.14%  qps=1860  p50=0.521ms  p99=0.983ms
+    rep 2: recall=72.14%  qps=1857  p50=0.522ms  p99=0.990ms
+    rep 3: recall=72.14%  qps=1845  p50=0.526ms  p99=0.988ms
+    summary: recall=72.14% (±0.00) qps=1854 (±6)
+
+  ef_search=80
+    rep 1: recall=75.08%  qps=1474  p50=0.665ms  p99=1.205ms
+    rep 2: recall=75.08%  qps=1476  p50=0.662ms  p99=1.203ms
+    rep 3: recall=75.08%  qps=1476  p50=0.665ms  p99=1.200ms
+    summary: recall=75.08% (±0.00) qps=1475 (±1)
+
+  ef_search=100
+    rep 1: recall=77.05%  qps=1234  p50=0.800ms  p99=1.380ms
+    rep 2: recall=77.05%  qps=1231  p50=0.803ms  p99=1.390ms
+    rep 3: recall=77.05%  qps=1209  p50=0.814ms  p99=1.430ms
+    summary: recall=77.05% (±0.00) qps=1225 (±11)
+
+  ef_search=150
+    rep 1: recall=80.23%  qps=841  p50=1.174ms  p99=2.227ms
+    rep 2: recall=80.23%  qps=851  p50=1.172ms  p99=2.039ms
+    rep 3: recall=80.23%  qps=888  p50=1.132ms  p99=1.841ms
+    summary: recall=80.23% (±0.00) qps=860 (±20)
+
+  ef_search=200
+    rep 1: recall=82.11%  qps=696  p50=1.457ms  p99=2.276ms
+    rep 2: recall=82.11%  qps=681  p50=1.483ms  p99=2.410ms
+    rep 3: recall=82.11%  qps=691  p50=1.469ms  p99=2.297ms
+    summary: recall=82.11% (±0.00) qps=689 (±6)
+
+  ef_search=300
+    rep 1: recall=84.48%  qps=492  p50=2.091ms  p99=3.091ms
+    rep 2: recall=84.48%  qps=501  p50=2.053ms  p99=2.977ms
+    rep 3: recall=84.48%  qps=506  p50=2.038ms  p99=2.937ms
+    summary: recall=84.48% (±0.00) qps=500 (±6)
+
+  ef_search=500
+    rep 1: recall=87.16%  qps=320  p50=3.271ms  p99=4.411ms
+    rep 2: recall=87.16%  qps=319  p50=3.290ms  p99=4.408ms
+    rep 3: recall=87.16%  qps=322  p50=3.249ms  p99=4.367ms
+    summary: recall=87.16% (±0.00) qps=320 (±1)
+
+  ef_search=800
+    rep 1: recall=89.53%  qps=205  p50=5.165ms  p99=6.563ms
+    rep 2: recall=89.53%  qps=205  p50=5.165ms  p99=6.624ms
+    rep 3: recall=89.53%  qps=203  p50=5.218ms  p99=6.725ms
+    summary: recall=89.53% (±0.00) qps=204 (±1)
+
+============================================================
+Config: hnswlib-f32-native
+============================================================
+  [hnswlib-f32] building index (M=16, ef_c=50)...
+  [hnswlib-f32] note: hnswlib-node only exposes addPoint (no batch API); build runs on one core. Python's hnswlib via add_items would be faster.
+  [hnswlib-f32] build: 91.5s
+
+  ef_search=20
+    rep 1: recall=56.84%  qps=6778  p50=0.140ms  p99=0.269ms
+    rep 2: recall=56.84%  qps=6834  p50=0.139ms  p99=0.266ms
+    rep 3: recall=56.84%  qps=6836  p50=0.138ms  p99=0.267ms
+    summary: recall=56.84% (±0.00) qps=6816 (±27)
+
+  ef_search=40
+    rep 1: recall=67.19%  qps=4553  p50=0.212ms  p99=0.398ms
+    rep 2: recall=67.19%  qps=4562  p50=0.211ms  p99=0.405ms
+    rep 3: recall=67.19%  qps=4564  p50=0.210ms  p99=0.406ms
+    summary: recall=67.19% (±0.00) qps=4559 (±5)
+
+  ef_search=60
+    rep 1: recall=72.05%  qps=3516  p50=0.275ms  p99=0.516ms
+    rep 2: recall=72.05%  qps=3514  p50=0.275ms  p99=0.517ms
+    rep 3: recall=72.05%  qps=3511  p50=0.274ms  p99=0.521ms
+    summary: recall=72.05% (±0.00) qps=3514 (±2)
+
+  ef_search=80
+    rep 1: recall=74.85%  qps=2878  p50=0.338ms  p99=0.610ms
+    rep 2: recall=74.85%  qps=2871  p50=0.340ms  p99=0.623ms
+    rep 3: recall=74.85%  qps=2820  p50=0.344ms  p99=0.632ms
+    summary: recall=74.85% (±0.00) qps=2857 (±26)
+
+  ef_search=100
+    rep 1: recall=76.70%  qps=2438  p50=0.404ms  p99=0.705ms
+    rep 2: recall=76.70%  qps=2443  p50=0.401ms  p99=0.712ms
+    rep 3: recall=76.70%  qps=2434  p50=0.404ms  p99=0.712ms
+    summary: recall=76.70% (±0.00) qps=2438 (±4)
+
+  ef_search=150
+    rep 1: recall=80.01%  qps=1726  p50=0.576ms  p99=1.012ms
+    rep 2: recall=80.01%  qps=1729  p50=0.578ms  p99=0.979ms
+    rep 3: recall=80.01%  qps=1730  p50=0.574ms  p99=1.000ms
+    summary: recall=80.01% (±0.00) qps=1728 (±2)
+
+  ef_search=200
+    rep 1: recall=81.98%  qps=1409  p50=0.714ms  p99=1.146ms
+    rep 2: recall=81.98%  qps=1434  p50=0.707ms  p99=1.104ms
+    rep 3: recall=81.98%  qps=1445  p50=0.700ms  p99=1.092ms
+    summary: recall=81.98% (±0.00) qps=1429 (±15)
+
+  ef_search=300
+    rep 1: recall=84.42%  qps=1028  p50=1.001ms  p99=1.452ms
+    rep 2: recall=84.42%  qps=1022  p50=1.005ms  p99=1.465ms
+    rep 3: recall=84.42%  qps=1021  p50=1.006ms  p99=1.480ms
+    summary: recall=84.42% (±0.00) qps=1024 (±3)
+
+  ef_search=500
+    rep 1: recall=87.15%  qps=621  p50=1.671ms  p99=2.487ms
+    rep 2: recall=87.15%  qps=645  p50=1.620ms  p99=2.222ms
+    rep 3: recall=87.15%  qps=647  p50=1.613ms  p99=2.211ms
+    summary: recall=87.15% (±0.00) qps=638 (±12)
+
+  ef_search=800
+    rep 1: recall=89.59%  qps=406  p50=2.578ms  p99=3.593ms
+    rep 2: recall=89.59%  qps=403  p50=2.606ms  p99=3.605ms
+    rep 3: recall=89.59%  qps=370  p50=2.819ms  p99=3.973ms
+    summary: recall=89.59% (±0.00) qps=393 (±16)
+
+============================================================
+Matched-recall comparison
+============================================================
+For each pair (A, B), interpolate B's QPS at A's recall points,
+then report A_qps / B_qps. Ratios > 1 mean A is faster at that recall.
+
+  pancake-i8-wasm vs pancake-f32-wasm:
+    at recall=59.0%: skipped (below B range)
+    at recall=68.4%: pancake-i8-wasm qps=3910, pancake-f32-wasm interp. qps=2843, ratio=1.38x
+    at recall=73.2%: pancake-i8-wasm qps=2904, pancake-f32-wasm interp. qps=2106, ratio=1.38x
+    at recall=76.1%: pancake-i8-wasm qps=2342, pancake-f32-wasm interp. qps=1708, ratio=1.37x
+    at recall=78.3%: pancake-i8-wasm qps=1970, pancake-f32-wasm interp. qps=1437, ratio=1.37x
+    at recall=81.5%: pancake-i8-wasm qps=1397, pancake-f32-wasm interp. qps=1033, ratio=1.35x
+    at recall=83.4%: pancake-i8-wasm qps=1107, pancake-f32-wasm interp. qps=819, ratio=1.35x
+    at recall=85.7%: pancake-i8-wasm qps=773, pancake-f32-wasm interp. qps=577, ratio=1.34x
+    at recall=88.2%: pancake-i8-wasm qps=485, pancake-f32-wasm interp. qps=385, ratio=1.26x
+    at recall=90.4%: pancake-i8-wasm qps=306, pancake-f32-wasm interp. qps=250, ratio=1.23x
+
+  pancake-i8-wasm vs usearch-i8-native:
+    at recall=59.0%: pancake-i8-wasm qps=6392, usearch-i8-native interp. qps=5478, ratio=1.17x
+    at recall=68.4%: pancake-i8-wasm qps=3910, usearch-i8-native interp. qps=3202, ratio=1.22x
+    at recall=73.2%: pancake-i8-wasm qps=2904, usearch-i8-native interp. qps=2215, ratio=1.31x
+    at recall=76.1%: pancake-i8-wasm qps=2342, usearch-i8-native interp. qps=1707, ratio=1.37x
+    at recall=78.3%: pancake-i8-wasm qps=1970, usearch-i8-native interp. qps=1340, ratio=1.47x
+    at recall=81.5%: pancake-i8-wasm qps=1397, usearch-i8-native interp. qps=835, ratio=1.67x
+    at recall=83.4%: pancake-i8-wasm qps=1107, usearch-i8-native interp. qps=582, ratio=1.90x
+    at recall=85.7%: pancake-i8-wasm qps=773, usearch-i8-native interp. qps=373, ratio=2.07x
+    at recall=88.2%: skipped (above B range)
+    at recall=90.4%: skipped (above B range)
+
+  pancake-i8-wasm vs usearch-f32-native:
+    at recall=59.0%: pancake-i8-wasm qps=6392, usearch-f32-native interp. qps=3780, ratio=1.69x
+    at recall=68.4%: pancake-i8-wasm qps=3910, usearch-f32-native interp. qps=2334, ratio=1.68x
+    at recall=73.2%: pancake-i8-wasm qps=2904, usearch-f32-native interp. qps=1708, ratio=1.70x
+    at recall=76.1%: pancake-i8-wasm qps=2342, usearch-f32-native interp. qps=1343, ratio=1.74x
+    at recall=78.3%: pancake-i8-wasm qps=1970, usearch-f32-native interp. qps=1066, ratio=1.85x
+    at recall=81.5%: pancake-i8-wasm qps=1397, usearch-f32-native interp. qps=736, ratio=1.90x
+    at recall=83.4%: pancake-i8-wasm qps=1107, usearch-f32-native interp. qps=579, ratio=1.91x
+    at recall=85.7%: pancake-i8-wasm qps=773, usearch-f32-native interp. qps=411, ratio=1.88x
+    at recall=88.2%: pancake-i8-wasm qps=485, usearch-f32-native interp. qps=265, ratio=1.83x
+    at recall=90.4%: skipped (above B range)
+
+  pancake-i8-wasm vs hnswlib-f32-native:
+    at recall=59.0%: pancake-i8-wasm qps=6392, hnswlib-f32-native interp. qps=6272, ratio=1.02x
+    at recall=68.4%: pancake-i8-wasm qps=3910, hnswlib-f32-native interp. qps=4272, ratio=0.92x
+    at recall=73.2%: pancake-i8-wasm qps=2904, hnswlib-f32-native interp. qps=3228, ratio=0.90x
+    at recall=76.1%: pancake-i8-wasm qps=2342, hnswlib-f32-native interp. qps=2573, ratio=0.91x
+    at recall=78.3%: pancake-i8-wasm qps=1970, hnswlib-f32-native interp. qps=2065, ratio=0.95x
+    at recall=81.5%: pancake-i8-wasm qps=1397, hnswlib-f32-native interp. qps=1491, ratio=0.94x
+    at recall=83.4%: pancake-i8-wasm qps=1107, hnswlib-f32-native interp. qps=1177, ratio=0.94x
+    at recall=85.7%: pancake-i8-wasm qps=773, hnswlib-f32-native interp. qps=826, ratio=0.94x
+    at recall=88.2%: pancake-i8-wasm qps=485, hnswlib-f32-native interp. qps=523, ratio=0.93x
+    at recall=90.4%: skipped (above B range)
+
+  pancake-f32-wasm vs pancake-i8-wasm:
+    at recall=59.5%: pancake-f32-wasm qps=4490, pancake-i8-wasm interp. qps=6205, ratio=0.72x
+    at recall=69.0%: pancake-f32-wasm qps=2753, pancake-i8-wasm interp. qps=3761, ratio=0.73x
+    at recall=73.7%: pancake-f32-wasm qps=2037, pancake-i8-wasm interp. qps=2793, ratio=0.73x
+    at recall=76.6%: pancake-f32-wasm qps=1640, pancake-i8-wasm interp. qps=2246, ratio=0.73x
+    at recall=78.8%: pancake-f32-wasm qps=1379, pancake-i8-wasm interp. qps=1865, ratio=0.74x
+    at recall=81.9%: pancake-f32-wasm qps=999, pancake-i8-wasm interp. qps=1343, ratio=0.74x
+    at recall=83.7%: pancake-f32-wasm qps=787, pancake-i8-wasm interp. qps=1055, ratio=0.75x
+    at recall=85.9%: pancake-f32-wasm qps=551, pancake-i8-wasm interp. qps=733, ratio=0.75x
+    at recall=88.8%: pancake-f32-wasm qps=346, pancake-i8-wasm interp. qps=424, ratio=0.82x
+    at recall=91.0%: skipped (above B range)
+
+  pancake-f32-wasm vs usearch-i8-native:
+    at recall=59.5%: pancake-f32-wasm qps=4490, usearch-i8-native interp. qps=5322, ratio=0.84x
+    at recall=69.0%: pancake-f32-wasm qps=2753, usearch-i8-native interp. qps=3061, ratio=0.90x
+    at recall=73.7%: pancake-f32-wasm qps=2037, usearch-i8-native interp. qps=2127, ratio=0.96x
+    at recall=76.6%: pancake-f32-wasm qps=1640, usearch-i8-native interp. qps=1612, ratio=1.02x
+    at recall=78.8%: pancake-f32-wasm qps=1379, usearch-i8-native interp. qps=1256, ratio=1.10x
+    at recall=81.9%: pancake-f32-wasm qps=999, usearch-i8-native interp. qps=792, ratio=1.26x
+    at recall=83.7%: pancake-f32-wasm qps=787, usearch-i8-native interp. qps=547, ratio=1.44x
+    at recall=85.9%: pancake-f32-wasm qps=551, usearch-i8-native interp. qps=353, ratio=1.56x
+    at recall=88.8%: skipped (above B range)
+    at recall=91.0%: skipped (above B range)
+
+  pancake-f32-wasm vs usearch-f32-native:
+    at recall=59.5%: pancake-f32-wasm qps=4490, usearch-f32-native interp. qps=3675, ratio=1.22x
+    at recall=69.0%: pancake-f32-wasm qps=2753, usearch-f32-native interp. qps=2246, ratio=1.23x
+    at recall=73.7%: pancake-f32-wasm qps=2037, usearch-f32-native interp. qps=1640, ratio=1.24x
+    at recall=76.6%: pancake-f32-wasm qps=1640, usearch-f32-native interp. qps=1276, ratio=1.29x
+    at recall=78.8%: pancake-f32-wasm qps=1379, usearch-f32-native interp. qps=1006, ratio=1.37x
+    at recall=81.9%: pancake-f32-wasm qps=999, usearch-f32-native interp. qps=710, ratio=1.41x
+    at recall=83.7%: pancake-f32-wasm qps=787, usearch-f32-native interp. qps=555, ratio=1.42x
+    at recall=85.9%: pancake-f32-wasm qps=551, usearch-f32-native interp. qps=392, ratio=1.41x
+    at recall=88.8%: pancake-f32-wasm qps=346, usearch-f32-native interp. qps=234, ratio=1.48x
+    at recall=91.0%: skipped (above B range)
+
+  pancake-f32-wasm vs hnswlib-f32-native:
+    at recall=59.5%: pancake-f32-wasm qps=4490, hnswlib-f32-native interp. qps=6135, ratio=0.73x
+    at recall=69.0%: pancake-f32-wasm qps=2753, hnswlib-f32-native interp. qps=4132, ratio=0.67x
+    at recall=73.7%: pancake-f32-wasm qps=2037, hnswlib-f32-native interp. qps=3107, ratio=0.66x
+    at recall=76.6%: pancake-f32-wasm qps=1640, hnswlib-f32-native interp. qps=2456, ratio=0.67x
+    at recall=78.8%: pancake-f32-wasm qps=1379, hnswlib-f32-native interp. qps=1957, ratio=0.70x
+    at recall=81.9%: pancake-f32-wasm qps=999, hnswlib-f32-native interp. qps=1446, ratio=0.69x
+    at recall=83.7%: pancake-f32-wasm qps=787, hnswlib-f32-native interp. qps=1129, ratio=0.70x
+    at recall=85.9%: pancake-f32-wasm qps=551, hnswlib-f32-native interp. qps=786, ratio=0.70x
+    at recall=88.8%: pancake-f32-wasm qps=346, hnswlib-f32-native interp. qps=459, ratio=0.75x
+    at recall=91.0%: skipped (above B range)
+
+  usearch-i8-native vs pancake-i8-wasm:
+    at recall=56.3%: skipped (below B range)
+    at recall=65.6%: usearch-i8-native qps=3907, pancake-i8-wasm interp. qps=4517, ratio=0.87x
+    at recall=70.0%: usearch-i8-native qps=2858, pancake-i8-wasm interp. qps=3545, ratio=0.81x
+    at recall=72.7%: usearch-i8-native qps=2298, pancake-i8-wasm interp. qps=2989, ratio=0.77x
+    at recall=74.8%: usearch-i8-native qps=1946, pancake-i8-wasm interp. qps=2567, ratio=0.76x
+    at recall=78.0%: usearch-i8-native qps=1392, pancake-i8-wasm interp. qps=2018, ratio=0.69x
+    at recall=79.9%: usearch-i8-native qps=1098, pancake-i8-wasm interp. qps=1664, ratio=0.66x
+    at recall=82.0%: usearch-i8-native qps=771, pancake-i8-wasm interp. qps=1315, ratio=0.59x
+    at recall=84.5%: usearch-i8-native qps=467, pancake-i8-wasm interp. qps=933, ratio=0.50x
+    at recall=86.6%: usearch-i8-native qps=312, pancake-i8-wasm interp. qps=648, ratio=0.48x
+
+  usearch-i8-native vs pancake-f32-wasm:
+    at recall=56.3%: skipped (below B range)
+    at recall=65.6%: usearch-i8-native qps=3907, pancake-f32-wasm interp. qps=3279, ratio=1.19x
+    at recall=70.0%: usearch-i8-native qps=2858, pancake-f32-wasm interp. qps=2589, ratio=1.10x
+    at recall=72.7%: usearch-i8-native qps=2298, pancake-f32-wasm interp. qps=2170, ratio=1.06x
+    at recall=74.8%: usearch-i8-native qps=1946, pancake-f32-wasm interp. qps=1872, ratio=1.04x
+    at recall=78.0%: usearch-i8-native qps=1392, pancake-f32-wasm interp. qps=1472, ratio=0.95x
+    at recall=79.9%: usearch-i8-native qps=1098, pancake-f32-wasm interp. qps=1231, ratio=0.89x
+    at recall=82.0%: usearch-i8-native qps=771, pancake-f32-wasm interp. qps=978, ratio=0.79x
+    at recall=84.5%: usearch-i8-native qps=467, pancake-f32-wasm interp. qps=696, ratio=0.67x
+    at recall=86.6%: usearch-i8-native qps=312, pancake-f32-wasm interp. qps=495, ratio=0.63x
+
+  usearch-i8-native vs usearch-f32-native:
+    at recall=56.3%: skipped (below B range)
+    at recall=65.6%: usearch-i8-native qps=3907, usearch-f32-native interp. qps=2716, ratio=1.44x
+    at recall=70.0%: usearch-i8-native qps=2858, usearch-f32-native interp. qps=2118, ratio=1.35x
+    at recall=72.7%: usearch-i8-native qps=2298, usearch-f32-native interp. qps=1771, ratio=1.30x
+    at recall=74.8%: usearch-i8-native qps=1946, usearch-f32-native interp. qps=1502, ratio=1.30x
+    at recall=78.0%: usearch-i8-native qps=1392, usearch-f32-native interp. qps=1103, ratio=1.26x
+    at recall=79.9%: usearch-i8-native qps=1098, usearch-f32-native interp. qps=892, ratio=1.23x
+    at recall=82.0%: usearch-i8-native qps=771, usearch-f32-native interp. qps=696, ratio=1.11x
+    at recall=84.5%: usearch-i8-native qps=467, usearch-f32-native interp. qps=500, ratio=0.93x
+    at recall=86.6%: usearch-i8-native qps=312, usearch-f32-native interp. qps=351, ratio=0.89x
+
+  usearch-i8-native vs hnswlib-f32-native:
+    at recall=56.3%: skipped (below B range)
+    at recall=65.6%: usearch-i8-native qps=3907, hnswlib-f32-native interp. qps=4843, ratio=0.81x
+    at recall=70.0%: usearch-i8-native qps=2858, hnswlib-f32-native interp. qps=3926, ratio=0.73x
+    at recall=72.7%: usearch-i8-native qps=2298, hnswlib-f32-native interp. qps=3342, ratio=0.69x
+    at recall=74.8%: usearch-i8-native qps=1946, hnswlib-f32-native interp. qps=2858, ratio=0.68x
+    at recall=78.0%: usearch-i8-native qps=1392, hnswlib-f32-native interp. qps=2133, ratio=0.65x
+    at recall=79.9%: usearch-i8-native qps=1098, hnswlib-f32-native interp. qps=1750, ratio=0.63x
+    at recall=82.0%: usearch-i8-native qps=771, hnswlib-f32-native interp. qps=1420, ratio=0.54x
+    at recall=84.5%: usearch-i8-native qps=467, hnswlib-f32-native interp. qps=1014, ratio=0.46x
+    at recall=86.6%: usearch-i8-native qps=312, hnswlib-f32-native interp. qps=701, ratio=0.44x
+
+  usearch-f32-native vs pancake-i8-wasm:
+    at recall=57.4%: skipped (below B range)
+    at recall=67.2%: usearch-f32-native qps=2507, pancake-i8-wasm interp. qps=4154, ratio=0.60x
+    at recall=72.1%: usearch-f32-native qps=1854, pancake-i8-wasm interp. qps=3101, ratio=0.60x
+    at recall=75.1%: usearch-f32-native qps=1475, pancake-i8-wasm interp. qps=2523, ratio=0.58x
+    at recall=77.1%: usearch-f32-native qps=1225, pancake-i8-wasm interp. qps=2171, ratio=0.56x
+    at recall=80.2%: usearch-f32-native qps=860, pancake-i8-wasm interp. qps=1607, ratio=0.54x
+    at recall=82.1%: usearch-f32-native qps=689, pancake-i8-wasm interp. qps=1301, ratio=0.53x
+    at recall=84.5%: usearch-f32-native qps=500, pancake-i8-wasm interp. qps=933, ratio=0.54x
+    at recall=87.2%: usearch-f32-native qps=320, pancake-i8-wasm interp. qps=583, ratio=0.55x
+    at recall=89.5%: usearch-f32-native qps=204, pancake-i8-wasm interp. qps=365, ratio=0.56x
+
+  usearch-f32-native vs pancake-f32-wasm:
+    at recall=57.4%: skipped (below B range)
+    at recall=67.2%: usearch-f32-native qps=2507, pancake-f32-wasm interp. qps=3018, ratio=0.83x
+    at recall=72.1%: usearch-f32-native qps=1854, pancake-f32-wasm interp. qps=2254, ratio=0.82x
+    at recall=75.1%: usearch-f32-native qps=1475, pancake-f32-wasm interp. qps=1840, ratio=0.80x
+    at recall=77.1%: usearch-f32-native qps=1225, pancake-f32-wasm interp. qps=1585, ratio=0.77x
+    at recall=80.2%: usearch-f32-native qps=860, pancake-f32-wasm interp. qps=1188, ratio=0.72x
+    at recall=82.1%: usearch-f32-native qps=689, pancake-f32-wasm interp. qps=967, ratio=0.71x
+    at recall=84.5%: usearch-f32-native qps=500, pancake-f32-wasm interp. qps=696, ratio=0.72x
+    at recall=87.2%: usearch-f32-native qps=320, pancake-f32-wasm interp. qps=452, ratio=0.71x
+    at recall=89.5%: usearch-f32-native qps=204, pancake-f32-wasm interp. qps=298, ratio=0.69x
+
+  usearch-f32-native vs usearch-i8-native:
+    at recall=57.4%: usearch-f32-native qps=4089, usearch-i8-native interp. qps=5936, ratio=0.69x
+    at recall=67.2%: usearch-f32-native qps=2507, usearch-i8-native interp. qps=3480, ratio=0.72x
+    at recall=72.1%: usearch-f32-native qps=1854, usearch-i8-native interp. qps=2408, ratio=0.77x
+    at recall=75.1%: usearch-f32-native qps=1475, usearch-i8-native interp. qps=1899, ratio=0.78x
+    at recall=77.1%: usearch-f32-native qps=1225, usearch-i8-native interp. qps=1539, ratio=0.80x
+    at recall=80.2%: usearch-f32-native qps=860, usearch-i8-native interp. qps=1039, ratio=0.83x
+    at recall=82.1%: usearch-f32-native qps=689, usearch-i8-native interp. qps=758, ratio=0.91x
+    at recall=84.5%: usearch-f32-native qps=500, usearch-i8-native interp. qps=467, ratio=1.07x
+    at recall=87.2%: skipped (above B range)
+    at recall=89.5%: skipped (above B range)
+
+  usearch-f32-native vs hnswlib-f32-native:
+    at recall=57.4%: usearch-f32-native qps=4089, hnswlib-f32-native interp. qps=6669, ratio=0.61x
+    at recall=67.2%: usearch-f32-native qps=2507, hnswlib-f32-native interp. qps=4547, ratio=0.55x
+    at recall=72.1%: usearch-f32-native qps=1854, hnswlib-f32-native interp. qps=3491, ratio=0.53x
+    at recall=75.1%: usearch-f32-native qps=1475, hnswlib-f32-native interp. qps=2802, ratio=0.53x
+    at recall=77.1%: usearch-f32-native qps=1225, hnswlib-f32-native interp. qps=2351, ratio=0.52x
+    at recall=80.2%: usearch-f32-native qps=860, hnswlib-f32-native interp. qps=1693, ratio=0.51x
+    at recall=82.1%: usearch-f32-native qps=689, hnswlib-f32-native interp. qps=1404, ratio=0.49x
+    at recall=84.5%: usearch-f32-native qps=500, hnswlib-f32-native interp. qps=1013, ratio=0.49x
+    at recall=87.2%: usearch-f32-native qps=320, hnswlib-f32-native interp. qps=636, ratio=0.50x
+    at recall=89.5%: usearch-f32-native qps=204, hnswlib-f32-native interp. qps=398, ratio=0.51x
+
+  hnswlib-f32-native vs pancake-i8-wasm:
+    at recall=56.8%: skipped (below B range)
+    at recall=67.2%: hnswlib-f32-native qps=4559, pancake-i8-wasm interp. qps=4165, ratio=1.09x
+    at recall=72.1%: hnswlib-f32-native qps=3514, pancake-i8-wasm interp. qps=3118, ratio=1.13x
+    at recall=74.9%: hnswlib-f32-native qps=2857, pancake-i8-wasm interp. qps=2566, ratio=1.11x
+    at recall=76.7%: hnswlib-f32-native qps=2438, pancake-i8-wasm interp. qps=2231, ratio=1.09x
+    at recall=80.0%: hnswlib-f32-native qps=1728, pancake-i8-wasm interp. qps=1643, ratio=1.05x
+    at recall=82.0%: hnswlib-f32-native qps=1429, pancake-i8-wasm interp. qps=1323, ratio=1.08x
+    at recall=84.4%: hnswlib-f32-native qps=1024, pancake-i8-wasm interp. qps=942, ratio=1.09x
+    at recall=87.2%: hnswlib-f32-native qps=638, pancake-i8-wasm interp. qps=585, ratio=1.09x
+    at recall=89.6%: hnswlib-f32-native qps=393, pancake-i8-wasm interp. qps=360, ratio=1.09x
+
+  hnswlib-f32-native vs pancake-f32-wasm:
+    at recall=56.8%: skipped (below B range)
+    at recall=67.2%: hnswlib-f32-native qps=4559, pancake-f32-wasm interp. qps=3026, ratio=1.51x
+    at recall=72.1%: hnswlib-f32-native qps=3514, pancake-f32-wasm interp. qps=2267, ratio=1.55x
+    at recall=74.9%: hnswlib-f32-native qps=2857, pancake-f32-wasm interp. qps=1871, ratio=1.53x
+    at recall=76.7%: hnswlib-f32-native qps=2438, pancake-f32-wasm interp. qps=1629, ratio=1.50x
+    at recall=80.0%: hnswlib-f32-native qps=1728, pancake-f32-wasm interp. qps=1215, ratio=1.42x
+    at recall=82.0%: hnswlib-f32-native qps=1429, pancake-f32-wasm interp. qps=983, ratio=1.45x
+    at recall=84.4%: hnswlib-f32-native qps=1024, pancake-f32-wasm interp. qps=702, ratio=1.46x
+    at recall=87.2%: hnswlib-f32-native qps=638, pancake-f32-wasm interp. qps=453, ratio=1.41x
+    at recall=89.6%: hnswlib-f32-native qps=393, pancake-f32-wasm interp. qps=294, ratio=1.34x
+
+  hnswlib-f32-native vs usearch-i8-native:
+    at recall=56.8%: hnswlib-f32-native qps=6816, usearch-i8-native interp. qps=6107, ratio=1.12x
+    at recall=67.2%: hnswlib-f32-native qps=4559, usearch-i8-native interp. qps=3493, ratio=1.31x
+    at recall=72.1%: hnswlib-f32-native qps=3514, usearch-i8-native interp. qps=2425, ratio=1.45x
+    at recall=74.9%: hnswlib-f32-native qps=2857, usearch-i8-native interp. qps=1945, ratio=1.47x
+    at recall=76.7%: hnswlib-f32-native qps=2438, usearch-i8-native interp. qps=1597, ratio=1.53x
+    at recall=80.0%: hnswlib-f32-native qps=1728, usearch-i8-native interp. qps=1076, ratio=1.61x
+    at recall=82.0%: hnswlib-f32-native qps=1429, usearch-i8-native interp. qps=776, ratio=1.84x
+    at recall=84.4%: hnswlib-f32-native qps=1024, usearch-i8-native interp. qps=473, ratio=2.17x
+    at recall=87.2%: skipped (above B range)
+    at recall=89.6%: skipped (above B range)
+
+  hnswlib-f32-native vs usearch-f32-native:
+    at recall=56.8%: skipped (below B range)
+    at recall=67.2%: hnswlib-f32-native qps=4559, usearch-f32-native interp. qps=2514, ratio=1.81x
+    at recall=72.1%: hnswlib-f32-native qps=3514, usearch-f32-native interp. qps=1864, ratio=1.88x
+    at recall=74.9%: hnswlib-f32-native qps=2857, usearch-f32-native interp. qps=1501, ratio=1.90x
+    at recall=76.7%: hnswlib-f32-native qps=2438, usearch-f32-native interp. qps=1266, ratio=1.93x
+    at recall=80.0%: hnswlib-f32-native qps=1728, usearch-f32-native interp. qps=880, ratio=1.96x
+    at recall=82.0%: hnswlib-f32-native qps=1429, usearch-f32-native interp. qps=700, ratio=2.04x
+    at recall=84.4%: hnswlib-f32-native qps=1024, usearch-f32-native interp. qps=504, ratio=2.03x
+    at recall=87.2%: hnswlib-f32-native qps=638, usearch-f32-native interp. qps=321, ratio=1.99x
+    at recall=89.6%: skipped (above B range)
+
+============================================================
+Outputs:
+  log:  /mnt/c/pancake1.0.0/benchmark_results/sweep_hnswlib_2026-06-25T20-24-43-762Z.log
+  json: /mnt/c/pancake1.0.0/benchmark_results/sweep_hnswlib_2026-06-25T20-24-43-762Z.json
+  csv:  /mnt/c/pancake1.0.0/benchmark_results/sweep_hnswlib_2026-06-25T20-24-43-762Z.csv
+
+Plot with:
+  python3 plot_sweep.py /mnt/c/pancake1.0.0/benchmark_results/sweep_hnswlib_2026-06-25T20-24-43-762Z.csv
