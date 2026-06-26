@@ -422,8 +422,38 @@ async function testAdd() {
         'add() with dim-1 throws'
     );
 
-    // Count unchanged after failed adds
-    assert(idx.count === 2, 'count unchanged after failed adds');
+    // Non-numeric elements in a plain array must be rejected, not silently
+    // coerced via Number() (e.g. '' -> 0, '1' -> 1, true -> 1, [2] -> 2).
+    assertThrows(
+        () => idx.add(Array.from(normalizedVec(DIM)).map(String)),
+        'add() with numeric-string elements throws'
+    );
+    assertThrows(
+        () => { const v = Array.from(normalizedVec(DIM)); v[0] = ''; return idx.add(v); },
+        'add() with empty-string element throws (not coerced to 0)'
+    );
+    assertThrows(
+        () => { const v = Array.from(normalizedVec(DIM)); v[1] = true; return idx.add(v); },
+        'add() with boolean element throws'
+    );
+    assertThrows(
+        () => { const v = Array.from(normalizedVec(DIM)); v[2] = [0.1]; return idx.add(v); },
+        'add() with nested-array element throws'
+    );
+    assertThrows(
+        () => { const v = Array.from(normalizedVec(DIM)); v[3] = null; return idx.add(v); },
+        'add() with null element throws'
+    );
+
+    // Float32Array and plain number[] remain valid (no regression).
+    const okF32 = idx.add(normalizedVec(DIM));
+    const okArr = idx.add(Array.from(normalizedVec(DIM)));
+    assert(typeof okF32 === 'number' && typeof okArr === 'number',
+        'add() still accepts Float32Array and plain number[]');
+
+    // Count reflects the 4 successful adds (2 above + these 2); the rejected
+    // adds did not mutate the index.
+    assert(idx.count === 4, 'count unchanged after failed (non-numeric) adds');
 
     idx.dispose();
 }
@@ -499,6 +529,19 @@ async function testSearch() {
     // k=1
     const one = idx.search(vecs[0], 1);
     assert(one.length === 1, 'search with k=1 returns 1 result');
+
+    // Non-numeric query elements rejected, not coerced via Number().
+    assertThrows(
+        () => idx.search(Array.from(vecs[0]).map(String), 1),
+        'search() with numeric-string query throws'
+    );
+    assertThrows(
+        () => { const q = Array.from(vecs[0]); q[0] = ''; return idx.search(q, 1); },
+        'search() with empty-string query element throws'
+    );
+    // Plain number[] query still valid (no regression).
+    assert(idx.search(Array.from(vecs[0]), 1).length === 1,
+        'search() still accepts a plain number[] query');
 
     idx.dispose();
 }

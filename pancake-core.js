@@ -11,6 +11,23 @@ const FLOAT_HNSW_MAGIC_V1 = 0x464C4831; // "FLH1"
 const INT8_HNSW_MAGIC_V0 = 0x49384857; // "I8HW"
 const INT8_HNSW_MAGIC_V1 = 0x49384831; // "I8H1"
 
+// Reject non-numeric elements in a plain-array vector input. A Float32Array
+// already guarantees numeric storage, but `new Float32Array([...])` silently
+// coerces a plain array's elements via Number() — so '1'->1, ''->0, true->1,
+// [2]->2 would be accepted as valid coordinates. That turns malformed input
+// (e.g. an empty CSV field) into a silently-wrong vector instead of a loud
+// error. Require real numbers so callers fail closed on bad data. Float32Array
+// inputs skip this (already numeric). NaN/Infinity are still caught downstream.
+function assertNumericVector(vec, label) {
+    if (vec instanceof Float32Array) return;
+    if (vec == null || typeof vec.length !== 'number') return; // length check handles these
+    for (let i = 0; i < vec.length; i++) {
+        if (typeof vec[i] !== 'number') {
+            throw new Error(`${label} must contain only numbers; found ${typeof vec[i]} at index ${i}`);
+        }
+    }
+}
+
 class PancakeIndex {
     constructor(engine, opts, handle, vecPtr, idPtr, distPtr, bufferCapacity) {
         this._e = engine;
@@ -35,6 +52,7 @@ class PancakeIndex {
 
     add(vec) {
         this._checkDisposed();
+        assertNumericVector(vec, 'Vector');
         const f32 = vec instanceof Float32Array ? vec : new Float32Array(vec);
         if (f32.length !== this._dim) {
             throw new Error(`Expected vector of length ${this._dim}, got ${f32.length}`);
@@ -74,6 +92,7 @@ class PancakeIndex {
             if (len !== this._dim) {
                 throw new Error(`Expected vector of length ${this._dim}, got ${len} at index ${i}`);
             }
+            assertNumericVector(v, `Vector at index ${i}`);
             const f32 = v instanceof Float32Array ? v : new Float32Array(v);
             for (let j = 0; j < f32.length; j++) {
                 if (!Number.isFinite(f32[j])) {
@@ -112,6 +131,7 @@ class PancakeIndex {
         if (!Number.isInteger(k) || k < 0) {
             throw new Error('search() requires a non-negative integer k');
         }
+        assertNumericVector(query, 'Query vector');
         const f32 = query instanceof Float32Array ? query : new Float32Array(query);
         if (f32.length !== this._dim) {
             throw new Error(`Expected query of length ${this._dim}, got ${f32.length}`);
@@ -133,6 +153,7 @@ class PancakeIndex {
         if (!Number.isInteger(k) || k < 0) {
             throw new Error('searchFiltered() requires a non-negative integer k');
         }
+        assertNumericVector(query, 'Query vector');
         const f32 = query instanceof Float32Array ? query : new Float32Array(query);
         if (f32.length !== this._dim) {
             throw new Error(`Expected query of length ${this._dim}, got ${f32.length}`);
