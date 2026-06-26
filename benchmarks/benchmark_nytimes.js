@@ -50,7 +50,54 @@ const Pancake = require('../pancake.js');
 const { parseBenchmarkArgs, resolveSingleValue, resolveSweepValues } = require('./bench_args');
 
 const parsedArgs = parseBenchmarkArgs();
-const HDF5_PATH = parsedArgs.args[0] || path.join(__dirname, '..', 'nytimes', 'nytimes-256-angular.hdf5');
+
+// --- Angular dataset registry --------------------------------------------
+// All entries are ann-benchmarks HDF5 files (train/test/neighbors, angular
+// metric). dim is read from the file at load time, so only the path, a display
+// label, and the download URL differ between datasets. Select with
+// --dataset <name>; a positional path still overrides the resolved default.
+const RAW_ARGS = process.argv.slice(2);
+function getStrArg(name, def) {
+  const i = RAW_ARGS.indexOf('--' + name);
+  return i >= 0 && i + 1 < RAW_ARGS.length ? RAW_ARGS[i + 1] : def;
+}
+const DATASETS = {
+  nytimes: {
+    label: 'NYTimes-256',
+    file: path.join(__dirname, '..', 'nytimes', 'nytimes-256-angular.hdf5'),
+    url: 'http://ann-benchmarks.com/nytimes-256-angular.hdf5',
+  },
+  glove: {
+    label: 'GloVe-100',
+    file: path.join(__dirname, '..', 'glove', 'glove-100-angular.hdf5'),
+    url: 'http://ann-benchmarks.com/glove-100-angular.hdf5',
+  },
+};
+const DATASET = getStrArg('dataset', 'nytimes').toLowerCase();
+if (!DATASETS[DATASET]) {
+  console.error(`Unknown --dataset ${DATASET}. Options: ${Object.keys(DATASETS).join(', ')}.`);
+  process.exit(1);
+}
+const DS = DATASETS[DATASET];
+// Positional arg (a bare path, not a flag value) still overrides the default
+// file. parseBenchmarkArgs() doesn't know --dataset/--count, so it leaves both
+// the flags and their values in .args; skip any value following such a flag.
+const VALUE_FLAGS = new Set(['--dataset', '--count']);
+const POSITIONAL = parsedArgs.args.find(
+  (a, i, arr) => a && !a.startsWith('-') && !(i > 0 && VALUE_FLAGS.has(arr[i - 1]))
+);
+const HDF5_PATH = POSITIONAL || DS.file;
+
+// --count N indexes only the first N train vectors. The shipped HDF5 ground
+// truth is computed over the FULL train set, so a subset needs its own GT;
+// loadDataset() brute-forces cosine GT for the subset (these are angular
+// datasets). 0 / unset => use the whole file and the shipped GT.
+const COUNT = (() => {
+  const i = RAW_ARGS.indexOf('--count');
+  if (i < 0 || i + 1 >= RAW_ARGS.length) return 0;
+  const n = parseInt(RAW_ARGS[i + 1], 10);
+  return Number.isInteger(n) && n > 0 ? n : 0;
+})();
 
 // --- Sweep configuration ---
 const K = 10;
@@ -75,13 +122,23 @@ try {
   // optional — will skip hnswlib configs
 }
 
+let native;
+try {
+  native = require('../native');
+} catch (e) {
+  // optional — will skip pancake-native configs (addon not built)
+}
+
 const CONFIGS = [
-  { label: 'pancake-i8-wasm',    library: 'pancake',  dtype: 'i8' },
-  { label: 'pancake-f32-wasm',   library: 'pancake',  dtype: 'f32' },
-  { label: 'usearch-i8-native',  library: 'usearch',  dtype: 'i8' },
-  { label: 'usearch-f32-native', library: 'usearch',  dtype: 'f32' },
-  { label: 'hnswlib-f32-native', library: 'hnswlib',  dtype: 'f32' },
+  { label: 'pancake-i8-wasm',     library: 'pancake',        dtype: 'i8' },
+  { label: 'pancake-f32-wasm',    library: 'pancake',        dtype: 'f32' },
+  { label: 'pancake-i8-native',   library: 'pancake-native', dtype: 'i8' },
+  { label: 'pancake-f32-native',  library: 'pancake-native', dtype: 'f32' },
+  { label: 'usearch-i8-native',   library: 'usearch',        dtype: 'i8' },
+  { label: 'usearch-f32-native',  library: 'usearch',        dtype: 'f32' },
+  { label: 'hnswlib-f32-native',  library: 'hnswlib',        dtype: 'f32' },
 ].filter(c => {
+  if (c.library === 'pancake-native' && !native) return false;
   if (c.library === 'usearch' && !usearch) return false;
   if (c.library === 'hnswlib' && !HierarchicalNSW) return false;
   return true;
@@ -99,6 +156,51 @@ const logStream = fs.createWriteStream(LOG_PATH);
 function log(msg = '') {
   console.log(msg);
   logStream.write(msg + '\n');
+}
+
+// Brute-force cosine ground truth for a (possibly subset) train set. These are
+// angular datasets, so neighbors are ranked by cosine distance (1 - dot/|q||x|),
+// NOT L2. Used only when --count subsets the data, since the shipped GT is
+// computed over the full train set and is invalid for a subset.
+function computeCosineGroundTruth(train, test, dim, k) {
+  const nq = test.length;
+  log(`Computing brute-force cosine ground truth (${nq} x ${train.length} x ${dim}D)...`);
+  const t0 = performance.now();
+
+  // Pre-norm train rows once (queries normalized per-query below).
+  const trainNorm = new Float32Array(train.length);
+  for (let i = 0; i < train.length; i++) {
+    let s = 0; const v = train[i];
+    for (let d = 0; d < dim; d++) s += v[d] * v[d];
+    trainNorm[i] = Math.sqrt(s) || 1;
+  }
+
+  const gt = new Array(nq);
+  for (let q = 0; q < nq; q++) {
+    const query = test[q];
+    let qn = 0;
+    for (let d = 0; d < dim; d++) qn += query[d] * query[d];
+    qn = Math.sqrt(qn) || 1;
+
+    const sims = new Float32Array(train.length);
+    for (let i = 0; i < train.length; i++) {
+      let dot = 0; const v = train[i];
+      for (let d = 0; d < dim; d++) dot += query[d] * v[d];
+      sims[i] = dot / (qn * trainNorm[i]);  // cosine similarity (higher = closer)
+    }
+    const idx = new Array(train.length);
+    for (let i = 0; i < train.length; i++) idx[i] = i;
+    idx.sort((a, b) => sims[b] - sims[a]);  // descending similarity
+    gt[q] = new Set(idx.slice(0, k));
+
+    if ((q + 1) % 25 === 0) {
+      const el = (performance.now() - t0) / 1000;
+      const eta = (el / (q + 1)) * (nq - q - 1);
+      process.stdout.write(`  ${q + 1}/${nq} (${el.toFixed(0)}s, ~${eta.toFixed(0)}s left)\r`);
+    }
+  }
+  log(`  Ground truth computed in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
+  return gt;
 }
 
 // --- Data loading ---
@@ -147,19 +249,22 @@ print(json.dumps(info))
 
   const dim = info.dim;
 
-  // Copy into freshly-allocated typed arrays. Buffer-backed views can be
-  // misaligned for Float32Array on some platforms; copying guarantees a
-  // 4-byte-aligned ArrayBuffer that we own.
+  // Copy into freshly-allocated typed arrays. The source offset (4 + JSON
+  // header length) is not guaranteed to be 4-byte aligned — and it isn't for
+  // every dataset (the JSON length varies) — so a Float32Array view over
+  // buf.buffer at that offset throws "start offset should be a multiple of 4".
+  // Copy the raw bytes through Buffer.copy(), which has no alignment
+  // requirement, into the typed arrays' own (aligned) backing buffers.
   const trainFlat = new Float32Array(info.n_train * dim);
-  trainFlat.set(new Float32Array(buf.buffer, buf.byteOffset + offset, info.n_train * dim));
+  buf.copy(Buffer.from(trainFlat.buffer), 0, offset, offset + info.n_train * dim * 4);
   offset += info.n_train * dim * 4;
 
   const testFlat = new Float32Array(info.n_test * dim);
-  testFlat.set(new Float32Array(buf.buffer, buf.byteOffset + offset, info.n_test * dim));
+  buf.copy(Buffer.from(testFlat.buffer), 0, offset, offset + info.n_test * dim * 4);
   offset += info.n_test * dim * 4;
 
   const neighborsFlat = new Int32Array(info.n_test * K);
-  neighborsFlat.set(new Int32Array(buf.buffer, buf.byteOffset + offset, info.n_test * K));
+  buf.copy(Buffer.from(neighborsFlat.buffer), 0, offset, offset + info.n_test * K * 4);
 
   // Per-row views. subarray() is O(1) -- no copy.
   const train = new Array(info.n_train);
@@ -179,6 +284,18 @@ print(json.dumps(info))
   // Cleanup temp files (best-effort).
   try { fs.unlinkSync(tmpBin); } catch (_) {}
   try { fs.unlinkSync(tmpPy);  } catch (_) {}
+
+  // --count subset: index only the first N train vectors and recompute GT over
+  // that subset (the shipped GT indexes the full set and would be invalid).
+  if (COUNT > 0 && COUNT < info.n_train) {
+    const subTrain = train.slice(0, COUNT);
+    log(`  Subsetting to first ${COUNT.toLocaleString()} train vectors (--count); recomputing GT.`);
+    const subGt = computeCosineGroundTruth(subTrain, test, dim, K);
+    return {
+      train: subTrain, test, groundTruth: subGt, dim,
+      info: { ...info, n_train: subTrain.length },
+    };
+  }
 
   return { train, test, groundTruth, dim, info };
 }
@@ -319,6 +436,52 @@ function queryPancake(index, test, groundTruth, efSearch) {
   return { latencies, meanRecall: totalRecall / test.length };
 }
 
+// --- pancake native addon: build and query ---
+// Same graph/quantization as the WASM engine but with AVX2 distance kernels;
+// isolates WASM runtime overhead from graph quality. metric=1 (cosine) — these
+// are angular datasets, so unlike the L2 pareto_frontier path this must NOT
+// pass L2.
+function buildPancakeNative({ train, dim, dtype }) {
+  const quantized = dtype === 'i8' ? 1 : 0;
+  log(`  [pancake-${dtype}-native] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
+  const h = native.pancake_init(dim, train.length, quantized, 1 /* 1=cosine */, M, EF_CONSTRUCTION, EF_SEARCH_VALUES[0]);
+  if (h === 0xFFFFFFFF) throw new Error('Failed to init native pancake index');
+
+  const t0 = performance.now();
+  const flat = new Float32Array(train.length * dim);
+  for (let i = 0; i < train.length; i++) flat.set(train[i], i * dim);
+  const batchSize = 10000;
+  for (let start = 0; start < train.length; start += batchSize) {
+    const end = Math.min(start + batchSize, train.length);
+    native.pancake_bulk_insert(h, flat.subarray(start * dim, end * dim), end - start);
+  }
+  const buildMs = performance.now() - t0;
+  const memMB = native.pancake_memory(h) / 1024 / 1024;
+  log(`  [pancake-${dtype}-native] build: ${(buildMs / 1000).toFixed(1)}s, memory: ${memMB.toFixed(0)} MB`);
+  return { handle: h, buildMs, memoryMB: memMB };
+}
+
+function queryPancakeNative(built, test, groundTruth, efSearch) {
+  native.pancake_set_ef(built.handle, efSearch);
+  for (let i = 0; i < WARMUP_QUERIES && i < test.length; i++) {
+    native.pancake_query(built.handle, test[i], K);
+  }
+
+  const latencies = new Float64Array(test.length);
+  let totalRecall = 0;
+  for (let i = 0; i < test.length; i++) {
+    const st = performance.now();
+    const result = native.pancake_query(built.handle, test[i], K);
+    latencies[i] = performance.now() - st;
+    let hits = 0;
+    const truth = groundTruth[i];
+    const ids = result.ids;
+    for (let j = 0; j < ids.length; j++) if (truth.has(Number(ids[j]))) hits++;
+    totalRecall += hits / truth.size;
+  }
+  return { latencies, meanRecall: totalRecall / test.length };
+}
+
 // --- hnswlib-node: build and query ---
 function buildHnswlib({ train, dim }) {
   if (!HierarchicalNSW) return null;
@@ -388,6 +551,8 @@ async function sweepOne(config, dataset) {
   let built;
   if (config.library === 'pancake') {
     built = await buildPancake({ train, dim, dtype: config.dtype });
+  } else if (config.library === 'pancake-native') {
+    built = buildPancakeNative({ train, dim, dtype: config.dtype });
   } else if (config.library === 'usearch') {
     built = buildUsearch({ train, dim, dtype: config.dtype });
   } else {
@@ -408,6 +573,8 @@ async function sweepOne(config, dataset) {
       let queryResult;
       if (config.library === 'pancake') {
         queryResult = queryPancake(index, test, groundTruth, efSearch);
+      } else if (config.library === 'pancake-native') {
+        queryResult = queryPancakeNative(built, test, groundTruth, efSearch);
       } else if (config.library === 'usearch') {
         queryResult = queryUsearch(built, test, groundTruth, efSearch, dim);
       } else {
@@ -445,7 +612,11 @@ async function sweepOne(config, dataset) {
     points.push(summary);
   }
 
-  if (typeof index.dispose === 'function') index.dispose();
+  if (config.library === 'pancake-native') {
+    native.pancake_dispose(built.handle);
+  } else if (index && typeof index.dispose === 'function') {
+    index.dispose();
+  }
   if (built.savePath && fs.existsSync(built.savePath)) {
     fs.unlinkSync(built.savePath);
   }
@@ -539,14 +710,13 @@ function matchedRecallComparison(results) {
 async function main() {
   if (!fs.existsSync(HDF5_PATH)) {
     log(`Dataset not found: ${HDF5_PATH}`);
-    log('Download: curl -L -o ./nytimes/nytimes-256-angular.hdf5 '
-      + 'http://ann-benchmarks.com/nytimes-256-angular.hdf5');
+    log(`Download: curl -L -o ${HDF5_PATH} ${DS.url}`);
     process.exit(1);
   }
 
   const dataset = loadDataset(HDF5_PATH);
   log(`\n${'='.repeat(60)}`);
-  log('Recall-QPS sweep on NYTimes-256 (Pancake vs USearch vs hnswlib)');
+  log(`Recall-QPS sweep on ${DS.label} (Pancake vs USearch vs hnswlib)`);
   log(`${dataset.info.n_train} vectors, ${dataset.dim}D, ${dataset.info.n_test} queries`);
   log(`k=${K}, M=${M}, ef_construction=${EF_CONSTRUCTION}`);
   log(`ef_search sweep: [${EF_SEARCH_VALUES.join(', ')}]`);
@@ -560,7 +730,7 @@ async function main() {
   }
 
   fs.writeFileSync(JSON_PATH, JSON.stringify({
-    benchmark: 'nytimes-256-sweep-hnswlib',
+    benchmark: `${DATASET}-angular-sweep`,
     timestamp: new Date().toISOString(),
     dataset: dataset.info,
     params: { K, M, EF_CONSTRUCTION, EF_SEARCH_VALUES, REPETITIONS, WARMUP_QUERIES, PANCAKE_BATCH_SIZE },
