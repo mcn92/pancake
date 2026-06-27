@@ -6,25 +6,58 @@
   "types": "pancake.d.ts",
   "exports": {
     ".": {
-      "types": "./pancake.d.ts",
-      "workerd": "./pancake.workerd.mjs",
-      "browser": "./pancake.web.mjs",
-      "import": "./pancake.node.mjs",
-      "require": "./pancake.js",
-      "default": "./pancake.js"
+      "workerd": {
+        "types": "./pancake.web.d.ts",
+        "default": "./pancake.workerd.mjs"
+      },
+      "browser": {
+        "types": "./pancake.web.d.ts",
+        "default": "./pancake.web.mjs"
+      },
+      "import": {
+        "types": "./pancake.d.ts",
+        "default": "./pancake.node.mjs"
+      },
+      "require": {
+        "types": "./pancake.d.ts",
+        "default": "./pancake.js"
+      },
+      "default": {
+        "types": "./pancake.d.ts",
+        "default": "./pancake.js"
+      }
     },
     "./web": {
-      "types": "./pancake.d.ts",
-      "workerd": "./pancake.workerd.mjs",
-      "browser": "./pancake.web.mjs",
-      "import": "./pancake.web.mjs",
-      "default": "./pancake.web.mjs"
+      "workerd": {
+        "types": "./pancake.web.d.ts",
+        "default": "./pancake.workerd.mjs"
+      },
+      "browser": {
+        "types": "./pancake.web.d.ts",
+        "default": "./pancake.web.mjs"
+      },
+      "import": {
+        "types": "./pancake.web.d.ts",
+        "default": "./pancake.web.mjs"
+      },
+      "default": {
+        "types": "./pancake.web.d.ts",
+        "default": "./pancake.web.mjs"
+      }
     },
     "./node": {
-      "types": "./pancake.d.ts",
-      "import": "./pancake.node.mjs",
-      "require": "./pancake.js",
-      "default": "./pancake.js"
+      "import": {
+        "types": "./pancake.d.ts",
+        "default": "./pancake.node.mjs"
+      },
+      "require": {
+        "types": "./pancake.d.ts",
+        "default": "./pancake.js"
+      },
+      "default": {
+        "types": "./pancake.d.ts",
+        "default": "./pancake.js"
+      }
     },
     "./engine": "./dist/engine.js",
     "./engine.wasm": "./dist/engine.wasm"
@@ -36,6 +69,7 @@
     "pancake.workerd.mjs",
     "pancake-core.js",
     "pancake.d.ts",
+    "pancake.web.d.ts",
     "dist/engine.js",
     "dist/engine.wasm",
     "dist/engine.scalar.js",
