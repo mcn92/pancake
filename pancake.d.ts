@@ -91,6 +91,11 @@ export interface PancakeIndex {
   readonly dim: number;
 }
 
+/**
+ * The portable API exposed by every entrypoint (Node, browser, Workers).
+ * The browser/Workers entrypoints expose exactly this surface; the Node
+ * entrypoints add file helpers (see {@link NodePancakeApi}).
+ */
 export interface PancakeApi {
   /** Create a new Pancake index using the runtime-specific packaged entrypoint. */
   create(opts: CreateOptions): Promise<PancakeIndex>;
@@ -98,12 +103,21 @@ export interface PancakeApi {
   fromVectors(vectors: readonly VectorInput[], opts?: Omit<CreateOptions, 'dim'> & Partial<Pick<CreateOptions, 'dim'>>): Promise<FromVectorsResult<never>>;
   /** Create and populate an index from { id, vector } records. */
   fromVectors<Id = unknown>(records: readonly VectorRecord<Id>[], opts?: Omit<CreateOptions, 'dim'> & Partial<Pick<CreateOptions, 'dim'>>): Promise<FromVectorsResult<Id>>;
-  /** Load vectors from a JSON/JSONL file and build an index. Node.js entrypoints only. */
+}
+
+/**
+ * The Node.js API: the portable surface plus filesystem helpers. These helpers
+ * exist only on the Node entrypoints (`pancake-wasm`, `pancake-wasm/node`); the
+ * browser/Workers entrypoints do not expose them, and importing those returns
+ * the narrower {@link PancakeApi}.
+ */
+export interface NodePancakeApi extends PancakeApi {
+  /** Load vectors from a JSON/JSONL file and build an index. */
   loadJsonFile<Id = unknown>(filePath: string, opts?: JsonFileOptions): Promise<FromVectorsResult<Id>>;
-  /** Load a previously exported Pancake snapshot from disk. Node.js entrypoints only. */
+  /** Load a previously exported Pancake snapshot from disk. */
   loadSnapshotFile(filePath: string, opts: SnapshotFileOptions): Promise<PancakeIndex>;
 }
 
-declare const Pancake: PancakeApi;
+declare const Pancake: NodePancakeApi;
 
 export default Pancake;
