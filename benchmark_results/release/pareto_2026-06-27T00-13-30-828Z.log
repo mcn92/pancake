@@ -1,0 +1,650 @@
+======================================================================
+Pareto-Frontier Benchmark (SIFT, L2)
+======================================================================
+Configs: pancake-wasm-int8, pancake-wasm-f32, pancake-native-int8, pancake-native-f32, usearch-i8, usearch-f32, hnswlib-f32
+
+Loading dataset...
+  Loading sift/sift_base.fvecs (first 1,000,000)...
+  Loading sift/sift_query.fvecs (first 1,000)...
+  Base:    1,000,000 vectors, 128D
+  Queries: 1,000
+  Metric:  L2
+  k=10, M=16, ef_construction=50
+  ef_search sweep: [10, 20, 40, 60, 80, 100, 150, 200, 300, 500, 800]  (includes 100)
+  Repetitions: 3, Warmup: 200
+  Loading sift/sift_groundtruth.ivecs (ground truth)...
+  Loaded precomputed ground truth: 1000 rows, first 10 neighbors each
+
+======================================================================
+Config: pancake-wasm-int8
+======================================================================
+  [i8 wasm] build (M=16, ef_c=50, metric=l2)...
+  [i8 wasm] build: 441.7s, memory: 383.9 MB
+
+  ef_search=10
+    rep 1: recall=71.29%  qps=9391  p50=0.102ms  p99=0.184ms
+    rep 2: recall=71.29%  qps=9605  p50=0.101ms  p99=0.191ms
+    rep 3: recall=71.29%  qps=9643  p50=0.100ms  p99=0.193ms
+    summary: recall=71.29% (+/-0.00) qps=9546 (+/-111)
+
+  ef_search=20
+    rep 1: recall=82.54%  qps=6395  p50=0.153ms  p99=0.250ms
+    rep 2: recall=82.54%  qps=6426  p50=0.153ms  p99=0.251ms
+    rep 3: recall=82.54%  qps=6327  p50=0.155ms  p99=0.259ms
+    summary: recall=82.54% (+/-0.00) qps=6383 (+/-42)
+
+  ef_search=40
+    rep 1: recall=91.05%  qps=4003  p50=0.252ms  p99=0.365ms
+    rep 2: recall=91.05%  qps=3987  p50=0.253ms  p99=0.393ms
+    rep 3: recall=91.05%  qps=3935  p50=0.253ms  p99=0.373ms
+    summary: recall=91.05% (+/-0.00) qps=3975 (+/-29)
+
+  ef_search=60
+    rep 1: recall=94.49%  qps=2946  p50=0.346ms  p99=0.492ms
+    rep 2: recall=94.49%  qps=2945  p50=0.347ms  p99=0.501ms
+    rep 3: recall=94.49%  qps=2953  p50=0.347ms  p99=0.487ms
+    summary: recall=94.49% (+/-0.00) qps=2948 (+/-4)
+
+  ef_search=80
+    rep 1: recall=96.14%  qps=2343  p50=0.441ms  p99=0.585ms
+    rep 2: recall=96.14%  qps=2350  p50=0.438ms  p99=0.612ms
+    rep 3: recall=96.14%  qps=2362  p50=0.434ms  p99=0.610ms
+    summary: recall=96.14% (+/-0.00) qps=2351 (+/-8)
+
+  ef_search=100
+    rep 1: recall=96.90%  qps=1990  p50=0.519ms  p99=0.703ms
+    rep 2: recall=96.90%  qps=1955  p50=0.527ms  p99=0.749ms
+    rep 3: recall=96.90%  qps=1961  p50=0.527ms  p99=0.738ms
+    summary: recall=96.90% (+/-0.00) qps=1969 (+/-15)
+
+  ef_search=150
+    rep 1: recall=97.94%  qps=1408  p50=0.737ms  p99=1.014ms
+    rep 2: recall=97.94%  qps=1412  p50=0.732ms  p99=0.988ms
+    rep 3: recall=97.94%  qps=1403  p50=0.735ms  p99=1.060ms
+    summary: recall=97.94% (+/-0.00) qps=1408 (+/-4)
+
+  ef_search=200
+    rep 1: recall=98.44%  qps=974  p50=0.981ms  p99=2.554ms
+    rep 2: recall=98.44%  qps=1101  p50=0.947ms  p99=1.256ms
+    rep 3: recall=98.44%  qps=1105  p50=0.947ms  p99=1.227ms
+    summary: recall=98.44% (+/-0.00) qps=1060 (+/-61)
+
+  ef_search=300
+    rep 1: recall=98.83%  qps=787  p50=1.329ms  p99=1.726ms
+    rep 2: recall=98.83%  qps=758  p50=1.361ms  p99=1.954ms
+    rep 3: recall=98.83%  qps=788  p50=1.314ms  p99=1.852ms
+    summary: recall=98.83% (+/-0.00) qps=778 (+/-14)
+
+  ef_search=500
+    rep 1: recall=99.08%  qps=514  p50=2.012ms  p99=2.667ms
+    rep 2: recall=99.08%  qps=514  p50=2.023ms  p99=2.687ms
+    rep 3: recall=99.08%  qps=513  p50=2.021ms  p99=2.709ms
+    summary: recall=99.08% (+/-0.00) qps=514 (+/-1)
+
+  ef_search=800
+    rep 1: recall=99.15%  qps=349  p50=2.967ms  p99=3.956ms
+    rep 2: recall=99.15%  qps=347  p50=2.989ms  p99=3.973ms
+    rep 3: recall=99.15%  qps=347  p50=2.984ms  p99=4.000ms
+    summary: recall=99.15% (+/-0.00) qps=348 (+/-1)
+
+======================================================================
+Config: pancake-wasm-f32
+======================================================================
+  [f32 wasm] build (M=16, ef_c=50, metric=l2)...
+  [f32 wasm] build: 546.1s, memory: 616.3 MB
+
+  ef_search=10
+    rep 1: recall=70.98%  qps=7742  p50=0.123ms  p99=0.225ms
+    rep 2: recall=70.98%  qps=7705  p50=0.123ms  p99=0.222ms
+    rep 3: recall=70.98%  qps=7747  p50=0.124ms  p99=0.219ms
+    summary: recall=70.98% (+/-0.00) qps=7732 (+/-19)
+
+  ef_search=20
+    rep 1: recall=82.67%  qps=5136  p50=0.191ms  p99=0.307ms
+    rep 2: recall=82.67%  qps=5112  p50=0.192ms  p99=0.303ms
+    rep 3: recall=82.67%  qps=5104  p50=0.192ms  p99=0.331ms
+    summary: recall=82.67% (+/-0.00) qps=5117 (+/-14)
+
+  ef_search=40
+    rep 1: recall=91.62%  qps=3197  p50=0.318ms  p99=0.452ms
+    rep 2: recall=91.62%  qps=3185  p50=0.318ms  p99=0.474ms
+    rep 3: recall=91.62%  qps=3190  p50=0.319ms  p99=0.449ms
+    summary: recall=91.62% (+/-0.00) qps=3190 (+/-5)
+
+  ef_search=60
+    rep 1: recall=94.85%  qps=2349  p50=0.436ms  p99=0.585ms
+    rep 2: recall=94.85%  qps=2346  p50=0.438ms  p99=0.591ms
+    rep 3: recall=94.85%  qps=2347  p50=0.438ms  p99=0.586ms
+    summary: recall=94.85% (+/-0.00) qps=2347 (+/-1)
+
+  ef_search=80
+    rep 1: recall=96.65%  qps=1869  p50=0.553ms  p99=0.752ms
+    rep 2: recall=96.65%  qps=1869  p50=0.556ms  p99=0.730ms
+    rep 3: recall=96.65%  qps=1872  p50=0.553ms  p99=0.737ms
+    summary: recall=96.65% (+/-0.00) qps=1870 (+/-1)
+
+  ef_search=100
+    rep 1: recall=97.47%  qps=1573  p50=0.665ms  p99=0.861ms
+    rep 2: recall=97.47%  qps=1567  p50=0.663ms  p99=0.909ms
+    rep 3: recall=97.47%  qps=1568  p50=0.659ms  p99=0.859ms
+    summary: recall=97.47% (+/-0.00) qps=1569 (+/-3)
+
+  ef_search=150
+    rep 1: recall=98.63%  qps=1123  p50=0.933ms  p99=1.229ms
+    rep 2: recall=98.63%  qps=1124  p50=0.926ms  p99=1.237ms
+    rep 3: recall=98.63%  qps=1124  p50=0.927ms  p99=1.243ms
+    summary: recall=98.63% (+/-0.00) qps=1124 (+/-1)
+
+  ef_search=200
+    rep 1: recall=99.08%  qps=888  p50=1.175ms  p99=1.548ms
+    rep 2: recall=99.08%  qps=887  p50=1.172ms  p99=1.539ms
+    rep 3: recall=99.08%  qps=877  p50=1.180ms  p99=1.689ms
+    summary: recall=99.08% (+/-0.00) qps=884 (+/-5)
+
+  ef_search=300
+    rep 1: recall=99.40%  qps=636  p50=1.637ms  p99=2.130ms
+    rep 2: recall=99.40%  qps=637  p50=1.639ms  p99=2.137ms
+    rep 3: recall=99.40%  qps=632  p50=1.644ms  p99=2.152ms
+    summary: recall=99.40% (+/-0.00) qps=635 (+/-2)
+
+  ef_search=500
+    rep 1: recall=99.67%  qps=417  p50=2.498ms  p99=3.324ms
+    rep 2: recall=99.67%  qps=418  p50=2.480ms  p99=3.331ms
+    rep 3: recall=99.67%  qps=403  p50=2.532ms  p99=4.237ms
+    summary: recall=99.67% (+/-0.00) qps=413 (+/-7)
+
+  ef_search=800
+    rep 1: recall=99.74%  qps=286  p50=3.628ms  p99=4.848ms
+    rep 2: recall=99.74%  qps=284  p50=3.648ms  p99=4.935ms
+    rep 3: recall=99.74%  qps=283  p50=3.673ms  p99=4.903ms
+    summary: recall=99.74% (+/-0.00) qps=284 (+/-1)
+
+======================================================================
+Config: pancake-native-int8
+======================================================================
+  [i8 native] build (M=16, ef_c=50, metric=l2)...
+  [i8 native] build: 356.2s, memory: 383.9 MB
+
+  ef_search=10
+    rep 1: recall=71.05%  qps=9272  p50=0.096ms  p99=0.227ms
+    rep 2: recall=71.05%  qps=10581  p50=0.088ms  p99=0.220ms
+    rep 3: recall=71.05%  qps=10475  p50=0.089ms  p99=0.184ms
+    summary: recall=71.05% (+/-0.00) qps=10109 (+/-594)
+
+  ef_search=20
+    rep 1: recall=82.68%  qps=7103  p50=0.138ms  p99=0.234ms
+    rep 2: recall=82.68%  qps=6998  p50=0.138ms  p99=0.244ms
+    rep 3: recall=82.68%  qps=7032  p50=0.139ms  p99=0.250ms
+    summary: recall=82.68% (+/-0.00) qps=7044 (+/-44)
+
+  ef_search=40
+    rep 1: recall=91.21%  qps=4456  p50=0.225ms  p99=0.354ms
+    rep 2: recall=91.21%  qps=4458  p50=0.225ms  p99=0.357ms
+    rep 3: recall=91.21%  qps=4467  p50=0.223ms  p99=0.355ms
+    summary: recall=91.21% (+/-0.00) qps=4460 (+/-4)
+
+  ef_search=60
+    rep 1: recall=94.64%  qps=3239  p50=0.311ms  p99=0.492ms
+    rep 2: recall=94.64%  qps=3331  p50=0.307ms  p99=0.424ms
+    rep 3: recall=94.64%  qps=3263  p50=0.312ms  p99=0.483ms
+    summary: recall=94.64% (+/-0.00) qps=3278 (+/-39)
+
+  ef_search=80
+    rep 1: recall=96.33%  qps=2413  p50=0.424ms  p99=0.622ms
+    rep 2: recall=96.33%  qps=2220  p50=0.462ms  p99=0.693ms
+    rep 3: recall=96.33%  qps=2210  p50=0.460ms  p99=0.660ms
+    summary: recall=96.33% (+/-0.00) qps=2281 (+/-93)
+
+  ef_search=100
+    rep 1: recall=97.14%  qps=2033  p50=0.496ms  p99=0.745ms
+    rep 2: recall=97.14%  qps=2195  p50=0.467ms  p99=0.646ms
+    rep 3: recall=97.14%  qps=2196  p50=0.468ms  p99=0.701ms
+    summary: recall=97.14% (+/-0.00) qps=2141 (+/-77)
+
+  ef_search=150
+    rep 1: recall=98.15%  qps=1586  p50=0.650ms  p99=0.897ms
+    rep 2: recall=98.15%  qps=1593  p50=0.652ms  p99=0.890ms
+    rep 3: recall=98.15%  qps=1588  p50=0.655ms  p99=0.902ms
+    summary: recall=98.15% (+/-0.00) qps=1589 (+/-3)
+
+  ef_search=200
+    rep 1: recall=98.58%  qps=1246  p50=0.832ms  p99=1.146ms
+    rep 2: recall=98.58%  qps=1241  p50=0.832ms  p99=1.130ms
+    rep 3: recall=98.58%  qps=1200  p50=0.854ms  p99=1.229ms
+    summary: recall=98.58% (+/-0.00) qps=1229 (+/-20)
+
+  ef_search=300
+    rep 1: recall=98.89%  qps=893  p50=1.160ms  p99=1.591ms
+    rep 2: recall=98.89%  qps=896  p50=1.159ms  p99=1.582ms
+    rep 3: recall=98.89%  qps=894  p50=1.170ms  p99=1.570ms
+    summary: recall=98.89% (+/-0.00) qps=894 (+/-1)
+
+  ef_search=500
+    rep 1: recall=99.09%  qps=588  p50=1.759ms  p99=2.378ms
+    rep 2: recall=99.09%  qps=553  p50=1.827ms  p99=3.163ms
+    rep 3: recall=99.09%  qps=588  p50=1.770ms  p99=2.386ms
+    summary: recall=99.09% (+/-0.00) qps=577 (+/-16)
+
+  ef_search=800
+    rep 1: recall=99.13%  qps=403  p50=2.549ms  p99=3.520ms
+    rep 2: recall=99.13%  qps=404  p50=2.552ms  p99=3.509ms
+    rep 3: recall=99.13%  qps=410  p50=2.518ms  p99=3.422ms
+    summary: recall=99.13% (+/-0.00) qps=406 (+/-3)
+
+======================================================================
+Config: pancake-native-f32
+======================================================================
+  [f32 native] build (M=16, ef_c=50, metric=l2)...
+  [f32 native] build: 373.7s, memory: 614.4 MB
+
+  ef_search=10
+    rep 1: recall=70.98%  qps=11808  p50=0.080ms  p99=0.168ms
+    rep 2: recall=70.98%  qps=11960  p50=0.079ms  p99=0.149ms
+    rep 3: recall=70.98%  qps=11544  p50=0.081ms  p99=0.167ms
+    summary: recall=70.98% (+/-0.00) qps=11771 (+/-172)
+
+  ef_search=20
+    rep 1: recall=82.67%  qps=7354  p50=0.132ms  p99=0.229ms
+    rep 2: recall=82.67%  qps=7694  p50=0.127ms  p99=0.213ms
+    rep 3: recall=82.67%  qps=7620  p50=0.126ms  p99=0.221ms
+    summary: recall=82.67% (+/-0.00) qps=7556 (+/-146)
+
+  ef_search=40
+    rep 1: recall=91.62%  qps=4679  p50=0.213ms  p99=0.345ms
+    rep 2: recall=91.62%  qps=4667  p50=0.213ms  p99=0.334ms
+    rep 3: recall=91.62%  qps=4647  p50=0.214ms  p99=0.357ms
+    summary: recall=91.62% (+/-0.00) qps=4664 (+/-13)
+
+  ef_search=60
+    rep 1: recall=94.85%  qps=3353  p50=0.296ms  p99=0.433ms
+    rep 2: recall=94.85%  qps=3431  p50=0.295ms  p99=0.417ms
+    rep 3: recall=94.85%  qps=3237  p50=0.311ms  p99=0.453ms
+    summary: recall=94.85% (+/-0.00) qps=3340 (+/-80)
+
+  ef_search=80
+    rep 1: recall=96.65%  qps=2735  p50=0.373ms  p99=0.513ms
+    rep 2: recall=96.65%  qps=2735  p50=0.373ms  p99=0.501ms
+    rep 3: recall=96.65%  qps=2667  p50=0.376ms  p99=0.546ms
+    summary: recall=96.65% (+/-0.00) qps=2713 (+/-32)
+
+  ef_search=100
+    rep 1: recall=97.47%  qps=2237  p50=0.458ms  p99=0.644ms
+    rep 2: recall=97.47%  qps=2170  p50=0.464ms  p99=0.828ms
+    rep 3: recall=97.47%  qps=2238  p50=0.457ms  p99=0.650ms
+    summary: recall=97.47% (+/-0.00) qps=2215 (+/-32)
+
+  ef_search=150
+    rep 1: recall=98.63%  qps=1561  p50=0.664ms  p99=0.916ms
+    rep 2: recall=98.63%  qps=1564  p50=0.662ms  p99=0.882ms
+    rep 3: recall=98.63%  qps=1561  p50=0.661ms  p99=0.917ms
+    summary: recall=98.63% (+/-0.00) qps=1562 (+/-1)
+
+  ef_search=200
+    rep 1: recall=99.08%  qps=1223  p50=0.850ms  p99=1.127ms
+    rep 2: recall=99.08%  qps=1223  p50=0.844ms  p99=1.167ms
+    rep 3: recall=99.08%  qps=1223  p50=0.847ms  p99=1.131ms
+    summary: recall=99.08% (+/-0.00) qps=1223 (+/-0)
+
+  ef_search=300
+    rep 1: recall=99.40%  qps=865  p50=1.198ms  p99=1.538ms
+    rep 2: recall=99.40%  qps=867  p50=1.199ms  p99=1.563ms
+    rep 3: recall=99.40%  qps=867  p50=1.189ms  p99=1.598ms
+    summary: recall=99.40% (+/-0.00) qps=867 (+/-1)
+
+  ef_search=500
+    rep 1: recall=99.67%  qps=563  p50=1.835ms  p99=2.422ms
+    rep 2: recall=99.67%  qps=562  p50=1.846ms  p99=2.357ms
+    rep 3: recall=99.67%  qps=563  p50=1.834ms  p99=2.372ms
+    summary: recall=99.67% (+/-0.00) qps=563 (+/-0)
+
+  ef_search=800
+    rep 1: recall=99.74%  qps=377  p50=2.737ms  p99=3.535ms
+    rep 2: recall=99.74%  qps=377  p50=2.730ms  p99=3.609ms
+    rep 3: recall=99.74%  qps=377  p50=2.736ms  p99=3.616ms
+    summary: recall=99.74% (+/-0.00) qps=377 (+/-0)
+
+======================================================================
+Config: usearch-i8
+======================================================================
+  [usearch-i8] build (connectivity=16, expansion_add=50, metric=l2sq, quantization=i8)...
+  [usearch-i8] build: 165.2s (saved to /mnt/c/pancake1.0.0/benchmark_results/_usearch_i8_2026-06-27T00-13-30-828Z.bin)
+
+  ef_search=10
+    rep 1: recall=62.05%  qps=10507  p50=0.082ms  p99=0.569ms
+    rep 2: recall=62.05%  qps=13060  p50=0.073ms  p99=0.152ms
+    rep 3: recall=62.05%  qps=12571  p50=0.074ms  p99=0.158ms
+    summary: recall=62.05% (+/-0.00) qps=12046 (+/-1107)
+
+  ef_search=20
+    rep 1: recall=73.79%  qps=8785  p50=0.108ms  p99=0.229ms
+    rep 2: recall=73.79%  qps=9104  p50=0.107ms  p99=0.188ms
+    rep 3: recall=73.79%  qps=9079  p50=0.107ms  p99=0.206ms
+    summary: recall=73.79% (+/-0.00) qps=8989 (+/-145)
+
+  ef_search=40
+    rep 1: recall=81.86%  qps=5906  p50=0.168ms  p99=0.283ms
+    rep 2: recall=81.86%  qps=5185  p50=0.184ms  p99=0.444ms
+    rep 3: recall=81.86%  qps=5821  p50=0.170ms  p99=0.273ms
+    summary: recall=81.86% (+/-0.00) qps=5637 (+/-322)
+
+  ef_search=60
+    rep 1: recall=85.36%  qps=4313  p50=0.233ms  p99=0.394ms
+    rep 2: recall=85.36%  qps=4284  p50=0.236ms  p99=0.357ms
+    rep 3: recall=85.36%  qps=4193  p50=0.237ms  p99=0.408ms
+    summary: recall=85.36% (+/-0.00) qps=4263 (+/-51)
+
+  ef_search=80
+    rep 1: recall=87.27%  qps=3498  p50=0.291ms  p99=0.425ms
+    rep 2: recall=87.27%  qps=3443  p50=0.293ms  p99=0.548ms
+    rep 3: recall=87.27%  qps=3502  p50=0.290ms  p99=0.428ms
+    summary: recall=87.27% (+/-0.00) qps=3481 (+/-27)
+
+  ef_search=100
+    rep 1: recall=88.35%  qps=2871  p50=0.354ms  p99=0.539ms
+    rep 2: recall=88.35%  qps=2879  p50=0.356ms  p99=0.497ms
+    rep 3: recall=88.35%  qps=2813  p50=0.361ms  p99=0.540ms
+    summary: recall=88.35% (+/-0.00) qps=2854 (+/-29)
+
+  ef_search=150
+    rep 1: recall=89.52%  qps=2113  p50=0.488ms  p99=0.659ms
+    rep 2: recall=89.52%  qps=2114  p50=0.488ms  p99=0.671ms
+    rep 3: recall=89.52%  qps=2114  p50=0.488ms  p99=0.688ms
+    summary: recall=89.52% (+/-0.00) qps=2114 (+/-0)
+
+  ef_search=200
+    rep 1: recall=89.93%  qps=1650  p50=0.626ms  p99=0.861ms
+    rep 2: recall=89.93%  qps=1658  p50=0.627ms  p99=0.871ms
+    rep 3: recall=89.93%  qps=1659  p50=0.624ms  p99=0.864ms
+    summary: recall=89.93% (+/-0.00) qps=1656 (+/-4)
+
+  ef_search=300
+    rep 1: recall=90.38%  qps=1169  p50=0.888ms  p99=1.175ms
+    rep 2: recall=90.38%  qps=1165  p50=0.887ms  p99=1.225ms
+    rep 3: recall=90.38%  qps=1167  p50=0.883ms  p99=1.206ms
+    summary: recall=90.38% (+/-0.00) qps=1167 (+/-2)
+
+  ef_search=500
+    rep 1: recall=90.67%  qps=739  p50=1.396ms  p99=2.015ms
+    rep 2: recall=90.67%  qps=704  p50=1.424ms  p99=2.708ms
+    rep 3: recall=90.67%  qps=747  p50=1.388ms  p99=1.896ms
+    summary: recall=90.67% (+/-0.00) qps=730 (+/-19)
+
+  ef_search=800
+    rep 1: recall=90.85%  qps=505  p50=2.055ms  p99=2.667ms
+    rep 2: recall=90.85%  qps=503  p50=2.066ms  p99=2.663ms
+    rep 3: recall=90.85%  qps=503  p50=2.072ms  p99=2.678ms
+    summary: recall=90.85% (+/-0.00) qps=504 (+/-1)
+
+======================================================================
+Config: usearch-f32
+======================================================================
+  [usearch-f32] build (connectivity=16, expansion_add=50, metric=l2sq, quantization=f32)...
+  [usearch-f32] build: 294.7s (saved to /mnt/c/pancake1.0.0/benchmark_results/_usearch_f32_2026-06-27T00-13-30-828Z.bin)
+
+  ef_search=10
+    rep 1: recall=62.96%  qps=1940  p50=0.189ms  p99=3.653ms
+    rep 2: recall=62.96%  qps=7452  p50=0.130ms  p99=0.233ms
+    rep 3: recall=62.96%  qps=7481  p50=0.128ms  p99=0.240ms
+    summary: recall=62.96% (+/-0.00) qps=5624 (+/-2605)
+
+  ef_search=20
+    rep 1: recall=76.74%  qps=4775  p50=0.200ms  p99=0.623ms
+    rep 2: recall=76.74%  qps=5119  p50=0.194ms  p99=0.319ms
+    rep 3: recall=76.74%  qps=4327  p50=0.228ms  p99=0.401ms
+    summary: recall=76.74% (+/-0.00) qps=4740 (+/-324)
+
+  ef_search=40
+    rep 1: recall=86.99%  qps=2552  p50=0.397ms  p99=0.600ms
+    rep 2: recall=86.99%  qps=2635  p50=0.385ms  p99=0.582ms
+    rep 3: recall=86.99%  qps=2488  p50=0.387ms  p99=0.741ms
+    summary: recall=86.99% (+/-0.00) qps=2558 (+/-60)
+
+  ef_search=60
+    rep 1: recall=91.41%  qps=2319  p50=0.436ms  p99=0.678ms
+    rep 2: recall=91.41%  qps=2379  p50=0.429ms  p99=0.613ms
+    rep 3: recall=91.41%  qps=2416  p50=0.425ms  p99=0.601ms
+    summary: recall=91.41% (+/-0.00) qps=2371 (+/-40)
+
+  ef_search=80
+    rep 1: recall=93.60%  qps=1894  p50=0.546ms  p99=0.733ms
+    rep 2: recall=93.60%  qps=1889  p50=0.549ms  p99=0.747ms
+    rep 3: recall=93.60%  qps=1909  p50=0.537ms  p99=0.745ms
+    summary: recall=93.60% (+/-0.00) qps=1897 (+/-9)
+
+  ef_search=100
+    rep 1: recall=95.00%  qps=1579  p50=0.657ms  p99=0.850ms
+    rep 2: recall=95.00%  qps=1582  p50=0.655ms  p99=0.865ms
+    rep 3: recall=95.00%  qps=1577  p50=0.658ms  p99=0.901ms
+    summary: recall=95.00% (+/-0.00) qps=1579 (+/-2)
+
+  ef_search=150
+    rep 1: recall=96.86%  qps=1117  p50=0.933ms  p99=1.235ms
+    rep 2: recall=96.86%  qps=1106  p50=0.952ms  p99=1.217ms
+    rep 3: recall=96.86%  qps=1117  p50=0.940ms  p99=1.223ms
+    summary: recall=96.86% (+/-0.00) qps=1113 (+/-5)
+
+  ef_search=200
+    rep 1: recall=97.69%  qps=867  p50=1.206ms  p99=1.561ms
+    rep 2: recall=97.69%  qps=862  p50=1.213ms  p99=1.574ms
+    rep 3: recall=97.69%  qps=867  p50=1.210ms  p99=1.573ms
+    summary: recall=97.69% (+/-0.00) qps=865 (+/-3)
+
+  ef_search=300
+    rep 1: recall=98.40%  qps=613  p50=1.717ms  p99=2.349ms
+    rep 2: recall=98.40%  qps=614  p50=1.700ms  p99=2.199ms
+    rep 3: recall=98.40%  qps=618  p50=1.696ms  p99=2.227ms
+    summary: recall=98.40% (+/-0.00) qps=615 (+/-2)
+
+  ef_search=500
+    rep 1: recall=98.90%  qps=408  p50=2.578ms  p99=3.301ms
+    rep 2: recall=98.90%  qps=408  p50=2.575ms  p99=3.270ms
+    rep 3: recall=98.90%  qps=403  p50=2.602ms  p99=3.367ms
+    summary: recall=98.90% (+/-0.00) qps=406 (+/-3)
+
+  ef_search=800
+    rep 1: recall=99.09%  qps=275  p50=3.822ms  p99=4.931ms
+    rep 2: recall=99.09%  qps=275  p50=3.812ms  p99=4.892ms
+    rep 3: recall=99.09%  qps=274  p50=3.824ms  p99=4.917ms
+    summary: recall=99.09% (+/-0.00) qps=275 (+/-0)
+
+======================================================================
+Config: hnswlib-f32
+======================================================================
+  [hnswlib-f32] build (M=16, ef_c=50, metric=l2)...
+  [hnswlib-f32] build: 178.0s
+
+  ef_search=10
+    rep 1: recall=63.36%  qps=12229  p50=0.079ms  p99=0.150ms
+    rep 2: recall=63.36%  qps=12225  p50=0.079ms  p99=0.160ms
+    rep 3: recall=63.36%  qps=12309  p50=0.079ms  p99=0.150ms
+    summary: recall=63.36% (+/-0.00) qps=12254 (+/-39)
+
+  ef_search=20
+    rep 1: recall=76.67%  qps=8887  p50=0.111ms  p99=0.203ms
+    rep 2: recall=76.67%  qps=8871  p50=0.111ms  p99=0.195ms
+    rep 3: recall=76.67%  qps=8881  p50=0.111ms  p99=0.184ms
+    summary: recall=76.67% (+/-0.00) qps=8880 (+/-7)
+
+  ef_search=40
+    rep 1: recall=87.23%  qps=5919  p50=0.171ms  p99=0.275ms
+    rep 2: recall=87.23%  qps=5980  p50=0.168ms  p99=0.257ms
+    rep 3: recall=87.23%  qps=6017  p50=0.168ms  p99=0.265ms
+    summary: recall=87.23% (+/-0.00) qps=5972 (+/-41)
+
+  ef_search=60
+    rep 1: recall=91.71%  qps=4562  p50=0.222ms  p99=0.319ms
+    rep 2: recall=91.71%  qps=4520  p50=0.223ms  p99=0.356ms
+    rep 3: recall=91.71%  qps=4518  p50=0.224ms  p99=0.347ms
+    summary: recall=91.71% (+/-0.00) qps=4534 (+/-20)
+
+  ef_search=80
+    rep 1: recall=93.91%  qps=3722  p50=0.274ms  p99=0.418ms
+    rep 2: recall=93.91%  qps=3726  p50=0.275ms  p99=0.402ms
+    rep 3: recall=93.91%  qps=3707  p50=0.275ms  p99=0.408ms
+    summary: recall=93.91% (+/-0.00) qps=3719 (+/-8)
+
+  ef_search=100
+    rep 1: recall=95.22%  qps=3144  p50=0.325ms  p99=0.471ms
+    rep 2: recall=95.22%  qps=3137  p50=0.328ms  p99=0.469ms
+    rep 3: recall=95.22%  qps=3145  p50=0.326ms  p99=0.470ms
+    summary: recall=95.22% (+/-0.00) qps=3142 (+/-4)
+
+  ef_search=150
+    rep 1: recall=97.03%  qps=2296  p50=0.451ms  p99=0.630ms
+    rep 2: recall=97.03%  qps=2296  p50=0.452ms  p99=0.607ms
+    rep 3: recall=97.03%  qps=2282  p50=0.452ms  p99=0.610ms
+    summary: recall=97.03% (+/-0.00) qps=2291 (+/-6)
+
+  ef_search=200
+    rep 1: recall=97.75%  qps=1795  p50=0.582ms  p99=0.795ms
+    rep 2: recall=97.75%  qps=1797  p50=0.577ms  p99=0.788ms
+    rep 3: recall=97.75%  qps=1798  p50=0.578ms  p99=0.792ms
+    summary: recall=97.75% (+/-0.00) qps=1797 (+/-1)
+
+  ef_search=300
+    rep 1: recall=98.59%  qps=1285  p50=0.815ms  p99=1.059ms
+    rep 2: recall=98.59%  qps=1283  p50=0.810ms  p99=1.070ms
+    rep 3: recall=98.59%  qps=1285  p50=0.810ms  p99=1.083ms
+    summary: recall=98.59% (+/-0.00) qps=1284 (+/-1)
+
+  ef_search=500
+    rep 1: recall=99.05%  qps=843  p50=1.238ms  p99=1.646ms
+    rep 2: recall=99.05%  qps=837  p50=1.249ms  p99=1.654ms
+    rep 3: recall=99.05%  qps=823  p50=1.262ms  p99=1.701ms
+    summary: recall=99.05% (+/-0.00) qps=835 (+/-8)
+
+  ef_search=800
+    rep 1: recall=99.31%  qps=554  p50=1.863ms  p99=2.683ms
+    rep 2: recall=99.31%  qps=569  p50=1.823ms  p99=2.372ms
+    rep 3: recall=99.31%  qps=570  p50=1.823ms  p99=2.401ms
+    summary: recall=99.31% (+/-0.00) qps=564 (+/-7)
+
+======================================================================
+Pareto frontiers (non-dominated QPS-recall points)
+======================================================================
+
+  pancake-wasm-int8
+       ef    recall        qps
+       10    71.29%       9546
+       20    82.54%       6383
+       40    91.05%       3975
+       60    94.49%       2948
+       80    96.14%       2351
+      100    96.90%       1969
+      150    97.94%       1408
+      200    98.44%       1060
+      300    98.83%        778
+      500    99.08%        514
+      800    99.15%        348
+
+  pancake-wasm-f32
+       ef    recall        qps
+       10    70.98%       7732
+       20    82.67%       5117
+       40    91.62%       3190
+       60    94.85%       2347
+       80    96.65%       1870
+      100    97.47%       1569
+      150    98.63%       1124
+      200    99.08%        884
+      300    99.40%        635
+      500    99.67%        413
+      800    99.74%        284
+
+  pancake-native-int8
+       ef    recall        qps
+       10    71.05%      10109
+       20    82.68%       7044
+       40    91.21%       4460
+       60    94.64%       3278
+       80    96.33%       2281
+      100    97.14%       2141
+      150    98.15%       1589
+      200    98.58%       1229
+      300    98.89%        894
+      500    99.09%        577
+      800    99.13%        406
+
+  pancake-native-f32
+       ef    recall        qps
+       10    70.98%      11771
+       20    82.67%       7556
+       40    91.62%       4664
+       60    94.85%       3340
+       80    96.65%       2713
+      100    97.47%       2215
+      150    98.63%       1562
+      200    99.08%       1223
+      300    99.40%        867
+      500    99.67%        563
+      800    99.74%        377
+
+  usearch-i8
+       ef    recall        qps
+       10    62.05%      12046
+       20    73.79%       8989
+       40    81.86%       5637
+       60    85.36%       4263
+       80    87.27%       3481
+      100    88.35%       2854
+      150    89.52%       2114
+      200    89.93%       1656
+      300    90.38%       1167
+      500    90.67%        730
+      800    90.85%        504
+
+  usearch-f32
+       ef    recall        qps
+       10    62.96%       5624
+       20    76.74%       4740
+       40    86.99%       2558
+       60    91.41%       2371
+       80    93.60%       1897
+      100    95.00%       1579
+      150    96.86%       1113
+      200    97.69%        865
+      300    98.40%        615
+      500    98.90%        406
+      800    99.09%        275
+
+  hnswlib-f32
+       ef    recall        qps
+       10    63.36%      12254
+       20    76.67%       8880
+       40    87.23%       5972
+       60    91.71%       4534
+       80    93.91%       3719
+      100    95.22%       3142
+      150    97.03%       2291
+      200    97.75%       1797
+      300    98.59%       1284
+      500    99.05%        835
+      800    99.31%        564
+
+======================================================================
+Interpolated equal-recall QPS (log-linear along each frontier)
+  Blank = recall target outside that library's frontier span.
+======================================================================
+
+   recall   pancake-wasm-int8    pancake-wasm-f32 pancake-native-int8  pancake-native-f32          usearch-i8         usearch-f32         hnswlib-f32
+  ---------------------------------------------------------------------------------------------------------------------------------------------------
+    80.0%                6990                5623                7656                8361                6277                3896                7836
+    85.0%                5566                4525                6221                6664                4388                2884                6494
+    90.0%                4214                3475                4759                5090                1568                2429                5036
+    92.5%                3504                2934                3972                4259                 n/a                2122                4222
+    95.0%                2749                2303                3034                3283                 n/a                1579                3232
+    96.5%                2162                1906                2251                2760                 n/a                1191                2513
+    98.0%                1361                1347                1661                1888                 n/a                 745                1626
+    99.0%                 586                 922                 702                1277                 n/a                 331                 875
+    99.5%                 n/a                 541                 n/a                 739                 n/a                 n/a                 n/a
+
+======================================================================
+Outputs:
+  log:            /mnt/c/pancake1.0.0/benchmark_results/pareto_2026-06-27T00-13-30-828Z.log
+  json:           /mnt/c/pancake1.0.0/benchmark_results/pareto_2026-06-27T00-13-30-828Z.json
+  raw sweep csv:  /mnt/c/pancake1.0.0/benchmark_results/pareto_2026-06-27T00-13-30-828Z.csv
+  frontier csv:   /mnt/c/pancake1.0.0/benchmark_results/pareto_2026-06-27T00-13-30-828Z_frontier.csv
+  equal-recall:   /mnt/c/pancake1.0.0/benchmark_results/pareto_2026-06-27T00-13-30-828Z_equalrecall.csv
+
+Plot with:
+  python3 benchmarks/plot_pareto.py /mnt/c/pancake1.0.0/benchmark_results/pareto_2026-06-27T00-13-30-828Z.csv
