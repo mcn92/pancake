@@ -1,6 +1,6 @@
 # Pancake
 
-HNSW vector search in about 45 KB of gzipped WebAssembly (122 KB uncompressed). Runs in Node.js, browser-bundled web apps, and Cloudflare Workers with no native dependencies in the default package path.
+HNSW vector search in about 49 KB of gzipped WebAssembly (137 KB uncompressed). Runs in Node.js, browser-bundled web apps, and Cloudflare Workers with no native dependencies in the default package path.
 
 Most ANN libraries ship as platform-specific native binaries, which means they do not work in browser tabs or JavaScript runtimes without native extensions. Pancake's primary package is a single portable WASM module built for JavaScript environments where native addons are not an option.
 
@@ -285,47 +285,51 @@ from graph quality, and is not part of the npm package.
 
 Single-threaded on an AMD Ryzen 9 4900HS laptop. Parameters `M=16`,
 `efConstruction=50`, `efSearch=100`; `k=10`, 1,000 held-out queries, 3
-repetitions, brute-force L2 ground truth. `pmax` is the worst observed query
-latency (reported instead of p999 because at 1,000 queries the 99.9th
-percentile is just the single slowest sample).
+repetitions, brute-force L2 ground truth.
 
-| Mode | Build | Recall@10 | QPS | p50 | p99 | pmax | Memory |
-|:-----|------:|----------:|----:|----:|----:|-----:|-------:|
-| int8 WASM | 67.93s | 96.70% | 1130 | 0.898ms | 1.381ms | 1.612ms | 86.3 MB |
-| f32 WASM | 158.06s | 98.83% | 802 | 1.268ms | 1.927ms | 3.129ms | 299.3 MB |
-| int8 native | 38.09s | 96.69% | 1455 | 0.699ms | 1.066ms | 1.270ms | 86.3 MB |
-| f32 native | 94.98s | 98.83% | 988 | 1.025ms | 1.603ms | 2.068ms | 299.3 MB |
+| Mode | Build | Recall@10 | QPS | p50 | p99 | Memory |
+|:-----|------:|----------:|----:|----:|----:|-------:|
+| int8 WASM | 73.0s | 96.70% | 1128 | 0.909ms | 1.385ms | 86.3 MB |
+| f32 WASM | 158.6s | 98.83% | 823 | 1.232ms | 1.896ms | 299.4 MB |
+| int8 native | 39.6s | 96.69% | 1394 | 0.726ms | 1.170ms | 86.3 MB |
+| f32 native | 96.6s | 98.83% | 1010 | 1.003ms | 1.531ms | 299.3 MB |
+
+These are the `efSearch=100` rows from the committed
+[`pareto_frontier` DBpedia run](benchmark_results/release/); see that
+directory for the full `efSearch` sweep and the cross-library frontier.
 
 Takeaways:
 
 - **int8 is the memory/throughput operating point:** `96.70%` recall at
-  `1130 QPS` in WASM, using `3.5x` less memory than float32 (`86 MB` vs
+  `1128 QPS` in WASM, using `3.5x` less memory than float32 (`86 MB` vs
   `299 MB`).
 - **float32 is the high-recall operating point:** `98.83%` recall, at the cost
   of memory and a slower build.
 - **Native vs WASM isolates runtime overhead:** the native addon runs the same
-  engine and reaches the same recall at roughly `25-30%` higher QPS (int8) and
-  `~20%` higher (f32) — the gap is WASM runtime cost, not graph quality.
+  engine and reaches the same recall at roughly `~25%` higher QPS (int8) and
+  `~20%` higher (f32) — the gap is WASM runtime cost, not graph quality. (On
+  larger, more memory-bound corpora the WASM gap narrows; the committed
+  SIFT-1M sweep shows WASM and native within a few percent at the operating
+  point.)
 
-### QPS-recall frontier vs other libraries
+### QPS-recall frontier
 
-Sweeping `efSearch` (10–800) traces each engine's QPS-recall frontier on the
-same DBpedia-50K data (`M=16`, `efConstruction=50`, single-threaded). The
-int8 results sit above native hnswlib and USearch through the mid-recall band,
-while the float32 line stays close to hnswlib across most of the curve.
+Sweeping `efSearch` (10–800) traces Pancake's full QPS-recall frontier on the
+DBpedia-50K data (`M=16`, `efConstruction=50`, single-threaded). The int8
+backend climbs the curve to a ceiling near `97.6%` recall — the int8
+quantization sets that limit — while the float32 backend continues on to
+`~99%`. Use int8 for the memory/throughput operating point and float32 when
+you need the higher recall ceiling.
 
-- int8 (left): Pancake int8 (WASM) is above native hnswlib and USearch through
-  the mid-recall band — around `95%` recall it reaches `~2200 QPS` versus
-  `~1700` (hnswlib) and `~1500` (USearch f32). It tops out near `97.6%` recall;
-  the int8 quantization ceiling sets that limit. USearch's int8 mode does not
-  exceed `~90%` recall at any `efSearch` in this run.
-- float32 (right): Pancake f32 (WASM) and native hnswlib are close across the
-  range. Above `~99%` recall hnswlib is faster at matched recall.
-
-These are WASM Pancake rows against native baselines. Numbers depend on each
-library's version and build flags, so the harness runs them live rather than
-quoting fixed figures — run `pareto_frontier` and `benchmark_dbpedia_50k_full`
-to reproduce or extend this (see [Reproducing](#reproducing)).
+The same `pareto_frontier` sweep also runs native hnswlib, USearch, and Faiss
+on the identical data and writes every config's frontier to one set of CSVs, so
+the cross-library comparison is in the committed results rather than asserted
+here — numbers depend on each library's version, build flags, and hardware.
+The committed sweeps in
+[`benchmark_results/release/`](benchmark_results/release/) cover DBpedia-50K
+(1536D, L2) plus SIFT-1M (128D, L2), GloVe-100 (100D, angular), and
+NYTimes-256 (256D, angular); run `pareto_frontier` to reproduce or extend them
+on your own data (see [Reproducing](#reproducing)).
 
 ### Deletion tolerance
 
@@ -497,7 +501,7 @@ For the Worker reference deployment, run:
 node test/test_worker_features.js
 ```
 
-Current core suite status on this tree: **756 passed, 0 failed**.
+Current core suite status on this tree: **781 passed, 0 failed**.
 
 ## Building from source
 
@@ -530,6 +534,7 @@ The script auto-detects whether the current Node runtime still needs
 - **Compaction is rebuild-based.** Deletes are soft deletes. Compaction rewrites the graph rather than patching edges in place. That keeps behavior predictable and avoids relying on background maintenance threads.
 - **Index instances are not a shared-memory concurrency primitive.** Treat a Pancake index like ordinary mutable in-process state: safe within one JavaScript thread/event loop, but not something to share concurrently across Node worker threads or isolates without your own coordination.
 - **Workers are best used as snapshot-serving search frontends.** In a Cloudflare Worker, in-memory state is a warm cache, not durable authority. Persist snapshots explicitly and treat isolate reuse as opportunistic.
+- **Inputs are validated, not coerced.** Vectors and queries accept a `Float32Array` or a plain numeric array, but plain-array elements must be actual numbers — a non-numeric element (string, boolean, nested array, `null`) is rejected with an error rather than silently coerced (e.g. an empty CSV field becoming `0`). Non-finite values (`NaN`/`Infinity`) and dimension mismatches are likewise rejected at the boundary.
 - **This is an index, not an embedding stack.** Pancake does vector search only. Bring your own embedding pipeline.
 
 ## License
