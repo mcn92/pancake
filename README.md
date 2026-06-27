@@ -26,11 +26,11 @@ node run_tests.js   # optional: verify the build
 ```
 
 The root `pancake.js` / `pancake.node.mjs` / `pancake.web.mjs` entry points are
-the same files that will ship in the npm package, so code written against the
-repo checkout will work unchanged once the package is published.
+the same files that ship in the npm package, so code written against the repo
+checkout works unchanged against the installed package.
 
-The native addon under `native/` is not part of the (future) npm package. It is
-an opt-in benchmarking tool used in this repo to separate runtime overhead from
+The native addon under `native/` is not part of the npm package. It is an
+opt-in benchmarking tool used in this repo to separate runtime overhead from
 graph quality.
 
 ## Runtime entry points
