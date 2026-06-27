@@ -3,7 +3,7 @@
 **Scope:** The full Pancake vector-search system as built today — the C++ HNSW
 backends, the WASM C ABI, the JavaScript wrapper, the native benchmarking addon,
 serialization, and the Cloudflare Worker reference deployments.
-**Last updated:** 2026-06-14
+**Last updated:** 2026-06-26
 **Status:** Reflects the current source tree (`src/`, `pancake-core.js`,
 `native/`, `examples/worker*`). This document was written from a ground-up
 re-read of the code.
@@ -40,7 +40,7 @@ re-read of the code.
 
 Pancake is an HNSW (Hierarchical Navigable Small World) approximate
 nearest-neighbor index compiled from C++ to WebAssembly. The primary artifact is
-a single portable WASM module (`dist/engine.wasm`, ~124 KB raw / ~45 KB gzipped,
+a single portable WASM module (`dist/engine.wasm`, ~137 KB raw / ~49 KB gzipped,
 plus a ~17 KB `engine.js` loader / ~5 KB gzipped) that runs unchanged in Node.js,
 browsers, and Cloudflare Workers — no native dependency on the default path.
 
@@ -106,8 +106,8 @@ Both backends are runtime-dimension (no compile-time `DIMS` template
 specialization) and implement the same HNSW algorithm with backend-specific
 storage and distance kernels. The graph algorithm code (level assignment, greedy
 descent, layer beam search, neighbor selection, compaction) is **largely
-duplicated** between `float_hnsw.hpp` (892 lines) and `int8_float_hnsw.hpp`
-(1570 lines) rather than shared through a common base — a deliberate trade of
+duplicated** between `float_hnsw.hpp` (~1080 lines) and `int8_float_hnsw.hpp`
+(~1740 lines) rather than shared through a common base — a deliberate trade of
 DRY-ness for keeping each backend's hot path self-contained and independently
 tunable.
 
@@ -124,13 +124,13 @@ tunable.
 
 Identical in both backends: an exponential distribution
 `level = floor(-ln(U) * level_mult)` where `level_mult = 1 / ln(M)` and `U` is
-uniform (0,1) from a seeded `std::mt19937`. (`float_hnsw.hpp:736`,
-`int8_float_hnsw.hpp:408`.)
+uniform (0,1) from a seeded `std::mt19937`. (`float_hnsw.hpp:115`,
+`int8_float_hnsw.hpp:244`.)
 
 ### 3.3 Insert
 
 1. Capacity check — returns `UINT32_MAX` if `count == max_elements` (no
-   resize). (`float_hnsw.hpp:90`, `int8_float_hnsw.hpp:172`.)
+   resize). (`float_hnsw.hpp:98`, `int8_float_hnsw.hpp:191`.)
 2. Assign sequential internal id `count_++`.
 3. Store the vector (float32 stored raw, or normalized-then-quantized for the
    int8 cosine path — see §4).
@@ -148,25 +148,34 @@ Both backends default to `use_heuristic = true` and implement the HNSW
 diversity heuristic with **backfill** (the paper's "keep pruned connections"):
 a candidate is kept only if it is not closer to an already-selected neighbor than
 to the inserting node; if fewer than `M` survive, the closest rejected
-candidates are added back until `M` slots are filled. (`float_hnsw.hpp:805`,
-`int8_float_hnsw.hpp:1475`.) The float backend caches pairwise candidate
-distances in an `nc × nc` matrix to avoid recomputing them during selection
-(`float_hnsw.hpp:815`); the int8 backend leans on its closed-form symmetric
-distance (§4.3) instead.
+candidates are added back until `M` slots are filled. (`float_hnsw.hpp:954`,
+`int8_float_hnsw.hpp:1620`.) The float backend caches pairwise candidate
+distances during selection to avoid recomputing them; the int8 backend leans on
+its closed-form symmetric distance (§4.3) instead.
+
+**Per-node slot capacity is hard.** Layer-0 neighbor slots are pre-allocated at
+exactly `M0` entries per node with no headroom between adjacent slots, so adding
+a reciprocal edge to a node already holding `M0` neighbors must not append past
+`M0`. When a node is saturated, `append_neighbor` runs the diversity heuristic
+over the existing neighbors plus the new candidate and re-selects within `M0`
+rather than writing a transient `M0+1`th entry (which would corrupt the next
+node's slot, or overrun the buffer on the last node). The int8 backend's
+`append_edge_with_prune` follows the same rule. (`float_hnsw.hpp:773`,
+`int8_float_hnsw.hpp:1028`.)
 
 ### 3.5 Delete and compaction
 
 - **Soft delete** sets a per-node flag in a `std::vector<uint8_t> deleted_`
   (one byte per node, not a packed bitset — a deliberate trade of memory for a
   branch-free check). The node stays in the graph and is skipped during
-  traversal. (`float_hnsw.hpp:335`, `int8_float_hnsw.hpp:463`.)
+  traversal. (`float_hnsw.hpp:346`, `int8_float_hnsw.hpp:483`.)
 - **Compaction** is a rebuild-with-remap: it builds an `old_id → new_id` map over
   survivors, physically moves vector/graph data into the compacted positions,
   remaps every neighbor id, and runs a **backfill pass** that re-expands
   under-connected nodes via their neighbors-of-neighbors and re-applies the
   selection heuristic. Deletion state is reset. The remap is returned to the
-  caller via an `out_map` out-parameter. (`float_hnsw.hpp:347`,
-  `int8_float_hnsw.hpp:482`.)
+  caller via an `out_map` out-parameter. (`float_hnsw.hpp:360`,
+  `int8_float_hnsw.hpp:497`.)
 
 The C ABI exposes both a void `compact()` and a `compact_remap()` that surfaces
 the `out_map`; in practice the current JS layer calls plain `compact()` and
@@ -181,8 +190,8 @@ non-matching nodes still navigate the graph (they remain in the candidate queue)
 but only matching nodes enter the result heap. The search starts with
 `ef = max(ef_search, k*2)` and **dynamically widens** ef (up to ~4× initial) when
 too few filtered results have been found, so that restrictive filters still
-return `k` results where the graph allows. (`float_hnsw.hpp:207`,
-`int8_float_hnsw.hpp:345`.) Effectiveness degrades below ~1% selectivity, where
+return `k` results where the graph allows. (`float_hnsw.hpp:216`,
+`int8_float_hnsw.hpp:365`.) Effectiveness degrades below ~1% selectivity, where
 the graph may lack navigable paths to the target set.
 
 ### 3.7 The visited-set generation trick
@@ -192,8 +201,8 @@ Rather than clearing a visited bitmap before each search, both backends keep a
 `visited_curr_` counter; a node is "visited this search" iff
 `visited_list_[id] == visited_curr_`. Each search just increments the counter;
 the array is only zeroed on the rare `uint32_t` wraparound. This avoids an
-`O(max_elements)` clear per query. (`float_hnsw.hpp:864`,
-`int8_float_hnsw.hpp:1528`.)
+`O(max_elements)` clear per query. (`float_hnsw.hpp:95`,
+`int8_float_hnsw.hpp:187`.)
 
 ---
 
@@ -202,22 +211,23 @@ the array is only zeroed on the rare `uint32_t` wraparound. This avoids an
 ### 4.1 Row-wise affine quantization (int8 backend)
 
 Each vector is quantized independently to **uint8** using its own min/max
-(`int8_float_hnsw.hpp:187`):
+(`int8_float_hnsw.hpp:213`):
 
 ```
 vmin = min(v),  vmax = max(v)
-range = max(vmax - vmin, 1e-30)        // degenerate-vector guard
+range = vmax - vmin
+if (range < 1e-30) range = 1.0      // degenerate-vector guard (constant vector)
 scale = range / 255
 q[d]  = clamp(round((v[d] - vmin) / scale), 0, 255)   // round via +0.5
 // stored per vector: scale (f32), offset = vmin (f32), q[0..D-1] (uint8)
 ```
 
-Dequantization is `v[d] ≈ offset + scale * q[d]` (`int8_float_hnsw.hpp:977`).
+Dequantization is `v[d] ≈ offset + scale * q[d]` (`int8_float_hnsw.hpp:1122`).
 
 **Per-vector storage:** `D` bytes (quantized data) + 4 (scale) + 4 (offset) +
 4 (`sum_q`) + 4 (`sum_q2`) = **D + 16 bytes**, versus `4D` for float32. The two
 extra `uint32` sums are precomputed statistics used by the symmetric distance
-(§4.3). (Fields: `int8_float_hnsw.hpp:1549–1553`.)
+(§4.3). (Fields: `int8_float_hnsw.hpp:1719–1722`.)
 
 ### 4.2 Asymmetric search distance
 
@@ -226,7 +236,7 @@ the fly during the distance computation. This avoids quantizing the query (which
 would compound error and require knowing the query's scale before the distance is
 computed) and preserves query-side precision. For cosine, both the stored vectors
 (at insert) and the query (at search) are L2-normalized first; distance is
-`1 − clamp(dot, −1, 1)`. (`int8_float_hnsw.hpp:179`, `:305`.)
+`1 − clamp(dot, −1, 1)`. (`int8_float_hnsw.hpp:199`, `:1184`.)
 
 ### 4.3 Closed-form symmetric distance
 
@@ -234,7 +244,7 @@ Graph maintenance (neighbor selection, edge-distance recomputation) needs
 node-to-node distances between two *stored* int8 vectors. Instead of
 dequantizing both, the int8 backend computes the distance algebraically from the
 quantized bytes and the cached `sum_q` / `sum_q2` statistics plus an integer
-`int8_dot` (`int8_float_hnsw.hpp:1361`):
+`int8_dot` (`int8_float_hnsw.hpp:1433`):
 
 ```
 L2(a,b) = D·(oa−ob)² + 2(oa−ob)(sa·sum_q[a] − sb·sum_q[b])
@@ -265,15 +275,15 @@ Priority is WASM SIMD128 → AVX2 → SSE2 → scalar. Each kernel processes the
 dimension in SIMD-width chunks with a scalar tail for the remainder.
 
 - **Float L2:** load 4/8 floats, subtract, square, accumulate
-  (`float_hnsw.hpp:654`). **Float cosine:** dot-product accumulate, then
-  `1 − clamp(dot)` (`float_hnsw.hpp:691`).
+  (`float_hnsw.hpp:803`). **Float cosine:** dot-product accumulate, then
+  `1 − clamp(dot)` (`float_hnsw.hpp:841`).
 - **Int8 asymmetric:** load 16 uint8, widen u8→u16→f32, dequantize in-register
   (`offset + scale·q`) via FMA, subtract the float query, square/dot, accumulate.
   Multiple independent accumulators (`acc0..acc3`) hide FMA latency.
-  (`int8_float_hnsw.hpp:989`, `:1046`.)
+  (`int8_float_hnsw.hpp:1184`, `:1305`.)
 - **Relaxed SIMD:** an opt-in WASM build path uses `wasm_f32x4_relaxed_madd`
   (fused multiply-add) where available, falling back to separate mul+add
-  otherwise (`int8_float_hnsw.hpp:55`). Relaxed-SIMD reductions are
+  otherwise (`int8_float_hnsw.hpp:57`). Relaxed-SIMD reductions are
   non-deterministic across runtimes; this is why it is opt-in (see §10).
 
 The native AVX2 build is the fastest distance path; the shipped WASM SIMD128
@@ -284,7 +294,7 @@ compute the same distances — only throughput differs.
 
 ## 6. The C ABI and Handle Table
 
-`src/engine.cpp` (477 lines) is the boundary between WASM and the C++ backends.
+`src/engine.cpp` (433 lines) is the boundary between WASM and the C++ backends.
 
 ### 6.1 Handle table
 
@@ -300,11 +310,11 @@ A fixed 64-slot static array. `alloc_handle()` linear-scans for the first free
 slot (or returns `INVALID_HANDLE`); `free_handle()` deletes the wrapper and
 clears the slot. Multiple independent indexes can coexist in one WASM instance —
 e.g., one per tenant — up to 64. State is plain mutable globals, which is safe
-under WASM's single-threaded execution model. (`engine.cpp:132–158`.)
+under WASM's single-threaded execution model. (`engine.cpp:143–168`.)
 
 ### 6.2 Backend dispatch
 
-`IndexWrapper` (`engine.cpp:26`) is an abstract base with virtual `insert`,
+`IndexWrapper` (`engine.cpp:38`) is an abstract base with virtual `insert`,
 `bulk_insert`, `search`, `search_filtered`, `mark_delete`, `compact` (both void
 and `out_map` forms), `count`, `ghost_count`, `ghost_ratio`, `memory_bytes`,
 `serialize`, `deserialize`, `set_ef_search`, `dimension`. `pancake_init` picks
@@ -316,7 +326,7 @@ if (quantized) g_handles[h].index = new Int8FloatHNSWWrapper(dim, i8cfg);
 else           g_handles[h].index = new FloatHNSWWrapper(dim, cfg);
 ```
 
-(`engine.cpp:171`.)
+(`engine.cpp:181`.)
 
 > **Defaults.** The library defaults are `M=16`, `efConstruction=50`,
 > `efSearch=100`, and the JavaScript wrapper passes them explicitly. The C ABI
@@ -330,15 +340,19 @@ else           g_handles[h].index = new FloatHNSWWrapper(dim, cfg);
 and `float* dists` buffers, run the search, and copy results in — widening the
 backend's internal `uint32_t` ids to `uint64_t` on the way out (the BigInt-wide
 ABI is why `WASM_BIGINT=1` is set at build time). They return the result count.
-(`engine.cpp:213`, `:223`.)
+(`engine.cpp:223`, `:233`.)
 
 ### 6.4 Export buffer ownership
 
 `pancake_export` serializes into the per-handle static `g_export_bufs[h]` and
 returns a pointer + size; the pointer is valid only until the next export on that
 handle or `pancake_dispose`. The caller must copy promptly. `pancake_import`
-returns `0` / `-1`; on failure the existing index is left intact.
-(`engine.cpp:286`, `:293`.)
+returns `0` / `-1`; on failure the existing index is left intact. The wrapper's
+`deserialize` builds a fresh backend into a `unique_ptr` and only swaps it in on
+success, and `pancake_import` wraps the call in a `try/catch` so a hostile
+snapshot that still slips an oversized allocation through the bounds checks
+(below) returns `-1` instead of aborting the WASM instance. (`engine.cpp:297`,
+`:304`.)
 
 ### 6.5 Utilities and lifecycle
 
@@ -368,13 +382,13 @@ All three call the Emscripten factory (exported as `P`, `MODULARIZE=1`) and then
 construct the same `PancakeIndex` from `pancake-core.js`. `Pancake.create()`
 allocates the per-index WASM scratch buffers (query vector, result ids, result
 distances), calls `_pancake_init`, and returns the wrapper.
-(`pancake-core.js:501`.)
+(`pancake-core.js:598`.)
 
 ### 7.2 PancakeIndex API
 
 | Method | Marshalling |
 |--------|-------------|
-| `add(vec)` | validates dim + finiteness, `HEAPF32.set` into the query buffer, `_pancake_add`, assigns an external id |
+| `add(vec)` | validates element type (plain-array elements must be numbers, not coerced) + dim + finiteness, `HEAPF32.set` into the query buffer, `_pancake_add`, assigns an external id |
 | `addBatch(vecs)` | one `emsc_malloc` for the whole batch, `_pancake_bulk_insert`, records a contiguous id range |
 | `search(q,k)` | `_ensureSearchCapacity(k)`, marshal query, `_pancake_query`, translate ids + (for L2) `sqrt` the squared distance |
 | `searchFiltered(q,k,allowedIds)` | builds an internal-id bitset from the allowed external-id `Set`, `_pancake_query_filtered` |
@@ -391,10 +405,10 @@ exports; `dim` is cached. `_setEfSearch(ef)` calls `_pancake_set_ef`.
 
 Search result buffers (`_idPtr`, `_distPtr`) are reused across queries and grown
 on demand by `_ensureSearchCapacity` when `k` exceeds the current capacity
-(`pancake-core.js:430`). Result ids are read back as a `uint64` (two `uint32`
+(`pancake-core.js:465`). Result ids are read back as a `uint64` (two `uint32`
 halves recombined) from the heap and translated to external ids; for L2 the
 stored squared distance is `Math.sqrt`-ed before being returned
-(`pancake-core.js:485`). `dispose()` frees all three scratch pointers even if the
+(`pancake-core.js:573`). `dispose()` frees all three scratch pointers even if the
 handle dispose throws, then sets a disposed flag that every method checks.
 
 ---
@@ -411,7 +425,7 @@ them on compaction** (gaps from deletes are closed). To give callers stable ids,
 - `_nextExtId`: monotonic external-id counter, never reused
 
 External ids are assigned at insert and never change. On `compact()`
-(`pancake-core.js:182`):
+(`pancake-core.js:210`):
 
 1. Collect surviving `{extId, intId}` pairs (skip `_deletedExt`).
 2. Sort by **old** internal id.
@@ -441,18 +455,18 @@ Byte layouts are in [Appendix B](#appendix-b-serialization-byte-layouts).
 
 - **FloatHNSW:** magic `0x464C4831` ("FLH1"), current version `1`; also reads a
   legacy magic. Stores raw (or normalized) float vectors + graph.
-  (`float_hnsw.hpp:467`.)
+  (`float_hnsw.hpp:513`.)
 - **Int8FloatHNSW:** magic `0x49384831` ("I8H1"), current version `2`; reads a
   legacy magic and older versions. Stores scales, offsets, quantized bytes, then
   graph. Version 2 stores edge distances inline; importing an older version
-  recomputes them. (`int8_float_hnsw.hpp:633`.)
+  recomputes them. (`int8_float_hnsw.hpp:660`.)
 
 > **Deletion state does not survive a round-trip.** Neither backend serializes
 > the `deleted_` flags — ghosts are written as ordinary vectors and come back
 > *live* on import, and `num_deleted_` resets to 0. The contract is: **compact
 > before export** if deletes must persist. The JS `export()` enforces this by
 > throwing when `ghostCount > 0`; the Worker's persist path compacts first.
-> (`float_hnsw.hpp:617`, `int8_float_hnsw.hpp:834`.)
+> (`float_hnsw.hpp:513`, `int8_float_hnsw.hpp:660`.)
 
 ### 9.2 Statistics reconstruction (int8)
 
@@ -466,7 +480,7 @@ footprint.
 `PancakeIndex.export()` wraps the backend blob with a 32-byte header **plus an
 embedded id-mapping table** so external ids survive an export/import cycle. This
 is new in v3 — earlier envelopes (v1/v2, 20-byte header, still accepted on
-import) carried no mapping. (`pancake-core.js:1`, `:205`.)
+import) carried no mapping. (`pancake-core.js:4`, `:250`.)
 
 ```
 Offset  Size           Field
@@ -489,7 +503,38 @@ checks that the mapping count equals the post-import vector count and that
 `nextExtId ≥ count`, then commits the restored maps. A bare backend blob with no
 envelope is imported with identity id mappings.
 
-### 9.4 WRK1 (Worker envelope)
+### 9.4 Untrusted-snapshot hardening (backend deserialize)
+
+The JS envelope checks in §9.3 are the *outer* gate. The backend
+`deserialize()` in each `*.hpp` parses an attacker-controlled byte buffer
+directly (anything reaching `index.import()` or the raw-blob path), so it is
+hardened to fail closed rather than corrupt memory or abort the instance:
+
+- **Bounds checks use subtraction, not addition.** `size_t` is 32-bit under
+  Emscripten (wasm32), so an `offset + len > data_size` test could wrap and pass
+  while the following `memcpy` ran out of bounds. Every block-size check is
+  written as `offset > data_size || data_size - offset < len`, and the float
+  backend adds an explicit `count_*dims_` multiply-overflow guard before sizing
+  the vector store. (`float_hnsw.hpp:560`, `int8_float_hnsw.hpp:720`.)
+- **The HNSW level count is capped** at `MAX_DESERIALIZE_LEVEL` (64). An
+  unbounded `max_level` read from a snapshot would otherwise drive a
+  multi-gigabyte per-node `upper_[i].resize()`, throwing `length_error` /
+  `bad_alloc`. 64 levels covers any realistic element count.
+  (`int8_float_hnsw.hpp:156`.)
+- **Quantization scales are validated** `> 0` (and finite, and `≤ 1e20`). A
+  zero/negative stored scale would collapse a vector to a constant and poison
+  every distance to it; `insert()` never produces one, so a snapshot may not
+  carry one either. (`int8_float_hnsw.hpp:213` for the insert-side guard the
+  importer mirrors.)
+- **Exceptions are contained** at the `pancake_import` boundary (§6.4): any
+  remaining oversized allocation returns `-1` rather than unwinding out of the
+  WASM module.
+
+Per-edge neighbor ids are also validated `< count_`, and vector/scale/offset
+components are rejected if non-finite (bit-level exponent check, since
+`std::isfinite` is unreliable under `-ffast-math`).
+
+### 9.5 WRK1 (Worker envelope)
 
 The Worker wraps the *JS-envelope* export in its own `WRK1` envelope to persist
 Worker-specific metadata (init params, `maxElements`, id mapping) as JSON
@@ -516,13 +561,21 @@ Single translation unit (`src/engine.cpp`) compiled with Emscripten. Key flags:
   `DISABLE_EXCEPTION_CATCHING=0` (C++ exceptions on).
 - **Exports:** the 26-function list in Appendix A; runtime methods
   `ccall, cwrap, HEAPF32, HEAPU8, HEAPU32, HEAP32`.
-- **Output:** `dist/engine.js` (~17 KB) + `dist/engine.wasm` (~124 KB;
-  ~45 KB gzipped).
+- **Output:** `dist/engine.js` (~17 KB) + `dist/engine.wasm` (~137 KB;
+  ~49 KB gzipped).
 
 A post-build `patch_engine.py` rewrites the Emscripten-generated environment
 detection, forcing `ENVIRONMENT_IS_NODE = false` in `engine.js` so the modular
 factory loads cleanly across Node, browser, and Workers rather than taking
 Emscripten's CommonJS auto-path. (`patch_engine.py`.)
+
+**Scalar fallback.** `npm run build:all` (`scripts/build-all.mjs`) builds the
+SIMD engine above and then re-runs the same compile with `WASM_SIMD=0` to emit
+`dist/engine.scalar.{js,wasm}`, a non-SIMD engine for runtimes without WASM
+SIMD. The JS loaders probe `WebAssembly.validate` for SIMD support and pick the
+scalar artifact when it is absent. Both engines compile from the same source, so
+`prepublishOnly` runs `build:all` first to keep the shipped SIMD and scalar
+artifacts in lockstep with the current `src/`.
 
 ### 10.2 Native (`native/binding.gyp`)
 
@@ -561,7 +614,7 @@ Each isolate holds two module-global references: the Emscripten engine
 across requests within an isolate. On any non-trivial route, if `index` is null
 and a bucket is bound, the Worker lazily **restores from R2** before serving
 (`/health`, `/readiness`, `/reset_cache`, `/init`, `/import` skip auto-restore).
-(`examples/worker/worker.js:258`, `:610`.)
+(`examples/worker/worker.js`, `restoreIndex()`.)
 
 ### 11.2 Endpoints
 
@@ -598,7 +651,8 @@ time order), with a fallback to a legacy fixed key. Mutating routes
 (`/add`, `/add_batch`, `/delete`) schedule a **fire-and-forget** persist via
 `ctx.waitUntil`; `/compact` and `/import` **await** the persist. Before export
 the Worker compacts if there are ghosts (so the snapshot has no live ghosts).
-(`examples/worker/worker.js:93`, `:129`, `:142`, `:195`.)
+(`examples/worker/worker.js`, `SNAPSHOT_KEY_PREFIX` / `restoreIndex()` /
+`schedulePersist()`.)
 
 The append-only scheme means a slow/late async write cannot clobber a newer
 snapshot under a shared key — restore always loads the newest. The durability
@@ -609,7 +663,8 @@ The **WRK1 envelope** (`0x57524B31`, version 1) is a 16-byte header
 then the raw `pancake-core` export bytes. The metadata carries `dims`,
 `maxElements`, `nextExtId`, `initParams {M, efC, efS}`, and the full
 `[intId, extId]` mapping — everything needed to reconstruct the index *and* its
-external-id mapping on cold restore. (`examples/worker/worker.js:531`.)
+external-id mapping on cold restore.
+(`examples/worker/worker.js`, `encodeWorkerExportEnvelope()`.)
 
 ### 11.4 READ_ONLY mode
 
@@ -618,7 +673,7 @@ a single guard after auth/rate-limit: `if (isReadOnly(env) &&
 isAdminRoute(path)) return 403`. `/search`, `/stats`, `/health`, `/readiness`
 remain available. This is the recommended posture for a public,
 snapshot-backed search endpoint: publish the index out-of-band, deploy read-only,
-expose only search. (`examples/worker/worker.js:521`, `:615`.)
+expose only search. (`examples/worker/worker.js`, `isReadOnly()` / `isAdminRoute()`.)
 
 ### 11.5 Worker-side id mapping
 
@@ -628,7 +683,7 @@ because it drives the WASM exports directly. Its `compact()` mirrors the core
 logic (sort survivors by old internal id, `_pancake_compact`, rebuild maps); no
 vector re-insertion is required. On cold restore, `_restoreMapping` rehydrates
 the maps from the WRK1 metadata (or seeds identity ids for legacy snapshots).
-(`examples/worker/worker.js:301`, `:422`, `:450`.)
+(`examples/worker/worker.js`, `compact()` / `_restoreMapping()`.)
 
 ### 11.6 Semantic-search demo differences
 
