@@ -11,22 +11,15 @@
  *   3. Interpolated equal-recall curves: QPS for every library at a common grid
  *      of recall targets, log-linearly interpolated along each frontier.
  *
- * Configs (8):
+ * Configs (7):
  *   pancake-wasm   int8 / fp32   (Pancake.create, _setEfSearch per ef)
  *   pancake-native int8 / fp32   (native.pancake_*, pancake_set_ef per ef)
  *   usearch        i8 / f32      (build-once-save-view per ef — JS binding
  *                                 only honors expansion_search at construction)
  *   hnswlib        f32           (HierarchicalNSW.setEf per ef)
- *   faiss-node                   (HNSW16,Flat — SINGLE POINT, see note below)
  *
- * faiss-node NOTE: faiss-node does not expose efConstruction or efSearch.
- *   Its HNSW uses the faiss defaults (efConstruction=40, efSearch=16) and only
- *   M is settable (via the "HNSW<M>,Flat" factory string). It therefore cannot
- *   be swept — it contributes a SINGLE (recall, qps) point and is explicitly
- *   excluded from the ef_search sweep and from equal-recall interpolation
- *   (a single point has no curve to interpolate along). This is flagged in
- *   every output. All other libraries use M=16, ef_construction=50, and the
- *   ef_search sweep below (which includes ef_search=100).
+ * All libraries use the same M and ef_construction, and every config is swept
+ * across the ef_search range below (which includes ef_search=100).
  *
  * Usage:
  *   node benchmarks/pareto_frontier.js
@@ -55,10 +48,6 @@ catch (e) { console.warn('WARN: usearch not installed — skipping usearch confi
 let HierarchicalNSW;
 try { HierarchicalNSW = require('hnswlib-node').HierarchicalNSW; }
 catch (e) { console.warn('WARN: hnswlib-node not installed — skipping hnswlib config.'); }
-
-let faiss;
-try { faiss = require('faiss-node'); }
-catch (e) { console.warn('WARN: faiss-node not installed — skipping faiss config.'); }
 
 // --- Args / config ---
 const parsedArgs = parseBenchmarkArgs();
@@ -121,11 +110,7 @@ const EF_SEARCH_VALUES = resolveSweepValues(parsedArgs, [10, 20, 40, 60, 80, 100
 const REPETITIONS = 3;
 const WARMUP_QUERIES = 200;
 
-// faiss is not tunable; record the defaults it actually uses for the record.
-const FAISS_EF_CONSTRUCTION_DEFAULT = 40;
-const FAISS_EF_SEARCH_DEFAULT = 16;
-
-// --- Config table. `sweep: false` => single fixed point (faiss only). ---
+// --- Config table. Every config is ef-swept (no single-point libraries). ---
 const CONFIGS = [];
 CONFIGS.push({ label: 'pancake-wasm-int8',   library: 'pancake', runtime: 'wasm',   dtype: 'i8',  sweep: true });
 CONFIGS.push({ label: 'pancake-wasm-f32',    library: 'pancake', runtime: 'wasm',   dtype: 'f32', sweep: true });
@@ -139,9 +124,6 @@ if (usearch) {
 }
 if (HierarchicalNSW) {
   CONFIGS.push({ label: 'hnswlib-f32', library: 'hnswlib', dtype: 'f32', sweep: true });
-}
-if (faiss) {
-  CONFIGS.push({ label: 'faiss-node', library: 'faiss', dtype: 'f32', sweep: false });
 }
 
 // --- Output paths ---
@@ -389,32 +371,6 @@ function queryHnswlib(built, test, gt, ef) {
   return { latencies, meanRecall: totalRecall / test.length };
 }
 
-// --- faiss-node (single fixed point; ef NOT tunable) ---
-function buildFaiss({ train, dim }) {
-  log(`  [faiss-node] build (HNSW${M},Flat — efC=${FAISS_EF_CONSTRUCTION_DEFAULT}/efS=${FAISS_EF_SEARCH_DEFAULT} are faiss defaults, NOT tunable)...`);
-  const index = faiss.Index.fromFactory(dim, `HNSW${M},Flat`, faiss.MetricType.METRIC_L2);
-  const t0 = performance.now();
-  const flat = new Float32Array(train.length * dim);
-  for (let i = 0; i < train.length; i++) flat.set(train[i], i * dim);
-  index.add(Array.from(flat));
-  const buildMs = performance.now() - t0;
-  log(`  [faiss-node] build: ${(buildMs / 1000).toFixed(1)}s`);
-  return { index, buildMs, memBytes: null };
-}
-function queryFaiss(built, test, gt) {
-  for (let i = 0; i < WARMUP_QUERIES && i < test.length; i++) built.index.search(Array.from(test[i]), K);
-  const latencies = new Array(test.length);
-  let totalRecall = 0;
-  for (let i = 0; i < test.length; i++) {
-    const query = Array.from(test[i]);
-    const st = performance.now();
-    const results = built.index.search(query, K);
-    latencies[i] = performance.now() - st;
-    totalRecall += recall(results.labels, gt[i]);
-  }
-  return { latencies, meanRecall: totalRecall / test.length };
-}
-
 // --- Dispatch ---
 async function build(config, dataset) {
   const { train, dim } = dataset;
@@ -425,7 +381,6 @@ async function build(config, dataset) {
         : buildPancakeNative({ train, dim, dtype: config.dtype });
     case 'usearch': return buildUsearch({ train, dim, dtype: config.dtype });
     case 'hnswlib': return buildHnswlib({ train, dim });
-    case 'faiss':   return buildFaiss({ train, dim });
   }
 }
 function query(config, built, dataset, ef) {
@@ -437,7 +392,6 @@ function query(config, built, dataset, ef) {
         : queryPancakeNative(built, test, groundTruth, ef);
     case 'usearch': return queryUsearch(built, test, groundTruth, ef);
     case 'hnswlib': return queryHnswlib(built, test, groundTruth, ef);
-    case 'faiss':   return queryFaiss(built, test, groundTruth);
   }
 }
 function cleanup(config, built) {
@@ -451,15 +405,14 @@ function cleanup(config, built) {
 // =====================================================================
 async function sweepOne(config, dataset) {
   log(`\n${'='.repeat(70)}`);
-  log(`Config: ${config.label}${config.sweep ? '' : '  (single fixed point — not tunable)'}`);
+  log(`Config: ${config.label}`);
   log('='.repeat(70));
 
   const built = await build(config, dataset);
-  const efValues = config.sweep ? EF_SEARCH_VALUES : [FAISS_EF_SEARCH_DEFAULT];
   const points = [];
 
-  for (const ef of efValues) {
-    log(`\n  ef_search=${ef}${config.sweep ? '' : ' (faiss default, fixed)'}`);
+  for (const ef of EF_SEARCH_VALUES) {
+    log(`\n  ef_search=${ef}`);
     const reps = [];
     for (let rep = 0; rep < REPETITIONS; rep++) {
       const { latencies, meanRecall } = query(config, built, dataset, ef);
@@ -488,11 +441,9 @@ async function sweepOne(config, dataset) {
 
   return {
     label: config.label, library: config.library, runtime: config.runtime || null,
-    dtype: config.dtype, tunable: config.sweep,
+    dtype: config.dtype, tunable: true,
     buildMs: built.buildMs, memMB: built.memBytes ? built.memBytes / 1024 / 1024 : null,
-    params: config.sweep
-      ? { M, ef_construction: EF_CONSTRUCTION, K }
-      : { M, ef_construction: FAISS_EF_CONSTRUCTION_DEFAULT, ef_search: FAISS_EF_SEARCH_DEFAULT, K, note: 'faiss-node defaults; not tunable' },
+    params: { M, ef_construction: EF_CONSTRUCTION, K },
     points,
   };
 }
@@ -586,7 +537,7 @@ function printFrontierTables(allResults, analysis) {
   log('='.repeat(70));
   for (const r of allResults) {
     const fr = analysis.frontiers[r.label];
-    log(`\n  ${r.label}${r.tunable ? '' : '  (single point — faiss not tunable)'}`);
+    log(`\n  ${r.label}`);
     log(`    ${'ef'.padStart(5)}  ${'recall'.padStart(8)}  ${'qps'.padStart(9)}`);
     for (const pt of fr)
       log(`    ${String(pt.ef_search).padStart(5)}  ${(pt.recall * 100).toFixed(2).padStart(7)}%  ${pt.qps.toFixed(0).padStart(9)}`);
@@ -595,7 +546,6 @@ function printFrontierTables(allResults, analysis) {
   log(`\n${'='.repeat(70)}`);
   log('Interpolated equal-recall QPS (log-linear along each frontier)');
   log('  Blank = recall target outside that library\'s frontier span.');
-  log('  faiss-node excluded (single point, no curve to interpolate).');
   log('='.repeat(70));
   const labels = analysis.sweepableLabels;
   log('\n  ' + 'recall'.padStart(7) + labels.map(l => l.padStart(20)).join(''));
@@ -631,8 +581,6 @@ async function main() {
   log(`  k=${K}, M=${M}, ef_construction=${EF_CONSTRUCTION}`);
   log(`  ef_search sweep: [${EF_SEARCH_VALUES.join(', ')}]  (includes 100)`);
   log(`  Repetitions: ${REPETITIONS}, Warmup: ${WARMUP_QUERIES}`);
-  log(`  NOTE: faiss-node is NOT tunable — it runs once at its built-in HNSW${M}`);
-  log(`        defaults (ef_construction=${FAISS_EF_CONSTRUCTION_DEFAULT}, ef_search=${FAISS_EF_SEARCH_DEFAULT}) and contributes a single point.`);
 
   // Ground truth: SIFT ships a precomputed .ivecs aligned to the full base set,
   // so it is valid only when the whole base is used. dbpedia computes + caches.
@@ -666,7 +614,6 @@ async function main() {
     timestamp: new Date().toISOString(),
     dataset: { name: DATASET, vectors: train.length, queries: test.length, dim, metric: 'l2', source: DATA_DIR },
     params: { K, M, EF_CONSTRUCTION, EF_SEARCH_VALUES, REPETITIONS, WARMUP_QUERIES },
-    faiss_note: `faiss-node is not tunable; runs once at HNSW${M},Flat with faiss defaults efConstruction=${FAISS_EF_CONSTRUCTION_DEFAULT}, efSearch=${FAISS_EF_SEARCH_DEFAULT}. Excluded from sweep and equal-recall interpolation.`,
     results: allResults,
     frontiers: analysis.frontiers,
     equal_recall: analysis.equalRecall,
