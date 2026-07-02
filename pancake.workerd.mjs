@@ -20,19 +20,16 @@ function toWasmSource(asset) {
   throw new Error(`Unsupported WASM asset type: ${typeof asset}`);
 }
 
-function instantiateEngineWithAsset(factory, asset) {
+async function instantiateEngineWithAsset(factory, asset) {
+  const compiled = asset instanceof WebAssembly.Module
+    ? asset
+    : await WebAssembly.compile(toWasmSource(asset));
+
   return factory({
     instantiateWasm(imports, successCallback) {
-      WebAssembly.instantiate(toWasmSource(asset), imports)
-        .then((result) => {
-          const instance = result instanceof WebAssembly.Instance ? result : result.instance;
-          const module = result instanceof WebAssembly.Instance ? undefined : result.module;
-          successCallback(instance, module);
-        })
-        .catch((err) => {
-          throw err;
-        });
-      return {};
+      const instance = new WebAssembly.Instance(compiled, imports);
+      successCallback(instance, compiled);
+      return instance.exports;
     }
   });
 }
