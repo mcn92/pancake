@@ -2,6 +2,12 @@
 'use strict';
 
 /**
+ * RAW ABI ENGINE-CEILING BENCHMARK
+ *
+ * This is the single intentional raw-ABI benchmark kept outside examples/.
+ * It bypasses pancake-core.js to measure engine-ceiling insert/profile overhead
+ * and to access C++ profiling hooks that are not part of the public API.
+ *
  * Build Phase Profiler
  *
  * Uses C++-side instrumentation (BuildProfile) to measure where insert

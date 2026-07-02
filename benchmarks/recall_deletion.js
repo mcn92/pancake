@@ -4,7 +4,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const Pancake = require('../dist/engine.js');
+const { pathToFileURL } = require('url');
 const { parseBenchmarkArgs, resolveSingleValue } = require('./bench_args');
 
 let HierarchicalNSW;
@@ -22,6 +22,11 @@ const FVECS_PATH = path.join(__dirname, '..', 'dbpedia', 'dbpedia_base_5k.fvecs'
 const M = resolveSingleValue(parsedArgs.m, 12);
 const EF_CONSTRUCTION = resolveSingleValue(parsedArgs.efConstruction, 150);
 const EF_SEARCH = resolveSingleValue(parsedArgs.efSearch, 250);
+
+async function loadPancake() {
+    const mod = await import(pathToFileURL(path.join(__dirname, '..', 'pancake.node.mjs')).href);
+    return mod.default;
+}
 
 function loadFvecs(filePath) {
     const buf = fs.readFileSync(filePath);
@@ -66,28 +71,23 @@ function cosineDist(a, b) {
     const N = all.length - QUERY_COUNT;
     const queryStart = N;
 
-    console.log('Loading engine...');
-    const wasmBinary = fs.readFileSync(path.join(__dirname, '..', 'dist', 'engine.wasm'));
-    const engine = await Pancake({ wasmBinary });
-
-    const queryPtr = engine._emsc_malloc(DIMS * 4);
-    const resultIdPtr = engine._emsc_malloc(K * 8);
-    const resultDistPtr = engine._emsc_malloc(K * 4);
-
-    const handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, M, EF_CONSTRUCTION, EF_SEARCH);
+    console.log('Loading Pancake public API...');
+    const Pancake = await loadPancake();
+    const index = await Pancake.create({
+        dim: DIMS,
+        maxElements: MAX_ELEM,
+        metric: 'cosine',
+        quantized: true,
+        M,
+        efConstruction: EF_CONSTRUCTION,
+        efSearch: EF_SEARCH
+    });
 
     console.log(`Building index with ${N} vectors at 1536D (cosine, int8, M=${M}, ef_c=${EF_CONSTRUCTION}, ef_s=${EF_SEARCH})...`);
-    const batchPtr = engine._emsc_malloc(500 * DIMS * 4);
     const t0 = Date.now();
-    for (let i = 0; i < N; i += 500) {
-        const n = Math.min(500, N - i);
-        const off = batchPtr >> 2;
-        for (let j = 0; j < n; j++) engine.HEAPF32.set(all[i + j], off + j * DIMS);
-        engine._pancake_bulk_insert(handle, batchPtr, n);
-    }
-    engine._emsc_free(batchPtr);
+    index.addBatch(all.slice(0, N));
     const buildSec = (Date.now() - t0) / 1000;
-    console.log(`Built in ${buildSec.toFixed(2)}s, count=${engine._pancake_count(handle)}`);
+    console.log(`Built in ${buildSec.toFixed(2)}s, count=${index.count}`);
 
     const queryIndices = [];
     for (let i = 0; i < QUERY_COUNT; i++) queryIndices.push(queryStart + i);
@@ -134,15 +134,13 @@ function cosineDist(a, b) {
             const qVec = all[qIdx];
             const { trueTopK, trueK } = computeGroundTruth(qVec);
 
-            engine.HEAPF32.set(qVec, queryPtr >> 2);
             const t = performance.now();
-            const found = engine._pancake_query(handle, queryPtr, K, resultIdPtr, resultDistPtr);
+            const found = index.search(qVec, K);
             latencies.push(performance.now() - t);
 
             let hits = 0;
-            for (let i = 0; i < found; i++) {
-                const id = engine.HEAPU32[(resultIdPtr >> 2) + i * 2];
-                if (trueTopK.has(id)) hits++;
+            for (const result of found) {
+                if (trueTopK.has(result.id)) hits++;
             }
             totalRecall += hits / trueK;
         }
@@ -192,7 +190,7 @@ function cosineDist(a, b) {
             [liveArr[i], liveArr[j]] = [liveArr[j], liveArr[i]];
         }
         for (let i = 0; i < actual; i++) {
-            engine._pancake_delete(handle, liveArr[i]);
+            index.delete(liveArr[i]);
             if (hnswIndex) hnswIndex.markDelete(liveArr[i]);
             liveSet.delete(liveArr[i]);
         }
@@ -279,5 +277,6 @@ function cosineDist(a, b) {
         pancake: results,
         hnswlib: hnswResults,
     }, null, 2));
+    index.dispose();
     process.exit(0);
 })().catch(err => { console.error(err); process.exit(1); });
