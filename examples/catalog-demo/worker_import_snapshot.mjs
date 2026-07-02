@@ -6,11 +6,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const WORKER_URL = process.env.PANCAKE_WORKER_URL || 'http://127.0.0.1:8787';
-const SNAPSHOT_PATH = path.join(__dirname, 'catalog_worker_export.bin');
+const SNAPSHOT_PATH = path.join(__dirname, 'catalog_index.pnck');
 
 async function main() {
   const body = fs.readFileSync(SNAPSHOT_PATH);
-  const response = await fetch(`${WORKER_URL}/import?dims=4`, {
+  const response = await fetch(`${WORKER_URL}/import`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/octet-stream',

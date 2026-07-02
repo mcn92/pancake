@@ -3,9 +3,9 @@
 This directory contains a reference Cloudflare Worker deployment built on top of `pancake-wasm`.
 
 > **Note:** `pancake-wasm` is not yet published to npm. This example runs from
-> the repository checkout and loads the engine from the repo's built
-> `dist/` artifacts (run `./build.sh` at the repo root first). npm publishing is
-> coming soon. See the [root README](../../README.md#install).
+> the repository checkout and imports the same public Worker entrypoint that the
+> package exports as `pancake-wasm/web`. npm publishing is coming soon. See the
+> [root README](../../README.md#install).
 
 The Worker keeps a Pancake index in-process when hot and persists snapshots to
 Cloudflare R2. Treat it as a **snapshot-first ANN serving layer** rather than
@@ -44,7 +44,7 @@ This runs the Worker as a snapshot-backed search endpoint at the edge.
 | `GET /stats` | Index count, memory, ghost ratio |
 | `GET /export` | Serialize index to binary blob |
 | `POST /init` | Create an index (`{ dims, maxElements, M?, efConstruction?, efSearch?, vectors? }`) |
-| `POST /import` | Restore from binary (`?dims=N` required) |
+| `POST /import` | Restore from a Pancake snapshot (`?dims=N` only needed for legacy raw snapshots) |
 | `POST /add` | Insert a vector (`{ vector: float[] }`) |
 | `POST /add_batch` | Insert multiple vectors (`{ vectors: float[][] }`) |
 | `POST /delete` | Soft-delete by ID (`{ id: number }`) |
@@ -105,7 +105,7 @@ At `M=16` this is `(dim + 120)` bytes per vector. Examples: `30k x 256D = 10 MB`
 
 **Cold starts and R2 restore.** Worker isolates are not persistent. On cold start, the Worker fetches the index from R2 and deserializes it lazily on the first request. For a large index, the first request after idle will be slow.
 
-**Persistence.** The current Worker example writes snapshots to R2 and restores
+**Persistence.** The current Worker example writes standard Pancake snapshots to R2 and restores
 from R2 on cold start. This is the durable boundary. In-memory state is only a
 warm cache for the current isolate. Snapshot writes are append-only and restore
 loads the latest saved snapshot, which avoids older async writes overwriting a

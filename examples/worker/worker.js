@@ -1,26 +1,17 @@
 /**
  * Pancake Search - Cloudflare Workers Entrypoint
  *
- * API:
- *   POST /search       { query: float[], k?: int, ef?: int }
- *
- *   POST /init         { dims, maxElements, M?, efConstruction?, efSearch?, vectors? }
- *   POST /add          { vector: float[] }
- *   POST /import       <binary body>  ?dims=<n>
- *
- *   GET  /export
- *   GET  /health
- *
- * All dims route through the unified pancake_init handle-based API.
- * Backend dispatch (QuantizedHNSW template vs Int8FloatHNSW runtime) is
- * handled internally by the WASM engine.
+ * This example intentionally uses the public Pancake API. It should be useful
+ * as deployment documentation and as a benchmark of the package surface users
+ * actually call, not as a copy of the raw WASM ABI.
  */
 
-import P from '../../dist/engine.js';
-import wasmModule from '../../dist/engine.wasm';
+import Pancake from '../../pancake.workerd.mjs';
 
-let pancake = null;
 let index = null;
+let indexConfig = null;
+let localSnapshot = null;
+
 const MAX_RESULTS = 100;
 const MAX_DIMS = 4096;
 const DEFAULT_MAX_ELEMENTS = 5_000;
@@ -28,8 +19,6 @@ const DEFAULT_MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 const DEFAULT_MAX_JSON_BYTES = 1 * 1024 * 1024;
 const MAX_EF = 2000;
 const MAX_M = 128;
-const WORKER_EXPORT_MAGIC = 0x57524b31; // "WRK1"
-const WORKER_EXPORT_VERSION = 1;
 const SNAPSHOT_KEY_PREFIX = 'pancake-index-';
 const LEGACY_SNAPSHOT_KEY = 'pancake-index.bin';
 const ADMIN_ROUTES = new Set([
@@ -43,6 +32,9 @@ const ADMIN_ROUTES = new Set([
   '/reset_cache',
   '/search_debug'
 ]);
+
+const rateLimitMap = new Map();
+const RATE_LIMIT_WINDOW_MS = 60_000;
 const restoreState = {
   restoreCount: 0,
   restoredAt: null,
@@ -53,118 +45,188 @@ const restoreState = {
   lastSnapshotKey: null
 };
 
-function logWorkerError(event, error) {
-  const name = error && typeof error.name === 'string' ? error.name : 'Error';
-  const message = error && typeof error.message === 'string' ? error.message : '';
-  console.error(`${event} (${name})${message ? ': ' + message : ''}`);
+function isPositiveInteger(value) {
+  return Number.isInteger(value) && value > 0;
 }
-const persistState = {
-  lastIssuedMs: 0,
-  seqInMs: 0
-};
 
-// ---------------------------------------------------------------------------
-// Rate limiting — per-IP sliding window (in-memory, resets on cold start)
-// ---------------------------------------------------------------------------
+function jsonResponse(body, status = 200, headers = {}) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+      ...headers
+    }
+  });
+}
 
-const rateLimitMap = new Map();
-const RATE_LIMIT_WINDOW_MS = 60_000;
+function binaryResponse(bytes, headers = {}) {
+  return new Response(bytes, {
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      ...headers
+    }
+  });
+}
 
-function isRateLimited(ip, maxRpm) {
-  const now = Date.now();
-  let entry = rateLimitMap.get(ip);
-  if (!entry) {
-    entry = { timestamps: [] };
-    rateLimitMap.set(ip, entry);
+function corsHeaders(env) {
+  const origin = env?.ALLOWED_ORIGIN || '*';
+  return {
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+  };
+}
+
+function withCors(response, env) {
+  const headers = new Headers(response.headers);
+  for (const [key, value] of Object.entries(corsHeaders(env))) {
+    headers.set(key, value);
   }
-  entry.timestamps = entry.timestamps.filter(t => now - t < RATE_LIMIT_WINDOW_MS);
-  if (entry.timestamps.length >= maxRpm) return true;
-  entry.timestamps.push(now);
+  return new Response(response.body, { status: response.status, headers });
+}
+
+function isReadOnly(env) {
+  return String(env?.READ_ONLY || '') === '1';
+}
+
+function isAdminAllowed(request, env) {
+  if (!env?.API_KEY) return true;
+  const expected = `Bearer ${env.API_KEY}`;
+  return request.headers.get('Authorization') === expected;
+}
+
+function getRateLimit(env) {
+  const raw = env?.RATE_LIMIT_RPM;
+  if (raw === undefined || raw === null || raw === '') return null;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function isRateLimited(request, env) {
+  const maxRpm = getRateLimit(env);
+  if (maxRpm === null) return false;
+
+  const ip = request.headers.get('CF-Connecting-IP') || 'local';
+  const now = Date.now();
+  let timestamps = rateLimitMap.get(ip);
+  if (!timestamps) {
+    timestamps = [];
+    rateLimitMap.set(ip, timestamps);
+  }
+
+  while (timestamps.length > 0 && now - timestamps[0] >= RATE_LIMIT_WINDOW_MS) {
+    timestamps.shift();
+  }
+  if (timestamps.length >= maxRpm) return true;
+  timestamps.push(now);
   return false;
 }
 
-let lastCleanup = Date.now();
-function cleanupRateLimits() {
-  const now = Date.now();
-  if (now - lastCleanup < RATE_LIMIT_WINDOW_MS) return;
-  lastCleanup = now;
-  for (const [ip, entry] of rateLimitMap) {
-    entry.timestamps = entry.timestamps.filter(t => now - t < RATE_LIMIT_WINDOW_MS);
-    if (entry.timestamps.length === 0) rateLimitMap.delete(ip);
+async function readJson(request, env) {
+  const maxBytes = positiveEnvInt(env, 'MAX_JSON_BYTES', DEFAULT_MAX_JSON_BYTES);
+  const text = await request.text();
+  if (text.length > maxBytes) {
+    throw new Error(`JSON body exceeds MAX_JSON_BYTES (${text.length} > ${maxBytes})`);
+  }
+  return text.length === 0 ? {} : JSON.parse(text);
+}
+
+async function readBytes(request, env) {
+  const maxBytes = positiveEnvInt(env, 'MAX_SNAPSHOT_BYTES', DEFAULT_MAX_SNAPSHOT_BYTES);
+  const buffer = await request.arrayBuffer();
+  if (buffer.byteLength > maxBytes) {
+    throw new Error(`Snapshot exceeds MAX_SNAPSHOT_BYTES (${buffer.byteLength} > ${maxBytes})`);
+  }
+  return new Uint8Array(buffer);
+}
+
+function positiveEnvInt(env, name, fallback) {
+  const raw = env?.[name];
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function validateCreateConfig(config, label, maxElementsLimit) {
+  if (!isPositiveInteger(config.dim) || config.dim > MAX_DIMS) {
+    throw new Error(`${label}: dims must be an integer between 1 and ${MAX_DIMS}`);
+  }
+  if (!isPositiveInteger(config.maxElements) || config.maxElements > maxElementsLimit) {
+    throw new Error(`${label}: maxElements must be an integer between 1 and ${maxElementsLimit}`);
+  }
+  if (!isPositiveInteger(config.M) || config.M > MAX_M) {
+    throw new Error(`${label}: M must be an integer between 1 and ${MAX_M}`);
+  }
+  if (!isPositiveInteger(config.efConstruction) || config.efConstruction > MAX_EF) {
+    throw new Error(`${label}: efConstruction must be an integer between 1 and ${MAX_EF}`);
+  }
+  if (!isPositiveInteger(config.efSearch) || config.efSearch > MAX_EF) {
+    throw new Error(`${label}: efSearch must be an integer between 1 and ${MAX_EF}`);
   }
 }
 
-// ---------------------------------------------------------------------------
-// R2 persistence helpers
-// ---------------------------------------------------------------------------
+function makeCreateConfig(body, env) {
+  const config = {
+    dim: body.dims ?? body.dim,
+    maxElements: body.maxElements ?? DEFAULT_MAX_ELEMENTS,
+    metric: body.metric || 'cosine',
+    quantized: body.quantized !== false,
+    M: body.M ?? 16,
+    efConstruction: body.efConstruction ?? body.efC ?? 200,
+    efSearch: body.efSearch ?? body.efS ?? 100
+  };
+  validateCreateConfig(config, 'Invalid index config', positiveEnvInt(env, 'MAX_ELEMENTS_LIMIT', DEFAULT_MAX_ELEMENTS));
+  return config;
+}
 
-async function persistIndex(env) {
-  if (!env.INDEX_BUCKET || !index) return;
-  try {
-    if (index.ghostCount() > 0) {
-      index.compact();
+function configForMetadata(config) {
+  return {
+    dims: config.dim,
+    maxElements: config.maxElements,
+    metric: config.metric,
+    quantized: config.quantized,
+    initParams: {
+      M: config.M,
+      efC: config.efConstruction,
+      efS: config.efSearch
     }
-    const bytes = index.exportBinary();
-    const key = nextSnapshotKey();
-    const metadata = {
-      dims: String(index.dims),
-      count: String(index.count),
-      savedAt: new Date().toISOString()
-    };
-    await env.INDEX_BUCKET.put(key, bytes, {
-      customMetadata: metadata,
-      httpMetadata: { contentType: 'application/octet-stream' }
-    });
-    restoreState.lastSnapshotKey = key;
-  } catch (e) {
-    logWorkerError('R2 persist failed', e);
-  }
+  };
 }
 
-function schedulePersist(env, ctx) {
-  if (!env.INDEX_BUCKET) return;
-  ctx.waitUntil(persistIndex(env));
+function configFromMetadata(metadata, fallbackDims, env) {
+  const initParams = metadata?.initParams || {};
+  const config = {
+    dim: metadata?.dims ?? fallbackDims,
+    maxElements: metadata?.maxElements ?? DEFAULT_MAX_ELEMENTS,
+    metric: metadata?.metric || 'cosine',
+    quantized: metadata?.quantized !== false,
+    M: initParams.M ?? 16,
+    efConstruction: initParams.efC ?? initParams.efConstruction ?? 200,
+    efSearch: initParams.efS ?? initParams.efSearch ?? 100
+  };
+  validateCreateConfig(config, 'Invalid snapshot config', positiveEnvInt(env, 'MAX_ELEMENTS_LIMIT', DEFAULT_MAX_ELEMENTS));
+  return config;
 }
 
-function getMaxElementsLimit(env) {
-  const raw = env?.MAX_ELEMENTS_LIMIT;
-  if (raw === undefined || raw === null || raw === '') return DEFAULT_MAX_ELEMENTS;
-  const parsed = parseInt(raw, 10);
-  if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_MAX_ELEMENTS;
-  return parsed;
-}
-
-function getMaxSnapshotBytes(env) {
-  const raw = env?.MAX_SNAPSHOT_BYTES;
-  if (raw === undefined || raw === null || raw === '') return DEFAULT_MAX_SNAPSHOT_BYTES;
-  const parsed = parseInt(raw, 10);
-  if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_MAX_SNAPSHOT_BYTES;
-  return parsed;
-}
-
-function getMaxJsonBytes(env) {
-  const raw = env?.MAX_JSON_BYTES;
-  if (raw === undefined || raw === null || raw === '') return DEFAULT_MAX_JSON_BYTES;
-  const parsed = parseInt(raw, 10);
-  if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_MAX_JSON_BYTES;
-  return parsed;
+function parsePancakeEnvelopeMetadata(bytes) {
+  if (bytes.byteLength < 20) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(0, true) !== 0x504E434B) return null;
+  const version = view.getUint32(4, true);
+  if (version !== 2 && version !== 3) return null;
+  return {
+    dims: view.getUint32(8, true),
+    metric: view.getUint32(12, true) === 0 ? 'l2' : 'cosine',
+    quantized: view.getUint32(16, true) !== 0
+  };
 }
 
 function nextSnapshotKey() {
-  const now = Date.now();
-  if (now === persistState.lastIssuedMs) {
-    persistState.seqInMs += 1;
-  } else {
-    persistState.lastIssuedMs = now;
-    persistState.seqInMs = 0;
-  }
-  const ts = String(now).padStart(13, '0');
-  const seq = String(persistState.seqInMs).padStart(6, '0');
-  return `${SNAPSHOT_KEY_PREFIX}${ts}-${seq}.bin`;
+  return `${SNAPSHOT_KEY_PREFIX}${String(Date.now()).padStart(13, '0')}.pnck`;
 }
 
 async function findLatestSnapshot(env) {
-  if (!env.INDEX_BUCKET) return null;
+  if (!env?.INDEX_BUCKET) return null;
 
   const listed = await env.INDEX_BUCKET.list({ prefix: SNAPSHOT_KEY_PREFIX });
   if (listed.objects && listed.objects.length > 0) {
@@ -172,890 +234,291 @@ async function findLatestSnapshot(env) {
     for (const obj of listed.objects) {
       if (obj.key > latest.key) latest = obj;
     }
-    return { key: latest.key, customMetadata: latest.customMetadata || {} };
+    return latest.key;
   }
 
   const legacy = await env.INDEX_BUCKET.head(LEGACY_SNAPSHOT_KEY);
-  if (legacy) {
-    return { key: LEGACY_SNAPSHOT_KEY, customMetadata: legacy.customMetadata || {} };
-  }
-
-  return null;
+  return legacy ? LEGACY_SNAPSHOT_KEY : null;
 }
 
-function validateImportConfig(dims, maxElements, initParams, contextLabel, maxElementsLimit) {
-  if (!isPositiveInteger(dims) || dims > MAX_DIMS) {
-    throw new Error(`${contextLabel}: dims must be an integer between 1 and ${MAX_DIMS}`);
-  }
-  if (!isPositiveInteger(maxElements) || maxElements > maxElementsLimit) {
-    throw new Error(`${contextLabel}: maxElements must be an integer between 1 and ${maxElementsLimit}`);
-  }
-
-  const { M, efC, efS } = initParams;
-  if (!isPositiveInteger(M) || M > MAX_M) {
-    throw new Error(`${contextLabel}: M must be an integer between 1 and ${MAX_M}`);
-  }
-  if (!isPositiveInteger(efC) || efC > MAX_EF) {
-    throw new Error(`${contextLabel}: efConstruction must be an integer between 1 and ${MAX_EF}`);
-  }
-  if (!isPositiveInteger(efS) || efS > MAX_EF) {
-    throw new Error(`${contextLabel}: efSearch must be an integer between 1 and ${MAX_EF}`);
-  }
-}
-
-function getImportConfig(imported, fallbackDims, contextLabel, maxElementsLimit) {
-  const dims = imported.metadata?.dims ?? fallbackDims;
-  const maxElements = imported.metadata?.maxElements ?? DEFAULT_MAX_ELEMENTS;
-  const rawInitParams = imported.metadata?.initParams ?? {};
-  const initParams = {
-    M: rawInitParams.M ?? 16,
-    efC: rawInitParams.efC ?? 50,
-    efS: rawInitParams.efS ?? 100
+async function persistIndex(env) {
+  if (!index || !indexConfig) return;
+  if (index.ghostCount > 0) index.compact();
+  const snapshot = index.export();
+  localSnapshot = {
+    bytes: snapshot,
+    config: { ...indexConfig },
+    key: 'local-memory-snapshot'
   };
-  validateImportConfig(dims, maxElements, initParams, contextLabel, maxElementsLimit);
-  return { dims, maxElements, initParams };
+  if (!env?.INDEX_BUCKET) return;
+  const key = nextSnapshotKey();
+  await env.INDEX_BUCKET.put(key, snapshot, {
+    customMetadata: Object.fromEntries(
+      Object.entries(configForMetadata(indexConfig)).map(([k, v]) => [k, typeof v === 'string' ? v : JSON.stringify(v)])
+    ),
+    httpMetadata: { contentType: 'application/octet-stream' }
+  });
+  restoreState.lastSnapshotKey = key;
 }
 
 async function restoreIndex(env) {
-  if (!env.INDEX_BUCKET || index) return false;
-  try {
-    const fetchStart = performance.now();
-    const latest = await findLatestSnapshot(env);
-    if (!latest) return false;
-    const obj = await env.INDEX_BUCKET.get(latest.key);
-    if (!obj) return false;
-    const maxSnapshotBytes = getMaxSnapshotBytes(env);
-    if (Number.isInteger(obj.size) && obj.size > maxSnapshotBytes) {
-      throw new Error(`Snapshot exceeds MAX_SNAPSHOT_BYTES (${obj.size} > ${maxSnapshotBytes})`);
-    }
-
-    const buffer = await obj.arrayBuffer();
-    if (buffer.byteLength > maxSnapshotBytes) {
-      throw new Error(`Snapshot exceeds MAX_SNAPSHOT_BYTES (${buffer.byteLength} > ${maxSnapshotBytes})`);
-    }
-    const fetchMs = performance.now() - fetchStart;
-    const deserializeStart = performance.now();
-    const engine = await initializePancake();
-    const imported = decodeWorkerExportEnvelope(buffer);
-    if (imported.bytes.byteLength > maxSnapshotBytes) {
-      throw new Error(`Snapshot payload exceeds MAX_SNAPSHOT_BYTES (${imported.bytes.byteLength} > ${maxSnapshotBytes})`);
-    }
-    const fallbackDims = parseInt(obj.customMetadata?.dims ?? '0', 10);
-    const { dims, maxElements, initParams } = getImportConfig(
-      imported,
-      fallbackDims,
-      'R2 restore rejected snapshot',
-      getMaxElementsLimit(env)
-    );
-
-    const handle = engine._pancake_init(dims, maxElements, 1, 1, initParams.M, initParams.efC, initParams.efS);
-    if (handle === 0xFFFFFFFF) return false;
-
-    const buf = engine._emsc_malloc(imported.bytes.byteLength);
-    if (!buf) { engine._pancake_dispose(handle); return false; }
-
+  if (index) return false;
+  if (!env?.INDEX_BUCKET && localSnapshot) {
+    const start = performance.now();
+    const restored = await Pancake.create(localSnapshot.config);
     try {
-      engine.HEAPU8.set(imported.bytes, buf);
-      const status = engine._pancake_import(handle, buf, imported.bytes.byteLength);
-      if (status !== 0) { engine._pancake_dispose(handle); return false; }
-    } finally {
-      engine._emsc_free(buf);
+      restored.import(localSnapshot.bytes);
+    } catch (error) {
+      restored.dispose();
+      throw error;
     }
-
-    const count = engine._pancake_count(handle);
-    index = buildIndexWrapper(engine, dims, maxElements, handle, initParams);
-    if (imported.metadata?.mapping?.length) {
-      index._restoreMapping(imported.metadata.mapping, imported.metadata.nextExtId);
-    } else {
-      for (let i = 0; i < count; i++) index._seedId(i);
-    }
-    const deserializeMs = performance.now() - deserializeStart;
+    index = restored;
+    indexConfig = { ...localSnapshot.config };
     restoreState.restoreCount += 1;
     restoreState.restoredAt = new Date().toISOString();
-    restoreState.lastFetchMs = fetchMs;
-    restoreState.lastDeserializeMs = deserializeMs;
-    restoreState.lastRestoreMs = fetchMs + deserializeMs;
-    restoreState.lastSnapshotBytes = imported.bytes.byteLength;
-    restoreState.lastSnapshotKey = latest.key;
-    console.log(`Restored index from R2: dims=${dims}, count=${count}`);
+    restoreState.lastRestoreMs = performance.now() - start;
+    restoreState.lastFetchMs = 0;
+    restoreState.lastDeserializeMs = restoreState.lastRestoreMs;
+    restoreState.lastSnapshotBytes = localSnapshot.bytes.byteLength;
+    restoreState.lastSnapshotKey = localSnapshot.key;
     return true;
-  } catch (e) {
-    logWorkerError('R2 restore failed', e);
-    return false;
   }
-}
+  if (!env?.INDEX_BUCKET) return false;
+  const key = await findLatestSnapshot(env);
+  if (!key) return false;
 
-// ---------------------------------------------------------------------------
-// WASM bootstrap
-// ---------------------------------------------------------------------------
+  const fetchStart = performance.now();
+  const obj = await env.INDEX_BUCKET.get(key);
+  if (!obj) return false;
+  const bytes = new Uint8Array(await obj.arrayBuffer());
+  const fetchMs = performance.now() - fetchStart;
+  const maxBytes = positiveEnvInt(env, 'MAX_SNAPSHOT_BYTES', DEFAULT_MAX_SNAPSHOT_BYTES);
+  if (bytes.byteLength > maxBytes) throw new Error(`Snapshot exceeds MAX_SNAPSHOT_BYTES (${bytes.byteLength} > ${maxBytes})`);
 
-async function initializePancake() {
-  if (pancake) return pancake;
-
-  pancake = await P({
-    instantiateWasm(imports, successCallback) {
-      WebAssembly.instantiate(wasmModule, imports)
-        .then(instance => successCallback(instance))
-        .catch(err => { throw err; });
-      return {};
-    }
-  });
-
-  const required = [
-    '_pancake_init', '_pancake_add', '_pancake_query', '_pancake_count',
-    '_pancake_memory', '_pancake_set_ef', '_pancake_export', '_pancake_import',
-    '_pancake_delete', '_pancake_compact', '_pancake_ghost_count',
-    '_pancake_ghost_ratio', '_pancake_dispose',
-    '_emsc_malloc', '_emsc_free'
-  ];
-  for (const fn of required) {
-    if (typeof pancake[fn] !== 'function') {
-      throw new Error(`WASM binding missing: ${fn}`);
-    }
+  const metadata = {};
+  for (const [key, value] of Object.entries(obj.customMetadata || {})) {
+    try { metadata[key] = JSON.parse(value); } catch { metadata[key] = value; }
+  }
+  const envelopeMetadata = parsePancakeEnvelopeMetadata(bytes);
+  const config = configFromMetadata(metadata, envelopeMetadata?.dims || 0, env);
+  if (envelopeMetadata) {
+    config.dim = envelopeMetadata.dims;
+    config.metric = envelopeMetadata.metric;
+    config.quantized = envelopeMetadata.quantized;
   }
 
-  return pancake;
-}
-
-// ---------------------------------------------------------------------------
-// Index wrapper
-// ---------------------------------------------------------------------------
-
-function buildIndexWrapper(engine, dims, maxElements, handle, initParams = {}) {
-  const vecBuffer   = engine._emsc_malloc(dims * 4);
-  const idsBuffer   = engine._emsc_malloc(MAX_RESULTS * 8);
-  const distsBuffer = engine._emsc_malloc(MAX_RESULTS * 4);
-
-  if (!vecBuffer || !idsBuffer || !distsBuffer) {
-    if (vecBuffer) engine._emsc_free(vecBuffer);
-    if (idsBuffer) engine._emsc_free(idsBuffer);
-    if (distsBuffer) engine._emsc_free(distsBuffer);
-    engine._pancake_dispose(handle);
-    throw new Error('WASM heap allocation failed');
-  }
-
-  const _initParams = { M: initParams.M || 16, efC: initParams.efC || 50, efS: initParams.efS || 100 };
-
-  const _extToInt = new Map();
-  const _intToExt = new Map();
-  const _deletedExt = new Set();
-  let _nextExtId = 0;
-
-  return {
-    engine,
-    dims,
-    maxElements,
-    handle,
-    _vecBuffer: vecBuffer,
-    _idsBuffer: idsBuffer,
-    _distsBuffer: distsBuffer,
-
-    add(vec) {
-      engine.HEAPF32.set(vec, this._vecBuffer >> 2);
-      const intId = engine._pancake_add(this.handle, this._vecBuffer);
-      if (intId === 0xFFFFFFFF || intId < 0) {
-        throw new Error('Insert failed (index full or not initialized)');
-      }
-      const extId = _nextExtId++;
-      _extToInt.set(extId, intId);
-      _intToExt.set(intId, extId);
-      return extId;
-    },
-
-    search(vec, k, ef = 50) {
-      engine._pancake_set_ef(this.handle, ef);
-      engine.HEAPF32.set(vec, this._vecBuffer >> 2);
-
-      const found = engine._pancake_query(
-        this.handle, this._vecBuffer, k, this._idsBuffer, this._distsBuffer);
-
-      const neighbors = [];
-      const distances = [];
-      const dv = new DataView(engine.HEAPU8.buffer);
-
-      for (let i = 0; i < found; i++) {
-        const lo = dv.getUint32(this._idsBuffer + i * 8, true);
-        const hi = dv.getUint32(this._idsBuffer + i * 8 + 4, true);
-        const intId = hi * 0x100000000 + lo;
-        const extId = _intToExt.get(intId);
-        if (extId !== undefined) {
-          neighbors.push(extId);
-          distances.push(engine.HEAPF32[this._distsBuffer / 4 + i]);
-        }
-      }
-
-      return { neighbors, distances };
-    },
-
-    searchDebug(vec, k, ef = 50) {
-      engine._pancake_set_ef(this.handle, ef);
-      engine.HEAPF32.set(vec, this._vecBuffer >> 2);
-      const found = engine._pancake_query(
-        this.handle, this._vecBuffer, k, this._idsBuffer, this._distsBuffer);
-      const raw = [], translated = [], dists = [];
-      const dv = new DataView(engine.HEAPU8.buffer);
-      for (let i = 0; i < found; i++) {
-        const lo = dv.getUint32(this._idsBuffer + i * 8, true);
-        const hi = dv.getUint32(this._idsBuffer + i * 8 + 4, true);
-        const intId = hi * 0x100000000 + lo;
-        raw.push(intId);
-        translated.push(_intToExt.get(intId));
-        dists.push(engine.HEAPF32[this._distsBuffer / 4 + i]);
-      }
-      return { raw, translated, dists, mapSize: _intToExt.size, nextExtId: _nextExtId };
-    },
-
-    // The C++ serializer includes ghost entries as regular data, and the
-    // deserializer resets deleted_ to all-zero on load — so ghosts silently
-    // resurrect on import. persistIndex() compacts before calling this;
-    // the guard below enforces the contract rather than relying on callers
-    // to remember.
-    exportBinary() {
-      if (this.ghostCount() > 0) {
-        throw new Error(
-          'exportBinary() called with ghosts present; compact() first. ' +
-          'The deserializer resets deleted_ to all-zero, so ghosts would ' +
-          'silently resurrect on restore.'
-        );
-      }
-      const sizePtr = engine._emsc_malloc(8);
-      if (!sizePtr) throw new Error('Allocation failed');
-      try {
-        const dataPtr = engine._pancake_export(this.handle, sizePtr);
-        if (!dataPtr) throw new Error('export returned null');
-
-        const size = engine.HEAPU8[sizePtr]       |
-                    (engine.HEAPU8[sizePtr + 1] << 8)  |
-                    (engine.HEAPU8[sizePtr + 2] << 16) |
-                    (engine.HEAPU8[sizePtr + 3] << 24);
-
-        if (size === 0) throw new Error('Export produced 0 bytes');
-        const raw = engine.HEAPU8.slice(dataPtr, dataPtr + size);
-        const mapping = Array.from(_intToExt.entries())
-          .sort((a, b) => a[0] - b[0])
-          .map(([intId, extId]) => [intId, extId]);
-        return encodeWorkerExportEnvelope(raw, {
-          dims: this.dims,
-          maxElements: this.maxElements,
-          nextExtId: _nextExtId,
-          initParams: _initParams,
-          mapping
-        });
-      } finally {
-        engine._emsc_free(sizePtr);
-      }
-    },
-
-    delete(extId) {
-      const intId = _extToInt.get(extId);
-      if (intId === undefined) return;
-      engine._pancake_delete(this.handle, intId);
-      _deletedExt.add(extId);
-    },
-
-    compact() {
-      const oldSurvivors = [];
-      for (const [extId, intId] of _extToInt) {
-        if (!_deletedExt.has(extId)) oldSurvivors.push({ extId, intId });
-      }
-      oldSurvivors.sort((a, b) => a.intId - b.intId);
-
-      engine._pancake_compact(this.handle);
-
-      _extToInt.clear();
-      _intToExt.clear();
-      _deletedExt.clear();
-      for (let newInt = 0; newInt < oldSurvivors.length; newInt++) {
-        _extToInt.set(oldSurvivors[newInt].extId, newInt);
-        _intToExt.set(newInt, oldSurvivors[newInt].extId);
-      }
-    },
-
-    _seedId(intId) {
-      const extId = _nextExtId++;
-      _extToInt.set(extId, intId);
-      _intToExt.set(intId, extId);
-    },
-
-    _restoreMapping(mapping, nextExtId) {
-      if (!Array.isArray(mapping)) {
-        throw new Error('Import failed: envelope mapping must be an array');
-      }
-      const count = engine._pancake_count(this.handle);
-      if (mapping.length !== count) {
-        throw new Error('Import failed: envelope mapping count mismatch');
-      }
-
-      _extToInt.clear();
-      _intToExt.clear();
-      _deletedExt.clear();
-      let maxExtId = -1;
-      for (const [intId, extId] of mapping) {
-        if (!Number.isInteger(intId) || intId < 0 || intId >= count) {
-          throw new Error('Import failed: envelope mapping contains invalid internal ID');
-        }
-        if (!Number.isInteger(extId) || extId < 0) {
-          throw new Error('Import failed: envelope mapping contains invalid external ID');
-        }
-        if (_intToExt.has(intId) || _extToInt.has(extId)) {
-          throw new Error('Import failed: envelope mapping contains duplicates');
-        }
-        _intToExt.set(intId, extId);
-        _extToInt.set(extId, intId);
-        if (extId > maxExtId) maxExtId = extId;
-      }
-      if (!Number.isInteger(nextExtId) || nextExtId < count || nextExtId <= maxExtId) {
-        throw new Error('Import failed: envelope nextExtId is invalid');
-      }
-      _nextExtId = nextExtId;
-    },
-
-    ghostCount() { return engine._pancake_ghost_count(this.handle); },
-    ghostRatio() { return engine._pancake_ghost_ratio(this.handle); },
-
-    get count() { return engine._pancake_count(this.handle); },
-    get memory() { return engine._pancake_memory(this.handle); },
-    get nextId() { return _nextExtId; },
-
-    destroy() {
-      engine._pancake_dispose(this.handle);
-      engine._emsc_free(this._vecBuffer);
-      engine._emsc_free(this._idsBuffer);
-      engine._emsc_free(this._distsBuffer);
-    }
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-let _corsEnv = null; // set per-request in handleRequest
-
-function corsHeaders(env, extraHeaders = {}) {
-  const origin = getCorsOrigin(env);
-  return origin
-    ? { 'Access-Control-Allow-Origin': origin, ...extraHeaders }
-    : { ...extraHeaders };
-}
-
-function jsonResponse(body, status = 200, extraHeaders = {}) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: _corsEnv
-      ? corsHeaders(_corsEnv, { 'Content-Type': 'application/json', ...extraHeaders })
-      : { 'Content-Type': 'application/json', ...extraHeaders }
-  });
-}
-
-function isPositiveInteger(v) {
-  return Number.isInteger(v) && v > 0;
-}
-
-async function safeParseJson(request, env) {
-  const maxJsonBytes = getMaxJsonBytes(env);
-  const contentLength = parseInt(request.headers.get('content-length') || '', 10);
-  if (Number.isInteger(contentLength) && contentLength > maxJsonBytes) {
-    return { error: `JSON body exceeds MAX_JSON_BYTES (${contentLength} > ${maxJsonBytes})`, status: 413 };
-  }
+  const deserializeStart = performance.now();
+  const restored = await Pancake.create(config);
   try {
-    const text = await request.text();
-    const size = new TextEncoder().encode(text).byteLength;
-    if (size > maxJsonBytes) {
-      return { error: `JSON body exceeds MAX_JSON_BYTES (${size} > ${maxJsonBytes})`, status: 413 };
-    }
-    return { body: JSON.parse(text) };
-  } catch {
-    return { error: 'Invalid JSON', status: 400 };
+    restored.import(bytes);
+  } catch (error) {
+    restored.dispose();
+    throw error;
   }
+
+  index = restored;
+  indexConfig = config;
+  restoreState.restoreCount += 1;
+  restoreState.restoredAt = new Date().toISOString();
+  restoreState.lastRestoreMs = performance.now() - fetchStart;
+  restoreState.lastFetchMs = fetchMs;
+  restoreState.lastDeserializeMs = performance.now() - deserializeStart;
+  restoreState.lastSnapshotBytes = bytes.byteLength;
+  restoreState.lastSnapshotKey = key;
+  return true;
 }
 
-function validateVector(vector, dims, fieldName) {
-  if (!Array.isArray(vector))
-    return `${fieldName} must be an array`;
-  if (vector.length !== dims)
-    return `${fieldName} must have exactly ${dims} elements`;
-  for (const v of vector) {
-    if (typeof v !== 'number' || !Number.isFinite(v))
-      return `${fieldName} must contain only finite numbers`;
-  }
-  return null;
+async function ensureIndex(env) {
+  if (index) return true;
+  return restoreIndex(env);
 }
 
-function getCorsOrigin(env) {
-  const value = String(env.ALLOWED_ORIGIN || '').trim();
-  return value || null;
-}
-
-function isReadOnly(env) {
-  const value = String(env.READ_ONLY || '').trim().toLowerCase();
-  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
-}
-
-function isAdminRoute(pathname) {
-  return ADMIN_ROUTES.has(pathname);
-}
-
-function allowInsecureAdmin(env) {
-  const value = String(env.ALLOW_INSECURE_ADMIN || '').trim().toLowerCase();
-  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
-}
-
-
-function encodeWorkerExportEnvelope(rawBytes, metadata) {
-  const jsonBytes = new TextEncoder().encode(JSON.stringify(metadata));
-  const out = new Uint8Array(16 + jsonBytes.byteLength + rawBytes.byteLength);
-  const view = new DataView(out.buffer);
-  view.setUint32(0, WORKER_EXPORT_MAGIC, true);
-  view.setUint32(4, WORKER_EXPORT_VERSION, true);
-  view.setUint32(8, jsonBytes.byteLength, true);
-  view.setUint32(12, rawBytes.byteLength, true);
-  out.set(jsonBytes, 16);
-  out.set(rawBytes, 16 + jsonBytes.byteLength);
-  return out;
-}
-
-function decodeWorkerExportEnvelope(buffer) {
-  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-  if (bytes.byteLength < 16) {
-    return { bytes, metadata: null };
-  }
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (view.getUint32(0, true) !== WORKER_EXPORT_MAGIC) {
-    return { bytes, metadata: null };
-  }
-  const version = view.getUint32(4, true);
-  if (version !== WORKER_EXPORT_VERSION) {
-    throw new Error(`Unsupported worker export version: ${version}`);
-  }
-  const metaLen = view.getUint32(8, true);
-  const rawLen = view.getUint32(12, true);
-  const endMeta = 16 + metaLen;
-  const endRaw = endMeta + rawLen;
-  if (endRaw > bytes.byteLength) {
-    throw new Error('Truncated worker export envelope');
-  }
-  const metadata = JSON.parse(new TextDecoder().decode(bytes.subarray(16, endMeta)));
+function healthBody(env) {
   return {
-    metadata,
-    bytes: bytes.slice(endMeta, endRaw)
+    ok: true,
+    initialized: !!index,
+    dims: indexConfig?.dim ?? null,
+    count: index ? index.count : 0,
+    read_only: isReadOnly(env),
+    restore: restoreState
   };
 }
 
+function statsBody() {
+  return {
+    dims: indexConfig.dim,
+    count: index.count,
+    memory: index.memory,
+    ghost_count: index.ghostCount,
+    ghost_ratio: index.ghostRatio
+  };
+}
 
-// ---------------------------------------------------------------------------
-// Request handler
-// ---------------------------------------------------------------------------
+function applyEf(index, ef) {
+  if (ef === undefined || ef === null) return;
+  const parsed = Number.parseInt(ef, 10);
+  if (Number.isInteger(parsed) && parsed > 0 && typeof index._setEfSearch === 'function') {
+    index._setEfSearch(Math.min(parsed, MAX_EF));
+  }
+}
 
 async function handleRequest(request, env, ctx) {
-  _corsEnv = env;
   const url = new URL(request.url);
-  const method = request.method;
-  const origin = getCorsOrigin(env);
+  const method = request.method.toUpperCase();
 
   if (method === 'OPTIONS') {
-    if (!origin) {
-      return new Response(null, { status: 403 });
-    }
-    return new Response(null, {
-      status: 204,
-      headers: {
-        'Access-Control-Allow-Origin': origin,
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization'
-      }
-    });
+    return new Response(null, { status: 204, headers: corsHeaders(env) });
   }
 
-  if (isAdminRoute(url.pathname) && !env.API_KEY && !allowInsecureAdmin(env)) {
-    return jsonResponse({
-      error: 'Admin routes require API_KEY or explicit ALLOW_INSECURE_ADMIN=1'
-    }, 403);
+  const adminRoute = ADMIN_ROUTES.has(url.pathname);
+  if (adminRoute && isReadOnly(env)) {
+    return jsonResponse({ error: 'Read-only mode' }, 403);
   }
-
-  if (env.API_KEY && url.pathname !== '/health') {
-    const authHeader = request.headers.get('Authorization') || '';
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-    if (token !== env.API_KEY) {
-      return jsonResponse({ error: 'Unauthorized' }, 401);
-    }
+  if (url.pathname !== '/health' && !isAdminAllowed(request, env)) {
+    return jsonResponse({ error: 'Unauthorized' }, 401);
   }
-
-  const maxRpm = parseInt(env.RATE_LIMIT_RPM || '0', 10);
-  if (maxRpm > 0 && url.pathname !== '/health') {
-    cleanupRateLimits();
-    const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || 'unknown';
-    if (isRateLimited(ip, maxRpm)) {
-      return jsonResponse({ error: 'Rate limit exceeded. Try again later.' }, 429);
-    }
-  }
-
-  const shouldAutoRestore = !['/health', '/readiness', '/reset_cache', '/init', '/import'].includes(url.pathname);
-  if (!index && env.INDEX_BUCKET && shouldAutoRestore) {
-    await restoreIndex(env);
-  }
-
-  if (isReadOnly(env) && isAdminRoute(url.pathname)) {
-    return jsonResponse({ error: 'Worker is in read-only mode.' }, 403);
+  if (url.pathname !== '/health' && isRateLimited(request, env)) {
+    return jsonResponse({ error: 'Rate limit exceeded' }, 429);
   }
 
   if (url.pathname === '/health' && method === 'GET') {
-    return jsonResponse({
-      status: 'ok',
-      loaded: index !== null,
-      count: index ? index.count : 0,
-      memory_bytes: index ? index.memory : null,
-      dims: index ? index.dims : null,
-      max_elements_limit: getMaxElementsLimit(env),
-      restore_count: restoreState.restoreCount,
-      restored_at: restoreState.restoredAt,
-      last_restore_ms: restoreState.lastRestoreMs,
-      last_fetch_ms: restoreState.lastFetchMs,
-      last_deserialize_ms: restoreState.lastDeserializeMs,
-      last_snapshot_bytes: restoreState.lastSnapshotBytes,
-      read_only: isReadOnly(env)
-    });
+    return jsonResponse(healthBody(env));
   }
 
   if (url.pathname === '/readiness' && method === 'GET') {
-    const latestSnapshot = env.INDEX_BUCKET ? await findLatestSnapshot(env) : null;
-    return jsonResponse({
-      ready: index !== null || latestSnapshot !== null,
-      loaded: index !== null,
-      snapshot_available: latestSnapshot !== null,
-      snapshot_key: latestSnapshot?.key || restoreState.lastSnapshotKey,
-      restore_count: restoreState.restoreCount,
-      restored_at: restoreState.restoredAt,
-      last_restore_ms: restoreState.lastRestoreMs,
-      last_fetch_ms: restoreState.lastFetchMs,
-      last_deserialize_ms: restoreState.lastDeserializeMs,
-      last_snapshot_bytes: restoreState.lastSnapshotBytes,
-      read_only: isReadOnly(env)
-    });
+    const snapshotKey = await findLatestSnapshot(env);
+    return jsonResponse({ ...healthBody(env), snapshot_available: !!snapshotKey, snapshot_key: snapshotKey });
   }
 
   if (url.pathname === '/reset_cache' && method === 'POST') {
-    if (index) {
-      index.destroy();
-      index = null;
-    }
-    return jsonResponse({
-      cleared: true,
-      restore_count: restoreState.restoreCount,
-      last_restore_ms: restoreState.lastRestoreMs
-    });
+    if (index) index.dispose();
+    index = null;
+    indexConfig = null;
+    return jsonResponse({ ok: true, reset: true });
   }
 
   if (url.pathname === '/init' && method === 'POST') {
-    const parsed = await safeParseJson(request, env);
-    if (parsed.error) return jsonResponse({ error: parsed.error }, parsed.status);
-    const body = parsed.body;
-    const { dims, maxElements, M = 16, efConstruction = 50, efSearch = 100, vectors = [] } = body;
-
-    if (!isPositiveInteger(dims) || dims > MAX_DIMS)
-      return jsonResponse({ error: `dims must be an integer between 1 and ${MAX_DIMS}` }, 400);
-    const maxElementsLimit = getMaxElementsLimit(env);
-    if (!isPositiveInteger(maxElements) || maxElements > maxElementsLimit)
-      return jsonResponse({ error: `maxElements must be an integer between 1 and ${maxElementsLimit}` }, 400);
-    if (!isPositiveInteger(M) || M > MAX_M)
-      return jsonResponse({ error: `M must be an integer between 1 and ${MAX_M}` }, 400);
-    if (!isPositiveInteger(efConstruction) || efConstruction > MAX_EF)
-      return jsonResponse({ error: `efConstruction must be an integer between 1 and ${MAX_EF}` }, 400);
-    if (!isPositiveInteger(efSearch) || efSearch > MAX_EF)
-      return jsonResponse({ error: `efSearch must be an integer between 1 and ${MAX_EF}` }, 400);
-    if (!Array.isArray(vectors))
-      return jsonResponse({ error: 'vectors must be an array' }, 400);
-    if (vectors.length > maxElements)
-      return jsonResponse({ error: 'vectors length cannot exceed maxElements' }, 400);
-
-    const engine = await initializePancake();
-    if (index) { index.destroy(); index = null; }
-
-    // quantized=1, metric=1 (cosine)
-    const handle = engine._pancake_init(dims, maxElements, 1, 1, M, efConstruction, efSearch);
-    if (handle === 0xFFFFFFFF) {
-      return jsonResponse({ error: 'Backend init failed' }, 500);
-    }
-
-    index = buildIndexWrapper(engine, dims, maxElements, handle, { M, efC: efConstruction, efS: efSearch });
-
-    let inserted = 0;
-    for (const vec of vectors) {
-      const err = validateVector(vec, dims, 'vectors[]');
-      if (err) { index.destroy(); index = null; return jsonResponse({ error: err }, 400); }
-      index.add(new Float32Array(vec));
-      inserted++;
-    }
-
-    await persistIndex(env);
-    return jsonResponse({
-      status: 'initialized',
-      dims,
-      maxElements,
-      M,
-      efConstruction,
-      efSearch,
-      inserted,
-      memory_bytes: index.memory
-    });
-  }
-
-  if (url.pathname === '/add' && method === 'POST') {
-    if (!index) return jsonResponse({ error: 'Index not initialized. Call /init first.' }, 503);
-    if (index.count >= index.maxElements)
-      return jsonResponse({ error: 'Index is at capacity' }, 409);
-
-    const parsed = await safeParseJson(request, env);
-    if (parsed.error) return jsonResponse({ error: parsed.error }, parsed.status);
-    const body = parsed.body;
-    const err = validateVector(body.vector, index.dims, 'vector');
-    if (err) return jsonResponse({ error: err }, 400);
-
-    let id;
+    const body = await readJson(request, env);
+    const config = makeCreateConfig(body, env);
+    const next = await Pancake.create(config);
     try {
-      id = index.add(new Float32Array(body.vector));
-    } catch (e) {
-      if (e.message.includes('Insert failed')) {
-        return jsonResponse({ error: 'Index is at capacity' }, 409);
+      if (Array.isArray(body.vectors) && body.vectors.length > 0) {
+        next.addBatch(body.vectors);
       }
-      throw e;
+    } catch (error) {
+      next.dispose();
+      throw error;
     }
-    schedulePersist(env, ctx);
-    return jsonResponse({ id, count: index.count });
-  }
-
-  if (url.pathname === '/delete' && method === 'POST') {
-    if (!index) return jsonResponse({ error: 'Index not initialized.' }, 503);
-    const parsed = await safeParseJson(request, env);
-    if (parsed.error) return jsonResponse({ error: parsed.error }, parsed.status);
-    const body = parsed.body;
-    const { id } = body;
-    if (typeof id !== 'number' || !Number.isInteger(id) || id < 0)
-      return jsonResponse({ error: 'id must be a non-negative integer' }, 400);
-    index.delete(id);
-    schedulePersist(env, ctx);
-    return jsonResponse({ deleted: id, ghost_count: index.ghostCount(), ghost_ratio: index.ghostRatio() });
-  }
-
-  if (url.pathname === '/compact' && method === 'POST') {
-    if (!index) return jsonResponse({ error: 'Index not initialized.' }, 503);
-    const t0 = performance.now();
-    index.compact();
-    const elapsed = performance.now() - t0;
+    if (index) index.dispose();
+    index = next;
+    indexConfig = config;
     await persistIndex(env);
-    return jsonResponse({ compacted: true, elapsed_ms: elapsed, count: index.count, memory_bytes: index.memory });
-  }
-
-  if (url.pathname === '/stats' && method === 'GET') {
-    if (!index) return jsonResponse({ error: 'Index not initialized.' }, 503);
-    return jsonResponse({
-      count: index.count,
-      memory_bytes: index.memory,
-      ghost_count: index.ghostCount(),
-      ghost_ratio: index.ghostRatio(),
-      next_id: index.nextId,
-      dims: index.dims
-    });
-  }
-
-  if (url.pathname === '/add_batch' && method === 'POST') {
-    if (!index) return jsonResponse({ error: 'Index not initialized. Call /init first.' }, 503);
-
-    const parsed = await safeParseJson(request, env);
-    if (parsed.error) return jsonResponse({ error: parsed.error }, parsed.status);
-    const body = parsed.body;
-    const { vectors } = body;
-    if (!Array.isArray(vectors) || vectors.length === 0)
-      return jsonResponse({ error: 'vectors must be a non-empty array' }, 400);
-    if (index.count + vectors.length > index.maxElements) {
-      return jsonResponse({
-        error: 'Index is at capacity',
-        inserted: 0,
-        ids: [],
-        count: index.count
-      }, 409);
-    }
-
-    const prepared = [];
-    for (let i = 0; i < vectors.length; i++) {
-      const err = validateVector(vectors[i], index.dims, `vectors[${i}]`);
-      if (err) return jsonResponse({ error: err }, 400);
-      prepared.push(new Float32Array(vectors[i]));
-    }
-
-    const ids = [];
-    for (let i = 0; i < prepared.length; i++) {
-      try {
-        ids.push(index.add(prepared[i]));
-      } catch (e) {
-        if (e.message.includes('Insert failed')) {
-          return jsonResponse({
-            error: 'Index is at capacity',
-            inserted: ids.length,
-            ids,
-            count: index.count
-          }, 409);
-        }
-        throw e;
-      }
-    }
-
-    schedulePersist(env, ctx);
-    return jsonResponse({ inserted: ids.length, ids, count: index.count });
-  }
-
-  if (url.pathname === '/search' && method === 'POST') {
-    if (!index) return jsonResponse({ error: 'Index not initialized. Call /init first.' }, 503);
-
-    const t0 = performance.now();
-    const parsed = await safeParseJson(request, env);
-    if (parsed.error) return jsonResponse({ error: parsed.error }, parsed.status);
-    const body = parsed.body;
-    const { query, k = 10, ef = 100 } = body;
-
-    const err = validateVector(query, index.dims, 'query');
-    if (err) return jsonResponse({ error: err }, 400);
-
-    if (!Number.isInteger(k) || k < 1 || k > MAX_RESULTS)
-      return jsonResponse({ error: `k must be an integer between 1 and ${MAX_RESULTS}` }, 400);
-    if (!isPositiveInteger(ef) || ef > MAX_EF)
-      return jsonResponse({ error: `ef must be an integer between 1 and ${MAX_EF}` }, 400);
-
-    const results = index.search(new Float32Array(query), k, ef);
-    const latency_ms = performance.now() - t0;
-
-    return jsonResponse({ ...results, latency_ms });
-  }
-
-  if (url.pathname === '/search_debug' && method === 'POST') {
-    if (!index) return jsonResponse({ error: 'Index not initialized.' }, 503);
-    const parsed = await safeParseJson(request, env);
-    if (parsed.error) return jsonResponse({ error: parsed.error }, parsed.status);
-    const body = parsed.body;
-    const { query, k = 5 } = body;
-
-    const err = validateVector(query, index.dims, 'query');
-    if (err) return jsonResponse({ error: err }, 400);
-    if (!Number.isInteger(k) || k < 1 || k > MAX_RESULTS)
-      return jsonResponse({ error: `k must be an integer between 1 and ${MAX_RESULTS}` }, 400);
-
-    const results = index.searchDebug(new Float32Array(query), k);
-    return jsonResponse(results);
-  }
-
-  if (url.pathname === '/export' && method === 'GET') {
-    if (!index) return jsonResponse({ error: 'No index to export' }, 503);
-
-    // The engine cannot serialize soft-deleted ghosts (deletion state is not
-    // serialized), so exportBinary() throws when ghosts are present. Compact
-    // first — same as the R2 persist path (persistIndex) — so /export is robust
-    // to any prior deletes instead of 500ing.
-    if (index.ghostCount() > 0) index.compact();
-
-    const bytes = index.exportBinary();
-    return new Response(bytes, {
-      status: 200,
-      headers: corsHeaders(env, {
-        'Content-Type': 'application/octet-stream',
-        'Content-Length': String(bytes.byteLength),
-        'X-Pancake-Dims': String(index.dims),
-        'X-Pancake-Count': String(index.count)
-      })
-    });
+    return jsonResponse({ ok: true, dims: config.dim, count: index.count, inserted: Array.isArray(body.vectors) ? body.vectors.length : 0 });
   }
 
   if (url.pathname === '/import' && method === 'POST') {
-    const maxSnapshotBytes = getMaxSnapshotBytes(env);
-    const contentLength = parseInt(request.headers.get('content-length') || '', 10);
-    if (Number.isInteger(contentLength) && contentLength > maxSnapshotBytes) {
-      return jsonResponse({ error: `Import failed: snapshot exceeds MAX_SNAPSHOT_BYTES (${contentLength} > ${maxSnapshotBytes})` }, 413);
-    }
-
-    const envelopeBuffer = await request.arrayBuffer();
-    if (envelopeBuffer.byteLength > maxSnapshotBytes) {
-      return jsonResponse({ error: `Import failed: snapshot exceeds MAX_SNAPSHOT_BYTES (${envelopeBuffer.byteLength} > ${maxSnapshotBytes})` }, 413);
-    }
-    const imported = decodeWorkerExportEnvelope(envelopeBuffer);
-    if (imported.bytes.byteLength > maxSnapshotBytes) {
-      return jsonResponse({ error: `Import failed: snapshot payload exceeds MAX_SNAPSHOT_BYTES (${imported.bytes.byteLength} > ${maxSnapshotBytes})` }, 413);
-    }
-    let dims;
-    let maxElements;
-    let initParams;
-    try {
-      ({ dims, maxElements, initParams } = getImportConfig(
-        imported,
-        parseInt(url.searchParams.get('dims') ?? '', 10),
-        'Import rejected snapshot',
-        getMaxElementsLimit(env)
-      ));
-    } catch (e) {
-      return jsonResponse({ error: e.message }, 400);
-    }
-
-    const engine = await initializePancake();
-    const previousIndex = index;
-
-    const handle = engine._pancake_init(dims, maxElements, 1, 1, initParams.M, initParams.efC, initParams.efS);
-    if (handle === 0xFFFFFFFF) {
-      return jsonResponse({ error: 'Backend init failed' }, 500);
-    }
-
-    const buf = engine._emsc_malloc(imported.bytes.byteLength);
-    if (!buf) {
-      engine._pancake_dispose(handle);
-      return jsonResponse({ error: 'WASM heap allocation failed' }, 500);
-    }
-
-    try {
-      engine.HEAPU8.set(imported.bytes, buf);
-      const status = engine._pancake_import(handle, buf, imported.bytes.byteLength);
-      if (status !== 0) {
-        engine._pancake_dispose(handle);
-        return jsonResponse({ error: 'Import failed' }, 500);
-      }
-    } finally {
-      engine._emsc_free(buf);
-    }
-
-    let nextIndex;
-    try {
-      nextIndex = buildIndexWrapper(engine, dims, maxElements, handle, initParams);
-      const importedCount = nextIndex.count;
-      if (imported.metadata?.mapping?.length) {
-        nextIndex._restoreMapping(imported.metadata.mapping, imported.metadata.nextExtId);
-      } else {
-        for (let i = 0; i < importedCount; i++) nextIndex._seedId(i);
-      }
-    } catch (e) {
-      if (nextIndex) nextIndex.destroy();
-      return jsonResponse({ error: e.message || 'Import failed' }, 400);
-    }
-
-    if (previousIndex) previousIndex.destroy();
-    index = nextIndex;
-
-    await persistIndex(env);
-    return jsonResponse({
-      status: 'imported',
+    const bytes = await readBytes(request, env);
+    const envelopeMetadata = parsePancakeEnvelopeMetadata(bytes);
+    const dims = envelopeMetadata?.dims || Number.parseInt(url.searchParams.get('dims') || '0', 10);
+    const config = makeCreateConfig({
       dims,
-      count: index.count,
-      memory_bytes: index.memory
+      maxElements: Number.parseInt(url.searchParams.get('maxElements') || String(DEFAULT_MAX_ELEMENTS), 10),
+      metric: envelopeMetadata?.metric || url.searchParams.get('metric') || 'cosine',
+      quantized: envelopeMetadata?.quantized ?? true,
+      M: Number.parseInt(url.searchParams.get('M') || '16', 10),
+      efConstruction: Number.parseInt(url.searchParams.get('efConstruction') || '200', 10),
+      efSearch: Number.parseInt(url.searchParams.get('efSearch') || '100', 10)
+    }, env);
+    const next = await Pancake.create(config);
+    try {
+      next.import(bytes);
+    } catch (error) {
+      next.dispose();
+      throw error;
+    }
+    if (index) index.dispose();
+    index = next;
+    indexConfig = config;
+    await persistIndex(env);
+    return jsonResponse({ ok: true, count: index.count, dims: config.dim });
+  }
+
+  if (url.pathname === '/stats' && method === 'GET') {
+    if (!await ensureIndex(env)) return jsonResponse({ error: 'Index not initialized. Call /init first.' }, 503);
+    return jsonResponse(statsBody());
+  }
+
+  if (url.pathname === '/add' && method === 'POST') {
+    if (!await ensureIndex(env)) return jsonResponse({ error: 'Index not initialized. Call /init first.' }, 503);
+    const body = await readJson(request, env);
+    const id = index.add(body.vector);
+    await persistIndex(env);
+    return jsonResponse({ ok: true, id, count: index.count });
+  }
+
+  if (url.pathname === '/add_batch' && method === 'POST') {
+    if (!await ensureIndex(env)) return jsonResponse({ error: 'Index not initialized. Call /init first.' }, 503);
+    const body = await readJson(request, env);
+    if (!Array.isArray(body.vectors)) throw new Error('add_batch requires vectors');
+    const ids = index.addBatch(body.vectors);
+    await persistIndex(env);
+    return jsonResponse({ ok: true, ids, inserted: ids.length, count: index.count });
+  }
+
+  if (url.pathname === '/delete' && method === 'POST') {
+    if (!await ensureIndex(env)) return jsonResponse({ error: 'Index not initialized. Call /init first.' }, 503);
+    const body = await readJson(request, env);
+    index.delete(body.id);
+    await persistIndex(env);
+    return jsonResponse({ ok: true, count: index.count, ghost_count: index.ghostCount });
+  }
+
+  if (url.pathname === '/compact' && method === 'POST') {
+    if (!await ensureIndex(env)) return jsonResponse({ error: 'Index not initialized. Call /init first.' }, 503);
+    index.compact();
+    await persistIndex(env);
+    return jsonResponse({ ok: true, count: index.count, ghost_count: index.ghostCount });
+  }
+
+  if ((url.pathname === '/search' || url.pathname === '/search_debug') && method === 'POST') {
+    if (!await ensureIndex(env)) return jsonResponse({ error: 'Index not initialized. Call /init first.' }, 503);
+    const body = await readJson(request, env);
+    const k = Math.min(Number.parseInt(body.k ?? '10', 10), MAX_RESULTS);
+    applyEf(index, body.ef);
+    const start = performance.now();
+    const neighbors = body.allowedIds
+      ? index.searchFiltered(body.query, k, new Set(body.allowedIds))
+      : index.search(body.query, k);
+    return jsonResponse({
+      ok: true,
+      neighbors,
+      results: neighbors,
+      search_ms: performance.now() - start,
+      count: index.count
     });
   }
 
+  if (url.pathname === '/export' && method === 'GET') {
+    if (!await ensureIndex(env)) return jsonResponse({ error: 'Index not initialized. Call /init first.' }, 503);
+    if (index.ghostCount > 0) index.compact();
+    return binaryResponse(index.export());
+  }
+
   return jsonResponse({
-    name: 'Pancake Search API',
-    version: '1.0.0',
-    endpoints: {
-      'GET  /health':       'Health check and stats',
-      'GET  /readiness':    'Authenticated readiness check and snapshot visibility',
-      'POST /reset_cache':  'Dispose in-memory index so next query restores from snapshot',
-      'GET  /export':       'Export index as binary blob',
-      'POST /init':         '{ dims, maxElements, M?, efConstruction?, efSearch?, vectors? }',
-      'POST /import':       'Binary body from /export — ?dims=<n> required',
-      'POST /add':          '{ vector: float[] }',
-      'POST /search':       '{ query: float[], k?, ef? }'
+    ok: true,
+    routes: {
+      'GET /health': 'Public health check',
+      'GET /readiness': 'Authenticated snapshot/readiness check',
+      'GET /stats': 'Index stats',
+      'POST /init': '{ dims, maxElements, M?, efConstruction?, efSearch?, vectors? }',
+      'POST /search': '{ query: float[], k?, ef?, allowedIds? }',
+      'POST /add': '{ vector: float[] }',
+      'POST /add_batch': '{ vectors: float[][] }',
+      'POST /delete': '{ id: number }',
+      'POST /compact': 'Compact deleted entries',
+      'GET /export': 'Export Pancake snapshot',
+      'POST /import': 'Import Pancake snapshot',
+      'POST /reset_cache': 'Drop warm in-memory index'
     }
   });
 }
@@ -1063,10 +526,10 @@ async function handleRequest(request, env, ctx) {
 export default {
   async fetch(request, env, ctx) {
     try {
-      return await handleRequest(request, env, ctx);
+      return withCors(await handleRequest(request, env, ctx), env);
     } catch (error) {
-      logWorkerError('Unhandled error', error);
-      return jsonResponse({ error: 'Internal server error' }, 500);
+      const message = error && error.message ? error.message : String(error);
+      return withCors(jsonResponse({ error: message }, 400), env);
     }
   }
 };

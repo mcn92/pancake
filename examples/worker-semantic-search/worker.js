@@ -1,6 +1,4 @@
-import loadEngine from '../../dist/engine.js';
-import wasmModule from '../../dist/engine.wasm';
-import createPancakeApi from '../../pancake-core.js';
+import Pancake from '../../pancake.workerd.mjs';
 import { DEMO_DIM, embedText } from './embedder.mjs';
 
 const INDEX_KEY = 'docs-index.bin';
@@ -9,19 +7,6 @@ const MANIFEST_KEY = 'docs-manifest.json';
 const MAX_RESULTS = 8;
 const DEFAULT_MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 const DEFAULT_MAX_JSON_BYTES = 256 * 1024;
-const Pancake = createPancakeApi(() =>
-  loadEngine({
-    instantiateWasm(imports, successCallback) {
-      WebAssembly.instantiate(wasmModule, imports)
-        .then((instance) => successCallback(instance))
-        .catch((err) => {
-          throw err;
-        });
-      return {};
-    }
-  })
-);
-
 let index = null;
 let manifest = null;
 let corpus = [];
