@@ -4,7 +4,7 @@ Plot Pareto-frontier (QPS-recall) curves and interpolated equal-recall curves
 from a pareto_frontier.js run.
 
 Usage:
-  python3 benchmarks/plot_pareto.py benchmark_results/pareto_<ts>.csv
+  python3 benchmarks/plot_pareto.py benchmark_results/pareto_<ts>.csv [title]
 
 Expects, alongside the raw sweep CSV, the sibling files written by the harness:
   pareto_<ts>_frontier.csv      (label, ef_search, recall, qps)
@@ -32,6 +32,7 @@ if len(sys.argv) < 2:
     sys.exit(1)
 
 raw_path = sys.argv[1]
+plot_title = sys.argv[2] if len(sys.argv) > 2 else None
 base = raw_path[:-4] if raw_path.endswith('.csv') else raw_path
 frontier_path = base + '_frontier.csv'
 equalrecall_path = base + '_equalrecall.csv'
@@ -93,8 +94,10 @@ def plot_dtype_panel(ax, dtype_value, title):
 plot_dtype_panel(ax1, 'i8', 'Pareto frontier: int8')
 plot_dtype_panel(ax2, 'f32', 'Pareto frontier: fp32')
 ax1.set_ylabel('QPS (single-thread)', fontsize=12)
+if plot_title:
+    fig.suptitle(plot_title, fontsize=14, fontweight='semibold', y=0.995)
 
-fig.tight_layout()
+fig.tight_layout(rect=(0, 0, 1, 0.94) if plot_title else None)
 out_path = base + '.png'
 fig.savefig(out_path, dpi=150, bbox_inches='tight')
 print(f"Saved: {out_path}")

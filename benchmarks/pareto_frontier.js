@@ -478,6 +478,18 @@ function logSystemInfo(info) {
   log('System: ' + info.platform + '/' + info.arch + ', Node ' + info.node);
   log('CPU: ' + info.cpu + ' (' + info.logicalCpus + ' logical), RAM ' + formatMB(info.totalMemoryBytes));
 }
+function compactCountLabel(n) {
+  if (n >= 1_000_000 && n % 1_000_000 === 0) return (n / 1_000_000) + 'M';
+  if (n >= 1_000 && n % 1_000 === 0) return (n / 1_000) + 'k';
+  return n.toLocaleString();
+}
+function plotTitle({ train, test, dim }) {
+  const dataset = DATASET.toUpperCase() + '-' + dim + 'D-' + METRIC.toUpperCase() + ' ' + compactCountLabel(train.length);
+  const params = 'k=' + K + ', M=' + M + ', ef_construction=' + EF_CONSTRUCTION
+    + ', ef_search=' + EF_SEARCH_VALUES[0] + '-' + EF_SEARCH_VALUES[EF_SEARCH_VALUES.length - 1]
+    + ', queries=' + test.length.toLocaleString();
+  return dataset + ' | ' + params;
+}
 
 // =====================================================================
 // Per-library build + query adapters.
@@ -859,14 +871,14 @@ function printFrontierTables(allResults, analysis) {
   }
 }
 
-function writePlot() {
+function writePlot(title) {
   if (!WRITE_PLOT) {
     log('  plot:           skipped (--no-plot)');
     return false;
   }
 
   const script = path.join(__dirname, 'plot_pareto.py');
-  const result = spawnSync('python3', [script, CSV_PATH], { encoding: 'utf8' });
+  const result = spawnSync('python3', [script, CSV_PATH, title], { encoding: 'utf8' });
   if (result.stdout) {
     for (const line of result.stdout.trim().split(/\r?\n/).filter(Boolean)) log(`  plot:           ${line}`);
   }
@@ -996,7 +1008,7 @@ async function main() {
   writeRawCsv(allResults, CSV_PATH);
   writeFrontierCsv(analysis.frontiers, FRONTIER_CSV);
   writeEqualRecallCsv(analysis.equalRecall, analysis.sweepableLabels, EQRECALL_CSV);
-  const plotWritten = writePlot();
+  const plotWritten = writePlot(plotTitle({ train, test, dim }));
 
   printFrontierTables(allResults, analysis);
 
