@@ -150,9 +150,12 @@ const restored = await Pancake.loadSnapshotFile('index.pnck', {
 
 If `ghostCount > 0`, `export()` throws. Call `compact()` first to produce a clean snapshot.
 `import()` also requires the target index config to match the export's `dim`, `metric`, and `quantized` mode.
-Envelope/config validation failures reject the snapshot before mutating the destination index, but backend-level import failures may still leave the destination unusable. If recovery matters, export a backup first.
+`import()` is atomic: the engine deserializes into a fresh internal index and only swaps it in on success, so a failed import — whether it's envelope validation or a backend-level rejection — leaves the destination index and its ID mappings unchanged.
 
-`compact()` is a stop-the-world rebuild of the surviving graph. Its cost scales
+`compact()` is a stop-the-world maintenance pass over the surviving graph:
+live vectors are remapped down in place, their edges are rewritten to the new
+IDs, and nodes left isolated by the deletions are reconnected — survivors are
+not re-inserted from scratch. Its cost scales
 with the number of live vectors that remain after deletions, not just the
 number of ghosts removed, so treat it as maintenance work rather than something
 to run in a latency-sensitive path. On the current DBpedia 50K int8 benchmark
@@ -180,6 +183,12 @@ deployment state alongside the packaged snapshot.
 | `M` | number | `16` | HNSW connectivity |
 | `efConstruction` | number | `50` | Build-time beam width |
 | `efSearch` | number | `100` | Query-time beam width |
+
+`maxElements` pre-allocates graph structure eagerly: the default `100000`
+costs about `25 MB` of index memory (and roughly `75 MB` of WASM heap at
+384D) before the first vector is added. In memory-constrained runtimes
+(Workers, browser tabs), size it to your expected corpus —
+`fromVectors()` does this automatically by defaulting it to `rows.length`.
 
 ### `await Pancake.fromVectors(rows, opts)`
 
@@ -209,6 +218,21 @@ Returns:
 | `export()` | `Uint8Array` | Serialize index state. Requires `ghostCount === 0`; call `compact()` first after deletions. |
 | `import(data)` | -- | Restore a previous export |
 | `dispose()` | -- | Free WASM buffers |
+
+### Distance values
+
+`search()` and `searchFiltered()` report a `distance` per hit:
+
+- `metric: 'l2'` — Euclidean distance (the square root is applied; this is
+  not squared L2).
+- `metric: 'cosine'` — cosine distance, `1 - cosine_similarity`, ranging
+  over `[0, 2]`: `0` is identical direction, `1` is orthogonal, `2` is
+  opposite. Vectors are normalized internally at insert and query time, so
+  inputs do not need to be pre-normalized.
+
+These semantics are part of the API contract and stable across snapshot
+envelope versions. (On the int8 backend, quantization adds small error to
+stored-side values, as described under Quantization.)
 
 ### Node-only file helpers
 
@@ -501,7 +525,7 @@ For the Worker reference deployment, run:
 node test/test_worker_features.js
 ```
 
-Current core suite status on this tree: **781 passed, 0 failed**.
+Current core suite status on this tree: **1010 passed, 0 failed**.
 
 ## Building from source
 
@@ -531,7 +555,8 @@ The script auto-detects whether the current Node runtime still needs
 - **Quantization is a real trade.** On the current 1536D DBpedia benchmark, the int8 path uses about `3.5x` less memory than float32 and gives up roughly 1-2 points of recall ceiling (`96.7%` vs `98.8%` in the 50K sweep at `efSearch=100`). Use float32 when you need the higher ceiling.
 - **Deterministic means per target/build.** Given the same inputs, the same build target will produce stable graph structure and query results, but bitwise-identical distances are not guaranteed across WASM SIMD, scalar WASM, AVX2, and SSE2 backends because their reduction orders differ. Treat tiny cross-backend floating-point deltas as expected, not as correctness bugs.
 - **One WASM instance can hold at most 64 live indexes.** The handle table in the shipped WASM engine is fixed at `MAX_HANDLES = 64`. If you need more concurrent indexes than that, dispose unused ones or spin up another module instance.
-- **Compaction is rebuild-based.** Deletes are soft deletes. Compaction rewrites the graph rather than patching edges in place. That keeps behavior predictable and avoids relying on background maintenance threads.
+- **Compaction is a stop-the-world maintenance pass.** Deletes are soft deletes. `compact()` remaps surviving vectors and their edges in place and reconnects nodes left isolated by deletions, rather than re-inserting survivors or relying on background maintenance threads.
+- **`export()` retains a WASM-side buffer.** The engine keeps the most recent snapshot copy inside WASM memory until the next `export()` on the same index or `dispose()`. Budget for that when exporting large indexes in memory-constrained runtimes.
 - **Index instances are not a shared-memory concurrency primitive.** Treat a Pancake index like ordinary mutable in-process state: safe within one JavaScript thread/event loop, but not something to share concurrently across Node worker threads or isolates without your own coordination.
 - **Workers are best used as snapshot-serving search frontends.** In a Cloudflare Worker, in-memory state is a warm cache, not durable authority. Persist snapshots explicitly and treat isolate reuse as opportunistic.
 - **Inputs are validated, not coerced.** Vectors and queries accept a `Float32Array` or a plain numeric array, but plain-array elements must be actual numbers — a non-numeric element (string, boolean, nested array, `null`) is rejected with an error rather than silently coerced (e.g. an empty CSV field becoming `0`). Non-finite values (`NaN`/`Infinity`) and dimension mismatches are likewise rejected at the boundary.

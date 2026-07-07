@@ -11,6 +11,7 @@
 
 const Pancake = require('./pancake.js');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const goldenSnapshots = require('./test/fixtures/golden_snapshots.js');
@@ -143,6 +144,19 @@ function wrapV2Envelope(rawBytes, dim, quantized, metric = 1) {
     view.setUint32(12, metric, true);
     view.setUint32(16, quantized ? 1 : 0, true);
     result.set(rawBytes, 20);
+    return result;
+}
+
+function wrapV1Envelope(rawBytes, dim, quantized, metric = 1) {
+    const result = new Uint8Array(24 + rawBytes.length);
+    const view = new DataView(result.buffer);
+    view.setUint32(0, 0x504E434B, true);
+    view.setUint32(4, 1, true);
+    view.setUint32(8, dim, true);
+    view.setUint32(12, dim, true); // compressed === dim: plain (non-DCT/PCA) v1 envelope
+    view.setUint32(16, metric, true);
+    view.setUint32(20, quantized ? 1 : 0, true);
+    result.set(rawBytes, 24);
     return result;
 }
 
@@ -1894,10 +1908,12 @@ async function testGoldenSnapshotCompatibility() {
         const exportedV3 = decodeBase64Bytes(scenario.base64);
         const raw = extractRawEngineBytes(exportedV3);
         const exportedV2 = wrapV2Envelope(raw, 4, scenario.quantized, 1);
+        const exportedV1 = wrapV1Envelope(raw, 4, scenario.quantized, 1);
 
         for (const variant of [
             { label: 'v3', bytes: exportedV3 },
             { label: 'v2', bytes: exportedV2 },
+            { label: 'v1', bytes: exportedV1 },
             { label: 'raw', bytes: raw },
         ]) {
             const idx = await Pancake.create({
@@ -2235,6 +2251,264 @@ async function testSearchAndSerializationDeterminismOracle() {
     }
 }
 
+async function testCompactReconnectsIsolatedSurvivors() {
+    section('Compact reconnects isolated survivors');
+
+    const makeRng = (seed) => {
+        let state = seed >>> 0;
+        return () => {
+            state = (state * 1664525 + 1013904223) >>> 0;
+            return state / 0x100000000;
+        };
+    };
+
+    const runCase = async (quantized) => {
+        const rand = makeRng(30);
+        const config = {
+            dim: 4,
+            metric: 'l2',
+            maxElements: 90,
+            M: 4,
+            efConstruction: 64,
+            efSearch: 200,
+            quantized,
+        };
+
+        const idx = await Pancake.create(config);
+        const vecs = [];
+        const ids = [];
+        for (let i = 0; i < 80; i++) {
+            const vec = new Float32Array([
+                rand() * 10,
+                rand() * 10,
+                rand() * 10,
+                rand() * 10,
+            ]);
+            vecs.push(vec);
+            ids.push(idx.add(vec));
+        }
+
+        const deleted = new Set();
+        for (let i = 0; i < 80; i++) {
+            if (rand() < 0.65) deleted.add(i);
+        }
+
+        const survivors = [];
+        for (let i = 0; i < 80; i++) {
+            if (!deleted.has(i)) survivors.push(i);
+        }
+
+        for (const i of survivors) {
+            const before = idx.search(vecs[i], 1);
+            assert(before.length > 0 && before[0].id === ids[i], `${quantized ? 'quantized' : 'float'}: survivor ${i} finds itself before delete`);
+        }
+
+        for (const i of deleted) idx.delete(ids[i]);
+
+        for (const i of survivors) {
+            const preCompact = idx.search(vecs[i], 1);
+            assert(preCompact.length > 0 && preCompact[0].id === ids[i], `${quantized ? 'quantized' : 'float'}: survivor ${i} finds itself before compact`);
+        }
+
+        idx.compact();
+
+        for (const i of survivors) {
+            const postCompact = idx.search(vecs[i], 1);
+            assert(
+                postCompact.length > 0 && postCompact[0].id === ids[i],
+                `${quantized ? 'quantized' : 'float'}: survivor ${i} still finds itself after compact`
+            );
+        }
+
+        idx.dispose();
+    };
+
+    await runCase(false);
+    await runCase(true);
+}
+
+async function testConvenienceLoaders() {
+    section('Convenience loaders');
+
+    {
+        const rows = [
+            unitVec(4, 0),
+            unitVec(4, 1),
+            unitVec(4, 2),
+        ];
+        const { index, ids, idMap } = await Pancake.fromVectors(rows, {
+            metric: 'cosine',
+            quantized: false,
+        });
+        assert(ids.length === 3, 'fromVectors() returns one Pancake ID per raw vector');
+        assert(index.dim === 4, 'fromVectors() infers dim from raw vectors');
+        assert(index.count === 3, 'fromVectors() populates the index from raw vectors');
+        assert(idMap.size === 0, 'fromVectors() leaves idMap empty for raw vectors');
+        const results = index.search(unitVec(4, 0), 1);
+        assert(results.length === 1 && results[0].id === ids[0], 'fromVectors() search works for raw vectors');
+        index.dispose();
+    }
+
+    {
+        const rows = [
+            { id: 'doc-a', vector: unitVec(4, 0) },
+            { id: 'doc-b', vector: unitVec(4, 1) },
+        ];
+        const { index, ids, idMap } = await Pancake.fromVectors(rows, {
+            metric: 'cosine',
+            quantized: false,
+        });
+        assert(ids.length === 2, 'fromVectors() accepts { id, vector } records');
+        assert(idMap.get(ids[0]) === 'doc-a', 'fromVectors() maps first record back to caller ID');
+        assert(idMap.get(ids[1]) === 'doc-b', 'fromVectors() maps second record back to caller ID');
+        index.dispose();
+    }
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pancake-loaders-'));
+    try {
+        {
+            const jsonPath = path.join(tmpDir, 'vectors.json');
+            fs.writeFileSync(jsonPath, JSON.stringify([
+                { docId: 'alpha', embedding: Array.from(unitVec(4, 0)) },
+                { docId: 'beta', embedding: Array.from(unitVec(4, 1)) },
+            ]));
+
+            const { index, ids, idMap } = await Pancake.loadJsonFile(jsonPath, {
+                metric: 'cosine',
+                quantized: false,
+                vectorKey: 'embedding',
+                idKey: 'docId',
+            });
+            assert(index.count === 2, 'loadJsonFile() loads JSON arrays into an index');
+            assert(idMap.get(ids[0]) === 'alpha', 'loadJsonFile() preserves custom ID field for first row');
+            assert(idMap.get(ids[1]) === 'beta', 'loadJsonFile() preserves custom ID field for second row');
+            index.dispose();
+        }
+
+        {
+            const jsonlPath = path.join(tmpDir, 'vectors.jsonl');
+            fs.writeFileSync(jsonlPath, [
+                JSON.stringify({ id: 'gamma', vector: Array.from(unitVec(4, 2)) }),
+                JSON.stringify({ id: 'delta', vector: Array.from(unitVec(4, 3)) }),
+            ].join('\n'));
+
+            const { index, ids, idMap } = await Pancake.loadJsonFile(jsonlPath, {
+                metric: 'cosine',
+                quantized: false,
+            });
+            assert(index.count === 2, 'loadJsonFile() loads JSONL into an index');
+            assert(idMap.get(ids[0]) === 'gamma', 'loadJsonFile() preserves JSONL ID for first row');
+            assert(idMap.get(ids[1]) === 'delta', 'loadJsonFile() preserves JSONL ID for second row');
+            index.dispose();
+        }
+
+        {
+            const txtPath = path.join(tmpDir, 'vectors.txt');
+            fs.writeFileSync(txtPath, JSON.stringify([
+                { id: 'epsilon', vector: Array.from(unitVec(4, 0)) },
+            ]));
+
+            await assertThrowsAsync(
+                () => Pancake.loadJsonFile(txtPath, {
+                    metric: 'cosine',
+                    quantized: false,
+                }),
+                'loadJsonFile() rejects unsupported file extensions unless format is explicit'
+            );
+        }
+
+        {
+            const jsonPath = path.join(tmpDir, 'oversized.json');
+            fs.writeFileSync(jsonPath, JSON.stringify([
+                { id: 'zeta', vector: Array.from(unitVec(4, 0)) },
+            ]));
+
+            await assertThrowsAsync(
+                () => Pancake.loadJsonFile(jsonPath, {
+                    metric: 'cosine',
+                    quantized: false,
+                    maxFileBytes: 8,
+                }),
+                'loadJsonFile() rejects files that exceed maxFileBytes'
+            );
+        }
+
+        {
+            const src = await Pancake.create({
+                dim: 4,
+                metric: 'cosine',
+                quantized: false,
+                maxElements: 8,
+            });
+            const vec = unitVec(4, 0);
+            const id = src.add(vec);
+            const snapshotPath = path.join(tmpDir, 'index.pnck');
+            fs.writeFileSync(snapshotPath, src.export());
+            src.dispose();
+
+            const restored = await Pancake.loadSnapshotFile(snapshotPath, {
+                dim: 4,
+                metric: 'cosine',
+                quantized: false,
+                maxElements: 8,
+            });
+            const results = restored.search(vec, 1);
+            assert(restored.count === 1, 'loadSnapshotFile() restores snapshot count from disk');
+            assert(results.length === 1 && results[0].id === id, 'loadSnapshotFile() restores searchable IDs');
+            restored.dispose();
+        }
+
+        {
+            const badSnapshotPath = path.join(tmpDir, 'bad.pnck');
+            fs.writeFileSync(badSnapshotPath, Buffer.from('not-a-pancake-snapshot'));
+
+            await assertThrowsAsync(
+                () => Pancake.loadSnapshotFile(badSnapshotPath, {
+                    dim: 4,
+                    metric: 'cosine',
+                    quantized: false,
+                    maxElements: 8,
+                }),
+                'loadSnapshotFile() rejects unsupported snapshot magic before import'
+            );
+        }
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+}
+
+async function testSearchFilteredInputContract() {
+    section('Filtered search input contract');
+
+    const idx = await Pancake.create(DEFAULT_CONFIG);
+    idx.addBatch([
+        normalizedVec(DIM),
+        normalizedVec(DIM),
+        normalizedVec(DIM),
+    ]);
+
+    const query = normalizedVec(DIM);
+    const ok = idx.searchFiltered(query, 2, new Set([0, 1]));
+    assert(Array.isArray(ok), 'searchFiltered() accepts Set<number>');
+
+    assertThrows(
+        () => idx.searchFiltered(query, 2, [0, 1]),
+        'searchFiltered() rejects array allowedIds'
+    );
+
+    assertThrows(
+        () => idx.searchFiltered(query, 2, '01'),
+        'searchFiltered() rejects string allowedIds'
+    );
+
+    assertThrows(
+        () => idx.searchFiltered(query, 2, { size: 2, values: () => [0, 1][Symbol.iterator]() }),
+        'searchFiltered() rejects non-Set set-like objects'
+    );
+
+    idx.dispose();
+}
+
 // ─── Runner ───────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -2251,12 +2525,14 @@ async function main() {
         testDelete,
         testGhostRatio,
         testCompact,
+        testCompactReconnectsIsolatedSurvivors,
         testMemory,
         testDispose,
         testDeterminism,
         testSearchDuringMutation,
         testRuntimeEntryPoints,
         testExportImport,
+        testConvenienceLoaders,
         testLargeIndex,
         testQuantized,
         testErrorPaths,
@@ -2276,6 +2552,7 @@ async function main() {
         testCosineNormOverflowRegression,
         testCompactEntryPointRecovery,
         testSearchFiltered,
+        testSearchFilteredInputContract,
         testHeldOutRecallOracle,
         testHeldOutRecallAfterCompact,
         testFilteredHeldOutRecallOracle,

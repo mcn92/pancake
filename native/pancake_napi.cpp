@@ -33,6 +33,7 @@
 #include <vector>
 #include <memory>
 #include <cstring>
+#include <string>
 #include <algorithm>
 
 using namespace pancake::wasm;
@@ -51,6 +52,28 @@ size_t serialized_index_count_hint(const uint8_t* data, size_t size, uint32_t ve
     uint32_t count = 0;
     std::memcpy(&count, data + count_offset, sizeof(count));
     return static_cast<size_t>(count);
+}
+
+// The count field in a snapshot header is untrusted, and the wrappers below
+// size max_elements (and thus the rebuilt index's allocations) from it. A
+// snapshot actually holding `count` vectors must contain at least the raw
+// vector payload (count * bytes_per_vector), so reject counts the buffer
+// cannot possibly hold before they drive an allocation. This is a
+// conservative pre-check only — deserialize() remains the authoritative
+// validator (magic, dims, levels, edge bounds, ...).
+bool snapshot_count_plausible(const uint8_t* data, size_t size, uint32_t versioned_magic, size_t bytes_per_vector) {
+    if (!data || size < 12) return true;  // header unreadable; deserialize() rejects it cheaply
+
+    uint32_t magic = 0;
+    std::memcpy(&magic, data, sizeof(magic));
+
+    size_t count_offset = (magic == versioned_magic) ? 12 : 8;
+    if (size < count_offset + 4) return true;
+
+    uint32_t count = 0;
+    std::memcpy(&count, data + count_offset, sizeof(count));
+    if (count == 0 || bytes_per_vector == 0) return true;
+    return static_cast<size_t>(count) <= size / bytes_per_vector;
 }
 
 } // namespace
@@ -74,6 +97,7 @@ public:
     virtual float ghost_ratio() const = 0;
     virtual size_t memory_bytes() const = 0;
     virtual std::vector<uint8_t> serialize() const = 0;
+    virtual bool snapshot_plausible(const uint8_t* data, size_t size) const = 0;
     virtual bool deserialize(const uint8_t* data, size_t size) = 0;
     virtual void set_ef_search(size_t ef) = 0;
     virtual size_t dimension() const = 0;
@@ -105,12 +129,23 @@ public:
     float ghost_ratio() const override { return impl_->ghost_ratio(); }
     size_t memory_bytes() const override { return impl_->memory_bytes(); }
     std::vector<uint8_t> serialize() const override { return impl_->serialize(); }
+    bool snapshot_plausible(const uint8_t* data, size_t size) const override {
+        return snapshot_count_plausible(data, size, 0x464C4831, dims_ * sizeof(float));
+    }
     bool deserialize(const uint8_t* data, size_t size) override {
+        // The header count is untrusted and sizes max_elements below; a
+        // crafted count would otherwise drive a multi-GB allocation here.
+        if (!snapshot_plausible(data, size)) return false;
         size_t cnt = serialized_index_count_hint(data, size, 0x464C4831);
         FloatHNSWConfig cfg = cfg_;
         cfg.max_elements = std::max(static_cast<size_t>(cnt * 1.2), static_cast<size_t>(100000));
-        impl_ = std::make_unique<FloatHNSW>(dims_, cfg);
-        return impl_->deserialize(data, size);
+        // Deserialize into a fresh index and swap only on success so a failed
+        // import leaves the live index unchanged (same contract as the WASM
+        // engine wrappers).
+        auto next = std::make_unique<FloatHNSW>(dims_, cfg);
+        if (!next->deserialize(data, size)) return false;
+        impl_ = std::move(next);
+        return true;
     }
     void set_ef_search(size_t ef) override { impl_->set_ef(ef); }
     size_t dimension() const override { return dims_; }
@@ -135,12 +170,23 @@ public:
     float ghost_ratio() const override { return impl_->ghost_ratio(); }
     size_t memory_bytes() const override { return impl_->memory_bytes(); }
     std::vector<uint8_t> serialize() const override { return impl_->serialize(); }
+    bool snapshot_plausible(const uint8_t* data, size_t size) const override {
+        return snapshot_count_plausible(data, size, 0x49384831, dims_ * sizeof(int8_t));
+    }
     bool deserialize(const uint8_t* data, size_t size) override {
+        // The header count is untrusted and sizes max_elements below; a
+        // crafted count would otherwise drive a multi-GB allocation here.
+        if (!snapshot_plausible(data, size)) return false;
         size_t cnt = serialized_index_count_hint(data, size, 0x49384831);
         Int8FloatHNSWConfig cfg = cfg_;
         cfg.max_elements = std::max(static_cast<size_t>(cnt * 1.2), static_cast<size_t>(100000));
-        impl_ = std::make_unique<Int8FloatHNSW>(dims_, cfg);
-        return impl_->deserialize(data, size);
+        // Deserialize into a fresh index and swap only on success so a failed
+        // import leaves the live index unchanged (same contract as the WASM
+        // engine wrappers).
+        auto next = std::make_unique<Int8FloatHNSW>(dims_, cfg);
+        if (!next->deserialize(data, size)) return false;
+        impl_ = std::move(next);
+        return true;
     }
     void set_ef_search(size_t ef) override { impl_->set_ef_search(ef); }
     size_t dimension() const override { return dims_; }
@@ -334,7 +380,29 @@ Napi::Value Import(const Napi::CallbackInfo& info) {
     Napi::Buffer<uint8_t> buf = info[1].As<Napi::Buffer<uint8_t>>();
     if (h >= MAX_HANDLES || !g_handles[h])
         return Napi::Number::New(env, -1);
-    bool ok = g_handles[h]->deserialize(buf.Data(), buf.Length());
+    // The snapshot header's count field is untrusted and sizes the rebuilt
+    // index; reject counts the buffer cannot possibly hold before allocating.
+    if (!g_handles[h]->snapshot_plausible(buf.Data(), buf.Length())) {
+        Napi::TypeError::New(env, "pancake_import: snapshot count field exceeds buffer capacity")
+            .ThrowAsJavaScriptException();
+        return Napi::Number::New(env, -1);
+    }
+    // deserialize() parses an untrusted buffer. Bounds and level caps make a
+    // hostile snapshot fail closed, but a remaining oversized resize() could
+    // still throw; convert any C++ exception into a JS error here instead of
+    // letting it escape the N-API boundary and abort the process.
+    bool ok = false;
+    try {
+        ok = g_handles[h]->deserialize(buf.Data(), buf.Length());
+    } catch (const std::exception& e) {
+        Napi::Error::New(env, std::string("pancake_import: ") + e.what())
+            .ThrowAsJavaScriptException();
+        return Napi::Number::New(env, -1);
+    } catch (...) {
+        Napi::Error::New(env, "pancake_import: snapshot rejected (C++ exception)")
+            .ThrowAsJavaScriptException();
+        return Napi::Number::New(env, -1);
+    }
     return Napi::Number::New(env, ok ? 0 : -1);
 }
 

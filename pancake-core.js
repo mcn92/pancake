@@ -3,6 +3,7 @@
 // Envelope header for validated export/import
 const PANCAKE_MAGIC = 0x504E434B; // "PNCK"
 const ENVELOPE_VERSION = 3;
+const V1_ENVELOPE_HEADER_SIZE = 24; // magic(4) + version(4) + dim(4) + compressed(4) + metric(4) + quantized(4)
 const V2_ENVELOPE_HEADER_SIZE = 20; // magic(4) + version(4) + dim(4) + metric(4) + quantized(4)
 const V3_ENVELOPE_HEADER_SIZE = 32; // v2 + nextExtId(4) + mappingCount(4) + wasmSize(4)
 const MAPPING_ENTRY_SIZE = 8; // intId(4) + extId(4)
@@ -210,23 +211,48 @@ class PancakeIndex {
     compact() {
         this._checkDisposed();
 
-        const survivors = [];
-        for (const [extId, intId] of this._extToInt) {
-            if (!this._deletedExt.has(extId)) {
-                survivors.push({ extId, intId });
-            }
+        // Use the engine's own old->new remap rather than re-deriving it in
+        // JS: how compaction assigns new IDs is the engine's contract, and
+        // re-implementing it here would silently corrupt the external-ID
+        // translation if the engine's assignment order ever changed.
+        const countBefore = this._e._pancake_count(this._handle);
+        if (countBefore === 0) {
+            this._e._pancake_compact(this._handle);
+            return;
         }
-        survivors.sort((a, b) => a.intId - b.intId);
 
-        this._e._pancake_compact(this._handle);
+        const mapPtr = this._e._emsc_malloc(countBefore * 4);
+        if (!mapPtr) throw new Error('WASM malloc failed for compact remap');
 
-        this._intToExt.clear();
-        this._extToInt.clear();
-        this._deletedExt.clear();
-        for (let newInt = 0; newInt < survivors.length; newInt++) {
-            const extId = survivors[newInt].extId;
-            this._intToExt.set(newInt, extId);
-            this._extToInt.set(extId, newInt);
+        try {
+            const written = this._e._pancake_compact_remap(this._handle, mapPtr, countBefore);
+            const base = mapPtr >> 2;
+            const remapped = [];
+            for (let oldInt = 0; oldInt < written; oldInt++) {
+                const newInt = this._e.HEAPU32[base + oldInt];
+                if (newInt === 0xFFFFFFFF) continue; // deleted by compaction
+                const extId = this._intToExt.get(oldInt);
+                if (extId === undefined) continue;
+                remapped.push([newInt, extId]);
+            }
+
+            this._intToExt.clear();
+            this._extToInt.clear();
+            this._deletedExt.clear();
+            for (const [newInt, extId] of remapped) {
+                this._intToExt.set(newInt, extId);
+                this._extToInt.set(extId, newInt);
+            }
+
+            const liveCount = this._e._pancake_count(this._handle);
+            if (this._intToExt.size !== liveCount) {
+                this._clearMappings();
+                throw new Error(
+                    `compact() remap mismatch: engine reports ${liveCount} live vectors, remap yielded ${this._intToExt.size}`
+                );
+            }
+        } finally {
+            this._e._emsc_free(mapPtr);
         }
     }
 
@@ -296,8 +322,7 @@ class PancakeIndex {
                 let wasmSize = null;
 
                 if (version === 1) {
-                    const V1_HEADER_SIZE = 24;
-                    if (bytes.length < V1_HEADER_SIZE) {
+                    if (bytes.length < V1_ENVELOPE_HEADER_SIZE) {
                         throw new Error('Import failed: truncated v1 envelope');
                     }
 
@@ -368,7 +393,11 @@ class PancakeIndex {
                     this._validateV3Mappings(pendingMappings, nextExtId, metadata.count);
                     pendingNextExtId = nextExtId;
                 } else {
-                    wasmBytes = bytes.subarray(V2_ENVELOPE_HEADER_SIZE);
+                    // The v1 header carries an extra `compressed` field, so its
+                    // payload starts 4 bytes later than v2's.
+                    wasmBytes = bytes.subarray(
+                        version === 1 ? V1_ENVELOPE_HEADER_SIZE : V2_ENVELOPE_HEADER_SIZE
+                    );
                 }
             }
         }
@@ -388,8 +417,6 @@ class PancakeIndex {
         try {
             this._e.HEAPU8.set(wasmBytes, dataPtr);
             status = this._e._pancake_import(this._handle, dataPtr, wasmBytes.length);
-        } catch (err) {
-            throw err;
         } finally {
             this._e._emsc_free(dataPtr);
         }

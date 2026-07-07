@@ -34,7 +34,9 @@ export interface FromVectorsResult<Id = unknown> {
   idMap: Map<number, Id>;
 }
 
-export interface JsonFileOptions extends CreateOptions {
+export interface JsonFileOptions extends Omit<CreateOptions, 'dim'> {
+  /** Input vector dimension. Default: inferred from the first vector in the file. */
+  dim?: number;
   /** Force JSON or JSONL parsing. Default: inferred from file extension. */
   format?: 'json' | 'jsonl';
   /** Record field holding the vector. Default: 'vector'. */
