@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  # Browser binaries are only needed by test:browser, which has its own job.
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+jobs:
+  test-committed-artifacts:
+    name: Tests vs committed WASM (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - run: npm ci
+      - run: node run_tests.js
+      - run: npm run test:fuzz
+      - run: npm run test:simd
+
+  build-from-source:
+    # Rebuilds both engine variants from src/ with the pinned Emscripten
+    # toolchain and runs the suite against the fresh artifacts. This is the
+    # drift check: it fails loudly if the committed dist/ no longer matches
+    # what src/ produces, or if an emsdk change breaks patch_engine.py's
+    # exact-match patch of the minified glue.
+    name: Rebuild WASM from source (drift check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          # Keep in sync with the version used for the committed dist/
+          # artifacts (~/emsdk on the release machine).
+          version: 5.0.0
+          actions-cache-folder: emsdk-cache
+      - run: npm ci
+      - name: Rebuild both engine variants from src/
+        run: npm run build:all
+        env:
+          EMCC: emcc
+      - run: node run_tests.js
+      - run: npm run test:simd
+
+  test-browser-entry:
+    name: Bundled browser consumer (Vite + Chromium)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '0'
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser

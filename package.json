@@ -86,8 +86,9 @@
     "test:browser": "node test/browser_smoke.js",
     "test:worker-web": "node test/test_worker_web_entry.js",
     "test:simd": "node test/simd_parity.js",
+    "test:fuzz": "node test/fuzz_import.js",
     "pack:dry-run": "node scripts/pack-dry-run.mjs",
-    "prepublishOnly": "npm run build:all && npm test && npm run test:browser && npm run test:worker-web && npm run pack:dry-run"
+    "prepublishOnly": "npm run build:all && npm test && npm run test:fuzz && npm run test:simd && npm run test:browser && npm run test:worker-web && npm run pack:dry-run"
   },
   "keywords": [
     "vector-search",
