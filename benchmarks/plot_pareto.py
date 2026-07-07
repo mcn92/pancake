@@ -90,8 +90,8 @@ def plot_dtype_panel(ax, dtype_value, title):
     ax.legend(loc='lower left', framealpha=0.9, fontsize=8)
     ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
 
-plot_dtype_panel(ax1, 'i8', 'Pareto frontier: int8 / i8')
-plot_dtype_panel(ax2, 'f32', 'Pareto frontier: f32')
+plot_dtype_panel(ax1, 'i8', 'Pareto frontier: int8')
+plot_dtype_panel(ax2, 'f32', 'Pareto frontier: fp32')
 ax1.set_ylabel('QPS (single-thread)', fontsize=12)
 
 fig.tight_layout()

@@ -389,6 +389,8 @@ function queryUsearch(built, test, groundTruth, efSearch, dim) {
 async function buildPancake({ train, dim, dtype }) {
   const quantized = dtype === 'i8';
   log(`  [pancake-${dtype}] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
+  // create() defaults to cosine, which matches these angular datasets; no
+  // explicit metric needed.
   const index = await Pancake.create({
     dim,
     maxElements: train.length,
@@ -410,7 +412,7 @@ async function buildPancake({ train, dim, dtype }) {
   }
   const buildMs = performance.now() - t0;
   const memMB = index.memory / 1024 / 1024;
-  log(`  [pancake-${dtype}] build: ${(buildMs / 1000).toFixed(1)}s, memory: ${memMB.toFixed(0)} MB`);
+  log(`  [pancake-${tag}] build: ${(buildMs / 1000).toFixed(1)}s, memory: ${memMB.toFixed(0)} MB`);
   return { index, buildMs, memoryMB: memMB };
 }
 
@@ -733,7 +735,7 @@ async function main() {
     benchmark: `${DATASET}-angular-sweep`,
     timestamp: new Date().toISOString(),
     dataset: dataset.info,
-    params: { K, M, EF_CONSTRUCTION, EF_SEARCH_VALUES, REPETITIONS, WARMUP_QUERIES, PANCAKE_BATCH_SIZE },
+    params: { K, M, EF_CONSTRUCTION, EF_SEARCH_VALUES, REPETITIONS, WARMUP_QUERIES, PANCAKE_BATCH_SIZE, ROTATION },
     results: allResults,
   }, null, 2) + '\n');
   writeCsv(allResults, CSV_PATH);

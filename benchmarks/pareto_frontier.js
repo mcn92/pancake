@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * Pareto-Frontier Benchmark Harness (QPS-Recall) — DBpedia-50k, L2, 1536D
+ * Pareto-Frontier Benchmark Harness (QPS-Recall)
  *
  * Produces, for a fixed graph (M=16, ef_construction=50):
  *   1. A QPS-recall sweep for every library that exposes a query-time knob
@@ -19,19 +19,24 @@
  *   hnswlib        f32           (HierarchicalNSW.setEf per ef)
  *
  * All libraries use the same M and ef_construction, and every config is swept
- * across the ef_search range below (which includes ef_search=100).
+ * across the configured ef_search range.
  *
  * Usage:
- *   node benchmarks/pareto_frontier.js
+ *   node benchmarks/pareto_frontier.js --dataset dbpedia
+ *   node benchmarks/pareto_frontier.js --dataset sift
+ *   node benchmarks/pareto_frontier.js --dataset nytimes
+ *   node benchmarks/pareto_frontier.js --dataset glove
+ *   node benchmarks/pareto_frontier.js --dataset custom --base-file base.fvecs --query-file query.fvecs --metric l2
+ *   node benchmarks/pareto_frontier.js --dataset custom --hdf5-file glove-100-angular.hdf5 --metric cosine
+ *   node benchmarks/pareto_frontier.js --dataset dbpedia --data-dir ./dbpedia
  *   node benchmarks/pareto_frontier.js --count 50000
  *   node benchmarks/pareto_frontier.js --ef-search-values 10,50,100,200
  *   node benchmarks/pareto_frontier.js --regenerate-gt
- *
- * Plot with:
- *   python3 benchmarks/plot_pareto.py benchmark_results/pareto_<ts>.csv
  */
 
+const { spawnSync } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const Pancake = require('../pancake.js');
 const { parseBenchmarkArgs, resolveSingleValue, resolveSweepValues } = require('./bench_args');
@@ -60,19 +65,26 @@ function getStrArg(name, defaultVal) {
   const idx = rawArgs.indexOf('--' + name);
   return idx >= 0 && idx + 1 < rawArgs.length ? rawArgs[idx + 1] : defaultVal;
 }
+function getBoolArg(name) {
+  return rawArgs.includes('--' + name);
+}
+function hasArg(name) {
+  return rawArgs.includes('--' + name);
+}
 const REGENERATE_GT = rawArgs.includes('--regenerate-gt');
 
 // --- Dataset selection ---------------------------------------------------
-// --dataset dbpedia (default) or sift. SIFT ships a precomputed .ivecs ground
-// truth (per-query, order-aligned), so it is read from disk rather than
-// brute-forced; dbpedia has no shipped GT, so it is computed and cached.
+// Built-in datasets use fvecs/ivecs files checked into the expected local
+// folders. Custom mode accepts explicit fvecs paths and optionally an ivecs
+// ground-truth file; without a GT file the harness computes and caches brute
+// force ground truth for the selected metric.
 const DATASET = getStrArg('dataset', 'dbpedia').toLowerCase();
 const DATASETS = {
   dbpedia: {
     dir: path.join(__dirname, '..', 'dbpedia'),
     baseFile: (n) => (n <= 5000 ? 'dbpedia_base_5k.fvecs' : 'dbpedia_base_100k.fvecs'),
     queryFile: 'dbpedia_query.fvecs',
-    gtFile: null,                 // computed
+    gtFile: null,
     defaultCount: 50_000,
     metric: 'l2',
   },
@@ -84,19 +96,55 @@ const DATASETS = {
     defaultCount: 1_000_000,
     metric: 'l2',
   },
+  nytimes: {
+    dir: path.join(__dirname, '..', 'nytimes'),
+    baseFile: () => 'nytimes_base.fvecs',
+    queryFile: 'nytimes_query.fvecs',
+    gtFile: 'nytimes_groundtruth.ivecs',
+    defaultCount: 290_000,
+    metric: 'cosine',
+  },
+  glove: {
+    dir: path.join(__dirname, '..', 'glove'),
+    hdf5File: 'glove-100-angular.hdf5',
+    defaultCount: null,
+    metric: 'cosine',
+  },
 };
-if (!DATASETS[DATASET]) {
-  console.error(`Unknown --dataset ${DATASET}. Use 'dbpedia' or 'sift'.`);
+if (!DATASETS[DATASET] && DATASET !== 'custom') {
+  console.error(`Unknown --dataset ${DATASET}. Use ${Object.keys(DATASETS).join(', ')} or custom.`);
   process.exit(1);
 }
-const DS = DATASETS[DATASET];
-// Optional positional override for the dataset directory.
-const DATA_DIR =
-  parsedArgs.args.find((a, i, arr) => a && !a.startsWith('-') && !(i > 0 && arr[i - 1] === '--count'))
-  || DS.dir;
+const CUSTOM_BASE_FILE = getStrArg('base-file', null);
+const CUSTOM_QUERY_FILE = getStrArg('query-file', null);
+const CUSTOM_GT_FILE = getStrArg('gt-file', null);
+const CUSTOM_HDF5_FILE = getStrArg('hdf5-file', null);
+const CUSTOM_METRIC = getStrArg('metric', null);
+const DS = DATASET === 'custom'
+  ? {
+      dir: process.cwd(),
+      baseFile: () => CUSTOM_BASE_FILE,
+      queryFile: CUSTOM_QUERY_FILE,
+      gtFile: CUSTOM_GT_FILE,
+      hdf5File: CUSTOM_HDF5_FILE,
+      defaultCount: null,
+      metric: CUSTOM_METRIC || 'l2',
+    }
+  : DATASETS[DATASET];
+if (DATASET === 'custom' && !CUSTOM_HDF5_FILE && (!CUSTOM_BASE_FILE || !CUSTOM_QUERY_FILE)) {
+  console.error('custom dataset requires either --hdf5-file or both --base-file and --query-file');
+  process.exit(1);
+}
+if (!['l2', 'cosine'].includes(DS.metric)) {
+  console.error(`Unsupported metric '${DS.metric}'. Use l2 or cosine.`);
+  process.exit(1);
+}
+const DATA_DIR = path.resolve(getStrArg('data-dir', DS.dir));
 
-const N_BASE = getIntArg('count', DS.defaultCount);
-const N_QUERIES = 1_000;
+const COUNT_LIMIT = hasArg('count') ? getIntArg('count', null) : DS.defaultCount;
+const N_BASE = COUNT_LIMIT || Number.MAX_SAFE_INTEGER;
+const READ_LIMIT = COUNT_LIMIT || undefined;
+const N_QUERIES = getIntArg('queries', 1_000);
 const K = 10;
 const METRIC = DS.metric;
 
@@ -109,34 +157,41 @@ const EF_SEARCH_VALUES = resolveSweepValues(parsedArgs, [10, 20, 40, 60, 80, 100
 
 const REPETITIONS = 3;
 const WARMUP_QUERIES = 200;
+const WRITE_PLOT = !getBoolArg('no-plot');
 
 // --- Config table. Every config is ef-swept (no single-point libraries). ---
 const CONFIGS = [];
 CONFIGS.push({ label: 'pancake-wasm-int8',   library: 'pancake', runtime: 'wasm',   dtype: 'i8',  sweep: true });
-CONFIGS.push({ label: 'pancake-wasm-f32',    library: 'pancake', runtime: 'wasm',   dtype: 'f32', sweep: true });
+CONFIGS.push({ label: 'pancake-wasm-fp32',   library: 'pancake', runtime: 'wasm',   dtype: 'f32', sweep: true });
 if (native) {
   CONFIGS.push({ label: 'pancake-native-int8', library: 'pancake', runtime: 'native', dtype: 'i8',  sweep: true });
-  CONFIGS.push({ label: 'pancake-native-f32',  library: 'pancake', runtime: 'native', dtype: 'f32', sweep: true });
+  CONFIGS.push({ label: 'pancake-native-fp32', library: 'pancake', runtime: 'native', dtype: 'f32', sweep: true });
 }
 if (usearch) {
-  CONFIGS.push({ label: 'usearch-i8',  library: 'usearch', dtype: 'i8',  sweep: true });
-  CONFIGS.push({ label: 'usearch-f32', library: 'usearch', dtype: 'f32', sweep: true });
+  CONFIGS.push({ label: 'usearch-int8', library: 'usearch', dtype: 'i8',  sweep: true });
+  CONFIGS.push({ label: 'usearch-fp32', library: 'usearch', dtype: 'f32', sweep: true });
 }
 if (HierarchicalNSW) {
-  CONFIGS.push({ label: 'hnswlib-f32', library: 'hnswlib', dtype: 'f32', sweep: true });
+  CONFIGS.push({ label: 'hnswlib-fp32', library: 'hnswlib', dtype: 'f32', sweep: true });
 }
 
 // --- Output paths ---
-const RESULTS_DIR = path.join(__dirname, '..', 'benchmark_results');
-if (!fs.existsSync(RESULTS_DIR)) fs.mkdirSync(RESULTS_DIR);
+const RESULTS_DIR = path.resolve(getStrArg('output-dir', path.join(__dirname, '..', 'benchmark_results')));
+if (!fs.existsSync(RESULTS_DIR)) fs.mkdirSync(RESULTS_DIR, { recursive: true });
 const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-const LOG_PATH      = path.join(RESULTS_DIR, `pareto_${timestamp}.log`);
-const JSON_PATH     = path.join(RESULTS_DIR, `pareto_${timestamp}.json`);
-const CSV_PATH      = path.join(RESULTS_DIR, `pareto_${timestamp}.csv`);
-const FRONTIER_CSV  = path.join(RESULTS_DIR, `pareto_${timestamp}_frontier.csv`);
-const EQRECALL_CSV  = path.join(RESULTS_DIR, `pareto_${timestamp}_equalrecall.csv`);
+const outputStem = `pareto_${DATASET}_${timestamp}`;
+const LOG_PATH      = path.join(RESULTS_DIR, `${outputStem}.log`);
+const JSON_PATH     = path.join(RESULTS_DIR, `${outputStem}.json`);
+const CSV_PATH      = path.join(RESULTS_DIR, `${outputStem}.csv`);
+const FRONTIER_CSV  = path.join(RESULTS_DIR, `${outputStem}_frontier.csv`);
+const EQRECALL_CSV  = path.join(RESULTS_DIR, `${outputStem}_equalrecall.csv`);
+const PNG_PATH      = path.join(RESULTS_DIR, `${outputStem}.png`);
 const logStream = fs.createWriteStream(LOG_PATH);
 function log(msg = '') { console.log(msg); logStream.write(msg + '\n'); }
+function resolveDatasetPath(filePath) {
+  if (!filePath) return null;
+  return path.isAbsolute(filePath) ? filePath : path.join(DATA_DIR, filePath);
+}
 
 // --- .fvecs reader ---
 function readFvecs(filePath, maxVectors) {
@@ -174,10 +229,124 @@ function readIvecs(filePath, maxRows) {
   return rows;
 }
 
-// --- Ground truth (brute-force L2, cached) ---
+function readFloatMatrix(buf, offset, rows, dim) {
+  const vectors = new Array(rows);
+  for (let i = 0; i < rows; i++) {
+    const vec = new Float32Array(dim);
+    for (let d = 0; d < dim; d++) {
+      vec[d] = buf.readFloatLE(offset);
+      offset += 4;
+    }
+    vectors[i] = vec;
+  }
+  return { vectors, offset };
+}
+
+function readNeighborMatrix(buf, offset, rows) {
+  const neighbors = new Array(rows);
+  for (let i = 0; i < rows; i++) {
+    const row = new Array(K);
+    for (let j = 0; j < K; j++) {
+      row[j] = buf.readInt32LE(offset);
+      offset += 4;
+    }
+    neighbors[i] = row;
+  }
+  return neighbors;
+}
+
+function loadHdf5Dataset(filePath, maxTrain, maxQueries) {
+  log(`  Loading ${filePath} (HDF5)...`);
+  const tmpPy = path.join(os.tmpdir(), `pareto_hdf5_${process.pid}_${Date.now()}.py`);
+  const tmpBin = path.join(os.tmpdir(), `pareto_hdf5_${process.pid}_${Date.now()}.bin`);
+  const script = `
+import h5py, json, struct, sys
+src, dst = sys.argv[1], sys.argv[2]
+max_train, max_queries, k = int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
+with h5py.File(src, "r") as f:
+    train_total = int(f["train"].shape[0])
+    query_total = int(f["test"].shape[0])
+    train_count = train_total if max_train <= 0 else min(max_train, train_total)
+    query_count = query_total if max_queries <= 0 else min(max_queries, query_total)
+    train = f["train"][:train_count].astype("float32")
+    test = f["test"][:query_count].astype("float32")
+    has_neighbors = "neighbors" in f and train_count == train_total
+    neighbors = f["neighbors"][:query_count, :k].astype("int32") if has_neighbors else None
+    info = {
+        "n_train": int(train.shape[0]),
+        "n_test": int(test.shape[0]),
+        "dim": int(train.shape[1]),
+        "train_total": train_total,
+        "has_neighbors": bool(has_neighbors),
+    }
+with open(dst, "wb") as out:
+    info_bytes = json.dumps(info).encode()
+    out.write(struct.pack("<I", len(info_bytes)))
+    out.write(info_bytes)
+    out.write(train.tobytes())
+    out.write(test.tobytes())
+    if neighbors is not None:
+        out.write(neighbors.tobytes())
+print(json.dumps(info))
+`;
+
+  try {
+    fs.writeFileSync(tmpPy, script);
+    const result = spawnSync('python3', [tmpPy, filePath, tmpBin, String(maxTrain || 0), String(maxQueries || 0), String(K)], {
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024,
+    });
+    if (result.status !== 0) {
+      const detail = (result.stderr || result.error || '').toString().trim();
+      throw new Error(`Failed to load HDF5 dataset${detail ? `: ${detail}` : ''}`);
+    }
+
+    const info = JSON.parse(result.stdout.trim().split(/\r?\n/).filter(Boolean).pop());
+    const buf = fs.readFileSync(tmpBin);
+    let offset = 0;
+    const infoLen = buf.readUInt32LE(offset); offset += 4;
+    offset += infoLen;
+
+    const trainData = readFloatMatrix(buf, offset, info.n_train, info.dim);
+    offset = trainData.offset;
+    const testData = readFloatMatrix(buf, offset, info.n_test, info.dim);
+    offset = testData.offset;
+    const groundTruth = info.has_neighbors ? readNeighborMatrix(buf, offset, info.n_test) : null;
+
+    log(`  HDF5 train: ${info.n_train.toLocaleString()} vectors, ${info.dim}D`);
+    log(`  HDF5 test:  ${info.n_test.toLocaleString()} queries`);
+    if (groundTruth) log(`  HDF5 ground truth: ${groundTruth.length.toLocaleString()} rows, first ${K} neighbors each`);
+    else log('  HDF5 ground truth: not used; computing for selected subset');
+
+    return { train: trainData.vectors, test: testData.vectors, groundTruth, dim: info.dim };
+  } finally {
+    for (const tmp of [tmpPy, tmpBin]) {
+      try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (_) {}
+    }
+  }
+}
+
+// --- Ground truth (metric-aware brute force, cached) ---
 const CACHE_DIR = path.join(RESULTS_DIR, 'cache');
-if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR);
-const GT_CACHE_PATH = path.join(CACHE_DIR, `gt_${DATASET}_l2_n${N_BASE}_q${N_QUERIES}_k${K}.bin`);
+if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
+const GT_COUNT_LABEL = COUNT_LIMIT ? String(COUNT_LIMIT) : 'all';
+// Built-in datasets have a fixed source, so their name identifies the data.
+// A custom dataset does not: two different --base-file/--hdf5-file sources
+// with the same shape would share one cache entry and silently corrupt
+// recall numbers, so fingerprint the source files into the cache key.
+function customGtSourceFingerprint() {
+  const crypto = require('crypto');
+  const hash = crypto.createHash('sha256');
+  for (const file of [CUSTOM_HDF5_FILE, CUSTOM_BASE_FILE, CUSTOM_QUERY_FILE]) {
+    if (!file) continue;
+    const resolved = path.resolve(file);
+    const stat = fs.statSync(resolved);
+    hash.update(`${resolved}\0${stat.size}\0${stat.mtimeMs}\0`);
+  }
+  return hash.digest('hex').slice(0, 12);
+}
+const GT_DATASET_LABEL = DATASET === 'custom' ? `custom_${customGtSourceFingerprint()}` : DATASET;
+const GT_CACHE_PATH = path.join(CACHE_DIR, `gt_${GT_DATASET_LABEL}_${METRIC}_n${GT_COUNT_LABEL}_q${N_QUERIES}_k${K}.bin`);
 
 function saveGroundTruth(gt) {
   const buf = Buffer.alloc(8 + gt.length * K * 4);
@@ -202,19 +371,31 @@ function loadGroundTruth() {
   }
   return gt;
 }
+function distanceForMetric(a, b, dim) {
+  if (METRIC === 'l2') {
+    let sum = 0;
+    for (let d = 0; d < dim; d++) { const diff = a[d] - b[d]; sum += diff * diff; }
+    return sum;
+  }
+
+  let dot = 0, an = 0, bn = 0;
+  for (let d = 0; d < dim; d++) {
+    dot += a[d] * b[d];
+    an += a[d] * a[d];
+    bn += b[d] * b[d];
+  }
+  return 1 - dot / ((Math.sqrt(an) || 1) * (Math.sqrt(bn) || 1));
+}
+
 function computeGroundTruth(train, queries, dim) {
   const nq = queries.length;
-  log(`Computing brute-force L2 ground truth (${nq} x ${train.length} x ${dim}D)... this can take minutes.`);
+  log(`Computing brute-force ${METRIC} ground truth (${nq} x ${train.length} x ${dim}D)... this can take minutes.`);
   const t0 = performance.now();
   const gt = new Array(nq);
   for (let q = 0; q < nq; q++) {
     const query = queries[q];
     const dists = new Float32Array(train.length);
-    for (let i = 0; i < train.length; i++) {
-      let sum = 0;
-      for (let d = 0; d < dim; d++) { const diff = query[d] - train[i][d]; sum += diff * diff; }
-      dists[i] = sum;
-    }
+    for (let i = 0; i < train.length; i++) dists[i] = distanceForMetric(query, train[i], dim);
     const indices = new Array(train.length);
     for (let i = 0; i < train.length; i++) indices[i] = i;
     indices.sort((a, b) => dists[a] - dists[b]);
@@ -239,6 +420,9 @@ function recall(predicted, truth) {
 function percentile(sorted, p) { return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))]; }
 function mean(arr) { return arr.reduce((a, b) => a + b, 0) / arr.length; }
 function stddev(arr) { const m = mean(arr); return Math.sqrt(arr.reduce((a, b) => a + (b - m) ** 2, 0) / arr.length); }
+function nativeMetricValue() { return METRIC === 'l2' ? 0 : 1; }
+function usearchMetricValue() { return METRIC === 'l2' ? 'l2sq' : 'cos'; }
+function hnswlibMetricValue() { return METRIC === 'l2' ? 'l2' : 'cosine'; }
 
 // =====================================================================
 // Per-library build + query adapters.
@@ -280,7 +464,7 @@ function queryPancakeWasm(built, test, gt, ef) {
 function buildPancakeNative({ train, dim, dtype }) {
   const quantized = dtype === 'i8' ? 1 : 0;
   log(`  [${dtype} native] build (M=${M}, ef_c=${EF_CONSTRUCTION}, metric=${METRIC})...`);
-  const h = native.pancake_init(dim, train.length, quantized, 0 /* 0=L2, 1=cosine */, M, EF_CONSTRUCTION, EF_SEARCH_VALUES[0]);
+  const h = native.pancake_init(dim, train.length, quantized, nativeMetricValue(), M, EF_CONSTRUCTION, EF_SEARCH_VALUES[0]);
   if (h === 0xFFFFFFFF) throw new Error('Failed to init native index');
   const t0 = performance.now();
   const flat = new Float32Array(train.length * dim);
@@ -314,9 +498,10 @@ function queryPancakeNative(built, test, gt, ef) {
 // save to disk, then view() with a fresh index per ef_search value.
 function buildUsearch({ train, dim, dtype }) {
   const quantization = dtype === 'i8' ? 'i8' : 'f32';
-  log(`  [usearch-${dtype}] build (connectivity=${M}, expansion_add=${EF_CONSTRUCTION}, metric=l2sq, quantization=${quantization})...`);
+  const metric = usearchMetricValue();
+  log(`  [usearch-${dtype}] build (connectivity=${M}, expansion_add=${EF_CONSTRUCTION}, metric=${metric}, quantization=${quantization})...`);
   const index = new usearch.Index({
-    metric: 'l2sq', connectivity: M, dimensions: dim,
+    metric, connectivity: M, dimensions: dim,
     quantization, expansion_add: EF_CONSTRUCTION, expansion_search: EF_SEARCH_VALUES[0],
   });
   const t0 = performance.now();
@@ -325,11 +510,11 @@ function buildUsearch({ train, dim, dtype }) {
   const savePath = path.join(RESULTS_DIR, `_usearch_${dtype}_${timestamp}.bin`);
   index.save(savePath);
   log(`  [usearch-${dtype}] build: ${(buildMs / 1000).toFixed(1)}s (saved to ${savePath})`);
-  return { buildMs, memBytes: null, savePath, quantization, dim };
+  return { buildMs, memBytes: null, savePath, quantization, dim, metric };
 }
 function queryUsearch(built, test, gt, ef) {
   const view = new usearch.Index({
-    metric: 'l2sq', connectivity: M, dimensions: built.dim,
+    metric: built.metric, connectivity: M, dimensions: built.dim,
     quantization: built.quantization, expansion_search: ef,
   });
   view.view(built.savePath);
@@ -347,8 +532,9 @@ function queryUsearch(built, test, gt, ef) {
 
 // --- hnswlib-node ---
 function buildHnswlib({ train, dim }) {
-  log(`  [hnswlib-f32] build (M=${M}, ef_c=${EF_CONSTRUCTION}, metric=l2)...`);
-  const index = new HierarchicalNSW('l2', dim);
+  const metric = hnswlibMetricValue();
+  log(`  [hnswlib-f32] build (M=${M}, ef_c=${EF_CONSTRUCTION}, metric=${metric})...`);
+  const index = new HierarchicalNSW(metric, dim);
   index.initIndex(train.length, M, EF_CONSTRUCTION, 100);
   const t0 = performance.now();
   for (let i = 0; i < train.length; i++) index.addPoint(Array.from(train[i]), i);
@@ -483,21 +669,64 @@ function qpsAtRecall(frontier, targetRecall) {
   return frontier[frontier.length - 1].qps;
 }
 
+function recallSpan(frontier) {
+  if (!frontier || frontier.length === 0) return null;
+  return { lo: frontier[0].recall, hi: frontier[frontier.length - 1].recall };
+}
+
+function evenlySpacedTargets(lo, hi, count = 9) {
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [];
+  if (hi < lo) return [];
+  if (Math.abs(hi - lo) < 1e-9) return [hi];
+
+  const targets = [];
+  for (let i = 0; i < count; i++) targets.push(lo + ((hi - lo) * i) / (count - 1));
+  return targets;
+}
+
+function uniqueSortedTargets(targets) {
+  const sorted = targets
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  const unique = [];
+  for (const target of sorted) {
+    if (unique.length === 0 || Math.abs(unique[unique.length - 1] - target) > 1e-9) {
+      unique.push(target);
+    }
+  }
+  return unique;
+}
+
+function buildRecallTargets(frontiers, labels) {
+  const spans = labels.map(label => recallSpan(frontiers[label])).filter(Boolean);
+  if (spans.length === 0) return [];
+
+  const overlapLo = Math.max(...spans.map(s => s.lo));
+  const overlapHi = Math.min(...spans.map(s => s.hi));
+  if (overlapLo <= overlapHi + 1e-9) return evenlySpacedTargets(overlapLo, overlapHi);
+
+  return uniqueSortedTargets(labels.flatMap(label =>
+    (frontiers[label] || []).map(point => point.recall)
+  ));
+}
+
 function buildAnalysis(allResults) {
   const sweepable = allResults.filter(r => r.tunable && r.points.length >= 2);
   const frontiers = {};
   for (const r of allResults) frontiers[r.label] = paretoFrontier(r.points);
 
-  // Common recall grid for equal-recall curves: span the overlap of all
-  // sweepable frontiers, sampled at a fixed set of targets.
-  const candidateTargets = [0.80, 0.85, 0.90, 0.925, 0.95, 0.965, 0.98, 0.99, 0.995];
+  // Common recall grid for equal-recall curves. Prefer the shared overlap
+  // across frontiers; if there is no overlap, sample the observed range so the
+  // table still shows where each library has comparable points.
+  const sweepableLabels = sweepable.map(r => r.label);
+  const candidateTargets = buildRecallTargets(frontiers, sweepableLabels);
   const equalRecall = candidateTargets.map(target => {
     const row = { recall: target };
     for (const r of sweepable) row[r.label] = qpsAtRecall(frontiers[r.label], target);
     return row;
   });
 
-  return { frontiers, equalRecall, sweepableLabels: sweepable.map(r => r.label) };
+  return { frontiers, equalRecall, sweepableLabels };
 }
 
 // =====================================================================
@@ -557,36 +786,65 @@ function printFrontierTables(allResults, analysis) {
   }
 }
 
+function writePlot() {
+  if (!WRITE_PLOT) {
+    log('  plot:           skipped (--no-plot)');
+    return false;
+  }
+
+  const script = path.join(__dirname, 'plot_pareto.py');
+  const result = spawnSync('python3', [script, CSV_PATH], { encoding: 'utf8' });
+  if (result.stdout) {
+    for (const line of result.stdout.trim().split(/\r?\n/).filter(Boolean)) log(`  plot:           ${line}`);
+  }
+  if (result.status !== 0) {
+    const detail = (result.stderr || result.error || '').toString().trim();
+    log(`  plot:           failed${detail ? `: ${detail}` : ''}`);
+    return false;
+  }
+  return fs.existsSync(PNG_PATH);
+}
+
 // =====================================================================
 // Main
 // =====================================================================
 async function main() {
-  const basePath = path.join(DATA_DIR, DS.baseFile(N_BASE));
-  const queryPath = path.join(DATA_DIR, DS.queryFile);
-  const gtPath = DS.gtFile ? path.join(DATA_DIR, DS.gtFile) : null;
-  for (const f of [basePath, queryPath, ...(gtPath ? [gtPath] : [])]) {
+  const hdf5Path = resolveDatasetPath(DS.hdf5File);
+  const basePath = hdf5Path ? null : resolveDatasetPath(DS.baseFile(N_BASE));
+  const queryPath = hdf5Path ? null : resolveDatasetPath(DS.queryFile);
+  const gtPath = hdf5Path ? null : resolveDatasetPath(DS.gtFile);
+  for (const f of [hdf5Path || basePath, ...(queryPath ? [queryPath] : []), ...(gtPath ? [gtPath] : [])]) {
     if (!fs.existsSync(f)) { log(`Missing file: ${f}`); process.exit(1); }
   }
 
   log('='.repeat(70));
-  log(`Pareto-Frontier Benchmark (${DATASET.toUpperCase()}, L2)`);
+  log(`Pareto-Frontier Benchmark (${DATASET.toUpperCase()}, ${METRIC})`);
   log('='.repeat(70));
   log(`Configs: ${CONFIGS.map(c => c.label).join(', ')}`);
   log('\nLoading dataset...');
-  const { vectors: train, dim } = readFvecs(basePath, N_BASE);
-  const { vectors: test } = readFvecs(queryPath, N_QUERIES);
+  const loaded = hdf5Path
+    ? loadHdf5Dataset(hdf5Path, READ_LIMIT, N_QUERIES)
+    : (() => {
+        const { vectors: train, dim } = readFvecs(basePath, READ_LIMIT);
+        const { vectors: test } = readFvecs(queryPath, N_QUERIES);
+        return { train, test, dim, groundTruth: null };
+      })();
+  const { train, test, dim } = loaded;
   log(`  Base:    ${train.length.toLocaleString()} vectors, ${dim}D`);
   log(`  Queries: ${test.length.toLocaleString()}`);
-  log(`  Metric:  L2`);
+  log(`  Metric:  ${METRIC}`);
   log(`  k=${K}, M=${M}, ef_construction=${EF_CONSTRUCTION}`);
-  log(`  ef_search sweep: [${EF_SEARCH_VALUES.join(', ')}]  (includes 100)`);
+  log(`  ef_search sweep: [${EF_SEARCH_VALUES.join(', ')}]`);
   log(`  Repetitions: ${REPETITIONS}, Warmup: ${WARMUP_QUERIES}`);
 
-  // Ground truth: SIFT ships a precomputed .ivecs aligned to the full base set,
-  // so it is valid only when the whole base is used. dbpedia computes + caches.
+  // Precomputed .ivecs files are usually aligned to the full base set. For
+  // built-ins, reject subset runs against a full-dataset GT. Custom datasets
+  // may provide subset-aligned GT explicitly.
   let groundTruth;
-  if (gtPath) {
-    if (N_BASE < DS.defaultCount) {
+  if (loaded.groundTruth && !REGENERATE_GT) {
+    groundTruth = loaded.groundTruth;
+  } else if (gtPath) {
+    if (DS.defaultCount && train.length < DS.defaultCount) {
       log(`\nERROR: ${DATASET} ships a precomputed ground truth for the full`);
       log(`  ${DS.defaultCount.toLocaleString()}-vector base. Running a --count subset would`);
       log(`  invalidate it (neighbors would point outside the subset). Re-run with the`);
@@ -610,17 +868,37 @@ async function main() {
 
   // Outputs
   fs.writeFileSync(JSON_PATH, JSON.stringify({
-    benchmark: `pancake-pareto-frontier-${DATASET}-l2`,
+    benchmark: `pancake-pareto-frontier-${DATASET}-${METRIC}`,
     timestamp: new Date().toISOString(),
-    dataset: { name: DATASET, vectors: train.length, queries: test.length, dim, metric: 'l2', source: DATA_DIR },
+    dataset: {
+      name: DATASET,
+      vectors: train.length,
+      queries: test.length,
+      dim,
+      metric: METRIC,
+      source: hdf5Path || DATA_DIR,
+      hdf5File: hdf5Path,
+      baseFile: basePath,
+      queryFile: queryPath,
+      groundTruthFile: gtPath,
+    },
     params: { K, M, EF_CONSTRUCTION, EF_SEARCH_VALUES, REPETITIONS, WARMUP_QUERIES },
     results: allResults,
     frontiers: analysis.frontiers,
     equal_recall: analysis.equalRecall,
+    outputs: {
+      log: LOG_PATH,
+      json: JSON_PATH,
+      csv: CSV_PATH,
+      frontierCsv: FRONTIER_CSV,
+      equalRecallCsv: EQRECALL_CSV,
+      plotPng: WRITE_PLOT ? PNG_PATH : null,
+    },
   }, null, 2) + '\n');
   writeRawCsv(allResults, CSV_PATH);
   writeFrontierCsv(analysis.frontiers, FRONTIER_CSV);
   writeEqualRecallCsv(analysis.equalRecall, analysis.sweepableLabels, EQRECALL_CSV);
+  const plotWritten = writePlot();
 
   printFrontierTables(allResults, analysis);
 
@@ -631,8 +909,7 @@ async function main() {
   log(`  raw sweep csv:  ${CSV_PATH}`);
   log(`  frontier csv:   ${FRONTIER_CSV}`);
   log(`  equal-recall:   ${EQRECALL_CSV}`);
-  log('\nPlot with:');
-  log(`  python3 benchmarks/plot_pareto.py ${CSV_PATH}`);
+  log(`  plot png:       ${plotWritten ? PNG_PATH : '(not written)'}`);
   logStream.end();
 }
 
