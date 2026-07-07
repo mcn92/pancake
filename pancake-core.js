@@ -28,6 +28,20 @@ function assertNumericVector(vec, label) {
     }
 }
 
+function validateVectorValues(f32, label, validateCosineNorm) {
+    let normSq = 0;
+    for (let i = 0; i < f32.length; i++) {
+        const value = f32[i];
+        if (!Number.isFinite(value)) {
+            throw new Error(`${label} contains non-finite value (NaN or Infinity)`);
+        }
+        if (validateCosineNorm) normSq += value * value;
+    }
+    if (validateCosineNorm && (!(normSq > 0) || !Number.isFinite(normSq))) {
+        throw new Error(`${label} has invalid cosine norm`);
+    }
+}
+
 class PancakeIndex {
     constructor(engine, opts, handle, vecPtr, idPtr, distPtr, bufferCapacity) {
         this._e = engine;
@@ -57,11 +71,7 @@ class PancakeIndex {
         if (f32.length !== this._dim) {
             throw new Error(`Expected vector of length ${this._dim}, got ${f32.length}`);
         }
-        for (let i = 0; i < f32.length; i++) {
-            if (!Number.isFinite(f32[i])) {
-                throw new Error('Vector contains non-finite value (NaN or Infinity)');
-            }
-        }
+        validateVectorValues(f32, 'Vector', !this._isL2);
         this._e.HEAPF32.set(f32, this._vecPtr >> 2);
         const intId = this._e._pancake_add(this._handle, this._vecPtr);
         if (intId === 0xFFFFFFFF || intId < 0) {
@@ -86,6 +96,9 @@ class PancakeIndex {
 
         // Validate ALL vectors first before mutating the index, so a bad
         // input mid-batch can't leave the index in a partially-inserted state.
+        // Keep the converted Float32Arrays so the write pass below doesn't
+        // convert plain arrays a second time.
+        const converted = new Array(vectors.length);
         for (let i = 0; i < vectors.length; i++) {
             const v = vectors[i];
             const len = (v instanceof Float32Array) ? v.length : (v && v.length);
@@ -94,11 +107,8 @@ class PancakeIndex {
             }
             assertNumericVector(v, `Vector at index ${i}`);
             const f32 = v instanceof Float32Array ? v : new Float32Array(v);
-            for (let j = 0; j < f32.length; j++) {
-                if (!Number.isFinite(f32[j])) {
-                    throw new Error(`Vector at index ${i} contains non-finite value (NaN or Infinity)`);
-                }
-            }
+            validateVectorValues(f32, `Vector at index ${i}`, !this._isL2);
+            converted[i] = f32;
         }
 
         // Allocate the WASM buffer once, write directly into the heap (no
@@ -110,9 +120,7 @@ class PancakeIndex {
         try {
             const heapOffset = dataPtr >> 2;
             for (let i = 0; i < vectors.length; i++) {
-                const v = vectors[i];
-                const f32 = v instanceof Float32Array ? v : new Float32Array(v);
-                this._e.HEAPF32.set(f32, heapOffset + i * this._dim);
+                this._e.HEAPF32.set(converted[i], heapOffset + i * this._dim);
             }
             const countBefore = this.count;
             const inserted = this._e._pancake_bulk_insert(this._handle, dataPtr, vectors.length);
@@ -136,11 +144,7 @@ class PancakeIndex {
         if (f32.length !== this._dim) {
             throw new Error(`Expected query of length ${this._dim}, got ${f32.length}`);
         }
-        for (let i = 0; i < f32.length; i++) {
-            if (!Number.isFinite(f32[i])) {
-                throw new Error('Query vector contains non-finite value (NaN or Infinity)');
-            }
-        }
+        validateVectorValues(f32, 'Query vector', !this._isL2);
         if (k === 0) return [];
         this._ensureSearchCapacity(k);
         this._e.HEAPF32.set(f32, this._vecPtr >> 2);
@@ -158,11 +162,7 @@ class PancakeIndex {
         if (f32.length !== this._dim) {
             throw new Error(`Expected query of length ${this._dim}, got ${f32.length}`);
         }
-        for (let i = 0; i < f32.length; i++) {
-            if (!Number.isFinite(f32[i])) {
-                throw new Error('Query vector contains non-finite value (NaN or Infinity)');
-            }
-        }
+        validateVectorValues(f32, 'Query vector', !this._isL2);
         if (!(allowedIds instanceof Set)) {
             throw new Error('searchFiltered() requires allowedIds to be a Set<number>');
         }

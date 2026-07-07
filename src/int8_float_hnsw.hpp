@@ -191,19 +191,16 @@ public:
     uint32_t insert(const float* vec) {
         if (count_ >= max_elements_) return UINT32_MAX;
 
+        const float* src = vec;
+        if (metric_ == DistanceMetric::Cosine) {
+            if (!normalize_cosine_vector(vec, scratch_norm_.data(), dims_)) return UINT32_MAX;
+            src = scratch_norm_.data();
+        }
+
         uint32_t id = static_cast<uint32_t>(count_++);
         PROFILE_COUNT(g_build_profile.inserts++);
 
-        const float* src = vec;
         PROFILE_BLOCK(quantize_ms, {
-            if (metric_ == DistanceMetric::Cosine) {
-                float norm_sq = 0.0f;
-                for (size_t d = 0; d < dims_; d++) norm_sq += vec[d] * vec[d];
-                float inv_norm = (norm_sq > 0.0f) ? 1.0f / std::sqrt(norm_sq) : 0.0f;
-                for (size_t d = 0; d < dims_; d++) scratch_norm_[d] = vec[d] * inv_norm;
-                src = scratch_norm_.data();
-            }
-
             float vmin = src[0];
             float vmax = src[0];
             for (size_t d = 1; d < dims_; d++) {
@@ -324,10 +321,7 @@ public:
 
         if (metric_ == DistanceMetric::Cosine) {
             norm_query_.resize(dims_);
-            float norm_sq = 0.0f;
-            for (size_t d = 0; d < dims_; d++) norm_sq += query[d] * query[d];
-            float inv_norm = (norm_sq > 0.0f) ? 1.0f / std::sqrt(norm_sq) : 0.0f;
-            for (size_t d = 0; d < dims_; d++) norm_query_[d] = query[d] * inv_norm;
+            if (!normalize_cosine_vector(query, norm_query_.data(), dims_)) return {};
             cached_query_ = norm_query_.data();
         } else {
             cached_query_ = query;
@@ -370,10 +364,7 @@ public:
 
         if (metric_ == DistanceMetric::Cosine) {
             norm_query_.resize(dims_);
-            float norm_sq = 0.0f;
-            for (size_t d = 0; d < dims_; d++) norm_sq += query[d] * query[d];
-            float inv_norm = (norm_sq > 0.0f) ? 1.0f / std::sqrt(norm_sq) : 0.0f;
-            for (size_t d = 0; d < dims_; d++) norm_query_[d] = query[d] * inv_norm;
+            if (!normalize_cosine_vector(query, norm_query_.data(), dims_)) return {};
             cached_query_ = norm_query_.data();
         } else {
             cached_query_ = query;

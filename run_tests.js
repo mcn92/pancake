@@ -1983,6 +1983,33 @@ async function testNonFiniteRejection() {
     }
 }
 
+async function testCosineNormOverflowRegression() {
+    section('Cosine norm overflow regression');
+
+    const dim = 4;
+    const huge = new Float32Array(dim).fill(1e19);
+    const zero = new Float32Array(dim);
+
+    for (const quantized of [false, true]) {
+        const label = quantized ? 'int8' : 'float32';
+        const idx = await Pancake.create({ dim, maxElements: 8, metric: 'cosine', quantized });
+
+        const id = idx.add(huge);
+        assert(id === 0, `${label}: huge finite vector inserts`);
+        const self = idx.search(huge, 1);
+        assert(self.length === 1 && self[0].id === id, `${label}: huge finite vector self-search returns itself`);
+        assertNear(self[0].distance, 0, 0.01, `${label}: huge finite vector does not normalize to zero`);
+
+        assertThrows(() => idx.add(zero), `${label}: zero cosine vector is rejected`);
+        assert(idx.count === 1, `${label}: rejected zero vector does not mutate count`);
+        assertThrows(() => idx.search(zero, 1), `${label}: zero cosine query is rejected`);
+        assertThrows(() => idx.addBatch([normalizedVec(dim), zero]), `${label}: zero vector in batch is rejected`);
+        assert(idx.count === 1, `${label}: rejected zero-vector batch does not mutate count`);
+
+        idx.dispose();
+    }
+}
+
 async function testCompactEntryPointRecovery() {
     section('Compact entry point recovery (all level 0)');
 
@@ -2246,6 +2273,7 @@ async function main() {
         testDeleteChurnRegression,
         testGoldenSnapshotCompatibility,
         testNonFiniteRejection,
+        testCosineNormOverflowRegression,
         testCompactEntryPointRecovery,
         testSearchFiltered,
         testHeldOutRecallOracle,

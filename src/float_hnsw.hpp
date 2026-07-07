@@ -48,6 +48,25 @@ namespace wasm {
 
 enum class DistanceMetric : uint8_t { L2 = 0, Cosine = 1 };
 
+inline bool normalize_cosine_vector(const float* src, float* dst, size_t dims) {
+    double norm_sq = 0.0;
+    for (size_t d = 0; d < dims; d++) {
+        const double value = static_cast<double>(src[d]);
+        norm_sq += value * value;
+    }
+    if (!(norm_sq > 0.0) || !std::isfinite(norm_sq)) return false;
+
+    const double inv_norm = 1.0 / std::sqrt(norm_sq);
+    if (!(inv_norm > 0.0) || !std::isfinite(inv_norm)) return false;
+
+    for (size_t d = 0; d < dims; d++) {
+        const double normalized = static_cast<double>(src[d]) * inv_norm;
+        if (!std::isfinite(normalized)) return false;
+        dst[d] = static_cast<float>(normalized);
+    }
+    return true;
+}
+
 struct FloatHNSWConfig {
     size_t M = 16;               // Max neighbors per layer (higher = better recall, more memory)
     size_t ef_construction = 50; // Construction beam width (higher = better quality, slower build)
@@ -98,17 +117,19 @@ public:
     uint32_t insert(const float* vec) {
         if (count_ >= max_elements_) return UINT32_MAX;
 
+        const float* src = vec;
+        if (metric_ == DistanceMetric::Cosine) {
+            scratch_norm_.resize(dims_);
+            if (!normalize_cosine_vector(vec, scratch_norm_.data(), dims_)) return UINT32_MAX;
+            src = scratch_norm_.data();
+        }
+
         uint32_t id = static_cast<uint32_t>(count_++);
         if (metric_ == DistanceMetric::Cosine) {
             // Normalize before storing so distance = 1 - dot(a,b) works
-            size_t off = vectors_.size();
-            vectors_.resize(off + dims_);
-            float norm_sq = 0.0f;
-            for (size_t d = 0; d < dims_; d++) norm_sq += vec[d] * vec[d];
-            float inv_norm = (norm_sq > 0.0f) ? 1.0f / std::sqrt(norm_sq) : 0.0f;
-            for (size_t d = 0; d < dims_; d++) vectors_[off + d] = vec[d] * inv_norm;
+            vectors_.insert(vectors_.end(), src, src + dims_);
         } else {
-            vectors_.insert(vectors_.end(), vec, vec + dims_);
+            vectors_.insert(vectors_.end(), src, src + dims_);
         }
         deleted_.push_back(0);
 
@@ -167,10 +188,7 @@ public:
         if (metric_ == DistanceMetric::Cosine) {
             // Normalize query into scratch buffer
             norm_query_.resize(dims_);
-            float norm_sq = 0.0f;
-            for (size_t d = 0; d < dims_; d++) norm_sq += query[d] * query[d];
-            float inv_norm = (norm_sq > 0.0f) ? 1.0f / std::sqrt(norm_sq) : 0.0f;
-            for (size_t d = 0; d < dims_; d++) norm_query_[d] = query[d] * inv_norm;
+            if (!normalize_cosine_vector(query, norm_query_.data(), dims_)) return {};
             cached_query_ = norm_query_.data();
         } else {
             cached_query_ = query;
@@ -221,10 +239,7 @@ public:
 
         if (metric_ == DistanceMetric::Cosine) {
             norm_query_.resize(dims_);
-            float norm_sq = 0.0f;
-            for (size_t d = 0; d < dims_; d++) norm_sq += query[d] * query[d];
-            float inv_norm = (norm_sq > 0.0f) ? 1.0f / std::sqrt(norm_sq) : 0.0f;
-            for (size_t d = 0; d < dims_; d++) norm_query_[d] = query[d] * inv_norm;
+            if (!normalize_cosine_vector(query, norm_query_.data(), dims_)) return {};
             cached_query_ = norm_query_.data();
         } else {
             cached_query_ = query;
@@ -1067,6 +1082,7 @@ private:
     std::vector<float> vectors_;
     const float* cached_query_;
     std::vector<float> norm_query_;  // scratch buffer for normalized query (cosine)
+    std::vector<float> scratch_norm_; // scratch buffer for normalized insert (cosine)
     std::vector<uint32_t> base_neighbors_;
     std::vector<uint16_t> base_sizes_;
     std::vector<std::vector<std::vector<uint32_t>>> upper_;
