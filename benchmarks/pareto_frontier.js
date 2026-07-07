@@ -768,13 +768,14 @@ function buildRecallTargets(frontiers, labels) {
   const spans = labels.map(label => recallSpan(frontiers[label])).filter(Boolean);
   if (spans.length === 0) return [];
 
-  const overlapLo = Math.max(...spans.map(s => s.lo));
-  const overlapHi = Math.min(...spans.map(s => s.hi));
-  if (overlapLo <= overlapHi + 1e-9) return evenlySpacedTargets(overlapLo, overlapHi);
-
-  return uniqueSortedTargets(labels.flatMap(label =>
+  const unionLo = Math.min(...spans.map(s => s.lo));
+  const unionHi = Math.max(...spans.map(s => s.hi));
+  const grid = evenlySpacedTargets(unionLo, unionHi);
+  const observed = labels.flatMap(label =>
     (frontiers[label] || []).map(point => point.recall)
-  ));
+  );
+
+  return uniqueSortedTargets([...grid, ...observed]);
 }
 
 function buildAnalysis(allResults) {
@@ -782,9 +783,9 @@ function buildAnalysis(allResults) {
   const frontiers = {};
   for (const r of allResults) frontiers[r.label] = paretoFrontier(r.points);
 
-  // Common recall grid for equal-recall curves. Prefer the shared overlap
-  // across frontiers; if there is no overlap, sample the observed range so the
-  // table still shows where each library has comparable points.
+  // Common recall grid for equal-recall curves. Use the union of frontier
+  // ranges so low-ceiling configs do not pin the comparison table; libraries
+  // that cannot reach a target are left blank.
   const sweepableLabels = sweepable.map(r => r.label);
   const candidateTargets = buildRecallTargets(frontiers, sweepableLabels);
   const equalRecall = candidateTargets.map(target => {
