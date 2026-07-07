@@ -56,14 +56,37 @@ async function fetchRaw(path, opts = {}) {
 // ---------------------------------------------------------------------------
 
 async function testAuthNoKey(env) {
-  section('Auth — no API_KEY configured (open access)');
+  section('Auth — no API_KEY configured (admin routes fail closed)');
 
   const r = await fetchJSON('/health');
   assert(r.status === 200, '/health returns 200 without auth');
 
   const r2 = await fetchJSON('/stats');
-  // 503 because no index, but NOT 401
-  assert(r2.status !== 401, '/stats does not return 401 when no API_KEY set');
+  // 503 because no index, but neither 401 nor 403 — read routes stay open
+  assert(r2.status !== 401 && r2.status !== 403, '/stats stays open when no API_KEY set');
+
+  const r3 = await fetchJSON('/init', {
+    method: 'POST',
+    body: { dims: 4, maxElements: 10, vectors: [[0, 0, 0, 1]] }
+  });
+  assert(r3.status === 403, '/init fails closed without API_KEY');
+  assert(r3.json?.error?.includes('ALLOW_INSECURE_ADMIN'), '403 explains the ALLOW_INSECURE_ADMIN opt-in');
+
+  const r4 = await fetchJSON('/reset_cache', { method: 'POST' });
+  assert(r4.status === 403, '/reset_cache fails closed without API_KEY');
+}
+
+async function testInsecureAdminOptIn(env) {
+  section('Auth — ALLOW_INSECURE_ADMIN=1 (explicit opt-in)');
+
+  const r = await fetchJSON('/init', {
+    method: 'POST',
+    body: { dims: 4, maxElements: 10, vectors: [[0, 0, 0, 1]] }
+  });
+  assert(r.status === 200, '/init succeeds with ALLOW_INSECURE_ADMIN=1 and no API_KEY');
+
+  const r2 = await fetchJSON('/reset_cache', { method: 'POST' });
+  assert(r2.status === 200, '/reset_cache succeeds with ALLOW_INSECURE_ADMIN=1 and no API_KEY');
 }
 
 async function testAuthWithKey(env) {
@@ -107,12 +130,13 @@ async function testRateLimiting(env) {
   assert(hitLimit, `rate limit was enforced after ${limit} requests`);
 }
 
-async function testCorsWildcard() {
-  section('CORS — wildcard (default)');
+async function testCorsDefaultOmitted() {
+  section('CORS — no ALLOWED_ORIGIN (header omitted)');
 
   const r = await fetchRaw('/health', { method: 'OPTIONS' });
   assert(r.status === 204, 'OPTIONS returns 204');
-  assert(r.headers.get('Access-Control-Allow-Origin') === '*', 'CORS origin is * by default');
+  assert(r.headers.get('Access-Control-Allow-Origin') === null,
+    'Access-Control-Allow-Origin is omitted when ALLOWED_ORIGIN is unset');
   assert(r.headers.get('Access-Control-Allow-Headers')?.includes('Authorization'),
     'CORS allows Authorization header');
 }
@@ -435,10 +459,10 @@ async function main() {
   const TEST_KEY = 'test-secret-key-12345';
   const TEST_ORIGIN = 'https://example.com';
 
-  // Suite 1: No auth, no rate limit, wildcard CORS
-  await runSuite('Open access (defaults)', {}, [
+  // Suite 1: No auth configured — admin routes fail closed, CORS header omitted
+  await runSuite('Fail-closed defaults', {}, [
     testAuthNoKey,
-    testCorsWildcard,
+    testCorsDefaultOmitted,
   ]);
 
   // Suite 2: Auth enabled
@@ -446,30 +470,35 @@ async function main() {
     testAuthWithKey,
   ]);
 
-  // Suite 3: Rate limiting (set low for fast testing)
+  // Suite 3: Explicit insecure opt-in restores open admin access
+  await runSuite('Insecure admin opt-in', { ALLOW_INSECURE_ADMIN: '1' }, [
+    testInsecureAdminOptIn,
+  ]);
+
+  // Suite 4: Rate limiting (set low for fast testing)
   await runSuite('Rate limiting', { RATE_LIMIT_RPM: '5' }, [
     testRateLimiting,
   ]);
 
-  // Suite 4: CORS restricted
+  // Suite 5: CORS restricted
   await runSuite('CORS restricted', { ALLOWED_ORIGIN: TEST_ORIGIN }, [
     testCorsRestricted,
   ]);
 
-  // Suite 5: Persistence
-  await runSuite('Persistence', {}, [
+  // Suite 6: Persistence (admin routes need the local opt-in without API_KEY)
+  await runSuite('Persistence', { ALLOW_INSECURE_ADMIN: '1' }, [
     testPersistence,
   ]);
 
-  await runSuite('1536D capability contract', {}, [
+  await runSuite('1536D capability contract', { ALLOW_INSECURE_ADMIN: '1' }, [
     test1536CapabilityContract,
   ]);
 
-  await runSuite('/add_batch atomic validation', {}, [
+  await runSuite('/add_batch atomic validation', { ALLOW_INSECURE_ADMIN: '1' }, [
     testAddBatchValidationIsAtomic,
   ]);
 
-  await runSuite('Restore/add/compact regression', {}, [
+  await runSuite('Restore/add/compact regression', { ALLOW_INSECURE_ADMIN: '1' }, [
     testRestoreAddCompactPreservesRestoredVectors,
   ]);
 

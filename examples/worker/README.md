@@ -40,7 +40,7 @@ This runs the Worker as a snapshot-backed search endpoint at the edge.
 |----------|-------------|
 | `POST /search` | k-NN search (`{ query: float[], k?, ef? }`) |
 | `GET /health` | Health check (public, no auth required) |
-| `GET /readiness` | Authenticated readiness check with snapshot visibility |
+| `GET /readiness` | Readiness check with snapshot visibility (bearer auth once `API_KEY` is set) |
 | `GET /stats` | Index count, memory, ghost ratio |
 | `GET /export` | Serialize index to binary blob |
 | `POST /init` | Create an index (`{ dims, maxElements, M?, efConstruction?, efSearch?, vectors? }`) |

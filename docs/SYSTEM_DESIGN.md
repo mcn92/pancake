@@ -621,9 +621,9 @@ and a bucket is bound, the Worker lazily **restores from R2** before serving
 | Endpoint | Method | Body → Response | Admin? |
 |----------|--------|-----------------|--------|
 | `/health` | GET | — → status, count, memory, restore timings, read_only | no (public) |
-| `/readiness` | GET | — → loaded + snapshot availability (no restore) | no |
-| `/search` | POST | `{query,k?,ef?}` → `{neighbors,distances,latency_ms}` | no |
-| `/stats` | GET | — → count, memory, ghost stats, dims | no |
+| `/readiness` | GET | — → loaded + snapshot availability (no restore) | no (bearer once `API_KEY` set) |
+| `/search` | POST | `{query,k?,ef?}` → `{neighbors,distances,latency_ms}` | no (bearer once `API_KEY` set) |
+| `/stats` | GET | — → count, memory, ghost stats, dims | no (bearer once `API_KEY` set) |
 | `/init` | POST | `{dims,maxElements,M?,efConstruction?,efSearch?,vectors?}` → init result | yes |
 | `/add` | POST | `{vector}` → `{id,count}` | yes |
 | `/add_batch` | POST | `{vectors}` → `{inserted,ids,count}` | yes |
@@ -636,7 +636,10 @@ and a bucket is bound, the Worker lazily **restores from R2** before serving
 
 Cross-cutting: `/health` always stays public, but admin routes now fail closed
 unless `API_KEY` is set or `ALLOW_INSECURE_ADMIN=1` is explicitly enabled for a
-local/demo deployment; optional per-IP sliding-window rate limiting
+local/demo deployment. Once `API_KEY` is set, every route except `/health`
+requires the bearer token — including `/search`, `/stats`, and `/readiness`;
+without `API_KEY`, those non-admin routes stay open while the admin routes
+return `403`. Also: optional per-IP sliding-window rate limiting
 (`RATE_LIMIT_RPM`, 60 s window, per-isolate so the effective global limit is
 `limit × isolates`); request-body caps for JSON (`MAX_JSON_BYTES`) and binary
 snapshot import (`MAX_SNAPSHOT_BYTES`); and opt-in CORS via `ALLOWED_ORIGIN`

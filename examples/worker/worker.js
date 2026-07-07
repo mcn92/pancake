@@ -69,12 +69,14 @@ function binaryResponse(bytes, headers = {}) {
 }
 
 function corsHeaders(env) {
-  const origin = env?.ALLOWED_ORIGIN || '*';
-  return {
-    'Access-Control-Allow-Origin': origin,
+  const origin = String(env?.ALLOWED_ORIGIN || '').trim();
+  const headers = {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization'
   };
+  // CORS is opt-in: without ALLOWED_ORIGIN the header is omitted entirely.
+  if (origin) headers['Access-Control-Allow-Origin'] = origin;
+  return headers;
 }
 
 function withCors(response, env) {
@@ -86,10 +88,18 @@ function withCors(response, env) {
 }
 
 function isReadOnly(env) {
-  return String(env?.READ_ONLY || '') === '1';
+  const value = String(env?.READ_ONLY || '').trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
+function allowInsecureAdmin(env) {
+  const value = String(env?.ALLOW_INSECURE_ADMIN || '').trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
 }
 
 function isAdminAllowed(request, env) {
+  // Without API_KEY, non-admin routes stay open; admin routes fail closed
+  // earlier in handleRequest() unless ALLOW_INSECURE_ADMIN is set.
   if (!env?.API_KEY) return true;
   const expected = `Bearer ${env.API_KEY}`;
   return request.headers.get('Authorization') === expected;
@@ -373,6 +383,9 @@ async function handleRequest(request, env, ctx) {
   const adminRoute = ADMIN_ROUTES.has(url.pathname);
   if (adminRoute && isReadOnly(env)) {
     return jsonResponse({ error: 'Read-only mode' }, 403);
+  }
+  if (adminRoute && !env?.API_KEY && !allowInsecureAdmin(env)) {
+    return jsonResponse({ error: 'Admin routes require API_KEY or explicit ALLOW_INSECURE_ADMIN=1' }, 403);
   }
   if (url.pathname !== '/health' && !isAdminAllowed(request, env)) {
     return jsonResponse({ error: 'Unauthorized' }, 401);
