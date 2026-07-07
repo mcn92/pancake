@@ -1833,6 +1833,54 @@ async function testRawEngineImportValidation() {
     }
 }
 
+async function testGhostEntryPointSearch() {
+    section('Ghost entry point keeps full top-k');
+
+    // Regression: the layer search used to push the graph's entry node into
+    // the result set unconditionally, so deleting the entry point silently
+    // returned k-1 results. Deleting every vector in turn guarantees the
+    // entry point (whichever node the level RNG picked) is covered.
+    const N = 40;
+    const K = 10;
+    const dim = 16;
+
+    for (const quantized of [false, true]) {
+        const label = quantized ? 'int8' : 'float';
+        const rng = mulberry32(1234);
+        const vecs = Array.from({ length: N }, () => {
+            const v = new Float32Array(dim);
+            for (let d = 0; d < dim; d++) v[d] = rng();
+            return v;
+        });
+
+        const src = await Pancake.create({
+            dim, maxElements: N, metric: 'l2', quantized,
+            M: 8, efConstruction: 50, efSearch: 50,
+        });
+        const ids = src.addBatch(vecs);
+        const snapshot = src.export();
+        src.dispose();
+
+        let fullK = 0;
+        let ghostLeaks = 0;
+        for (let i = 0; i < N; i++) {
+            const idx = await Pancake.create({
+                dim, maxElements: N, metric: 'l2', quantized,
+                M: 8, efConstruction: 50, efSearch: 50,
+            });
+            idx.import(snapshot);
+            idx.delete(ids[i]);
+            const results = idx.search(vecs[i], K);
+            if (results.length === K) fullK++;
+            if (results.some(r => r.id === ids[i])) ghostLeaks++;
+            idx.dispose();
+        }
+
+        assert(fullK === N, `${label}: search returns full k=${K} results for every deleted vector (got ${fullK}/${N})`);
+        assert(ghostLeaks === 0, `${label}: deleted vector never appears in results`);
+    }
+}
+
 async function testDeleteChurnRegression() {
     section('Delete churn regression');
 
@@ -2547,6 +2595,7 @@ async function main() {
         testMetricCorrectnessQuantized,
         testRawEngineImportValidation,
         testDeleteChurnRegression,
+        testGhostEntryPointSearch,
         testGoldenSnapshotCompatibility,
         testNonFiniteRejection,
         testCosineNormOverflowRegression,

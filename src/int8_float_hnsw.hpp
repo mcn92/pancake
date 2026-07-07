@@ -1562,7 +1562,9 @@ private:
         if (!skip_deleted) PROFILE_COUNT(g_build_profile.dist_calls++);
         candidates.emplace(d, entry);
         PROFILE_COUNT(g_build_profile.candidate_pushes++);
-        results.emplace(d, entry);
+        // A soft-deleted entry point stays navigable (candidate queue) but must
+        // never occupy a result slot, mirroring how deleted neighbors are treated.
+        if (!(skip_deleted && deleted_[entry])) results.emplace(d, entry);
         mark_visited(entry);
         PROFILE_COUNT(g_build_profile.visited_marks++);
 
@@ -1570,7 +1572,7 @@ private:
             auto [curr_dist, curr] = candidates.top();
             candidates.pop();
             PROFILE_COUNT(g_build_profile.candidate_pops++);
-            if (curr_dist > results.top().first && results.size() >= ef) break;
+            if (results.size() >= ef && curr_dist > results.top().first) break;
             for_each_edge(curr, level, [&](const Edge& edge) {
                 uint32_t neighbor = edge.neighbor;
                 if (is_visited(neighbor)) return;
@@ -1579,7 +1581,7 @@ private:
                 PROFILE_COUNT(g_build_profile.visited_marks++);
                 float nd = dist_func(neighbor);
                 if (!skip_deleted) PROFILE_COUNT(g_build_profile.dist_calls++);
-                if (nd < results.top().first || results.size() < ef) {
+                if (results.size() < ef || nd < results.top().first) {
                     candidates.emplace(nd, neighbor);
                     PROFILE_COUNT(g_build_profile.candidate_pushes++);
                     results.emplace(nd, neighbor);

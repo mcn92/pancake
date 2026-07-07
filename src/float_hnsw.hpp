@@ -942,18 +942,20 @@ private:
         prepare_visited();
         float d = distance_to_query(entry);
         candidates.emplace(d, entry);
-        results.emplace(d, entry);
+        // A soft-deleted entry point stays navigable (candidate queue) but must
+        // never occupy a result slot, mirroring how deleted neighbors are treated.
+        if (!deleted_[entry]) results.emplace(d, entry);
         mark_visited(entry);
 
         while (!candidates.empty()) {
             auto [curr_dist, curr] = candidates.top();
             candidates.pop();
-            if (curr_dist > results.top().first && results.size() >= ef) break;
+            if (results.size() >= ef && curr_dist > results.top().first) break;
             for_each_edge(curr, level, [&](uint32_t neighbor) {
                 if (is_visited(neighbor) || deleted_[neighbor]) return;
                 mark_visited(neighbor);
                 float nd = distance_to_query(neighbor);
-                if (nd < results.top().first || results.size() < ef) {
+                if (results.size() < ef || nd < results.top().first) {
                     candidates.emplace(nd, neighbor);
                     results.emplace(nd, neighbor);
                     if (results.size() > ef) results.pop();
