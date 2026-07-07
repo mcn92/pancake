@@ -837,23 +837,24 @@ async function main() {
   log(`  ef_search sweep: [${EF_SEARCH_VALUES.join(', ')}]`);
   log(`  Repetitions: ${REPETITIONS}, Warmup: ${WARMUP_QUERIES}`);
 
-  // Precomputed .ivecs files are usually aligned to the full base set. For
-  // built-ins, reject subset runs against a full-dataset GT. Custom datasets
-  // may provide subset-aligned GT explicitly.
+  // Precomputed .ivecs/HDF5 neighbor matrices are aligned to the full base set.
+  // When --count selects a subset, recompute metric-aware GT against that subset
+  // so recall is not compared to neighbors that were never indexed.
+  const usesFullBuiltInBase = !DS.defaultCount || train.length >= DS.defaultCount;
+  const canUsePrecomputedGt = !REGENERATE_GT && usesFullBuiltInBase;
   let groundTruth;
-  if (loaded.groundTruth && !REGENERATE_GT) {
+  if (loaded.groundTruth && canUsePrecomputedGt) {
     groundTruth = loaded.groundTruth;
-  } else if (gtPath) {
-    if (DS.defaultCount && train.length < DS.defaultCount) {
-      log(`\nERROR: ${DATASET} ships a precomputed ground truth for the full`);
-      log(`  ${DS.defaultCount.toLocaleString()}-vector base. Running a --count subset would`);
-      log(`  invalidate it (neighbors would point outside the subset). Re-run with the`);
-      log(`  full base, or extend the harness to recompute GT for subsets.`);
-      process.exit(1);
-    }
+  } else if (gtPath && canUsePrecomputedGt) {
     groundTruth = readIvecs(gtPath, N_QUERIES);
     log(`  Loaded precomputed ground truth: ${groundTruth.length} rows, first ${K} neighbors each`);
   } else {
+    if ((loaded.groundTruth || gtPath) && !usesFullBuiltInBase) {
+      log(`  Subset run detected: indexed ${train.length.toLocaleString()} of ${DS.defaultCount.toLocaleString()} base vectors.`);
+      log('  Recomputing ground truth for the selected subset.');
+    } else if ((loaded.groundTruth || gtPath) && REGENERATE_GT) {
+      log('  --regenerate-gt set; recomputing ground truth instead of using precomputed neighbors.');
+    }
     groundTruth = REGENERATE_GT ? null : loadGroundTruth();
     if (groundTruth) log(`\nLoaded cached ground truth (${groundTruth.length} queries) from ${GT_CACHE_PATH}`);
     else { groundTruth = computeGroundTruth(train, test, dim); saveGroundTruth(groundTruth); }
