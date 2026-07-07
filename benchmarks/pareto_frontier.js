@@ -387,6 +387,30 @@ function distanceForMetric(a, b, dim) {
   return 1 - dot / ((Math.sqrt(an) || 1) * (Math.sqrt(bn) || 1));
 }
 
+function isIndexableVector(vec, dim) {
+  let normSq = 0;
+  for (let d = 0; d < dim; d++) {
+    const value = vec[d];
+    if (!Number.isFinite(value)) return false;
+    normSq += value * value;
+  }
+  return METRIC !== 'cosine' || (normSq > 0 && Number.isFinite(normSq));
+}
+
+function filterIndexableVectors(vectors, dim, label) {
+  const kept = [];
+  const dropped = [];
+  for (let i = 0; i < vectors.length; i++) {
+    if (isIndexableVector(vectors[i], dim)) kept.push(vectors[i]);
+    else dropped.push(i);
+  }
+  if (dropped.length > 0) {
+    log('  Dropped ' + dropped.length.toLocaleString() + ' non-indexable ' + label + ' vector(s) for ' + METRIC + '.');
+    log('  First dropped ' + label + ' row(s): ' + dropped.slice(0, 8).join(', ') + (dropped.length > 8 ? ', ...' : ''));
+  }
+  return { vectors: kept, dropped };
+}
+
 function computeGroundTruth(train, queries, dim) {
   const nq = queries.length;
   log(`Computing brute-force ${METRIC} ground truth (${nq} x ${train.length} x ${dim}D)... this can take minutes.`);
@@ -829,7 +853,24 @@ async function main() {
         const { vectors: test } = readFvecs(queryPath, N_QUERIES);
         return { train, test, dim, groundTruth: null };
       })();
-  const { train, test, dim } = loaded;
+  let { train, test, dim } = loaded;
+  let forceGroundTruthRecompute = false;
+  const filteredTrain = filterIndexableVectors(train, dim, 'base');
+  const filteredTest = filterIndexableVectors(test, dim, 'query');
+  if (filteredTrain.dropped.length || filteredTest.dropped.length) {
+    train = filteredTrain.vectors;
+    test = filteredTest.vectors;
+    forceGroundTruthRecompute = true;
+    if (train.length < K) {
+      log(`ERROR: only ${train.length} indexable base vectors remain, fewer than k=${K}.`);
+      process.exit(1);
+    }
+    if (test.length === 0) {
+      log('ERROR: no indexable query vectors remain.');
+      process.exit(1);
+    }
+    log('  Recomputing ground truth because filtering changed the indexed/query set.');
+  }
   log(`  Base:    ${train.length.toLocaleString()} vectors, ${dim}D`);
   log(`  Queries: ${test.length.toLocaleString()}`);
   log(`  Metric:  ${METRIC}`);
@@ -841,7 +882,7 @@ async function main() {
   // When --count selects a subset, recompute metric-aware GT against that subset
   // so recall is not compared to neighbors that were never indexed.
   const usesFullBuiltInBase = !DS.defaultCount || train.length >= DS.defaultCount;
-  const canUsePrecomputedGt = !REGENERATE_GT && usesFullBuiltInBase;
+  const canUsePrecomputedGt = !REGENERATE_GT && !forceGroundTruthRecompute && usesFullBuiltInBase;
   let groundTruth;
   if (loaded.groundTruth && canUsePrecomputedGt) {
     groundTruth = loaded.groundTruth;
@@ -855,7 +896,7 @@ async function main() {
     } else if ((loaded.groundTruth || gtPath) && REGENERATE_GT) {
       log('  --regenerate-gt set; recomputing ground truth instead of using precomputed neighbors.');
     }
-    groundTruth = REGENERATE_GT ? null : loadGroundTruth();
+    groundTruth = (REGENERATE_GT || forceGroundTruthRecompute) ? null : loadGroundTruth();
     if (groundTruth) log(`\nLoaded cached ground truth (${groundTruth.length} queries) from ${GT_CACHE_PATH}`);
     else { groundTruth = computeGroundTruth(train, test, dim); saveGroundTruth(groundTruth); }
   }
