@@ -447,6 +447,37 @@ function stddev(arr) { const m = mean(arr); return Math.sqrt(arr.reduce((a, b) =
 function nativeMetricValue() { return METRIC === 'l2' ? 0 : 1; }
 function usearchMetricValue() { return METRIC === 'l2' ? 'l2sq' : 'cos'; }
 function hnswlibMetricValue() { return METRIC === 'l2' ? 'l2' : 'cosine'; }
+function bytesToMB(bytes) { return bytes == null ? null : bytes / 1024 / 1024; }
+function forceGc() { if (global.gc) global.gc(); }
+function measureRssBytes() {
+  forceGc();
+  return process.memoryUsage().rss;
+}
+function rssDeltaBytes(before, after) {
+  if (!Number.isFinite(before) || !Number.isFinite(after)) return null;
+  return Math.max(0, after - before);
+}
+function formatMB(bytes) {
+  const mb = bytesToMB(bytes);
+  return mb == null ? 'n/a' : mb.toFixed(1) + ' MB';
+}
+function systemInfo() {
+  const cpus = os.cpus() || [];
+  return {
+    platform: process.platform,
+    arch: process.arch,
+    node: process.version,
+    cpu: cpus[0]?.model || 'unknown',
+    logicalCpus: cpus.length,
+    totalMemoryBytes: os.totalmem(),
+    freeMemoryBytes: os.freemem(),
+    hostname: os.hostname(),
+  };
+}
+function logSystemInfo(info) {
+  log('System: ' + info.platform + '/' + info.arch + ', Node ' + info.node);
+  log('CPU: ' + info.cpu + ' (' + info.logicalCpus + ' logical), RAM ' + formatMB(info.totalMemoryBytes));
+}
 
 // =====================================================================
 // Per-library build + query adapters.
@@ -457,6 +488,7 @@ function hnswlibMetricValue() { return METRIC === 'l2' ? 'l2' : 'cosine'; }
 async function buildPancakeWasm({ train, dim, dtype }) {
   const quantized = dtype === 'i8';
   log(`  [${dtype} wasm] build (M=${M}, ef_c=${EF_CONSTRUCTION}, metric=${METRIC})...`);
+  const rssBefore = measureRssBytes();
   const index = await Pancake.create({
     dim, maxElements: train.length, quantized, metric: METRIC,
     M, efConstruction: EF_CONSTRUCTION, efSearch: EF_SEARCH_VALUES[0],
@@ -467,8 +499,9 @@ async function buildPancakeWasm({ train, dim, dtype }) {
     index.addBatch(train.slice(start, Math.min(start + batchSize, train.length)));
   }
   const buildMs = performance.now() - t0;
-  log(`  [${dtype} wasm] build: ${(buildMs / 1000).toFixed(1)}s, memory: ${(index.memory / 1024 / 1024).toFixed(1)} MB`);
-  return { index, buildMs, memBytes: index.memory };
+  const rssDelta = rssDeltaBytes(rssBefore, measureRssBytes());
+  log(`  [${dtype} wasm] build: ${(buildMs / 1000).toFixed(1)}s, memory: ${formatMB(index.memory)} (rss +${formatMB(rssDelta)})`);
+  return { index, buildMs, memBytes: index.memory, memorySource: 'reported', rssDeltaBytes: rssDelta };
 }
 function queryPancakeWasm(built, test, gt, ef) {
   built.index._setEfSearch(ef);
@@ -488,6 +521,7 @@ function queryPancakeWasm(built, test, gt, ef) {
 function buildPancakeNative({ train, dim, dtype }) {
   const quantized = dtype === 'i8' ? 1 : 0;
   log(`  [${dtype} native] build (M=${M}, ef_c=${EF_CONSTRUCTION}, metric=${METRIC})...`);
+  const rssBefore = measureRssBytes();
   const h = native.pancake_init(dim, train.length, quantized, nativeMetricValue(), M, EF_CONSTRUCTION, EF_SEARCH_VALUES[0]);
   if (h === 0xFFFFFFFF) throw new Error('Failed to init native index');
   const t0 = performance.now();
@@ -500,8 +534,9 @@ function buildPancakeNative({ train, dim, dtype }) {
   }
   const buildMs = performance.now() - t0;
   const memBytes = native.pancake_memory(h);
-  log(`  [${dtype} native] build: ${(buildMs / 1000).toFixed(1)}s, memory: ${(memBytes / 1024 / 1024).toFixed(1)} MB`);
-  return { handle: h, buildMs, memBytes };
+  const rssDelta = rssDeltaBytes(rssBefore, measureRssBytes());
+  log(`  [${dtype} native] build: ${(buildMs / 1000).toFixed(1)}s, memory: ${formatMB(memBytes)} (rss +${formatMB(rssDelta)})`);
+  return { handle: h, buildMs, memBytes, memorySource: 'reported', rssDeltaBytes: rssDelta };
 }
 function queryPancakeNative(built, test, gt, ef) {
   native.pancake_set_ef(built.handle, ef);
@@ -524,6 +559,7 @@ function buildUsearch({ train, dim, dtype }) {
   const quantization = dtype === 'i8' ? 'i8' : 'f32';
   const metric = usearchMetricValue();
   log(`  [usearch-${dtype}] build (connectivity=${M}, expansion_add=${EF_CONSTRUCTION}, metric=${metric}, quantization=${quantization})...`);
+  const rssBefore = measureRssBytes();
   const index = new usearch.Index({
     metric, connectivity: M, dimensions: dim,
     quantization, expansion_add: EF_CONSTRUCTION, expansion_search: EF_SEARCH_VALUES[0],
@@ -531,10 +567,12 @@ function buildUsearch({ train, dim, dtype }) {
   const t0 = performance.now();
   for (let i = 0; i < train.length; i++) index.add(BigInt(i), train[i]);
   const buildMs = performance.now() - t0;
+  const rssDelta = rssDeltaBytes(rssBefore, measureRssBytes());
   const savePath = path.join(RESULTS_DIR, `_usearch_${dtype}_${timestamp}.bin`);
   index.save(savePath);
-  log(`  [usearch-${dtype}] build: ${(buildMs / 1000).toFixed(1)}s (saved to ${savePath})`);
-  return { buildMs, memBytes: null, savePath, quantization, dim, metric };
+  const fileBytes = fs.statSync(savePath).size;
+  log(`  [usearch-${dtype}] build: ${(buildMs / 1000).toFixed(1)}s, index file: ${formatMB(fileBytes)} (rss +${formatMB(rssDelta)}, saved to ${savePath})`);
+  return { buildMs, memBytes: fileBytes, memorySource: 'file_size', rssDeltaBytes: rssDelta, savePath, quantization, dim, metric };
 }
 function queryUsearch(built, test, gt, ef) {
   const view = new usearch.Index({
@@ -558,13 +596,15 @@ function queryUsearch(built, test, gt, ef) {
 function buildHnswlib({ train, dim }) {
   const metric = hnswlibMetricValue();
   log(`  [hnswlib-f32] build (M=${M}, ef_c=${EF_CONSTRUCTION}, metric=${metric})...`);
+  const rssBefore = measureRssBytes();
   const index = new HierarchicalNSW(metric, dim);
   index.initIndex(train.length, M, EF_CONSTRUCTION, 100);
   const t0 = performance.now();
   for (let i = 0; i < train.length; i++) index.addPoint(Array.from(train[i]), i);
   const buildMs = performance.now() - t0;
-  log(`  [hnswlib-f32] build: ${(buildMs / 1000).toFixed(1)}s`);
-  return { index, buildMs, memBytes: null };
+  const rssDelta = rssDeltaBytes(rssBefore, measureRssBytes());
+  log(`  [hnswlib-f32] build: ${(buildMs / 1000).toFixed(1)}s, estimated memory: ${formatMB(rssDelta)} RSS`);
+  return { index, buildMs, memBytes: rssDelta, memorySource: 'rss_delta', rssDeltaBytes: rssDelta };
 }
 function queryHnswlib(built, test, gt, ef) {
   built.index.setEf(ef);
@@ -652,7 +692,10 @@ async function sweepOne(config, dataset) {
   return {
     label: config.label, library: config.library, runtime: config.runtime || null,
     dtype: config.dtype, tunable: true,
-    buildMs: built.buildMs, memMB: built.memBytes ? built.memBytes / 1024 / 1024 : null,
+    buildMs: built.buildMs,
+    memMB: bytesToMB(built.memBytes),
+    memorySource: built.memorySource || (built.memBytes != null ? 'reported' : null),
+    rssDeltaMB: bytesToMB(built.rssDeltaBytes),
     params: { M, ef_construction: EF_CONSTRUCTION, K },
     points,
   };
@@ -758,13 +801,18 @@ function buildAnalysis(allResults) {
 // =====================================================================
 function writeRawCsv(allResults, p) {
   const rows = [['label', 'library', 'runtime', 'dtype', 'tunable', 'ef_search',
-                 'recall', 'recall_std', 'qps', 'qps_std', 'p50_ms', 'p95_ms', 'p99_ms']];
+                 'recall', 'recall_std', 'qps', 'qps_std', 'p50_ms', 'p95_ms', 'p99_ms',
+                 'build_s', 'memory_mb', 'memory_source', 'rss_delta_mb']];
   for (const r of allResults) for (const pt of r.points) {
     rows.push([
       r.label, r.library, r.runtime || '', r.dtype, r.tunable, pt.ef_search,
       pt.recall_mean.toFixed(5), pt.recall_std.toFixed(5),
       pt.qps_mean.toFixed(2), pt.qps_std.toFixed(2),
       pt.p50_mean.toFixed(4), pt.p95_mean.toFixed(4), pt.p99_mean.toFixed(4),
+      (r.buildMs / 1000).toFixed(3),
+      r.memMB == null ? '' : r.memMB.toFixed(2),
+      r.memorySource || '',
+      r.rssDeltaMB == null ? '' : r.rssDeltaMB.toFixed(2),
     ]);
   }
   fs.writeFileSync(p, rows.map(r => r.join(',')).join('\n') + '\n');
@@ -841,9 +889,12 @@ async function main() {
     if (!fs.existsSync(f)) { log(`Missing file: ${f}`); process.exit(1); }
   }
 
+  const sysInfo = systemInfo();
+
   log('='.repeat(70));
   log(`Pareto-Frontier Benchmark (${DATASET.toUpperCase()}, ${METRIC})`);
   log('='.repeat(70));
+  logSystemInfo(sysInfo);
   log(`Configs: ${CONFIGS.map(c => c.label).join(', ')}`);
   log('\nLoading dataset...');
   const loaded = hdf5Path
@@ -924,6 +975,10 @@ async function main() {
       queryFile: queryPath,
       groundTruthFile: gtPath,
     },
+    memory: {
+      note: 'Pancake reports index memory directly. USearch memory uses saved index file size as a stable proxy. hnswlib memory uses process RSS delta during build; RSS is approximate and runtime-dependent.',
+    },
+    system: sysInfo,
     params: { K, M, EF_CONSTRUCTION, EF_SEARCH_VALUES, REPETITIONS, WARMUP_QUERIES },
     results: allResults,
     frontiers: analysis.frontiers,
