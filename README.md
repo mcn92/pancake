@@ -4,7 +4,7 @@ HNSW vector search in about 49 KB of gzipped WebAssembly (137 KB uncompressed). 
 
 Most ANN libraries ship as platform-specific native binaries, which means they do not work in browser tabs or JavaScript runtimes without native extensions. Pancake's primary package is a single portable WASM module built for JavaScript environments where native addons are not an option.
 
-Pancake ships two backends in the WASM engine: an int8 quantized backend that cuts memory by about `3.5x` on the current 1536D runs, with roughly a 1-2 point recall-ceiling tradeoff versus float32, and a full float32 backend for higher precision distances. Both use WASM SIMD acceleration. The repo also includes an experimental native Node addon with AVX2 distance kernels for direct native-vs-WASM comparisons and local benchmarks.
+Pancake ships two backends in the WASM engine: an int8 quantized backend that cuts memory by about `3.7x` on the current 1536D DBpedia run, with roughly a 2 point recall-ceiling tradeoff versus float32, and a full float32 backend for higher precision distances. Both use WASM SIMD acceleration. The repo also includes an experimental native Node addon with AVX2 distance kernels for direct native-vs-WASM comparisons and local benchmarks.
 
 Pancake is an ANN library -- it doesn't ship an embedding model. Use any embedder (sentence-transformers, OpenAI, Cohere, etc.) and feed the resulting vectors to Pancake.
 
@@ -179,7 +179,7 @@ deployment state alongside the packaged snapshot.
 | `dim` | number | required | Vector dimension |
 | `maxElements` | number | `100000` | Pre-allocated capacity |
 | `metric` | string | `'cosine'` | `'cosine'` or `'l2'` |
-| `quantized` | boolean | `true` | Use int8 storage. Cuts memory by about `3.5x` on the current 1536D runs, with roughly a 1-2 point recall-ceiling tradeoff versus float32. Set to `false` for full float32 storage. |
+| `quantized` | boolean | `true` | Use int8 storage. Cuts memory by about `3.7x` on the current 1536D DBpedia run, with roughly a 2 point recall-ceiling tradeoff versus float32. Set to `false` for full float32 storage. |
 | `M` | number | `16` | HNSW connectivity |
 | `efConstruction` | number | `50` | Build-time beam width |
 | `efSearch` | number | `100` | Query-time beam width |
@@ -264,7 +264,7 @@ Pancake picks one of two HNSW backends based on the `quantized` option. This is 
 
 | Condition | Backend | Notes |
 |-----------|---------|-------|
-| `quantized: true` | Int8 HNSW | Asymmetric distance: queries stay in float32, database vectors stored as int8. Preserves query-side precision while cutting memory by about `3.5x` on the current 1536D runs. |
+| `quantized: true` | Int8 HNSW | Asymmetric distance: queries stay in float32, database vectors stored as int8. Preserves query-side precision while cutting memory by about `3.7x` on the current 1536D DBpedia run. |
 | `quantized: false` | Float32 HNSW | Full precision, any dimension |
 
 ## Filtered search
@@ -299,61 +299,64 @@ This works well for moderate selectivity (roughly 1% of the index or more). At v
 
 ## Performance
 
-The primary benchmark is DBpedia-50K (`50,000 × 1536D`, L2), the operating
+The primary benchmark is DBpedia-50K (`50,000 x 1536D`, L2), the operating
 point Pancake is built for: in-process ANN at moderate scale across portable
 JavaScript runtimes. Pancake's default package path is WASM; the native addon
 is an experimental in-repo tool, included here to separate runtime overhead
 from graph quality, and is not part of the npm package.
 
+The latest committed Pareto sweeps were generated on an AMD Ryzen 9 4900HS
+laptop, Node `v22.19.0`, single-threaded, `k=10`, `M=8`,
+`efConstruction=50`, 3 repetitions, and an `efSearch` sweep from 10 to 800.
+The full CSV/JSON/log/PNG artifacts are indexed in
+[`benchmark_results/`](benchmark_results/).
+
 ### DBpedia-50K: WASM vs native (50k x 1536D, L2)
 
-Single-threaded on an AMD Ryzen 9 4900HS laptop. Parameters `M=16`,
-`efConstruction=50`, `efSearch=100`; `k=10`, 1,000 held-out queries, 3
-repetitions, brute-force L2 ground truth.
+| Mode | Build | Memory | ef=100 Recall@10 | ef=100 QPS | ef=800 Recall@10 | ef=800 QPS |
+|:-----|------:|-------:|-----------------:|-----------:|-----------------:|-----------:|
+| int8 WASM | 30.6s | 80.3 MB | 95.11% | 1,704 | 97.45% | 303 |
+| f32 WASM | 56.6s | 296.3 MB | 96.76% | 1,244 | 99.65% | 222 |
+| int8 native | 19.7s | 80.3 MB | 95.12% | 2,008 | 97.46% | 387 |
+| f32 native | 38.9s | 296.3 MB | 96.76% | 1,352 | 99.65% | 287 |
 
-| Mode | Build | Recall@10 | QPS | p50 | p99 | Memory |
-|:-----|------:|----------:|----:|----:|----:|-------:|
-| int8 WASM | 73.0s | 96.70% | 1128 | 0.909ms | 1.385ms | 86.3 MB |
-| f32 WASM | 158.6s | 98.83% | 823 | 1.232ms | 1.896ms | 299.4 MB |
-| int8 native | 39.6s | 96.69% | 1394 | 0.726ms | 1.170ms | 86.3 MB |
-| f32 native | 96.6s | 98.83% | 1010 | 1.003ms | 1.531ms | 299.3 MB |
-
-These are the `efSearch=100` rows from the committed
-[`pareto_frontier` DBpedia run](benchmark_results/release/); see that
-directory for the full `efSearch` sweep and the cross-library frontier.
+These are the Pancake rows from
+[`pareto_dbpedia_2026-07-07T19-04-37-320Z`](benchmark_results/pareto_dbpedia_2026-07-07T19-04-37-320Z.csv).
+The same run includes USearch and hnswlib baselines.
 
 Takeaways:
 
-- **int8 is the memory/throughput operating point:** `96.70%` recall at
-  `1128 QPS` in WASM, using `3.5x` less memory than float32 (`86 MB` vs
-  `299 MB`).
-- **float32 is the high-recall operating point:** `98.83%` recall, at the cost
-  of memory and a slower build.
+- **int8 is the memory/throughput operating point:** on DBpedia-50K, int8 WASM
+  uses `80.3 MB` vs `296.3 MB` for float32, about `3.7x` less memory.
+- **float32 is the high-recall operating point:** DBpedia float32 reaches
+  `99.65%` recall at the high-`efSearch` end of the frontier; int8 reaches
+  `97.45%` on the same sweep.
 - **Native vs WASM isolates runtime overhead:** the native addon runs the same
-  engine and reaches the same recall at roughly `~25%` higher QPS (int8) and
-  `~20%` higher (f32) — the gap is WASM runtime cost, not graph quality. (On
-  larger, more memory-bound corpora the WASM gap narrows; the committed
-  SIFT-1M sweep shows WASM and native within a few percent at the operating
-  point.)
+  engine and lands at essentially identical recall. It is faster on DBpedia,
+  but the gap narrows or reverses depending on dataset dimensionality and
+  memory behavior.
 
 ### QPS-recall frontier
 
-Sweeping `efSearch` (10–800) traces Pancake's full QPS-recall frontier on the
-DBpedia-50K data (`M=16`, `efConstruction=50`, single-threaded). The int8
-backend climbs the curve to a ceiling near `97.6%` recall — the int8
-quantization sets that limit — while the float32 backend continues on to
-`~99%`. Use int8 for the memory/throughput operating point and float32 when
-you need the higher recall ceiling.
+Sweeping `efSearch` (10-800) traces Pancake's full QPS-recall frontier. The
+latest committed sweeps cover DBpedia-50K (1536D, L2), NYTimes-256 (256D,
+cosine), SIFT-1M (128D, L2), and GloVe-100 (100D, cosine):
 
-The same `pareto_frontier` sweep also runs native hnswlib, USearch, and Faiss
-on the identical data and writes every config's frontier to one set of CSVs, so
-the cross-library comparison is in the committed results rather than asserted
-here — numbers depend on each library's version, build flags, and hardware.
-The committed sweeps in
-[`benchmark_results/release/`](benchmark_results/release/) cover DBpedia-50K
-(1536D, L2) plus SIFT-1M (128D, L2), GloVe-100 (100D, angular), and
-NYTimes-256 (256D, angular); run `pareto_frontier` to reproduce or extend them
-on your own data (see [Reproducing](#reproducing)).
+| Dataset | Backend | ef=100 Recall@10 | ef=100 QPS | ef=800 Recall@10 | ef=800 QPS | Memory |
+|:--------|:--------|-----------------:|-----------:|-----------------:|-----------:|-------:|
+| DBpedia-50K | int8 WASM | 95.11% | 1,704 | 97.45% | 303 | 80.3 MB |
+| DBpedia-50K | f32 WASM | 96.76% | 1,244 | 99.65% | 222 | 296.3 MB |
+| NYTimes-256 | int8 WASM | 64.56% | 2,908 | 81.78% | 484 | 111.4 MB |
+| NYTimes-256 | f32 WASM | 63.48% | 1,825 | 81.84% | 359 | 302.5 MB |
+| SIFT-1M | int8 WASM | 91.52% | 2,972 | 98.20% | 488 | 262.4 MB |
+| SIFT-1M | f32 WASM | 91.86% | 2,502 | 98.81% | 414 | 555.6 MB |
+| GloVe-100 | int8 WASM | 62.42% | 2,455 | 81.22% | 427 | 278.9 MB |
+| GloVe-100 | f32 WASM | 63.75% | 2,074 | 82.20% | 364 | 531.1 MB |
+
+The cross-library comparison is in the committed benchmark results rather than
+asserted here; exact numbers depend on library versions, build flags, CPU, and
+memory pressure. Run `pareto_frontier` to reproduce or extend the sweeps on
+your own data (see [Reproducing](#reproducing)).
 
 ### Deletion tolerance
 
@@ -446,7 +449,7 @@ Pancake makes sense when you want one engine that spans browser, Worker, and Nod
 - **Node.js without native addons** -- in-process ANN without native binary packaging
 - **Small to medium indexes** -- in-process search without external infrastructure
 
-If you only care about native server throughput and do not need portability, Faiss, hnswlib, or USearch are good baselines to compare against — run `benchmark_dbpedia_50k_full` to see how they land against Pancake on your own hardware. On the DBpedia-50K run above, the int8 backend offers a lower-memory operating point with about a 1-2 point recall-ceiling tradeoff versus float32 (`96.70%` vs `98.83%`). The native addon in this repo is there to help separate runtime overhead from graph quality.
+If you only care about native server throughput and do not need portability, Faiss, hnswlib, or USearch are good baselines to compare against — run `benchmark_dbpedia_50k_full` to see how they land against Pancake on your own hardware. On the DBpedia-50K run above, the int8 backend offers a lower-memory operating point with about a 2.2 point recall-ceiling tradeoff versus float32 (`97.45%` vs `99.65%` on DBpedia-50K). The native addon in this repo is there to help separate runtime overhead from graph quality.
 
 ## How it works
 
@@ -552,7 +555,7 @@ The script auto-detects whether the current Node runtime still needs
 ## Tradeoffs
 
 - **Single-threaded by design.** Pancake is meant for runtimes where background threads are unavailable or unreliable. That is a deployment advantage, not just a limitation.
-- **Quantization is a real trade.** On the current 1536D DBpedia benchmark, the int8 path uses about `3.5x` less memory than float32 and gives up roughly 1-2 points of recall ceiling (`96.7%` vs `98.8%` in the 50K sweep at `efSearch=100`). Use float32 when you need the higher ceiling.
+- **Quantization is a real trade.** On the current 1536D DBpedia benchmark, the int8 path uses about `3.7x` less memory than float32 and gives up roughly 2.2 points of recall ceiling (`97.45%` vs `99.65%` in the 50K sweep at `efSearch=800`). Use float32 when you need the higher ceiling.
 - **Deterministic means per target/build.** Given the same inputs, the same build target will produce stable graph structure and query results, but bitwise-identical distances are not guaranteed across WASM SIMD, scalar WASM, AVX2, and SSE2 backends because their reduction orders differ. Treat tiny cross-backend floating-point deltas as expected, not as correctness bugs.
 - **One WASM instance can hold at most 64 live indexes.** The handle table in the shipped WASM engine is fixed at `MAX_HANDLES = 64`. If you need more concurrent indexes than that, dispose unused ones or spin up another module instance.
 - **Compaction is a stop-the-world maintenance pass.** Deletes are soft deletes. `compact()` remaps surviving vectors and their edges in place and reconnects nodes left isolated by deletions, rather than re-inserting survivors or relying on background maintenance threads.
