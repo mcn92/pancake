@@ -26,7 +26,6 @@ jobs:
       - run: npm ci
       - run: node run_tests.js
       - run: npm run test:fuzz
-      - run: npm run test:simd
 
   build-from-source:
     # Rebuilds both engine variants from src/ with the pinned Emscripten
@@ -57,7 +56,7 @@ jobs:
       - run: npm run test:simd
 
   test-browser-entry:
-    name: Bundled browser consumer (Vite + Chromium)
+    name: Bundled browser consumer (Vite + Playwright)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -68,5 +67,5 @@ jobs:
       - run: npm ci
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '0'
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run test:browser
