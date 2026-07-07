@@ -1,0 +1,733 @@
+======================================================================
+Pareto-Frontier Benchmark (NYTIMES, cosine)
+======================================================================
+System: linux/x64, Node v22.19.0
+CPU: AMD Ryzen 9 4900HS with Radeon Graphics (8 logical), RAM 11961.6 MB
+Configs: pancake-wasm-int8, pancake-wasm-fp32, pancake-native-int8, pancake-native-fp32, usearch-int8, usearch-fp32, hnswlib-fp32
+
+Loading dataset...
+  Loading /mnt/c/pancake1.0.0/nytimes/nytimes_base.fvecs (first 290,000)...
+  Loading /mnt/c/pancake1.0.0/nytimes/nytimes_query.fvecs (first 1,000)...
+  Dropped 239 non-indexable base vector(s) for cosine.
+  First dropped base row(s): 938, 1857, 4656, 11067, 14540, 15408, 16591, 18290, ...
+  Dropped 1 non-indexable query vector(s) for cosine.
+  First dropped query row(s): 795
+  Recomputing ground truth because filtering changed the indexed/query set.
+  Base:    289,761 vectors, 256D
+  Queries: 999
+  Metric:  cosine
+  k=10, M=8, ef_construction=50
+  ef_search sweep: [10, 20, 40, 60, 80, 100, 150, 200, 300, 500, 800]
+  Repetitions: 3, Warmup: 200
+  Subset run detected: indexed 289,761 of 290,000 base vectors.
+  Recomputing ground truth for the selected subset.
+Computing brute-force cosine ground truth (999 x 289761 x 256D)... this can take minutes.
+  Ground truth computed in 303.4s
+  Cached ground truth to /mnt/c/pancake1.0.0/benchmark_results/cache/gt_nytimes_cosine_n290000_q1000_k10.bin
+
+======================================================================
+Config: pancake-wasm-int8
+======================================================================
+  [i8 wasm] build (M=8, ef_c=50, metric=cosine)...
+  [i8 wasm] build: 76.7s, memory: 111.4 MB (rss +145.3 MB)
+
+  ef_search=10
+    rep 1: recall=30.67%  qps=13821  p50=0.067ms  p99=0.157ms
+    rep 2: recall=30.67%  qps=14672  p50=0.063ms  p99=0.144ms
+    rep 3: recall=30.67%  qps=15029  p50=0.061ms  p99=0.142ms
+    summary: recall=30.67% (+/-0.00) qps=14507 (+/-507)
+
+  ef_search=20
+    rep 1: recall=42.46%  qps=9336  p50=0.102ms  p99=0.214ms
+    rep 2: recall=42.46%  qps=9478  p50=0.099ms  p99=0.220ms
+    rep 3: recall=42.46%  qps=9565  p50=0.098ms  p99=0.194ms
+    summary: recall=42.46% (+/-0.00) qps=9460 (+/-94)
+
+  ef_search=40
+    rep 1: recall=52.29%  qps=5754  p50=0.165ms  p99=0.330ms
+    rep 2: recall=52.29%  qps=5667  p50=0.165ms  p99=0.331ms
+    rep 3: recall=52.29%  qps=5736  p50=0.165ms  p99=0.322ms
+    summary: recall=52.29% (+/-0.00) qps=5719 (+/-38)
+
+  ef_search=60
+    rep 1: recall=57.77%  qps=4276  p50=0.224ms  p99=0.441ms
+    rep 2: recall=57.77%  qps=4312  p50=0.222ms  p99=0.411ms
+    rep 3: recall=57.77%  qps=4320  p50=0.223ms  p99=0.421ms
+    summary: recall=57.77% (+/-0.00) qps=4303 (+/-19)
+
+  ef_search=80
+    rep 1: recall=60.85%  qps=3464  p50=0.276ms  p99=0.509ms
+    rep 2: recall=60.85%  qps=3466  p50=0.278ms  p99=0.508ms
+    rep 3: recall=60.85%  qps=3486  p50=0.275ms  p99=0.496ms
+    summary: recall=60.85% (+/-0.00) qps=3472 (+/-10)
+
+  ef_search=100
+    rep 1: recall=64.56%  qps=2888  p50=0.337ms  p99=0.613ms
+    rep 2: recall=64.56%  qps=2918  p50=0.332ms  p99=0.609ms
+    rep 3: recall=64.56%  qps=2919  p50=0.331ms  p99=0.575ms
+    summary: recall=64.56% (+/-0.00) qps=2908 (+/-14)
+
+  ef_search=150
+    rep 1: recall=69.46%  qps=2110  p50=0.465ms  p99=0.784ms
+    rep 2: recall=69.46%  qps=2101  p50=0.469ms  p99=0.823ms
+    rep 3: recall=69.46%  qps=2102  p50=0.470ms  p99=0.796ms
+    summary: recall=69.46% (+/-0.00) qps=2104 (+/-4)
+
+  ef_search=200
+    rep 1: recall=72.31%  qps=1652  p50=0.598ms  p99=1.007ms
+    rep 2: recall=72.31%  qps=1655  p50=0.601ms  p99=1.002ms
+    rep 3: recall=72.31%  qps=1673  p50=0.593ms  p99=0.977ms
+    summary: recall=72.31% (+/-0.00) qps=1660 (+/-9)
+
+  ef_search=300
+    rep 1: recall=75.42%  qps=1173  p50=0.854ms  p99=1.372ms
+    rep 2: recall=75.42%  qps=1177  p50=0.849ms  p99=1.344ms
+    rep 3: recall=75.42%  qps=1178  p50=0.853ms  p99=1.328ms
+    summary: recall=75.42% (+/-0.00) qps=1176 (+/-2)
+
+  ef_search=500
+    rep 1: recall=78.77%  qps=753  p50=1.364ms  p99=1.870ms
+    rep 2: recall=78.77%  qps=750  p50=1.374ms  p99=1.861ms
+    rep 3: recall=78.77%  qps=752  p50=1.360ms  p99=1.896ms
+    summary: recall=78.77% (+/-0.00) qps=752 (+/-1)
+
+  ef_search=800
+    rep 1: recall=81.78%  qps=478  p50=2.170ms  p99=2.889ms
+    rep 2: recall=81.78%  qps=487  p50=2.129ms  p99=2.756ms
+    rep 3: recall=81.78%  qps=486  p50=2.141ms  p99=2.801ms
+    summary: recall=81.78% (+/-0.00) qps=484 (+/-4)
+
+======================================================================
+Config: pancake-wasm-fp32
+======================================================================
+  [f32 wasm] build (M=8, ef_c=50, metric=cosine)...
+  [f32 wasm] build: 107.4s, memory: 302.5 MB (rss +141.3 MB)
+
+  ef_search=10
+    rep 1: recall=30.41%  qps=11638  p50=0.080ms  p99=0.176ms
+    rep 2: recall=30.41%  qps=11683  p50=0.080ms  p99=0.184ms
+    rep 3: recall=30.41%  qps=11849  p50=0.079ms  p99=0.170ms
+    summary: recall=30.41% (+/-0.00) qps=11723 (+/-91)
+
+  ef_search=20
+    rep 1: recall=40.29%  qps=7225  p50=0.131ms  p99=0.257ms
+    rep 2: recall=40.29%  qps=7217  p50=0.131ms  p99=0.262ms
+    rep 3: recall=40.29%  qps=7257  p50=0.131ms  p99=0.255ms
+    summary: recall=40.29% (+/-0.00) qps=7233 (+/-17)
+
+  ef_search=40
+    rep 1: recall=50.32%  qps=4287  p50=0.223ms  p99=0.421ms
+    rep 2: recall=50.32%  qps=4281  p50=0.222ms  p99=0.436ms
+    rep 3: recall=50.32%  qps=4301  p50=0.222ms  p99=0.430ms
+    summary: recall=50.32% (+/-0.00) qps=4290 (+/-8)
+
+  ef_search=60
+    rep 1: recall=56.53%  qps=3143  p50=0.305ms  p99=0.565ms
+    rep 2: recall=56.53%  qps=3139  p50=0.306ms  p99=0.572ms
+    rep 3: recall=56.53%  qps=2864  p50=0.335ms  p99=0.646ms
+    summary: recall=56.53% (+/-0.00) qps=3049 (+/-130)
+
+  ef_search=80
+    rep 1: recall=60.54%  qps=2183  p50=0.445ms  p99=0.814ms
+    rep 2: recall=60.54%  qps=2167  p50=0.449ms  p99=0.854ms
+    rep 3: recall=60.54%  qps=2155  p50=0.449ms  p99=0.830ms
+    summary: recall=60.54% (+/-0.00) qps=2168 (+/-11)
+
+  ef_search=100
+    rep 1: recall=63.48%  qps=1779  p50=0.544ms  p99=0.995ms
+    rep 2: recall=63.48%  qps=1817  p50=0.538ms  p99=0.968ms
+    rep 3: recall=63.48%  qps=1881  p50=0.517ms  p99=0.945ms
+    summary: recall=63.48% (+/-0.00) qps=1825 (+/-42)
+
+  ef_search=150
+    rep 1: recall=68.19%  qps=1488  p50=0.660ms  p99=1.161ms
+    rep 2: recall=68.19%  qps=1536  p50=0.641ms  p99=1.113ms
+    rep 3: recall=68.19%  qps=1537  p50=0.639ms  p99=1.097ms
+    summary: recall=68.19% (+/-0.00) qps=1520 (+/-23)
+
+  ef_search=200
+    rep 1: recall=71.21%  qps=1214  p50=0.815ms  p99=1.355ms
+    rep 2: recall=71.21%  qps=1212  p50=0.818ms  p99=1.337ms
+    rep 3: recall=71.21%  qps=1214  p50=0.816ms  p99=1.325ms
+    summary: recall=71.21% (+/-0.00) qps=1213 (+/-1)
+
+  ef_search=300
+    rep 1: recall=74.73%  qps=850  p50=1.173ms  p99=1.885ms
+    rep 2: recall=74.73%  qps=864  p50=1.166ms  p99=1.819ms
+    rep 3: recall=74.73%  qps=864  p50=1.163ms  p99=1.840ms
+    summary: recall=74.73% (+/-0.00) qps=859 (+/-7)
+
+  ef_search=500
+    rep 1: recall=78.62%  qps=556  p50=1.843ms  p99=2.545ms
+    rep 2: recall=78.62%  qps=556  p50=1.841ms  p99=2.551ms
+    rep 3: recall=78.62%  qps=551  p50=1.862ms  p99=2.634ms
+    summary: recall=78.62% (+/-0.00) qps=554 (+/-2)
+
+  ef_search=800
+    rep 1: recall=81.84%  qps=357  p50=2.926ms  p99=3.651ms
+    rep 2: recall=81.84%  qps=360  p50=2.902ms  p99=3.702ms
+    rep 3: recall=81.84%  qps=361  p50=2.896ms  p99=3.633ms
+    summary: recall=81.84% (+/-0.00) qps=359 (+/-2)
+
+======================================================================
+Config: pancake-native-int8
+======================================================================
+  [i8 native] build (M=8, ef_c=50, metric=cosine)...
+  [i8 native] build: 56.6s, memory: 111.4 MB (rss +389.7 MB)
+
+  ef_search=10
+    rep 1: recall=30.07%  qps=18453  p50=0.050ms  p99=0.120ms
+    rep 2: recall=30.07%  qps=18923  p50=0.049ms  p99=0.129ms
+    rep 3: recall=30.07%  qps=18789  p50=0.049ms  p99=0.115ms
+    summary: recall=30.07% (+/-0.00) qps=18722 (+/-198)
+
+  ef_search=20
+    rep 1: recall=40.69%  qps=11770  p50=0.079ms  p99=0.183ms
+    rep 2: recall=40.69%  qps=11692  p50=0.079ms  p99=0.172ms
+    rep 3: recall=40.69%  qps=11853  p50=0.079ms  p99=0.163ms
+    summary: recall=40.69% (+/-0.00) qps=11771 (+/-66)
+
+  ef_search=40
+    rep 1: recall=52.19%  qps=7103  p50=0.134ms  p99=0.262ms
+    rep 2: recall=52.19%  qps=7082  p50=0.133ms  p99=0.256ms
+    rep 3: recall=52.19%  qps=7087  p50=0.134ms  p99=0.270ms
+    summary: recall=52.19% (+/-0.00) qps=7091 (+/-9)
+
+  ef_search=60
+    rep 1: recall=57.79%  qps=5335  p50=0.180ms  p99=0.332ms
+    rep 2: recall=57.79%  qps=5318  p50=0.180ms  p99=0.328ms
+    rep 3: recall=57.79%  qps=5255  p50=0.182ms  p99=0.359ms
+    summary: recall=57.79% (+/-0.00) qps=5302 (+/-35)
+
+  ef_search=80
+    rep 1: recall=61.28%  qps=4122  p50=0.229ms  p99=0.461ms
+    rep 2: recall=61.28%  qps=4249  p50=0.225ms  p99=0.442ms
+    rep 3: recall=61.28%  qps=4069  p50=0.236ms  p99=0.452ms
+    summary: recall=61.28% (+/-0.00) qps=4146 (+/-75)
+
+  ef_search=100
+    rep 1: recall=64.38%  qps=3285  p50=0.293ms  p99=0.557ms
+    rep 2: recall=64.38%  qps=3543  p50=0.273ms  p99=0.513ms
+    rep 3: recall=64.38%  qps=3558  p50=0.271ms  p99=0.515ms
+    summary: recall=64.38% (+/-0.00) qps=3462 (+/-125)
+
+  ef_search=150
+    rep 1: recall=69.53%  qps=2515  p50=0.381ms  p99=0.700ms
+    rep 2: recall=69.53%  qps=2573  p50=0.382ms  p99=0.679ms
+    rep 3: recall=69.53%  qps=2570  p50=0.379ms  p99=0.690ms
+    summary: recall=69.53% (+/-0.00) qps=2553 (+/-27)
+
+  ef_search=200
+    rep 1: recall=72.41%  qps=2059  p50=0.479ms  p99=0.801ms
+    rep 2: recall=72.41%  qps=2022  p50=0.483ms  p99=0.792ms
+    rep 3: recall=72.41%  qps=2028  p50=0.489ms  p99=0.818ms
+    summary: recall=72.41% (+/-0.00) qps=2036 (+/-16)
+
+  ef_search=300
+    rep 1: recall=75.72%  qps=1444  p50=0.695ms  p99=1.053ms
+    rep 2: recall=75.72%  qps=1435  p50=0.687ms  p99=1.093ms
+    rep 3: recall=75.72%  qps=1444  p50=0.689ms  p99=1.072ms
+    summary: recall=75.72% (+/-0.00) qps=1441 (+/-4)
+
+  ef_search=500
+    rep 1: recall=79.09%  qps=913  p50=1.117ms  p99=1.653ms
+    rep 2: recall=79.09%  qps=917  p50=1.104ms  p99=1.607ms
+    rep 3: recall=79.09%  qps=920  p50=1.108ms  p99=1.580ms
+    summary: recall=79.09% (+/-0.00) qps=917 (+/-3)
+
+  ef_search=800
+    rep 1: recall=81.51%  qps=595  p50=1.748ms  p99=2.257ms
+    rep 2: recall=81.51%  qps=585  p50=1.751ms  p99=2.560ms
+    rep 3: recall=81.51%  qps=591  p50=1.747ms  p99=2.363ms
+    summary: recall=81.51% (+/-0.00) qps=590 (+/-4)
+
+======================================================================
+Config: pancake-native-fp32
+======================================================================
+  [f32 native] build (M=8, ef_c=50, metric=cosine)...
+  [f32 native] build: 80.7s, memory: 302.5 MB (rss +583.5 MB)
+
+  ef_search=10
+    rep 1: recall=32.32%  qps=8959  p50=0.090ms  p99=0.219ms
+    rep 2: recall=32.32%  qps=10643  p50=0.088ms  p99=0.201ms
+    rep 3: recall=32.32%  qps=10490  p50=0.087ms  p99=0.210ms
+    summary: recall=32.32% (+/-0.00) qps=10031 (+/-760)
+
+  ef_search=20
+    rep 1: recall=41.50%  qps=6766  p50=0.137ms  p99=0.299ms
+    rep 2: recall=41.50%  qps=6916  p50=0.137ms  p99=0.282ms
+    rep 3: recall=41.50%  qps=7034  p50=0.133ms  p99=0.293ms
+    summary: recall=41.50% (+/-0.00) qps=6905 (+/-109)
+
+  ef_search=40
+    rep 1: recall=51.10%  qps=4193  p50=0.228ms  p99=0.465ms
+    rep 2: recall=51.10%  qps=4196  p50=0.228ms  p99=0.465ms
+    rep 3: recall=51.10%  qps=4191  p50=0.229ms  p99=0.461ms
+    summary: recall=51.10% (+/-0.00) qps=4193 (+/-2)
+
+  ef_search=60
+    rep 1: recall=57.43%  qps=2872  p50=0.332ms  p99=0.689ms
+    rep 2: recall=57.43%  qps=3159  p50=0.304ms  p99=0.613ms
+    rep 3: recall=57.43%  qps=3114  p50=0.306ms  p99=0.612ms
+    summary: recall=57.43% (+/-0.00) qps=3048 (+/-126)
+
+  ef_search=80
+    rep 1: recall=61.45%  qps=2495  p50=0.382ms  p99=0.718ms
+    rep 2: recall=61.45%  qps=2597  p50=0.372ms  p99=0.705ms
+    rep 3: recall=61.45%  qps=2446  p50=0.395ms  p99=0.756ms
+    summary: recall=61.45% (+/-0.00) qps=2513 (+/-63)
+
+  ef_search=100
+    rep 1: recall=63.65%  qps=2123  p50=0.456ms  p99=0.810ms
+    rep 2: recall=63.65%  qps=2100  p50=0.461ms  p99=0.826ms
+    rep 3: recall=63.65%  qps=2079  p50=0.472ms  p99=0.850ms
+    summary: recall=63.65% (+/-0.00) qps=2101 (+/-18)
+
+  ef_search=150
+    rep 1: recall=68.45%  qps=1595  p50=0.607ms  p99=1.165ms
+    rep 2: recall=68.45%  qps=1815  p50=0.540ms  p99=0.960ms
+    rep 3: recall=68.45%  qps=1815  p50=0.528ms  p99=0.945ms
+    summary: recall=68.45% (+/-0.00) qps=1741 (+/-104)
+
+  ef_search=200
+    rep 1: recall=71.21%  qps=1452  p50=0.683ms  p99=1.135ms
+    rep 2: recall=71.21%  qps=1451  p50=0.685ms  p99=1.127ms
+    rep 3: recall=71.21%  qps=1449  p50=0.682ms  p99=1.120ms
+    summary: recall=71.21% (+/-0.00) qps=1451 (+/-1)
+
+  ef_search=300
+    rep 1: recall=74.51%  qps=930  p50=1.077ms  p99=1.768ms
+    rep 2: recall=74.51%  qps=900  p50=1.109ms  p99=1.797ms
+    rep 3: recall=74.51%  qps=898  p50=1.116ms  p99=1.760ms
+    summary: recall=74.51% (+/-0.00) qps=909 (+/-14)
+
+  ef_search=500
+    rep 1: recall=78.54%  qps=631  p50=1.597ms  p99=2.505ms
+    rep 2: recall=78.54%  qps=665  p50=1.549ms  p99=2.112ms
+    rep 3: recall=78.54%  qps=666  p50=1.550ms  p99=2.107ms
+    summary: recall=78.54% (+/-0.00) qps=654 (+/-16)
+
+  ef_search=800
+    rep 1: recall=81.88%  qps=433  p50=2.397ms  p99=3.085ms
+    rep 2: recall=81.88%  qps=433  p50=2.392ms  p99=3.057ms
+    rep 3: recall=81.88%  qps=432  p50=2.406ms  p99=3.095ms
+    summary: recall=81.88% (+/-0.00) qps=433 (+/-1)
+
+======================================================================
+Config: usearch-int8
+======================================================================
+  [usearch-i8] build (connectivity=8, expansion_add=50, metric=cos, quantization=i8)...
+  [usearch-i8] build: 58.8s, index file: 94.2 MB (rss +106.5 MB, saved to /mnt/c/pancake1.0.0/benchmark_results/_usearch_i8_2026-07-07T19-19-12-061Z.bin)
+
+  ef_search=10
+    rep 1: recall=29.32%  qps=12518  p50=0.072ms  p99=0.189ms
+    rep 2: recall=29.32%  qps=14153  p50=0.065ms  p99=0.150ms
+    rep 3: recall=29.32%  qps=12774  p50=0.072ms  p99=0.160ms
+    summary: recall=29.32% (+/-0.00) qps=13148 (+/-718)
+
+  ef_search=20
+    rep 1: recall=36.32%  qps=9051  p50=0.104ms  p99=0.206ms
+    rep 2: recall=36.32%  qps=8883  p50=0.106ms  p99=0.244ms
+    rep 3: recall=36.32%  qps=8907  p50=0.107ms  p99=0.213ms
+    summary: recall=36.32% (+/-0.00) qps=8947 (+/-74)
+
+  ef_search=40
+    rep 1: recall=47.78%  qps=5355  p50=0.178ms  p99=0.333ms
+    rep 2: recall=47.78%  qps=5276  p50=0.181ms  p99=0.335ms
+    rep 3: recall=47.78%  qps=5185  p50=0.185ms  p99=0.370ms
+    summary: recall=47.78% (+/-0.00) qps=5272 (+/-70)
+
+  ef_search=60
+    rep 1: recall=53.14%  qps=3526  p50=0.272ms  p99=0.513ms
+    rep 2: recall=53.14%  qps=3483  p50=0.275ms  p99=0.516ms
+    rep 3: recall=53.14%  qps=3796  p50=0.252ms  p99=0.487ms
+    summary: recall=53.14% (+/-0.00) qps=3602 (+/-139)
+
+  ef_search=80
+    rep 1: recall=56.64%  qps=3051  p50=0.315ms  p99=0.551ms
+    rep 2: recall=56.64%  qps=2986  p50=0.323ms  p99=0.590ms
+    rep 3: recall=56.64%  qps=3006  p50=0.322ms  p99=0.586ms
+    summary: recall=56.64% (+/-0.00) qps=3014 (+/-27)
+
+  ef_search=100
+    rep 1: recall=58.71%  qps=2573  p50=0.377ms  p99=0.662ms
+    rep 2: recall=58.71%  qps=2620  p50=0.370ms  p99=0.661ms
+    rep 3: recall=58.71%  qps=2431  p50=0.397ms  p99=0.683ms
+    summary: recall=58.71% (+/-0.00) qps=2541 (+/-80)
+
+  ef_search=150
+    rep 1: recall=63.52%  qps=1776  p50=0.551ms  p99=1.055ms
+    rep 2: recall=63.52%  qps=1762  p50=0.554ms  p99=1.000ms
+    rep 3: recall=63.52%  qps=1999  p50=0.493ms  p99=0.870ms
+    summary: recall=63.52% (+/-0.00) qps=1846 (+/-109)
+
+  ef_search=200
+    rep 1: recall=66.43%  qps=1581  p50=0.633ms  p99=1.090ms
+    rep 2: recall=66.43%  qps=1579  p50=0.623ms  p99=1.123ms
+    rep 3: recall=66.43%  qps=1583  p50=0.625ms  p99=1.054ms
+    summary: recall=66.43% (+/-0.00) qps=1581 (+/-2)
+
+  ef_search=300
+    rep 1: recall=69.62%  qps=1118  p50=0.899ms  p99=1.425ms
+    rep 2: recall=69.62%  qps=1073  p50=0.935ms  p99=1.478ms
+    rep 3: recall=69.62%  qps=1111  p50=0.902ms  p99=1.456ms
+    summary: recall=69.62% (+/-0.00) qps=1101 (+/-20)
+
+  ef_search=500
+    rep 1: recall=73.13%  qps=707  p50=1.454ms  p99=2.048ms
+    rep 2: recall=73.13%  qps=706  p50=1.458ms  p99=2.029ms
+    rep 3: recall=73.13%  qps=705  p50=1.460ms  p99=1.995ms
+    summary: recall=73.13% (+/-0.00) qps=706 (+/-1)
+
+  ef_search=800
+    rep 1: recall=76.09%  qps=460  p50=2.256ms  p99=2.883ms
+    rep 2: recall=76.09%  qps=462  p50=2.247ms  p99=2.891ms
+    rep 3: recall=76.09%  qps=459  p50=2.261ms  p99=2.900ms
+    summary: recall=76.09% (+/-0.00) qps=460 (+/-1)
+
+======================================================================
+Config: usearch-fp32
+======================================================================
+  [usearch-f32] build (connectivity=8, expansion_add=50, metric=cos, quantization=f32)...
+  [usearch-f32] build: 94.3s, index file: 306.5 MB (rss +330.8 MB, saved to /mnt/c/pancake1.0.0/benchmark_results/_usearch_f32_2026-07-07T19-19-12-061Z.bin)
+
+  ef_search=10
+    rep 1: recall=26.00%  qps=3877  p50=0.124ms  p99=1.500ms
+    rep 2: recall=26.00%  qps=9679  p50=0.097ms  p99=0.213ms
+    rep 3: recall=26.00%  qps=9737  p50=0.096ms  p99=0.209ms
+    summary: recall=26.00% (+/-0.00) qps=7765 (+/-2749)
+
+  ef_search=20
+    rep 1: recall=35.94%  qps=6039  p50=0.155ms  p99=0.353ms
+    rep 2: recall=35.94%  qps=6176  p50=0.153ms  p99=0.332ms
+    rep 3: recall=35.94%  qps=6271  p50=0.150ms  p99=0.309ms
+    summary: recall=35.94% (+/-0.00) qps=6162 (+/-95)
+
+  ef_search=40
+    rep 1: recall=47.01%  qps=3698  p50=0.258ms  p99=0.503ms
+    rep 2: recall=47.01%  qps=3700  p50=0.256ms  p99=0.486ms
+    rep 3: recall=47.01%  qps=3694  p50=0.257ms  p99=0.503ms
+    summary: recall=47.01% (+/-0.00) qps=3697 (+/-3)
+
+  ef_search=60
+    rep 1: recall=52.58%  qps=2679  p50=0.365ms  p99=0.660ms
+    rep 2: recall=52.58%  qps=2710  p50=0.358ms  p99=0.657ms
+    rep 3: recall=52.58%  qps=2623  p50=0.366ms  p99=0.695ms
+    summary: recall=52.58% (+/-0.00) qps=2671 (+/-36)
+
+  ef_search=80
+    rep 1: recall=56.58%  qps=2170  p50=0.447ms  p99=0.812ms
+    rep 2: recall=56.58%  qps=2170  p50=0.448ms  p99=0.787ms
+    rep 3: recall=56.58%  qps=2169  p50=0.451ms  p99=0.805ms
+    summary: recall=56.58% (+/-0.00) qps=2170 (+/-0)
+
+  ef_search=100
+    rep 1: recall=59.47%  qps=1790  p50=0.542ms  p99=0.988ms
+    rep 2: recall=59.47%  qps=1788  p50=0.544ms  p99=0.940ms
+    rep 3: recall=59.47%  qps=1795  p50=0.546ms  p99=0.945ms
+    summary: recall=59.47% (+/-0.00) qps=1791 (+/-3)
+
+  ef_search=150
+    rep 1: recall=64.30%  qps=1273  p50=0.769ms  p99=1.317ms
+    rep 2: recall=64.30%  qps=1288  p50=0.766ms  p99=1.317ms
+    rep 3: recall=64.30%  qps=1286  p50=0.765ms  p99=1.339ms
+    summary: recall=64.30% (+/-0.00) qps=1282 (+/-7)
+
+  ef_search=200
+    rep 1: recall=67.95%  qps=1004  p50=0.992ms  p99=1.619ms
+    rep 2: recall=67.95%  qps=1005  p50=0.988ms  p99=1.589ms
+    rep 3: recall=67.95%  qps=1010  p50=0.982ms  p99=1.608ms
+    summary: recall=67.95% (+/-0.00) qps=1006 (+/-3)
+
+  ef_search=300
+    rep 1: recall=71.27%  qps=722  p50=1.404ms  p99=2.103ms
+    rep 2: recall=71.27%  qps=721  p50=1.403ms  p99=2.077ms
+    rep 3: recall=71.27%  qps=726  p50=1.390ms  p99=2.104ms
+    summary: recall=71.27% (+/-0.00) qps=723 (+/-2)
+
+  ef_search=500
+    rep 1: recall=75.03%  qps=474  p50=2.168ms  p99=2.955ms
+    rep 2: recall=75.03%  qps=474  p50=2.163ms  p99=2.991ms
+    rep 3: recall=75.03%  qps=473  p50=2.170ms  p99=2.996ms
+    summary: recall=75.03% (+/-0.00) qps=474 (+/-1)
+
+  ef_search=800
+    rep 1: recall=78.34%  qps=310  p50=3.351ms  p99=4.262ms
+    rep 2: recall=78.34%  qps=311  p50=3.346ms  p99=4.179ms
+    rep 3: recall=78.34%  qps=310  p50=3.351ms  p99=4.268ms
+    summary: recall=78.34% (+/-0.00) qps=310 (+/-0)
+
+======================================================================
+Config: hnswlib-fp32
+======================================================================
+  [hnswlib-f32] build (M=8, ef_c=50, metric=cosine)...
+  [hnswlib-f32] build: 62.1s, estimated memory: 320.3 MB RSS
+
+  ef_search=10
+    rep 1: recall=26.99%  qps=12989  p50=0.069ms  p99=0.203ms
+    rep 2: recall=26.99%  qps=13654  p50=0.068ms  p99=0.152ms
+    rep 3: recall=26.99%  qps=13649  p50=0.068ms  p99=0.142ms
+    summary: recall=26.99% (+/-0.00) qps=13430 (+/-312)
+
+  ef_search=20
+    rep 1: recall=36.09%  qps=9531  p50=0.097ms  p99=0.196ms
+    rep 2: recall=36.09%  qps=9667  p50=0.097ms  p99=0.181ms
+    rep 3: recall=36.09%  qps=9540  p50=0.097ms  p99=0.198ms
+    summary: recall=36.09% (+/-0.00) qps=9580 (+/-62)
+
+  ef_search=40
+    rep 1: recall=47.20%  qps=6341  p50=0.148ms  p99=0.293ms
+    rep 2: recall=47.20%  qps=6413  p50=0.147ms  p99=0.276ms
+    rep 3: recall=47.20%  qps=6411  p50=0.147ms  p99=0.281ms
+    summary: recall=47.20% (+/-0.00) qps=6388 (+/-33)
+
+  ef_search=60
+    rep 1: recall=52.81%  qps=4891  p50=0.195ms  p99=0.366ms
+    rep 2: recall=52.81%  qps=4848  p50=0.196ms  p99=0.373ms
+    rep 3: recall=52.81%  qps=4888  p50=0.193ms  p99=0.361ms
+    summary: recall=52.81% (+/-0.00) qps=4876 (+/-19)
+
+  ef_search=80
+    rep 1: recall=56.70%  qps=4025  p50=0.239ms  p99=0.429ms
+    rep 2: recall=56.70%  qps=4027  p50=0.239ms  p99=0.414ms
+    rep 3: recall=56.70%  qps=4012  p50=0.241ms  p99=0.426ms
+    summary: recall=56.70% (+/-0.00) qps=4021 (+/-7)
+
+  ef_search=100
+    rep 1: recall=59.96%  qps=3419  p50=0.285ms  p99=0.528ms
+    rep 2: recall=59.96%  qps=3430  p50=0.282ms  p99=0.497ms
+    rep 3: recall=59.96%  qps=3395  p50=0.285ms  p99=0.543ms
+    summary: recall=59.96% (+/-0.00) qps=3415 (+/-15)
+
+  ef_search=150
+    rep 1: recall=64.59%  qps=2542  p50=0.386ms  p99=0.644ms
+    rep 2: recall=64.59%  qps=2538  p50=0.386ms  p99=0.630ms
+    rep 3: recall=64.59%  qps=2543  p50=0.385ms  p99=0.655ms
+    summary: recall=64.59% (+/-0.00) qps=2541 (+/-2)
+
+  ef_search=200
+    rep 1: recall=68.07%  qps=2026  p50=0.487ms  p99=0.790ms
+    rep 2: recall=68.07%  qps=2034  p50=0.485ms  p99=0.781ms
+    rep 3: recall=68.07%  qps=2025  p50=0.487ms  p99=0.791ms
+    summary: recall=68.07% (+/-0.00) qps=2028 (+/-4)
+
+  ef_search=300
+    rep 1: recall=71.61%  qps=1460  p50=0.687ms  p99=1.017ms
+    rep 2: recall=71.61%  qps=1463  p50=0.689ms  p99=1.033ms
+    rep 3: recall=71.61%  qps=1467  p50=0.684ms  p99=1.006ms
+    summary: recall=71.61% (+/-0.00) qps=1463 (+/-3)
+
+  ef_search=500
+    rep 1: recall=74.93%  qps=953  p50=1.073ms  p99=1.461ms
+    rep 2: recall=74.93%  qps=956  p50=1.071ms  p99=1.487ms
+    rep 3: recall=74.93%  qps=960  p50=1.065ms  p99=1.436ms
+    summary: recall=74.93% (+/-0.00) qps=956 (+/-3)
+
+  ef_search=800
+    rep 1: recall=78.46%  qps=629  p50=1.645ms  p99=2.050ms
+    rep 2: recall=78.46%  qps=628  p50=1.652ms  p99=2.087ms
+    rep 3: recall=78.46%  qps=627  p50=1.659ms  p99=2.093ms
+    summary: recall=78.46% (+/-0.00) qps=628 (+/-1)
+  plot:           Saved: /mnt/c/pancake1.0.0/benchmark_results/pareto_nytimes_2026-07-07T19-19-12-061Z.png
+
+======================================================================
+Pareto frontiers (non-dominated QPS-recall points)
+======================================================================
+
+  pancake-wasm-int8
+       ef    recall        qps
+       10    30.67%      14507
+       20    42.46%       9460
+       40    52.29%       5719
+       60    57.77%       4303
+       80    60.85%       3472
+      100    64.56%       2908
+      150    69.46%       2104
+      200    72.31%       1660
+      300    75.42%       1176
+      500    78.77%        752
+      800    81.78%        484
+
+  pancake-wasm-fp32
+       ef    recall        qps
+       10    30.41%      11723
+       20    40.29%       7233
+       40    50.32%       4290
+       60    56.53%       3049
+       80    60.54%       2168
+      100    63.48%       1825
+      150    68.19%       1520
+      200    71.21%       1213
+      300    74.73%        859
+      500    78.62%        554
+      800    81.84%        359
+
+  pancake-native-int8
+       ef    recall        qps
+       10    30.07%      18722
+       20    40.69%      11771
+       40    52.19%       7091
+       60    57.79%       5302
+       80    61.28%       4146
+      100    64.38%       3462
+      150    69.53%       2553
+      200    72.41%       2036
+      300    75.72%       1441
+      500    79.09%        917
+      800    81.51%        590
+
+  pancake-native-fp32
+       ef    recall        qps
+       10    32.32%      10031
+       20    41.50%       6905
+       40    51.10%       4193
+       60    57.43%       3048
+       80    61.45%       2513
+      100    63.65%       2101
+      150    68.45%       1741
+      200    71.21%       1451
+      300    74.51%        909
+      500    78.54%        654
+      800    81.88%        433
+
+  usearch-int8
+       ef    recall        qps
+       10    29.32%      13148
+       20    36.32%       8947
+       40    47.78%       5272
+       60    53.14%       3602
+       80    56.64%       3014
+      100    58.71%       2541
+      150    63.52%       1846
+      200    66.43%       1581
+      300    69.62%       1101
+      500    73.13%        706
+      800    76.09%        460
+
+  usearch-fp32
+       ef    recall        qps
+       10    26.00%       7765
+       20    35.94%       6162
+       40    47.01%       3697
+       60    52.58%       2671
+       80    56.58%       2170
+      100    59.47%       1791
+      150    64.30%       1282
+      200    67.95%       1006
+      300    71.27%        723
+      500    75.03%        474
+      800    78.34%        310
+
+  hnswlib-fp32
+       ef    recall        qps
+       10    26.99%      13430
+       20    36.09%       9580
+       40    47.20%       6388
+       60    52.81%       4876
+       80    56.70%       4021
+      100    59.96%       3415
+      150    64.59%       2541
+      200    68.07%       2028
+      300    71.61%       1463
+      500    74.93%        956
+      800    78.46%        628
+
+======================================================================
+Interpolated equal-recall QPS (log-linear along each frontier)
+  Blank = recall target outside that library's frontier span.
+======================================================================
+
+   recall   pancake-wasm-int8   pancake-wasm-fp32 pancake-native-int8 pancake-native-fp32        usearch-int8        usearch-fp32        hnswlib-fp32
+  ---------------------------------------------------------------------------------------------------------------------------------------------------
+    26.0%                 n/a                 n/a                 n/a                 n/a                 n/a                7765                 n/a
+    27.0%                 n/a                 n/a                 n/a                 n/a                 n/a                7588               13430
+    29.3%                 n/a                 n/a                 n/a                 n/a               13148                7187               12316
+    30.1%                 n/a                 n/a               18722                 n/a               12616                7063               11978
+    30.4%                 n/a               11723               18445                 n/a               12382                7007               11827
+    30.7%               14507               11575               18237                 n/a               12206                6965               11713
+    32.3%               13664               10677               16967               10031               11146                6702               11017
+    33.0%               13341               10339               16485                9765               10749                6600               10750
+    35.9%               11986                8949               14489                8660                9136                6162                9633
+    36.1%               11921                8883               14394                8607                9061                6119                9580
+    36.3%               11822                8784               14250                8527                8947                6055                9499
+    40.0%               10356                7348               12149                7350                7560                5116                8315
+    40.3%               10235                7233               11979                7254                7448                5040                8218
+    40.7%               10087                7084               11771                7137                7312                4948                8099
+    41.5%                9795                6791               11358                6905                7043                4767                7863
+    42.5%                9460                6459               10887                6569                6738                4560                7592
+    47.0%                7517                5112                8932                5202                5477                3707                6445
+    47.0%                7496                5098                8911                5187                5463                3697                6433
+    47.2%                7424                5048                8837                5136                5415                3657                6388
+    47.8%                7206                4897                8614                4984                5272                3535                6212
+    50.3%                6327                4290                7701                4367                4401                3047                5497
+    51.1%                6079                4109                7440                4193                4164                2912                5294
+    52.2%                5749                3870                7091                3969                3853                2732                5024
+    52.3%                5719                3849                7054                3949                3826                2716                4999
+    52.6%                5634                3788                6948                3892                3748                2671                4930
+    52.8%                5567                3740                6866                3847                3687                2639                4876
+    53.1%                5472                3673                6749                3783                3602                2594                4797
+    53.9%                5250                3515                6476                3634                3458                2489                4611
+    56.5%                4590                3049                5661                3190                3031                2175                4056
+    56.6%                4578                3036                5647                3182                3023                2170                4045
+    56.6%                4563                3020                5629                3172                3014                2161                4033
+    56.7%                4549                3005                5612                3163                2999                2152                4021
+    57.4%                4380                2824                5403                3048                2824                2051                3877
+    57.8%                4303                2744                5308                2999                2746                2005                3811
+    57.8%                4297                2739                5302                2996                2742                2002                3808
+    58.7%                4030                2533                4970                2867                2541                1884                3636
+    59.5%                3822                2375                4710                2764                2416                1791                3500
+    60.0%                3694                2278                4551                2699                2339                1732                3415
+    60.5%                3548                2168                4368                2625                2250                1663                3291
+    60.9%                3472                2129                4274                2586                2204                1628                3226
+    60.9%                3460                2120                4252                2577                2194                1620                3211
+    61.3%                3402                2076                4146                2534                2142                1580                3139
+    61.5%                3374                2056                4106                2513                2118                1562                3105
+    63.5%                3062                1825                3648                2130                1851                1357                2728
+    63.5%                3056                1823                3640                2123                1846                1354                2721
+    63.7%                3037                1813                3612                2101                1833                1341                2698
+    64.3%                2944                1768                3478                2048                1771                1282                2589
+    64.4%                2933                1763                3462                2042                1763                1276                2575
+    64.6%                2908                1750                3425                2027                1746                1260                2546
+    64.6%                2902                1748                3419                2025                1743                1258                2541
+    66.4%                2571                1628                3068                1885                1581                1114                2256
+    67.9%                2331                1537                2810                1778                1336                1009                2049
+    67.9%                2325                1535                2803                1776                1331                1006                2044
+    68.1%                2307                1527                2784                1768                1313                 994                2028
+    68.2%                2289                1520                2764                1759                1295                 983                2006
+    68.4%                2250                1491                2722                1741                1257                 958                1958
+    69.5%                2104                1383                2563                1629                1121                 866                1784
+    69.5%                2092                1376                2553                1621                1112                 860                1773
+    69.6%                2076                1366                2535                1612                1101                 852                1758
+    71.2%                1819                1213                2237                1451                 900                 727                1518
+    71.3%                1810                1206                2227                1438                 893                 723                1510
+    71.6%                1760                1167                2168                1371                 856                 696                1463
+    72.3%                1660                1089                2052                1242                 783                 643                1338
+    72.4%                1642                1079                2036                1224                 774                 636                1321
+    73.1%                1516                1005                1888                1105                 706                 586                1204
+    74.5%                1300                 878                1634                 909                 578                 502                1009
+    74.7%                1268                 859                1597                 893                 560                 489                 981
+    74.9%                1246                 844                1570                 881                 547                 481                 961
+    74.9%                1241                 840                1564                 879                 544                 478                 956
+    75.0%                1228                 832                1549                 872                 537                 474                 946
+    75.4%                1176                 796                1487                 845                 507                 451                 903
+    75.7%                1130                 769                1441                 824                 486                 434                 871
+    76.1%                1075                 738                1371                 799                 460                 414                 834
+    78.3%                 796                 572                1014                 665                 n/a                 310                 637
+    78.5%                 784                 564                 998                 658                 n/a                 n/a                 628
+    78.5%                 775                 559                 987                 654                 n/a                 n/a                 n/a
+    78.6%                 767                 554                 976                 647                 n/a                 n/a                 n/a
+    78.8%                 752                 543                 957                 635                 n/a                 n/a                 n/a
+    79.1%                 717                 520                 917                 611                 n/a                 n/a                 n/a
+    81.5%                 503                 376                 590                 453                 n/a                 n/a                 n/a
+    81.8%                 484                 362                 n/a                 438                 n/a                 n/a                 n/a
+    81.8%                 n/a                 359                 n/a                 435                 n/a                 n/a                 n/a
+    81.9%                 n/a                 n/a                 n/a                 433                 n/a                 n/a                 n/a
+
+======================================================================
+Outputs:
+  log:            /mnt/c/pancake1.0.0/benchmark_results/pareto_nytimes_2026-07-07T19-19-12-061Z.log
+  json:           /mnt/c/pancake1.0.0/benchmark_results/pareto_nytimes_2026-07-07T19-19-12-061Z.json
+  raw sweep csv:  /mnt/c/pancake1.0.0/benchmark_results/pareto_nytimes_2026-07-07T19-19-12-061Z.csv
+  frontier csv:   /mnt/c/pancake1.0.0/benchmark_results/pareto_nytimes_2026-07-07T19-19-12-061Z_frontier.csv
+  equal-recall:   /mnt/c/pancake1.0.0/benchmark_results/pareto_nytimes_2026-07-07T19-19-12-061Z_equalrecall.csv
+  plot png:       /mnt/c/pancake1.0.0/benchmark_results/pareto_nytimes_2026-07-07T19-19-12-061Z.png
