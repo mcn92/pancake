@@ -9,14 +9,15 @@ const { pathToFileURL } = require('url');
 const DIMS = 384;
 const K = 10;
 const MAX_ELEM = 110_000;
-const LATENCY_CHECK_QUERIES = 50;
+const LATENCY_WARMUP_QUERIES = 50;
+const LATENCY_CHECK_QUERIES = 200;
 const AVG_LATENCY_THRESHOLD_MS = 2;
 const P99_LATENCY_THRESHOLD_MS = 5;
 const VECTORS_PATH = path.join(__dirname, '..', '..', 'dist', 'vectors.bin');
 const DEFAULT_EXPORT_PATH = path.join(__dirname, 'pancake-index.pnck');
 
 const PROOFS = [
-    { id: 'load', text: 'Real embeddings loaded from vectors.bin' },
+    { id: 'load', text: 'Deterministic clustered demo embeddings loaded from vectors.bin' },
     { id: 'init', text: 'Index built through the public Pancake API' },
     { id: 'search', text: 'Successful search execution' },
     { id: 'avg_latency', text: `Average search latency under ${AVG_LATENCY_THRESHOLD_MS}ms over ${LATENCY_CHECK_QUERIES} queries` },
@@ -88,9 +89,16 @@ class TechnicalDemoCLI {
         this.proofState = Object.fromEntries(PROOFS.map(proof => [proof.id, false]));
         this.liveVectors = new Map();
         this.deletedIds = new Set();
+        this.oracleAvailable = true;
     }
 
     async init(showHelp = true) {
+        if (!fs.existsSync(VECTORS_PATH)) {
+            throw new Error(
+                `Demo vectors not found at ${VECTORS_PATH}. Run "npm run demo:data" first, ` +
+                'or use "npm run demo" to generate them automatically.'
+            );
+        }
         this.log(`Loading embeddings from ${VECTORS_PATH}...`, 'info');
         const buf = fs.readFileSync(VECTORS_PATH);
         this.vectors = new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.byteLength / 4));
@@ -126,6 +134,10 @@ class TechnicalDemoCLI {
         return normalize(vec);
     }
 
+    trackedLiveCount() {
+        return this.liveVectors.size - this.deletedIds.size;
+    }
+
     async createIndex(maxElements = MAX_ELEM) {
         if (this.index) this.index.dispose();
         this.index = await this.Pancake.create({
@@ -140,10 +152,11 @@ class TechnicalDemoCLI {
         this.latencyHistory = [];
         this.liveVectors.clear();
         this.deletedIds.clear();
+        this.oracleAvailable = true;
     }
 
     requireIndex(action) {
-        if (!this.index || this.index.count === 0) {
+        if (!this.index) {
             throw new Error(`${action} requires a built or imported index`);
         }
     }
@@ -177,7 +190,7 @@ class TechnicalDemoCLI {
         process.stdout.write('  help                                      Show commands\n');
         process.stdout.write('  status                                    Show index metrics\n');
         process.stdout.write('  checklist                                 Show validation checklist\n');
-        process.stdout.write('  build [count]                             Build index (default 100000)\n');
+        process.stdout.write('  build [count]                             Build index (default: all demo vectors)\n');
         process.stdout.write('  reset                                     Reset the index\n');
         process.stdout.write('  search [count]                            Run random searches\n');
         process.stdout.write('  insert [count]                            Insert synthetic vectors\n');
@@ -192,7 +205,7 @@ class TechnicalDemoCLI {
 
     async build(count = Math.min(this.totalVectors, 100_000)) {
         count = Math.max(1, Math.min(count, this.totalVectors, MAX_ELEM));
-        await this.createIndex(Math.max(MAX_ELEM, count + 10_000));
+        await this.createIndex(Math.min(MAX_ELEM, count + 10_000));
         this.log(`Building ${count.toLocaleString()} vectors via index.addBatch()...`, 'info');
         const batch = new Array(count);
         for (let i = 0; i < count; i++) batch[i] = this.getVec(i);
@@ -221,6 +234,9 @@ class TechnicalDemoCLI {
     async search(count = LATENCY_CHECK_QUERIES) {
         this.requireIndex('search');
         count = Math.max(1, count);
+        for (let i = 0; i < LATENCY_WARMUP_QUERIES; i++) {
+            this.index.search(this.randomLoadedVec(), K);
+        }
         this.log(`Running ${count} random searches...`, 'info');
         const latencies = [];
         for (let i = 0; i < count; i++) {
@@ -253,6 +269,10 @@ class TechnicalDemoCLI {
     delete(count = 1, verbose = true) {
         this.requireIndex('delete');
         const liveIds = [...this.liveVectors.keys()].filter(id => !this.deletedIds.has(id));
+        if (liveIds.length === 0) {
+            if (verbose) this.log('No tracked live vectors are available to delete.', 'info');
+            return 0;
+        }
         count = Math.max(1, Math.min(count, liveIds.length));
         for (let i = 0; i < count; i++) {
             const pick = i + Math.floor(Math.random() * (liveIds.length - i));
@@ -263,6 +283,7 @@ class TechnicalDemoCLI {
         this.markProof('delete');
         if (this.index.ghostCount > 0) this.markProof('ghosts');
         if (verbose) this.log(`Deleted ${count.toLocaleString()} vectors; ghosts=${this.index.ghostCount.toLocaleString()}`, 'success');
+        return count;
     }
 
     compact() {
@@ -291,11 +312,10 @@ class TechnicalDemoCLI {
         this.index.import(snapshot);
         this.liveVectors.clear();
         this.deletedIds.clear();
-        for (let id = 0; id < this.index.count; id++) {
-            if (id < this.totalVectors) this.liveVectors.set(id, new Float32Array(this.getVec(id)));
-        }
+        this.oracleAvailable = false;
         this.markProof('import');
         this.log(`Imported ${this.index.count.toLocaleString()} vectors from ${filePath}`, 'success');
+        this.log('Brute-force recall validation is unavailable because this snapshot has no demo oracle sidecar.', 'info');
     }
 
     validateDeterministic() {
@@ -329,7 +349,9 @@ class TechnicalDemoCLI {
 
     validateCompaction() {
         this.requireIndex('compaction validation');
-        if (this.index.ghostCount === 0) this.delete(Math.min(10, Math.max(1, this.index.count)), false);
+        if (this.index.ghostCount === 0 && this.trackedLiveCount() > 0) {
+            this.delete(Math.min(10, this.trackedLiveCount()), false);
+        }
         const before = this.index.count - this.index.ghostCount;
         this.compact();
         if (this.index.count !== before || this.index.ghostCount !== 0) {
@@ -384,6 +406,9 @@ class TechnicalDemoCLI {
 
     validateRecall(queryCount = 50, topK = 10) {
         this.requireIndex('recall validation');
+        if (!this.oracleAvailable) {
+            throw new Error('recall validation is unavailable after importing a snapshot without a demo oracle sidecar');
+        }
         const candidates = [...this.liveVectors.entries()].filter(([id]) => !this.deletedIds.has(id));
         if (candidates.length < topK) {
             throw new Error(`not enough tracked vectors (${candidates.length}) for recall validation`);
@@ -413,7 +438,7 @@ class TechnicalDemoCLI {
         const latencies = [];
         for (let i = 0; i < 200; i++) {
             if (i % 4 === 0) this.insert(1, false);
-            if (i % 5 === 0 && this.liveVectors.size > 20) this.delete(1, false);
+            if (i % 5 === 0 && this.trackedLiveCount() > 20) this.delete(1, false);
             const { latency } = this.doSearch(this.randomLoadedVec());
             latencies.push(latency);
             if (i % 25 === 0) await sleep(0);
@@ -428,14 +453,35 @@ class TechnicalDemoCLI {
     async validate(target) {
         switch (target) {
         case 'all':
-            await this.search(LATENCY_CHECK_QUERIES);
-            this.validateDeterministic();
-            this.validateDeletion();
-            this.validateCompaction();
-            await this.validateExport();
-            this.validateSelfRecall();
-            this.validateRecall();
-            await this.validateStability();
+            {
+                const checks = [
+                    ['latency', () => this.search(LATENCY_CHECK_QUERIES)],
+                    ['determinism', () => this.validateDeterministic()],
+                    ['deletion', () => this.validateDeletion()],
+                    ['compaction', () => this.validateCompaction()],
+                    ['export/import', () => this.validateExport()],
+                    ['self-recall', () => this.validateSelfRecall()],
+                    ['recall', () => this.validateRecall()],
+                    ['stability', () => this.validateStability()],
+                ];
+                const failures = [];
+                for (const [label, check] of checks) {
+                    try {
+                        await check();
+                    } catch (error) {
+                        const message = error && error.message ? error.message : String(error);
+                        failures.push(`${label}: ${message}`);
+                        this.log(`${label} validation failed: ${message}`, 'error');
+                    }
+                }
+                this.log(
+                    `Validation summary: ${checks.length - failures.length}/${checks.length} checks passed.`,
+                    failures.length === 0 ? 'success' : 'error'
+                );
+                if (failures.length > 0) {
+                    throw new Error(`${failures.length} validation check(s) failed; see the summary above`);
+                }
+            }
             break;
         case 'deterministic':
             this.validateDeterministic();
@@ -469,6 +515,7 @@ class TechnicalDemoCLI {
         if (!config) throw new Error(`unknown stress mode "${mode}"`);
         const end = performance.now() + Math.max(1, seconds) * 1000;
         const latencies = [];
+        const resultCounts = [];
         let inserts = 0;
         let deletes = 0;
         let searches = 0;
@@ -477,21 +524,45 @@ class TechnicalDemoCLI {
                 this.insert(1, false);
                 inserts++;
             }
-            for (let i = 0; i < config.delete / 10 && this.liveVectors.size > 20; i++) {
+            for (let i = 0; i < config.delete / 10 && this.trackedLiveCount() > 20; i++) {
                 this.delete(1, false);
                 deletes++;
             }
             for (let i = 0; i < config.search / 10; i++) {
-                const { latency } = this.doSearch(this.randomLoadedVec());
+                const { results, latency } = this.doSearch(this.randomLoadedVec());
                 latencies.push(latency);
+                resultCounts.push(results.length);
                 searches++;
             }
             await sleep(0);
         }
         const p50 = percentile(latencies, 0.5);
         const p99 = percentile(latencies, 0.99);
+        const averageResults = resultCounts.reduce((sum, count) => sum + count, 0) / resultCounts.length;
+        if (this.index.count - this.index.ghostCount > 0 && averageResults === 0) {
+            throw new Error('stress searches returned no results from a non-empty live index');
+        }
+
+        let recallText = 'unavailable';
+        const candidates = [...this.liveVectors.entries()].filter(([id]) => !this.deletedIds.has(id));
+        if (this.oracleAvailable && candidates.length >= K) {
+            const query = candidates[Math.floor(Math.random() * candidates.length)][1];
+            const truth = new Set(candidates
+                .map(([id, vec]) => ({ id, distance: cosineDistance(query, vec) }))
+                .sort((a, b) => a.distance - b.distance)
+                .slice(0, K)
+                .map(result => result.id));
+            const approximate = this.index.search(query, K);
+            const hits = approximate.filter(result => truth.has(result.id)).length;
+            recallText = `${((hits / K) * 100).toFixed(1)}%`;
+        }
         this.markProof('stress');
-        this.log(`stress ${mode}: inserts=${inserts} deletes=${deletes} searches=${searches} p50=${p50.toFixed(3)}ms p99=${p99.toFixed(3)}ms`, 'success');
+        this.log(
+            `stress ${mode}: inserts=${inserts} deletes=${deletes} searches=${searches} ` +
+            `avg_results=${averageResults.toFixed(1)} recall_spot=${recallText} ` +
+            `p50=${p50.toFixed(3)}ms p99=${p99.toFixed(3)}ms`,
+            'success'
+        );
     }
 
     async handleCommand(input) {

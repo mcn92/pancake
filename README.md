@@ -181,8 +181,8 @@ deployment state alongside the packaged snapshot.
 | `metric` | string | `'cosine'` | `'cosine'` or `'l2'` |
 | `quantized` | boolean | `true` | Use int8 storage. Cuts memory by about `3.7x` on the current 1536D DBpedia run, with roughly a 2 point recall-ceiling tradeoff versus float32. Set to `false` for full float32 storage. |
 | `M` | number | `16` | HNSW connectivity |
-| `efConstruction` | number | `50` | Build-time beam width |
-| `efSearch` | number | `100` | Query-time beam width |
+| `efConstruction` | number | `50` | Build-time beam width (`1`–`4096`) |
+| `efSearch` | number | `100` | Default query-time beam width (`1`–`4096`) |
 
 `maxElements` pre-allocates graph structure eagerly: the default `100000`
 costs about `25 MB` of index memory (and roughly `75 MB` of WASM heap at
@@ -205,19 +205,36 @@ Returns:
 
 `dim` defaults to the first vector's length. `maxElements` defaults to `rows.length`.
 
+### Snapshot restore
+
+`await Pancake.restore(snapshot, overrides?)` infers `dim`, `metric`,
+`quantized`, `M`, and `efConstruction` from a Pancake envelope. Capacity
+defaults to the restored count, so pass `{ maxElements }` when the restored
+index must accept more vectors. `efSearch` is runtime policy and defaults to
+`100`; it can also be overridden during restore.
+
+`Pancake.inspectSnapshot(snapshot)` validates the headers without creating a
+WASM instance and returns the format, version, resolved construction fields,
+count, and next external ID. Legacy raw engine snapshots remain supported, but
+`restore()` requires their construction fields to be supplied explicitly.
+
 ### Methods
 
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `add(vector)` | `number` | Insert one vector, returns its ID |
 | `addBatch(vectors)` | `number[]` | Insert multiple vectors |
-| `search(query, k)` | `{id, distance}[]` | k-nearest-neighbor search |
-| `searchFiltered(query, k, allowedIds)` | `{id, distance}[]` | k-NN restricted to an ID set |
-| `delete(id)` | -- | Soft-delete by ID |
+| `search(query, k, { efSearch? })` | `{id, distance}[]` | k-nearest-neighbor search, optionally overriding beam width for this call |
+| `searchFiltered(query, k, allowedIds, { efSearch? })` | `{id, distance}[]` | k-NN restricted to an ID set, with the same per-call override |
+| `setEfSearch(value)` | -- | Change the default beam width for future searches |
+| `delete(id)` | `boolean` | Soft-delete a live ID; false means unknown or already deleted |
+| `has(id)` | `boolean` | Whether an ID is live |
+| `isDeleted(id)` | `boolean` | Whether an ID is awaiting compaction |
 | `compact()` | -- | Rebuild graph without soft-deleted entries |
 | `export()` | `Uint8Array` | Serialize index state. Requires `ghostCount === 0`; call `compact()` first after deletions. |
 | `import(data)` | -- | Restore a previous export |
 | `dispose()` | -- | Free WASM buffers |
+| `Pancake.withIndex(opts, fn)` | callback result | Create, use, and always dispose an index |
 
 ### Distance values
 
@@ -239,7 +256,7 @@ stored-side values, as described under Quantization.)
 | Helper | Returns | Description |
 |--------|---------|-------------|
 | `loadJsonFile(path, opts)` | `{ index, ids, idMap }` | Build an index from a JSON array or JSONL file |
-| `loadSnapshotFile(path, opts)` | `PancakeIndex` | Restore a previous `export()` from disk |
+| `loadSnapshotFile(path, overrides?)` | `PancakeIndex` | Restore a previous `export()` from disk with inferred config |
 
 File-helper notes:
 
@@ -253,9 +270,13 @@ File-helper notes:
 | Property | Description |
 |----------|-------------|
 | `count` | Vectors stored (includes soft-deleted until `compact()`) |
-| `ghostCount` | Soft-deleted vectors awaiting compaction |
-| `ghostRatio` | `ghostCount / count` |
-| `memory` | Estimated index memory in bytes (vectors + graph structure) |
+| `liveCount` | Live, searchable vectors |
+| `deletedCount` / `deletedRatio` | Soft-deleted vectors awaiting compaction and their fraction |
+| `capacity` / `remainingCapacity` | Fixed insertion capacity and unused slots; soft deletion does not free a slot |
+| `config` | Fully resolved construction config and current default `efSearch` |
+| `memoryUsage` | `{ logicalIndexBytes, wasmHeapBytes, snapshotBufferBytes }` |
+| `ghostCount` / `ghostRatio` | Backward-compatible aliases for the deleted state |
+| `memory` | Alias for `memoryUsage.logicalIndexBytes` |
 | `dim` | Vector dimension |
 
 ### Backend dispatch

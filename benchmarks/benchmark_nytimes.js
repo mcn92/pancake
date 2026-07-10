@@ -417,7 +417,7 @@ async function buildPancake({ train, dim, dtype }) {
 }
 
 function queryPancake(index, test, groundTruth, efSearch) {
-  index._setEfSearch(efSearch);
+  index.setEfSearch(efSearch);
 
   // Warmup: let v8 specialize for the new ef_search work shape.
   for (let i = 0; i < WARMUP_QUERIES && i < test.length; i++) {

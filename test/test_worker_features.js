@@ -273,12 +273,17 @@ async function testRestoreAddCompactPreservesRestoredVectors(env) {
   });
   assert(cleared.status === 200, '/reset_cache succeeds');
 
-  const restoredSearch = await fetchJSON('/search', {
+  const restoredSearches = await Promise.all(Array.from({ length: 5 }, () => fetchJSON('/search', {
     method: 'POST',
     headers: auth,
     body: { query: v1, k: 1, ef: 20 }
-  });
-  assert(restoredSearch.status === 200, '/search restores snapshot after reset');
+  })));
+  assert(restoredSearches.every(result => result.status === 200),
+    'concurrent /search requests restore the snapshot successfully after reset');
+
+  const healthAfterRestore = await fetchJSON('/health');
+  assert(healthAfterRestore.json?.restore?.restoreCount === 1,
+    'concurrent cold-start requests share one snapshot restore');
 
   const add = await fetchJSON('/add', {
     method: 'POST',

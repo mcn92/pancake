@@ -208,7 +208,7 @@ async function buildWasm({ train, dim, dtype }) {
 }
 
 function queryWasm(index, test, groundTruth, efSearch) {
-  index._setEfSearch(efSearch);
+  index.setEfSearch(efSearch);
   for (let i = 0; i < WARMUP_QUERIES && i < test.length; i++) index.search(test[i], K);
   const latencies = new Array(test.length);
   let totalRecall = 0;

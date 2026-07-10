@@ -147,6 +147,11 @@ class TechnicalDemoWorker {
     }
 
     async init(showHelp = true) {
+        if (!fs.existsSync(VECTORS_PATH)) {
+            throw new Error(
+                `Demo vectors not found at ${VECTORS_PATH}. Run "npm run demo:data" first.`
+            );
+        }
         this.log(`Loading embeddings from ${VECTORS_PATH}...`, 'info');
         const buf = fs.readFileSync(VECTORS_PATH);
         this.vectors = new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.byteLength / 4));

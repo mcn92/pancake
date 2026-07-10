@@ -11,13 +11,14 @@ import Pancake from '../../pancake.workerd.mjs';
 let index = null;
 let indexConfig = null;
 let localSnapshot = null;
+let restorePromise = null;
 
 const MAX_RESULTS = 100;
 const MAX_DIMS = 4096;
 const DEFAULT_MAX_ELEMENTS = 5_000;
 const DEFAULT_MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 const DEFAULT_MAX_JSON_BYTES = 1 * 1024 * 1024;
-const MAX_EF = 2000;
+const MAX_EF = 4096;
 const MAX_M = 128;
 const SNAPSHOT_KEY_PREFIX = 'pancake-index-';
 const LEGACY_SNAPSHOT_KEY = 'pancake-index.bin';
@@ -164,8 +165,8 @@ function validateCreateConfig(config, label, maxElementsLimit) {
   if (!isPositiveInteger(config.maxElements) || config.maxElements > maxElementsLimit) {
     throw new Error(`${label}: maxElements must be an integer between 1 and ${maxElementsLimit}`);
   }
-  if (!isPositiveInteger(config.M) || config.M > MAX_M) {
-    throw new Error(`${label}: M must be an integer between 1 and ${MAX_M}`);
+  if (!Number.isInteger(config.M) || config.M < 2 || config.M > MAX_M) {
+    throw new Error(`${label}: M must be an integer between 2 and ${MAX_M}`);
   }
   if (!isPositiveInteger(config.efConstruction) || config.efConstruction > MAX_EF) {
     throw new Error(`${label}: efConstruction must be an integer between 1 and ${MAX_EF}`);
@@ -340,7 +341,12 @@ async function restoreIndex(env) {
 
 async function ensureIndex(env) {
   if (index) return true;
-  return restoreIndex(env);
+  if (restorePromise === null) {
+    restorePromise = restoreIndex(env).finally(() => {
+      restorePromise = null;
+    });
+  }
+  return restorePromise;
 }
 
 function healthBody(env) {
@@ -362,14 +368,6 @@ function statsBody() {
     ghost_count: index.ghostCount,
     ghost_ratio: index.ghostRatio
   };
-}
-
-function applyEf(index, ef) {
-  if (ef === undefined || ef === null) return;
-  const parsed = Number.parseInt(ef, 10);
-  if (Number.isInteger(parsed) && parsed > 0 && typeof index._setEfSearch === 'function') {
-    index._setEfSearch(Math.min(parsed, MAX_EF));
-  }
 }
 
 async function handleRequest(request, env, ctx) {
@@ -497,11 +495,15 @@ async function handleRequest(request, env, ctx) {
     if (!await ensureIndex(env)) return jsonResponse({ error: 'Index not initialized. Call /init first.' }, 503);
     const body = await readJson(request, env);
     const k = Math.min(Number.parseInt(body.k ?? '10', 10), MAX_RESULTS);
-    applyEf(index, body.ef);
+    const efSearch = body.efSearch ?? body.ef;
+    if (efSearch !== undefined && (!isPositiveInteger(efSearch) || efSearch > MAX_EF)) {
+      return jsonResponse({ error: `efSearch must be an integer between 1 and ${MAX_EF}` }, 400);
+    }
+    const searchOptions = efSearch === undefined ? undefined : { efSearch };
     const start = performance.now();
     const neighbors = body.allowedIds
-      ? index.searchFiltered(body.query, k, new Set(body.allowedIds))
-      : index.search(body.query, k);
+      ? index.searchFiltered(body.query, k, new Set(body.allowedIds), searchOptions)
+      : index.search(body.query, k, searchOptions);
     return jsonResponse({
       ok: true,
       neighbors,

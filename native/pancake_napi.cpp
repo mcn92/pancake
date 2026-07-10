@@ -259,9 +259,25 @@ Napi::Value Init(const Napi::CallbackInfo& info) {
 Napi::Value Add(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     uint32_t h = info[0].As<Napi::Number>().Uint32Value();
-    Napi::Float32Array vec = info[1].As<Napi::TypedArray>().As<Napi::Float32Array>();
     if (h >= MAX_HANDLES || !g_handles[h])
         return Napi::Number::New(env, INVALID_HANDLE);
+    if (!info[1].IsTypedArray()) {
+        Napi::TypeError::New(env, "pancake_add: vector must be a Float32Array")
+            .ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+    Napi::TypedArray typed = info[1].As<Napi::TypedArray>();
+    if (typed.TypedArrayType() != napi_float32_array) {
+        Napi::TypeError::New(env, "pancake_add: vector must be a Float32Array")
+            .ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+    Napi::Float32Array vec = typed.As<Napi::Float32Array>();
+    if (vec.ElementLength() < g_handles[h]->dimension()) {
+        Napi::RangeError::New(env, "pancake_add: vector is shorter than the index dimension")
+            .ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
     uint32_t id = g_handles[h]->insert(vec.Data());
     return Napi::Number::New(env, id);
 }
@@ -269,10 +285,33 @@ Napi::Value Add(const Napi::CallbackInfo& info) {
 Napi::Value BulkInsert(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     uint32_t h = info[0].As<Napi::Number>().Uint32Value();
-    Napi::Float32Array vecs = info[1].As<Napi::TypedArray>().As<Napi::Float32Array>();
     int n = info[2].As<Napi::Number>().Int32Value();
     if (h >= MAX_HANDLES || !g_handles[h])
         return Napi::Number::New(env, 0);
+    if (n < 0) {
+        Napi::RangeError::New(env, "pancake_bulk_insert: n must be non-negative")
+            .ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+    if (!info[1].IsTypedArray()) {
+        Napi::TypeError::New(env, "pancake_bulk_insert: vectors must be a Float32Array")
+            .ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+    Napi::TypedArray typed = info[1].As<Napi::TypedArray>();
+    if (typed.TypedArrayType() != napi_float32_array) {
+        Napi::TypeError::New(env, "pancake_bulk_insert: vectors must be a Float32Array")
+            .ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+    Napi::Float32Array vecs = typed.As<Napi::Float32Array>();
+    const size_t dims = g_handles[h]->dimension();
+    const size_t requested = static_cast<size_t>(n);
+    if (dims != 0 && requested > vecs.ElementLength() / dims) {
+        Napi::RangeError::New(env, "pancake_bulk_insert: vectors are shorter than n * dimension")
+            .ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
     int count = g_handles[h]->bulk_insert(vecs.Data(), n);
     return Napi::Number::New(env, count);
 }
@@ -280,7 +319,6 @@ Napi::Value BulkInsert(const Napi::CallbackInfo& info) {
 Napi::Value Query(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     uint32_t h = info[0].As<Napi::Number>().Uint32Value();
-    Napi::Float32Array qv = info[1].As<Napi::TypedArray>().As<Napi::Float32Array>();
     int k = info[2].As<Napi::Number>().Int32Value();
 
     if (h >= MAX_HANDLES || !g_handles[h]) {
@@ -288,8 +326,31 @@ Napi::Value Query(const Napi::CallbackInfo& info) {
         result.Set("count", 0);
         return result;
     }
+    if (k < 0) {
+        Napi::RangeError::New(env, "pancake_query: k must be non-negative")
+            .ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+    if (!info[1].IsTypedArray()) {
+        Napi::TypeError::New(env, "pancake_query: query must be a Float32Array")
+            .ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+    Napi::TypedArray typed = info[1].As<Napi::TypedArray>();
+    if (typed.TypedArrayType() != napi_float32_array) {
+        Napi::TypeError::New(env, "pancake_query: query must be a Float32Array")
+            .ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+    Napi::Float32Array qv = typed.As<Napi::Float32Array>();
+    if (qv.ElementLength() < g_handles[h]->dimension()) {
+        Napi::RangeError::New(env, "pancake_query: query is shorter than the index dimension")
+            .ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
 
-    auto res = g_handles[h]->search(qv.Data(), k);
+    const size_t bounded_k = std::min(static_cast<size_t>(k), g_handles[h]->count());
+    auto res = g_handles[h]->search(qv.Data(), bounded_k);
     int count = static_cast<int>(res.size());
 
     Napi::Uint32Array ids = Napi::Uint32Array::New(env, count);

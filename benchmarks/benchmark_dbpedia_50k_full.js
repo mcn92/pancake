@@ -262,7 +262,7 @@ async function benchPancake(train, queries, groundTruth, dim, quantized, runtime
     if (end % 10000 < batchSize) log(`    ${end.toLocaleString()}/${train.length.toLocaleString()}`);
   }
   const buildMs = performance.now() - t0;
-  index._setEfSearch(EF_SEARCH);
+  index.setEfSearch(EF_SEARCH);
   for (let i = 0; i < WARMUP_QUERIES && i < queries.length; i++) index.search(queries[i], K);
   const latencies = [];
   let totalRecall = 0;

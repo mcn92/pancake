@@ -182,7 +182,7 @@ public:
         return id;
     }
 
-    std::vector<std::pair<uint32_t, float>> search(const float* query, size_t k) {
+    std::vector<std::pair<uint32_t, float>> search(const float* query, size_t k, size_t ef_search) {
         if (count_ == 0) return {};
 
         if (metric_ == DistanceMetric::Cosine) {
@@ -212,7 +212,7 @@ public:
             }
         }
 
-        auto candidates = search_layer_query(curr, std::max(ef_search_, k), 0);
+        auto candidates = search_layer_query(curr, std::max(ef_search, k), 0);
         std::vector<std::pair<uint32_t, float>> results;
         for (size_t i = 0; i < std::min(k, candidates.size()); ++i) {
             if (!deleted_[candidates[i].second]) {
@@ -233,7 +233,8 @@ public:
     // filter_bitset layout: bit (id & 7) of byte (id >> 3).
     std::vector<std::pair<uint32_t, float>> search_filtered(
         const float* query, size_t k,
-        const uint8_t* filter_bitset, size_t bitset_len
+        const uint8_t* filter_bitset, size_t bitset_len,
+        size_t ef_search
     ) {
         if (count_ == 0) return {};
 
@@ -266,7 +267,7 @@ public:
         }
 
         // Layer 0: in-traversal filtered search with dynamic ef expansion
-        size_t initial_ef = std::max(ef_search_, k * 2);
+        size_t initial_ef = std::max(ef_search, k * 2);
         size_t max_ef = initial_ef * 4;
         size_t current_ef = initial_ef;
 
@@ -357,6 +358,17 @@ public:
     }
 
     void set_ef(size_t ef) { ef_search_ = ef; }
+
+    std::vector<std::pair<uint32_t, float>> search(const float* query, size_t k) {
+        return search(query, k, ef_search_);
+    }
+
+    std::vector<std::pair<uint32_t, float>> search_filtered(
+        const float* query, size_t k,
+        const uint8_t* filter_bitset, size_t bitset_len
+    ) {
+        return search_filtered(query, k, filter_bitset, bitset_len, ef_search_);
+    }
 
     void mark_delete(uint32_t id) {
         if (id >= count_ || deleted_[id] != 0) return;
@@ -628,7 +640,7 @@ public:
 
         if (count_ > max_elements_) return fail();
         if (metric_val > static_cast<uint32_t>(DistanceMetric::Cosine)) return fail();
-        if (M_ <= 1 || M_ > 128 || M0_ == 0 || M0_ > 256) return fail();
+        if (M_ <= 1 || M_ > 128 || M0_ != M_ * 2) return fail();
         if (ef_construction_ == 0 || ef_construction_ > 4096) return fail();
         // Cap the level count read from an untrusted snapshot. Without this an
         // attacker-controlled level_val drives a multi-gigabyte upper_[i].resize()
@@ -776,7 +788,9 @@ private:
 
     void write_level_edges(uint32_t node, int level, const std::vector<uint32_t>& edges) {
         if (level == 0) {
-            uint16_t sz = static_cast<uint16_t>(edges.size());
+            // Base-layer storage is a fixed-width slot. Keep this boundary safe
+            // even if a future caller accidentally supplies an oversized list.
+            uint16_t sz = static_cast<uint16_t>(std::min(edges.size(), M0_));
             base_sizes_[node] = sz;
             uint32_t* slot = base_slot(node);
             for (uint16_t i = 0; i < sz; ++i) slot[i] = edges[i];
@@ -899,7 +913,9 @@ private:
 
     int random_level() {
         std::uniform_real_distribution<double> dist(0.0, 1.0);
-        return static_cast<int>(-std::log(dist(rng_)) * level_mult_);
+        double sample = dist(rng_);
+        if (sample <= 0.0) sample = std::numeric_limits<double>::min();
+        return static_cast<int>(-std::log(sample) * level_mult_);
     }
 
     // Uses vector ID for distance computation (used during graph construction)
@@ -1036,20 +1052,23 @@ private:
     }
 
     void ensure_base_neighbor(uint32_t node, uint32_t neighbor) {
-        std::vector<uint32_t> nbrs = copy_level_edges(node, 0);
-        for (uint32_t n : nbrs) {
-            if (n == neighbor) return;
-        }
+        if (has_neighbor(node, 0, neighbor)) return;
 
-        nbrs.push_back(neighbor);
-        if (nbrs.size() <= M0_) {
+        // append_neighbor() is capacity-aware: for a saturated base slot it
+        // selects from the existing M0_ neighbors plus the candidate without
+        // ever writing a transient M0_+1 entry into the fixed-width slot.
+        append_neighbor(node, 0, neighbor);
+        if (has_neighbor(node, 0, neighbor)) return;
+
+        // Compaction requires at least one reciprocal anchor for an isolated
+        // survivor. If the diversity heuristic rejected that anchor, replace
+        // the current worst edge in place while keeping the slot capped at M0_.
+        std::vector<uint32_t> nbrs = copy_level_edges(node, 0);
+        if (nbrs.size() < M0_) {
+            nbrs.push_back(neighbor);
             write_level_edges(node, 0, nbrs);
             return;
         }
-
-        write_level_edges(node, 0, nbrs);
-        prune_neighbors(node, 0, M0_);
-        if (has_neighbor(node, 0, neighbor)) return;
 
         size_t worst = 0;
         float worst_dist = distance(node, nbrs[0]);

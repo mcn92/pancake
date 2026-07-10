@@ -279,7 +279,7 @@ async function main() {
 
   const pkPoints = [];
   for (const efS of EF_SEARCH_VALUES) {
-    pkIndex._setEfSearch(efS);
+    pkIndex.setEfSearch(efS);
 
     for (let i = 0; i < WARMUP_QUERIES && i < queries.length; i++) {
       pkIndex.search(queries[i], K);

@@ -131,7 +131,7 @@ async function main() {
       log(`  Built in ${(buildMs / 1000).toFixed(1)}s`);
 
       for (const efS of EF_SEARCH_VALUES) {
-        index._setEfSearch(efS);
+        index.setEfSearch(efS);
 
         // Warmup
         for (let i = 0; i < WARMUP_QUERIES && i < test.length; i++) {

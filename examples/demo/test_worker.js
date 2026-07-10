@@ -16,11 +16,7 @@
 
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
-
 const BASE_URL = process.argv[2] || 'http://localhost:8787';
-const VECTORS_PATH = path.join(__dirname, '..', '..', 'dist', 'vectors.bin');
 const DIMS = 1536;
 const BUILD_COUNT = 500;   // vectors to insert (keep small for HTTP overhead)
 const SEARCH_COUNT = 20;   // searches to run
@@ -219,12 +215,6 @@ async function main() {
     console.log(`\nPancake Worker Integration Test`);
     console.log(`Target: ${BASE_URL}`);
     console.log(`Mode: synthetic ${DIMS}D vectors`);
-    console.log(`Reference asset path: ${VECTORS_PATH}`);
-
-    if (!fs.existsSync(VECTORS_PATH)) {
-        console.error(`\nERROR: ${VECTORS_PATH} not found`);
-        process.exit(1);
-    }
 
     console.log('\nGenerating synthetic vectors...');
     const vectors = loadVectors();

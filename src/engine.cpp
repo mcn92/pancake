@@ -40,8 +40,8 @@ public:
     virtual ~IndexWrapper() = default;
     virtual uint32_t insert(const float* vec) = 0;
     virtual int bulk_insert(const float* vecs, int n) = 0;
-    virtual std::vector<std::pair<uint32_t, float>> search(const float* query, size_t k) = 0;
-    virtual std::vector<std::pair<uint32_t, float>> search_filtered(const float* query, size_t k, const uint8_t* bitset, size_t bitset_len) = 0;
+    virtual std::vector<std::pair<uint32_t, float>> search(const float* query, size_t k, size_t ef_search) = 0;
+    virtual std::vector<std::pair<uint32_t, float>> search_filtered(const float* query, size_t k, const uint8_t* bitset, size_t bitset_len, size_t ef_search) = 0;
     virtual void mark_delete(uint32_t id) = 0;
     virtual void compact() = 0;
     virtual void compact(std::vector<uint32_t>& out_map) = 0;
@@ -51,7 +51,6 @@ public:
     virtual size_t memory_bytes() const = 0;
     virtual std::vector<uint8_t> serialize() const = 0;
     virtual bool deserialize(const uint8_t* data, size_t size) = 0;
-    virtual void set_ef_search(size_t ef) = 0;
     virtual size_t dimension() const = 0;
 };
 
@@ -73,11 +72,11 @@ public:
         }
         return inserted;
     }
-    std::vector<std::pair<uint32_t, float>> search(const float* query, size_t k) override {
-        return impl_->search(query, k);
+    std::vector<std::pair<uint32_t, float>> search(const float* query, size_t k, size_t ef_search) override {
+        return impl_->search(query, k, ef_search);
     }
-    std::vector<std::pair<uint32_t, float>> search_filtered(const float* query, size_t k, const uint8_t* bitset, size_t bitset_len) override {
-        return impl_->search_filtered(query, k, bitset, bitset_len);
+    std::vector<std::pair<uint32_t, float>> search_filtered(const float* query, size_t k, const uint8_t* bitset, size_t bitset_len, size_t ef_search) override {
+        return impl_->search_filtered(query, k, bitset, bitset_len, ef_search);
     }
     void mark_delete(uint32_t id) override { impl_->mark_delete(id); }
     void compact() override { impl_->compact(); }
@@ -97,7 +96,6 @@ public:
         impl_ = std::move(next);
         return true;
     }
-    void set_ef_search(size_t ef) override { impl_->set_ef(ef); }
     size_t dimension() const override { return dims_; }
 };
 
@@ -111,11 +109,11 @@ public:
 
     uint32_t insert(const float* vec) override { return impl_->insert(vec); }
     int bulk_insert(const float* vecs, int n) override { return impl_->bulk_insert(vecs, n); }
-    std::vector<std::pair<uint32_t, float>> search(const float* query, size_t k) override {
-        return impl_->search(query, k);
+    std::vector<std::pair<uint32_t, float>> search(const float* query, size_t k, size_t ef_search) override {
+        return impl_->search(query, k, ef_search);
     }
-    std::vector<std::pair<uint32_t, float>> search_filtered(const float* query, size_t k, const uint8_t* bitset, size_t bitset_len) override {
-        return impl_->search_filtered(query, k, bitset, bitset_len);
+    std::vector<std::pair<uint32_t, float>> search_filtered(const float* query, size_t k, const uint8_t* bitset, size_t bitset_len, size_t ef_search) override {
+        return impl_->search_filtered(query, k, bitset, bitset_len, ef_search);
     }
     void mark_delete(uint32_t id) override { impl_->mark_delete(id); }
     void compact() override { impl_->compact(); }
@@ -135,7 +133,6 @@ public:
         impl_ = std::move(next);
         return true;
     }
-    void set_ef_search(size_t ef) override { impl_->set_ef_search(ef); }
     size_t dimension() const override { return dims_; }
 };
 
@@ -220,9 +217,11 @@ int pancake_bulk_insert(uint32_t h, const float* vecs, int n) {
     return g_handles[h].index->bulk_insert(vecs, n);
 }
 
-int pancake_query(uint32_t h, const float* qv, int k, uint64_t* ids, float* dists) {
-    if (h >= MAX_HANDLES || !g_handles[h].index) return 0;
-    auto res = g_handles[h].index->search(qv, static_cast<size_t>(k));
+int pancake_query(uint32_t h, const float* qv, int k, int ef_search, uint64_t* ids, float* dists) {
+    if (h >= MAX_HANDLES || !g_handles[h].index || !qv || !ids || !dists ||
+        k <= 0 || ef_search <= 0 || ef_search > 4096) return 0;
+    const size_t bounded_k = std::min(static_cast<size_t>(k), g_handles[h].index->count());
+    auto res = g_handles[h].index->search(qv, bounded_k, static_cast<size_t>(ef_search));
     for (size_t j = 0; j < res.size(); ++j) {
         ids[j] = static_cast<uint64_t>(res[j].first);
         dists[j] = res[j].second;
@@ -230,11 +229,14 @@ int pancake_query(uint32_t h, const float* qv, int k, uint64_t* ids, float* dist
     return static_cast<int>(res.size());
 }
 
-int pancake_query_filtered(uint32_t h, const float* qv, int k,
+int pancake_query_filtered(uint32_t h, const float* qv, int k, int ef_search,
                            uint64_t* ids, float* dists,
                            const uint8_t* bitset, size_t bitset_len) {
-    if (h >= MAX_HANDLES || !g_handles[h].index) return 0;
-    auto res = g_handles[h].index->search_filtered(qv, static_cast<size_t>(k), bitset, bitset_len);
+    if (h >= MAX_HANDLES || !g_handles[h].index || !qv || !ids || !dists ||
+        (!bitset && bitset_len != 0) || k <= 0 || ef_search <= 0 || ef_search > 4096) return 0;
+    const size_t bounded_k = std::min(static_cast<size_t>(k), g_handles[h].index->count());
+    auto res = g_handles[h].index->search_filtered(qv, bounded_k, bitset, bitset_len,
+                                                    static_cast<size_t>(ef_search));
     for (size_t j = 0; j < res.size(); ++j) {
         ids[j] = static_cast<uint64_t>(res[j].first);
         dists[j] = res[j].second;
@@ -283,11 +285,6 @@ size_t pancake_ghost_count(uint32_t h) {
 float pancake_ghost_ratio(uint32_t h) {
     if (h >= MAX_HANDLES || !g_handles[h].index) return 0.0f;
     return g_handles[h].index->ghost_ratio();
-}
-
-void pancake_set_ef(uint32_t h, int ef) {
-    if (h >= MAX_HANDLES || !g_handles[h].index || ef <= 0) return;
-    g_handles[h].index->set_ef_search(static_cast<size_t>(ef));
 }
 
 int pancake_bulk_insert_flat(uint32_t h, const float* vecs, int n) {
@@ -344,75 +341,6 @@ void pancake_profile_reset() {
 #if defined(PANCAKE_INT8_HNSW_BUILD_PROFILE)
     pancake::wasm::g_build_profile.reset();
 #endif
-}
-
-// =============================================================================
-// Dense/Sparse matmul + normalize (WASM SIMD)
-// =============================================================================
-
-void dense_matmul(const float* matrix, const float* vec, const float* bias, float* output, int rows, int cols) {
-    for (int i = 0; i < rows; i++) {
-        float sum = 0.0f;
-        const float* row = matrix + i * cols;
-#if defined(__wasm_simd128__)
-        v128_t acc = wasm_f32x4_splat(0.0f);
-        int j = 0;
-        for (; j + 4 <= cols; j += 4) {
-            v128_t m = wasm_v128_load(row + j);
-            v128_t v = wasm_v128_load(vec + j);
-            acc = wasm_f32x4_add(acc, wasm_f32x4_mul(m, v));
-        }
-        sum = wasm_f32x4_extract_lane(acc, 0) + wasm_f32x4_extract_lane(acc, 1) +
-              wasm_f32x4_extract_lane(acc, 2) + wasm_f32x4_extract_lane(acc, 3);
-        for (; j < cols; j++) sum += row[j] * vec[j];
-#else
-        for (int j = 0; j < cols; j++) sum += row[j] * vec[j];
-#endif
-        output[i] = sum + bias[i];
-    }
-}
-
-void sparse_matmul(const float* matrix, const int* indices, const float* values, int nnz,
-                   const float* bias, float* output, int rows, int cols) {
-    for (int i = 0; i < rows; i++) output[i] = bias[i];
-    for (int k = 0; k < nnz; k++) {
-        int j = indices[k];
-        float val = values[k];
-        for (int i = 0; i < rows; i++) {
-            output[i] += matrix[i * cols + j] * val;
-        }
-    }
-}
-
-void normalize(float* vec, int dim) {
-    float norm_sq = 0.0f;
-#if defined(__wasm_simd128__)
-    v128_t acc = wasm_f32x4_splat(0.0f);
-    int i = 0;
-    for (; i + 4 <= dim; i += 4) {
-        v128_t v = wasm_v128_load(vec + i);
-        acc = wasm_f32x4_add(acc, wasm_f32x4_mul(v, v));
-    }
-    norm_sq = wasm_f32x4_extract_lane(acc, 0) + wasm_f32x4_extract_lane(acc, 1) +
-              wasm_f32x4_extract_lane(acc, 2) + wasm_f32x4_extract_lane(acc, 3);
-    for (; i < dim; i++) norm_sq += vec[i] * vec[i];
-#else
-    for (int i = 0; i < dim; i++) norm_sq += vec[i] * vec[i];
-#endif
-    if (norm_sq > 0.0f) {
-        float inv_norm = 1.0f / sqrtf(norm_sq);
-#if defined(__wasm_simd128__)
-        v128_t inv = wasm_f32x4_splat(inv_norm);
-        int i = 0;
-        for (; i + 4 <= dim; i += 4) {
-            v128_t v = wasm_v128_load(vec + i);
-            wasm_v128_store(vec + i, wasm_f32x4_mul(v, inv));
-        }
-        for (; i < dim; i++) vec[i] *= inv_norm;
-#else
-        for (int i = 0; i < dim; i++) vec[i] *= inv_norm;
-#endif
-    }
 }
 
 // =============================================================================

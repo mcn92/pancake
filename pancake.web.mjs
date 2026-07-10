@@ -3,11 +3,13 @@ import loadScalarEngine from './dist/engine.scalar.js';
 import simdWasmAsset from './dist/engine.wasm?url';
 import scalarWasmAsset from './dist/engine.scalar.wasm?url';
 import createPancakeApi from './pancake-core.js';
+import errorContract from './pancake-errors.js';
+const { PancakeError, PANCAKE_ERROR_CODES, pancakeError } = errorContract;
 let engineVariant = null;
 
 function makeLoadError(message, error) {
   const detail = error && error.message ? error.message : String(error);
-  return new Error(`${message}: ${detail}`);
+  return pancakeError(PANCAKE_ERROR_CODES.WASM_LOAD_FAILED, `${message}: ${detail}`, undefined, error);
 }
 
 function isUrlLikeWasmAsset(asset) {
@@ -20,7 +22,7 @@ function toWasmSource(asset) {
   if (ArrayBuffer.isView(asset)) {
     return asset.buffer.slice(asset.byteOffset, asset.byteOffset + asset.byteLength);
   }
-  throw new Error(`Unsupported WASM asset type: ${typeof asset}`);
+  throw pancakeError(PANCAKE_ERROR_CODES.WASM_LOAD_FAILED, `Unsupported WASM asset type: ${typeof asset}`, { assetType: typeof asset });
 }
 
 async function instantiateEngineWithAsset(factory, expectedFileName, asset) {
@@ -61,7 +63,7 @@ async function detectEngineVariant(simdAsset) {
     const href = simdAsset instanceof URL ? simdAsset.href : simdAsset;
     const response = await fetch(href, { credentials: 'same-origin' });
     if (!response.ok) {
-      throw new Error(`${response.status} ${response.statusText}`.trim());
+      throw pancakeError(PANCAKE_ERROR_CODES.WASM_LOAD_FAILED, `${response.status} ${response.statusText}`.trim(), { status: response.status });
     }
     const binary = await response.arrayBuffer();
     return WebAssembly.validate(binary) ? 'simd' : 'scalar';
@@ -100,10 +102,11 @@ async function loadWebEngine() {
 }
 
 const Pancake = createPancakeApi(loadWebEngine);
+export { PancakeError, PANCAKE_ERROR_CODES };
 
 function unsupportedNodeFileHelper(name) {
   return async function unsupported() {
-    throw new Error(`${name}() is only available in the Node.js entrypoints`);
+    throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, `${name}() is only available in the Node.js entrypoints`);
   };
 }
 

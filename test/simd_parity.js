@@ -25,42 +25,6 @@ function randomFloatArray(length, rng) {
     return out;
 }
 
-function randomIntArray(length, maxExclusive, rng) {
-    const out = new Int32Array(length);
-    for (let i = 0; i < length; i++) out[i] = Math.floor(rng() * maxExclusive);
-    return out;
-}
-
-function denseMatmulRef(matrix, vec, bias, rows, cols) {
-    const out = new Float32Array(rows);
-    for (let i = 0; i < rows; i++) {
-        let sum = bias[i];
-        const rowOff = i * cols;
-        for (let j = 0; j < cols; j++) sum += matrix[rowOff + j] * vec[j];
-        out[i] = sum;
-    }
-    return out;
-}
-
-function sparseMatmulRef(matrix, indices, values, bias, rows, cols) {
-    const out = new Float32Array(bias);
-    for (let k = 0; k < indices.length; k++) {
-        const j = indices[k];
-        const val = values[k];
-        for (let i = 0; i < rows; i++) out[i] += matrix[i * cols + j] * val;
-    }
-    return out;
-}
-
-function normalizeRef(vec) {
-    let normSq = 0;
-    for (let i = 0; i < vec.length; i++) normSq += vec[i] * vec[i];
-    const out = new Float32Array(vec);
-    const inv = normSq > 0 ? 1 / Math.sqrt(normSq) : 0;
-    for (let i = 0; i < out.length; i++) out[i] *= inv;
-    return out;
-}
-
 function randomUnitArray(length, rng) {
     const out = randomFloatArray(length, rng);
     let normSq = 0;
@@ -68,17 +32,6 @@ function randomUnitArray(length, rng) {
     const inv = normSq > 0 ? 1 / Math.sqrt(normSq) : 0;
     for (let i = 0; i < out.length; i++) out[i] *= inv;
     return out;
-}
-
-function assertFloatArraysNear(actual, expected, tolerance, label) {
-    assert.strictEqual(actual.length, expected.length, `${label}: length mismatch`);
-    for (let i = 0; i < actual.length; i++) {
-        const delta = Math.abs(actual[i] - expected[i]);
-        assert.ok(
-            delta <= tolerance,
-            `${label}: mismatch at ${i}, got ${actual[i]}, expected ${expected[i]}, delta ${delta}`
-        );
-    }
 }
 
 function assertSearchResultsNear(actual, expected, tolerance, label) {
@@ -150,116 +103,12 @@ function makePancakeApi(basename) {
     return createPancakeApi(() => loadModule(basename));
 }
 
-function allocF32(mod, values) {
-    const ptr = mod._emsc_malloc(values.byteLength);
-    mod.HEAPF32.set(values, ptr >> 2);
-    return ptr;
-}
-
-function allocI32(mod, values) {
-    const ptr = mod._emsc_malloc(values.byteLength);
-    mod.HEAP32.set(values, ptr >> 2);
-    return ptr;
-}
-
-function readF32(mod, ptr, length) {
-    return new Float32Array(mod.HEAPF32.buffer.slice(ptr, ptr + length * 4));
-}
-
-function freePtrs(mod, ptrs) {
-    for (const ptr of ptrs) mod._emsc_free(ptr);
-}
-
-function runDenseMatmul(mod, matrix, vec, bias, rows, cols) {
-    const matrixPtr = allocF32(mod, matrix);
-    const vecPtr = allocF32(mod, vec);
-    const biasPtr = allocF32(mod, bias);
-    const outPtr = mod._emsc_malloc(rows * 4);
-    try {
-        mod._dense_matmul(matrixPtr, vecPtr, biasPtr, outPtr, rows, cols);
-        return readF32(mod, outPtr, rows);
-    } finally {
-        freePtrs(mod, [matrixPtr, vecPtr, biasPtr, outPtr]);
-    }
-}
-
-function runSparseMatmul(mod, matrix, indices, values, bias, rows, cols) {
-    const matrixPtr = allocF32(mod, matrix);
-    const indicesPtr = allocI32(mod, indices);
-    const valuesPtr = allocF32(mod, values);
-    const biasPtr = allocF32(mod, bias);
-    const outPtr = mod._emsc_malloc(rows * 4);
-    try {
-        mod._sparse_matmul(matrixPtr, indicesPtr, valuesPtr, indices.length, biasPtr, outPtr, rows, cols);
-        return readF32(mod, outPtr, rows);
-    } finally {
-        freePtrs(mod, [matrixPtr, indicesPtr, valuesPtr, biasPtr, outPtr]);
-    }
-}
-
-function runNormalize(mod, vec) {
-    const ptr = allocF32(mod, vec);
-    try {
-        mod._normalize(ptr, vec.length);
-        return readF32(mod, ptr, vec.length);
-    } finally {
-        freePtrs(mod, [ptr]);
-    }
-}
-
 async function main() {
     ensureScalarBuild();
 
-    const simd = await loadModule('engine');
-    const scalar = await loadModule(SCALAR_BASENAME);
     const PancakeSimd = makePancakeApi('engine');
     const PancakeScalar = makePancakeApi(SCALAR_BASENAME);
     const rng = makeRng(0xC0FFEE);
-
-    const denseCases = [
-        { rows: 5, cols: 7 },
-        { rows: 9, cols: 16 },
-        { rows: 11, cols: 19 },
-    ];
-    for (const { rows, cols } of denseCases) {
-        const matrix = randomFloatArray(rows * cols, rng);
-        const vec = randomFloatArray(cols, rng);
-        const bias = randomFloatArray(rows, rng);
-        const ref = denseMatmulRef(matrix, vec, bias, rows, cols);
-        const simdOut = runDenseMatmul(simd, matrix, vec, bias, rows, cols);
-        const scalarOut = runDenseMatmul(scalar, matrix, vec, bias, rows, cols);
-        assertFloatArraysNear(simdOut, ref, 1e-5, `dense ref ${rows}x${cols}`);
-        assertFloatArraysNear(scalarOut, ref, 1e-5, `dense scalar ${rows}x${cols}`);
-        assertFloatArraysNear(simdOut, scalarOut, 1e-5, `dense parity ${rows}x${cols}`);
-    }
-
-    const sparseCases = [
-        { rows: 6, cols: 13, nnz: 4 },
-        { rows: 10, cols: 17, nnz: 7 },
-    ];
-    for (const { rows, cols, nnz } of sparseCases) {
-        const matrix = randomFloatArray(rows * cols, rng);
-        const indices = randomIntArray(nnz, cols, rng);
-        const values = randomFloatArray(nnz, rng);
-        const bias = randomFloatArray(rows, rng);
-        const ref = sparseMatmulRef(matrix, indices, values, bias, rows, cols);
-        const simdOut = runSparseMatmul(simd, matrix, indices, values, bias, rows, cols);
-        const scalarOut = runSparseMatmul(scalar, matrix, indices, values, bias, rows, cols);
-        assertFloatArraysNear(simdOut, ref, 1e-5, `sparse ref ${rows}x${cols}`);
-        assertFloatArraysNear(scalarOut, ref, 1e-5, `sparse scalar ${rows}x${cols}`);
-        assertFloatArraysNear(simdOut, scalarOut, 1e-5, `sparse parity ${rows}x${cols}`);
-    }
-
-    const normCases = [3, 4, 15, 32];
-    for (const dim of normCases) {
-        const vec = randomFloatArray(dim, rng);
-        const ref = normalizeRef(vec);
-        const simdOut = runNormalize(simd, vec);
-        const scalarOut = runNormalize(scalar, vec);
-        assertFloatArraysNear(simdOut, ref, 1e-5, `normalize ref dim=${dim}`);
-        assertFloatArraysNear(scalarOut, ref, 1e-5, `normalize scalar dim=${dim}`);
-        assertFloatArraysNear(simdOut, scalarOut, 1e-5, `normalize parity dim=${dim}`);
-    }
 
     const annScenarios = [
         { label: 'float-cosine', dim: 64, metric: 'cosine', quantized: false, count: 120, k: 8 },

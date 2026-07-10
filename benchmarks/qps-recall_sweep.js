@@ -182,8 +182,8 @@ function queryPancake(index, test, groundTruth, efSearch) {
   // Assume index has a way to update ef_search. If not, you'll need to add
   // a _set_ef wrapper. Falling back to recreating the wrapper is possible
   // but expensive. Check for _i8_set_ef and _float_set_ef exports.
-  if (typeof index._setEfSearch === 'function') {
-    index._setEfSearch(efSearch);
+  if (typeof index.setEfSearch === 'function') {
+    index.setEfSearch(efSearch);
   } else if (index._e && index._e._i8_set_ef && index._useInt8) {
     index._e._i8_set_ef(efSearch);
   } else if (index._e && index._e._float_set_ef && !index._useInt8) {

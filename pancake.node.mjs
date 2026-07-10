@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import loadEngine from './dist/engine.js';
 import loadScalarEngine from './dist/engine.scalar.js';
 import createPancakeApi from './pancake-core.js';
+import errorContract from './pancake-errors.js';
+const { PancakeError, PANCAKE_ERROR_CODES, pancakeError } = errorContract;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,13 +30,13 @@ function readWasmBinary(fileName) {
     );
   } catch (error) {
     const message = error && error.message ? error.message : String(error);
-    throw new Error(`Failed to load Pancake WASM binary (${fileName}): ${message}`);
+    throw pancakeError(PANCAKE_ERROR_CODES.WASM_LOAD_FAILED, `Failed to load Pancake WASM binary (${fileName}): ${message}`, { fileName }, error);
   }
 }
 
 function makeLoadError(message, error) {
   const detail = error && error.message ? error.message : String(error);
-  return new Error(`${message}: ${detail}`);
+  return pancakeError(PANCAKE_ERROR_CODES.WASM_LOAD_FAILED, `${message}: ${detail}`, undefined, error);
 }
 
 function hasSimdSupport(binary) {
@@ -55,7 +57,7 @@ function parseJsonLines(text, filePath) {
       rows.push(JSON.parse(line));
     } catch (error) {
       const message = error && error.message ? error.message : String(error);
-      throw new Error(`Failed to parse JSONL in ${filePath} at line ${i + 1}: ${message}`);
+      throw pancakeError(PANCAKE_ERROR_CODES.PARSE_FAILED, `Failed to parse JSONL in ${filePath} at line ${i + 1}: ${message}`, { filePath, line: i + 1 }, error);
     }
   }
   return rows;
@@ -64,22 +66,22 @@ function parseJsonLines(text, filePath) {
 function inferJsonFormat(filePath) {
   if (/\.json$/i.test(filePath)) return 'json';
   if (/\.(jsonl|ndjson)$/i.test(filePath)) return 'jsonl';
-  throw new Error(`loadJsonFile() could not infer format from '${filePath}'. Use a .json/.jsonl/.ndjson extension or pass opts.format.`);
+  throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, `loadJsonFile() could not infer format from '${filePath}'. Use a .json/.jsonl/.ndjson extension or pass opts.format.`, { filePath });
 }
 
 function remapJsonRows(rows, vectorKey, idKey) {
   if (!Array.isArray(rows)) {
-    throw new Error('loadJsonFile() expects a JSON array or JSONL sequence of vectors/records');
+    throw pancakeError(PANCAKE_ERROR_CODES.PARSE_FAILED, 'loadJsonFile() expects a JSON array or JSONL sequence of vectors/records');
   }
   return rows.map((row, i) => {
     if (row instanceof Float32Array || Array.isArray(row)) {
       return row;
     }
     if (!row || typeof row !== 'object') {
-      throw new Error(`loadJsonFile() expected an object or vector at index ${i}`);
+      throw pancakeError(PANCAKE_ERROR_CODES.PARSE_FAILED, `loadJsonFile() expected an object or vector at index ${i}`, { index: i });
     }
     if (!(vectorKey in row)) {
-      throw new Error(`loadJsonFile() missing vectorKey '${vectorKey}' at index ${i}`);
+      throw pancakeError(PANCAKE_ERROR_CODES.PARSE_FAILED, `loadJsonFile() missing vectorKey '${vectorKey}' at index ${i}`, { index: i, vectorKey });
     }
     const mapped = { vector: row[vectorKey] };
     if (Object.prototype.hasOwnProperty.call(row, idKey)) {
@@ -91,27 +93,33 @@ function remapJsonRows(rows, vectorKey, idKey) {
 
 function validateFilePath(filePath, helperName) {
   if (typeof filePath !== 'string' || filePath.length === 0) {
-    throw new Error(`${helperName}() requires a non-empty file path`);
+    throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, `${helperName}() requires a non-empty file path`);
   }
 }
 
 function validateMaxFileBytes(maxFileBytes, helperName) {
   if (!Number.isInteger(maxFileBytes) || maxFileBytes <= 0) {
-    throw new Error(`${helperName}() maxFileBytes must be a positive integer`);
+    throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, `${helperName}() maxFileBytes must be a positive integer`, { maxFileBytes });
   }
 }
 
 function statRegularFile(filePath, helperName) {
-  const stat = statSync(filePath);
+  let stat;
+  try {
+    stat = statSync(filePath);
+  } catch (error) {
+    const message = error && error.message ? error.message : String(error);
+    throw pancakeError(PANCAKE_ERROR_CODES.FILE_IO_FAILED, `${helperName}() could not stat ${filePath}: ${message}`, { filePath }, error);
+  }
   if (!stat.isFile()) {
-    throw new Error(`${helperName}() expected a regular file: ${filePath}`);
+    throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, `${helperName}() expected a regular file: ${filePath}`, { filePath });
   }
   return stat;
 }
 
 function enforceFileSize(stat, maxFileBytes, helperName, filePath) {
   if (stat.size > maxFileBytes) {
-    throw new Error(`${helperName}() file exceeds maxFileBytes (${stat.size} > ${maxFileBytes}): ${filePath}`);
+    throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, `${helperName}() file exceeds maxFileBytes (${stat.size} > ${maxFileBytes}): ${filePath}`, { filePath, fileBytes: stat.size, maxFileBytes });
   }
 }
 
@@ -120,7 +128,12 @@ function readUtf8FileWithLimit(filePath, helperName, maxFileBytes) {
   validateMaxFileBytes(maxFileBytes, helperName);
   const stat = statRegularFile(filePath, helperName);
   enforceFileSize(stat, maxFileBytes, helperName, filePath);
-  return readFileSync(filePath, 'utf8');
+  try {
+    return readFileSync(filePath, 'utf8');
+  } catch (error) {
+    const message = error && error.message ? error.message : String(error);
+    throw pancakeError(PANCAKE_ERROR_CODES.FILE_IO_FAILED, `${helperName}() could not read ${filePath}: ${message}`, { filePath }, error);
+  }
 }
 
 function readBinaryFileWithLimit(filePath, helperName, maxFileBytes) {
@@ -128,17 +141,22 @@ function readBinaryFileWithLimit(filePath, helperName, maxFileBytes) {
   validateMaxFileBytes(maxFileBytes, helperName);
   const stat = statRegularFile(filePath, helperName);
   enforceFileSize(stat, maxFileBytes, helperName, filePath);
-  return readFileSync(filePath);
+  try {
+    return readFileSync(filePath);
+  } catch (error) {
+    const message = error && error.message ? error.message : String(error);
+    throw pancakeError(PANCAKE_ERROR_CODES.FILE_IO_FAILED, `${helperName}() could not read ${filePath}: ${message}`, { filePath }, error);
+  }
 }
 
 function validateSnapshotBytes(snapshot, filePath) {
   if (!snapshot || snapshot.byteLength < 4) {
-    throw new Error(`loadSnapshotFile() snapshot is too small to be valid: ${filePath}`);
+    throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, `loadSnapshotFile() snapshot is too small to be valid: ${filePath}`, { filePath });
   }
   const view = new DataView(snapshot.buffer, snapshot.byteOffset, snapshot.byteLength);
   const magic = view.getUint32(0, true);
   if (!SUPPORTED_SNAPSHOT_MAGICS.has(magic)) {
-    throw new Error(`loadSnapshotFile() unsupported snapshot file type: ${filePath}`);
+    throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, `loadSnapshotFile() unsupported snapshot file type: ${filePath}`, { filePath, magic });
   }
 }
 
@@ -178,6 +196,7 @@ async function loadNodeEngine() {
 }
 
 const Pancake = createPancakeApi(loadNodeEngine);
+export { PancakeError, PANCAKE_ERROR_CODES };
 
 Pancake.loadSnapshotFile = async function loadSnapshotFile(filePath, opts) {
   const {
@@ -187,16 +206,7 @@ Pancake.loadSnapshotFile = async function loadSnapshotFile(filePath, opts) {
 
   const snapshot = readBinaryFileWithLimit(filePath, 'loadSnapshotFile', maxFileBytes);
   validateSnapshotBytes(snapshot, filePath);
-  const index = await Pancake.create(createOpts);
-  try {
-    index.import(snapshot);
-    return index;
-  } catch (error) {
-    try {
-      index.dispose();
-    } catch {}
-    throw error;
-  }
+  return Pancake.restore(snapshot, createOpts);
 };
 
 Pancake.loadJsonFile = async function loadJsonFile(filePath, opts = {}) {
@@ -209,7 +219,7 @@ Pancake.loadJsonFile = async function loadJsonFile(filePath, opts = {}) {
   } = opts;
 
   if (format !== 'json' && format !== 'jsonl') {
-    throw new Error(`loadJsonFile() format must be 'json' or 'jsonl', got '${format}'`);
+    throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, `loadJsonFile() format must be 'json' or 'jsonl', got '${format}'`, { format });
   }
 
   const text = readUtf8FileWithLimit(filePath, 'loadJsonFile', maxFileBytes);
@@ -221,7 +231,7 @@ Pancake.loadJsonFile = async function loadJsonFile(filePath, opts = {}) {
       rows = JSON.parse(text);
     } catch (error) {
       const message = error && error.message ? error.message : String(error);
-      throw new Error(`Failed to parse JSON in ${filePath}: ${message}`);
+      throw pancakeError(PANCAKE_ERROR_CODES.PARSE_FAILED, `Failed to parse JSON in ${filePath}: ${message}`, { filePath }, error);
     }
   }
   return Pancake.fromVectors(remapJsonRows(rows, vectorKey, idKey), createOpts);

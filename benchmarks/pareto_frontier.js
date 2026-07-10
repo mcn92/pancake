@@ -12,7 +12,7 @@
  *      of recall targets, log-linearly interpolated along each frontier.
  *
  * Configs (7):
- *   pancake-wasm   int8 / fp32   (Pancake.create, _setEfSearch per ef)
+ *   pancake-wasm   int8 / fp32   (Pancake.create, setEfSearch per ef)
  *   pancake-native int8 / fp32   (native.pancake_*, pancake_set_ef per ef)
  *   usearch        i8 / f32      (build-once-save-view per ef — JS binding
  *                                 only honors expansion_search at construction)
@@ -516,7 +516,7 @@ async function buildPancakeWasm({ train, dim, dtype }) {
   return { index, buildMs, memBytes: index.memory, memorySource: 'reported', rssDeltaBytes: rssDelta };
 }
 function queryPancakeWasm(built, test, gt, ef) {
-  built.index._setEfSearch(ef);
+  built.index.setEfSearch(ef);
   for (let i = 0; i < WARMUP_QUERIES && i < test.length; i++) built.index.search(test[i], K);
   const latencies = new Array(test.length);
   let totalRecall = 0;

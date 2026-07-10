@@ -147,8 +147,8 @@ async function buildPancake({ train, dim }) {
 }
 
 function queryPancake(index, test, groundTruth, efSearch) {
-  if (typeof index._setEfSearch === 'function') {
-    index._setEfSearch(efSearch);
+  if (typeof index.setEfSearch === 'function') {
+    index.setEfSearch(efSearch);
   } else if (index._e && index._e._i8_set_ef && index._useInt8) {
     index._e._i8_set_ef(efSearch);
   } else if (index._e && index._e._float_set_ef && !index._useInt8) {

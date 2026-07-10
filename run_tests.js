@@ -537,6 +537,17 @@ async function testSearch() {
     const bigK = idx.search(vecs[0], 1000);
     assert(bigK.length === idx.count, 'search with k>count returns count results');
 
+    // Regression: k crosses a signed i32 boundary, but must be bounded before
+    // reaching the C ABI or sizing WASM output buffers.
+    const wrappedK = idx.search(vecs[0], 0x80000001);
+    assert(wrappedK.length === idx.count, 'search safely bounds k above signed i32 range');
+    assert(idx.search(vecs[0], 1).length === 1, 'index remains usable after oversized-k search');
+
+    assertThrows(
+        () => idx.search(vecs[0], Number.MAX_SAFE_INTEGER + 1),
+        'search rejects integers that cannot be represented safely'
+    );
+
     const overHundred = idx.search(vecs[0], 150);
     assert(overHundred.length === idx.count, 'search with k>100 is not truncated');
 
@@ -558,6 +569,25 @@ async function testSearch() {
         'search() still accepts a plain number[] query');
 
     idx.dispose();
+
+    // A result without an external-ID mapping is an internal invariant failure,
+    // not a valid raw-ID fallback.
+    {
+        const broken = await Pancake.create({
+            ...DEFAULT_CONFIG,
+            dim: 4,
+            maxElements: 4,
+            metric: 'l2',
+            quantized: false,
+        });
+        broken.add(new Float32Array([1, 0, 0, 0]));
+        broken._intToExt.clear();
+        assertThrows(
+            () => broken.search(new Float32Array([1, 0, 0, 0]), 1),
+            'search fails closed when an internal result has no external-ID mapping'
+        );
+        broken.dispose();
+    }
 }
 
 
@@ -1790,8 +1820,38 @@ async function testRawEngineImportValidation() {
         const src = await Pancake.create(cfg);
         const vecs = Array.from({ length: 8 }, () => normalizedVec(cfg.dim));
         src.addBatch(vecs);
-        const raw = extractRawEngineBytes(src.export());
+        const exported = src.export();
+        const raw = extractRawEngineBytes(exported);
         src.dispose();
+
+        // The envelope and embedded raw header must agree. The raw metric is
+        // what the backend actually restores, so accepting an outer cosine
+        // header around an inner L2 snapshot would desynchronize the wrapper's
+        // distance interpretation from engine behavior.
+        const rawWithL2Metric = overwriteU32(raw, 32, 0);
+        const v3WithL2Metric = new Uint8Array(exported);
+        const v3View = new DataView(
+            v3WithL2Metric.buffer,
+            v3WithL2Metric.byteOffset,
+            v3WithL2Metric.byteLength
+        );
+        const mappingCount = v3View.getUint32(24, true);
+        const rawOffset = 32 + mappingCount * 8;
+        v3View.setUint32(rawOffset + 32, 0, true);
+
+        for (const mismatch of [
+            { label: 'v3', bytes: v3WithL2Metric },
+            { label: 'v2', bytes: wrapV2Envelope(rawWithL2Metric, cfg.dim, testCase.quantized, 1) },
+            { label: 'v1', bytes: wrapV1Envelope(rawWithL2Metric, cfg.dim, testCase.quantized, 1) },
+        ]) {
+            const idx = await Pancake.create(cfg);
+            assertThrows(
+                () => idx.import(mismatch.bytes),
+                `${testCase.label}/${mismatch.label}: rejects envelope/raw metric disagreement`
+            );
+            assert(idx.count === 0, `${testCase.label}/${mismatch.label}: mismatch rejection is atomic`);
+            idx.dispose();
+        }
 
         // Header: count at 12, entry point at 16, max level at 20, M at 24, M0 at 28, metric at 32
         {
@@ -1818,6 +1878,16 @@ async function testRawEngineImportValidation() {
             let msg = '';
             try { idx.import(bad); } catch (e) { msg = e.message; }
             assert(msg.includes('Import failed'), `${testCase.label}: rejects invalid M <= 1`);
+            idx.dispose();
+        }
+
+        {
+            const idx = await Pancake.create(cfg);
+            const serializedM = new DataView(raw.buffer, raw.byteOffset, raw.byteLength).getUint32(24, true);
+            const bad = overwriteU32(raw, 28, serializedM * 2 - 1);
+            let msg = '';
+            try { idx.import(bad); } catch (e) { msg = e.message; }
+            assert(msg.includes('Import failed'), `${testCase.label}: rejects M0 that is not exactly 2*M`);
             idx.dispose();
         }
 
@@ -2539,6 +2609,15 @@ async function testSearchFilteredInputContract() {
     const ok = idx.searchFiltered(query, 2, new Set([0, 1]));
     assert(Array.isArray(ok), 'searchFiltered() accepts Set<number>');
 
+    const oversized = idx.searchFiltered(query, 0x80000001, new Set([0, 1, 2]));
+    assert(oversized.length === 3, 'searchFiltered() safely bounds k above signed i32 range');
+    assert(idx.search(query, 1).length === 1, 'index remains usable after oversized filtered search');
+
+    assertThrows(
+        () => idx.searchFiltered(query, Number.MAX_SAFE_INTEGER + 1, new Set([0, 1])),
+        'searchFiltered() rejects integers that cannot be represented safely'
+    );
+
     assertThrows(
         () => idx.searchFiltered(query, 2, [0, 1]),
         'searchFiltered() rejects array allowedIds'
@@ -2555,6 +2634,341 @@ async function testSearchFilteredInputContract() {
     );
 
     idx.dispose();
+}
+
+async function testDemoVectorGenerator() {
+    section('Deterministic clustered demo vectors');
+
+    const generatorUrl = pathToFileURL(path.join(process.cwd(), 'scripts', 'make-demo-vectors.mjs')).href;
+    const { generateClusteredVectors } = await import(generatorUrl);
+    const options = { count: 64, dims: 16, clusters: 4, spread: 0.03, seed: 12345 };
+    const first = generateClusteredVectors(options);
+    const second = generateClusteredVectors(options);
+
+    assert(first.length === options.count * options.dims, 'demo generator emits count * dims float values');
+    assert(first.every((value, i) => value === second[i]), 'demo generator is byte-deterministic for a fixed seed');
+
+    for (let row = 0; row < options.count; row++) {
+        let normSq = 0;
+        const offset = row * options.dims;
+        for (let d = 0; d < options.dims; d++) normSq += first[offset + d] * first[offset + d];
+        assertNear(Math.sqrt(normSq), 1, 1e-5, `demo vector ${row} is unit-normalized`);
+    }
+
+    const dot = (rowA, rowB) => {
+        let value = 0;
+        for (let d = 0; d < options.dims; d++) {
+            value += first[rowA * options.dims + d] * first[rowB * options.dims + d];
+        }
+        return value;
+    };
+    assert(dot(0, 4) > dot(0, 1), 'same-cluster demo vectors are closer than different-cluster vectors');
+}
+
+async function testPancakeErrorContract() {
+    section('PancakeError contract');
+
+    const expectCode = (fn, code, message) => {
+        try {
+            fn();
+            assert(false, `${message} (expected ${code})`);
+        } catch (error) {
+            assert(error instanceof Pancake.PancakeError, `${message} throws PancakeError`);
+            assert(error.code === code, `${message} has ${code} code`);
+        }
+    };
+    const expectCodeAsync = async (fn, code, message) => {
+        try {
+            await fn();
+            assert(false, `${message} (expected ${code})`);
+        } catch (error) {
+            assert(error instanceof Pancake.PancakeError, `${message} throws PancakeError`);
+            assert(error.code === code, `${message} has ${code} code`);
+        }
+    };
+
+    assert(typeof Pancake.PancakeError === 'function', 'CJS API exposes PancakeError');
+    assert(Pancake.PANCAKE_ERROR_CODES.INDEX_DISPOSED === 'INDEX_DISPOSED',
+        'CJS API exposes stable error codes');
+
+    const esm = await import(pathToFileURL(path.join(process.cwd(), 'pancake.node.mjs')).href);
+    assert(esm.PancakeError === Pancake.PancakeError, 'Node ESM exposes the same PancakeError class');
+
+    await expectCodeAsync(
+        () => Pancake.create({ dim: 0 }),
+        Pancake.PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+        'invalid construction options'
+    );
+
+    const full = await Pancake.create({ dim: 4, maxElements: 1, metric: 'l2', quantized: false });
+    expectCode(
+        () => full.add(new Float32Array(3)),
+        Pancake.PANCAKE_ERROR_CODES.DIMENSION_MISMATCH,
+        'wrong-length vector'
+    );
+    expectCode(
+        () => full.add(new Float32Array([NaN, 0, 0, 0])),
+        Pancake.PANCAKE_ERROR_CODES.INVALID_VECTOR,
+        'non-finite vector'
+    );
+    full.add(new Float32Array(4));
+    expectCode(
+        () => full.add(new Float32Array(4)),
+        Pancake.PANCAKE_ERROR_CODES.INDEX_FULL,
+        'capacity overflow'
+    );
+    full.delete(0);
+    expectCode(
+        () => full.export(),
+        Pancake.PANCAKE_ERROR_CODES.COMPACTION_REQUIRED,
+        'snapshot export with deleted nodes'
+    );
+    full.dispose();
+
+    const source = await Pancake.create({ dim: 4, maxElements: 2, metric: 'l2', quantized: false });
+    source.addBatch([unitVec(4, 0), unitVec(4, 1)]);
+    const snapshot = source.export();
+    const mismatched = await Pancake.create({ dim: 4, maxElements: 2, metric: 'cosine', quantized: false });
+    expectCode(
+        () => mismatched.import(snapshot),
+        Pancake.PANCAKE_ERROR_CODES.SNAPSHOT_CONFIG_MISMATCH,
+        'snapshot configuration mismatch'
+    );
+    const undersized = await Pancake.create({ dim: 4, maxElements: 1, metric: 'l2', quantized: false });
+    expectCode(
+        () => undersized.import(snapshot),
+        Pancake.PANCAKE_ERROR_CODES.SNAPSHOT_CAPACITY_EXCEEDED,
+        'snapshot capacity overflow'
+    );
+    source.dispose();
+    mismatched.dispose();
+    undersized.dispose();
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pancake-errors-'));
+    try {
+        const invalidJson = path.join(tmpDir, 'invalid.json');
+        fs.writeFileSync(invalidJson, '{');
+        await expectCodeAsync(
+            () => Pancake.loadJsonFile(invalidJson),
+            Pancake.PANCAKE_ERROR_CODES.PARSE_FAILED,
+            'malformed JSON file'
+        );
+        await expectCodeAsync(
+            () => Pancake.loadJsonFile(path.join(tmpDir, 'missing.json')),
+            Pancake.PANCAKE_ERROR_CODES.FILE_IO_FAILED,
+            'missing JSON file'
+        );
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+
+    const idx = await Pancake.create({ dim: 4, maxElements: 4, metric: 'l2', quantized: false });
+    idx.dispose();
+    try {
+        idx.search(new Float32Array(4), 1);
+        assert(false, 'disposed index throws PancakeError');
+    } catch (error) {
+        assert(error instanceof Pancake.PancakeError, 'disposed index error is a PancakeError');
+        assert(error.code === Pancake.PANCAKE_ERROR_CODES.INDEX_DISPOSED,
+            'disposed index error has INDEX_DISPOSED code');
+    }
+}
+
+async function testPerQueryEfSearch() {
+    section('Per-query efSearch');
+
+    const idx = await Pancake.create({
+        dim: 4,
+        maxElements: 8,
+        metric: 'l2',
+        quantized: false,
+        efSearch: 100,
+    });
+    idx.addBatch([unitVec(4, 0), unitVec(4, 1), unitVec(4, 2)]);
+
+    const observed = [];
+    const originalQuery = idx._e._pancake_query;
+    const originalFiltered = idx._e._pancake_query_filtered;
+    idx._e._pancake_query = (...args) => {
+        observed.push(['search', args[3]]);
+        return originalQuery(...args);
+    };
+    idx._e._pancake_query_filtered = (...args) => {
+        observed.push(['filtered', args[3]]);
+        return originalFiltered(...args);
+    };
+
+    try {
+        idx.search(unitVec(4, 0), 1);
+        idx.search(unitVec(4, 0), 1, { efSearch: 12 });
+        idx.search(unitVec(4, 0), 1);
+        idx.searchFiltered(unitVec(4, 0), 1, new Set([0, 1]), { efSearch: 24 });
+        idx.setEfSearch(160);
+        idx.search(unitVec(4, 0), 1);
+
+        assert(JSON.stringify(observed) === JSON.stringify([
+            ['search', 100],
+            ['search', 12],
+            ['search', 100],
+            ['filtered', 24],
+            ['search', 160],
+        ]), 'per-query efSearch reaches the ABI without mutating the index default');
+
+        for (const invalid of [0, 4097, 1.5, '100']) {
+            try {
+                idx.search(unitVec(4, 0), 1, { efSearch: invalid });
+                assert(false, `search() rejects invalid efSearch ${String(invalid)}`);
+            } catch (error) {
+                assert(error instanceof Pancake.PancakeError,
+                    `invalid efSearch ${String(invalid)} throws PancakeError`);
+                assert(error.code === Pancake.PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+                    `invalid efSearch ${String(invalid)} has INVALID_ARGUMENT code`);
+            }
+        }
+    } finally {
+        idx._e._pancake_query = originalQuery;
+        idx._e._pancake_query_filtered = originalFiltered;
+        idx.dispose();
+    }
+}
+
+async function testAdditiveIndexSurface() {
+    section('0.2 index state and lifecycle surface');
+
+    const idx = await Pancake.create({
+        dim: 4,
+        maxElements: 5,
+        metric: 'l2',
+        quantized: false,
+        M: 8,
+        efConstruction: 32,
+        efSearch: 40,
+    });
+    const ids = idx.addBatch([unitVec(4, 0), unitVec(4, 1), unitVec(4, 2)]);
+
+    assert(idx.count === 3 && idx.liveCount === 3, 'liveCount starts at the backend count');
+    assert(idx.deletedCount === 0 && idx.deletedRatio === 0, 'deleted state starts empty');
+    assert(idx.capacity === 5 && idx.remainingCapacity === 2, 'capacity state reports unused insertion slots');
+    assert(idx.has(ids[0]) && !idx.isDeleted(ids[0]), 'has() recognizes a live ID');
+    assert(idx.delete(ids[0]) === true, 'delete() returns true for a live ID');
+    assert(idx.delete(ids[0]) === false, 'delete() returns false for an already-deleted ID');
+    assert(idx.delete(999999) === false, 'delete() returns false for an unknown ID');
+    assert(!idx.has(ids[0]) && idx.isDeleted(ids[0]), 'has()/isDeleted() distinguish a soft-deleted ID');
+    assert(idx.liveCount === 2 && idx.deletedCount === 1, 'live/deleted counts track soft deletion');
+    assert(idx.remainingCapacity === 2, 'soft deletion does not claim to free insertion capacity');
+    assert(idx.ghostCount === idx.deletedCount && idx.ghostRatio === idx.deletedRatio,
+        'legacy ghost state remains an alias');
+
+    const config = idx.config;
+    assert(config.dim === 4 && config.maxElements === 5 && config.metric === 'l2' &&
+        config.quantized === false && config.M === 8 && config.efConstruction === 32 && config.efSearch === 40,
+        'config exposes fully resolved values');
+    idx.setEfSearch(80);
+    assert(idx.config.efSearch === 80, 'config reflects the current default efSearch policy');
+
+    const beforeExportMemory = idx.memoryUsage;
+    assert(beforeExportMemory.logicalIndexBytes === idx.memory,
+        'memory remains an alias for logicalIndexBytes');
+    assert(beforeExportMemory.wasmHeapBytes >= beforeExportMemory.logicalIndexBytes,
+        'memoryUsage exposes the full WASM heap separately');
+    assert(beforeExportMemory.snapshotBufferBytes === 0,
+        'snapshotBufferBytes is zero before the first export');
+    idx.compact();
+    idx.export();
+    assert(idx.memoryUsage.snapshotBufferBytes > 0,
+        'memoryUsage tracks the backend buffer retained by export()');
+    idx.dispose();
+
+    let scopedIndex;
+    const result = await Pancake.withIndex(
+        { dim: 4, maxElements: 2, metric: 'l2', quantized: false },
+        async (index) => {
+            scopedIndex = index;
+            index.add(unitVec(4, 0));
+            return index.liveCount;
+        }
+    );
+    assert(result === 1, 'withIndex() returns the callback result');
+    assertThrows(() => scopedIndex.count, 'withIndex() disposes after a successful callback');
+
+    let failedIndex;
+    await assertThrowsAsync(
+        () => Pancake.withIndex(
+            { dim: 4, maxElements: 2, metric: 'l2', quantized: false },
+            (index) => {
+                failedIndex = index;
+                throw new Error('expected callback failure');
+            }
+        ),
+        'withIndex() propagates callback failures'
+    );
+    assertThrows(() => failedIndex.count, 'withIndex() disposes after a failed callback');
+}
+
+async function testSnapshotInspectionAndRestore() {
+    section('Snapshot inspection and restore');
+
+    const source = await Pancake.create({
+        dim: 4,
+        maxElements: 8,
+        metric: 'cosine',
+        quantized: true,
+        M: 8,
+        efConstruction: 64,
+        efSearch: 120,
+    });
+    const ids = source.addBatch([unitVec(4, 0), unitVec(4, 1), unitVec(4, 2)]);
+    source.delete(ids[1]);
+    source.compact();
+    const snapshot = source.export();
+
+    const metadata = Pancake.inspectSnapshot(snapshot);
+    assert(metadata.format === 'pancake' && metadata.version === 3,
+        'inspectSnapshot() identifies the current envelope');
+    assert(metadata.dim === 4 && metadata.count === 2 && metadata.metric === 'cosine' &&
+        metadata.quantized === true && metadata.M === 8 && metadata.efConstruction === 64,
+        'inspectSnapshot() reports the complete construction config');
+    assert(metadata.nextId === 3, 'inspectSnapshot() reports the stable next external ID');
+
+    const exact = await Pancake.restore(snapshot);
+    assert(exact.config.dim === 4 && exact.config.metric === 'cosine' && exact.config.quantized === true &&
+        exact.config.M === 8 && exact.config.efConstruction === 64 && exact.config.efSearch === 100,
+        'restore() infers snapshot config and resets runtime efSearch policy');
+    assert(exact.capacity === 2 && exact.remainingCapacity === 0,
+        'restore() defaults capacity to the restored count');
+    exact.dispose();
+
+    const grown = await Pancake.restore(snapshot, { maxElements: 5, efSearch: 200 });
+    assert(grown.capacity === 5 && grown.config.efSearch === 200,
+        'restore() accepts capacity and runtime-policy overrides');
+    const nextId = grown.add(unitVec(4, 3));
+    assert(nextId === 3, 'restore() preserves external-ID allocation across compaction');
+    grown.dispose();
+
+    await assertThrowsAsync(
+        () => Pancake.restore(snapshot, { M: 16 }),
+        'restore() rejects construction overrides that disagree with the snapshot'
+    );
+
+    const raw = extractRawEngineBytes(snapshot);
+    const rawMetadata = Pancake.inspectSnapshot(raw);
+    assert(rawMetadata.format === 'raw' && rawMetadata.M === 8 && rawMetadata.efConstruction === 64,
+        'inspectSnapshot() reads legacy raw headers');
+    await assertThrowsAsync(
+        () => Pancake.restore(raw),
+        'restore() requires explicit config for legacy raw snapshots'
+    );
+    const rawRestored = await Pancake.restore(raw, {
+        dim: 4,
+        metric: 'cosine',
+        quantized: true,
+        M: 8,
+        efConstruction: 64,
+        maxElements: 4,
+    });
+    assert(rawRestored.count === 2, 'restore() supports explicitly configured legacy raw snapshots');
+    rawRestored.dispose();
+    source.dispose();
 }
 
 // ─── Runner ───────────────────────────────────────────────────────────────────
@@ -2602,6 +3016,11 @@ async function main() {
         testCompactEntryPointRecovery,
         testSearchFiltered,
         testSearchFilteredInputContract,
+        testDemoVectorGenerator,
+        testPancakeErrorContract,
+        testPerQueryEfSearch,
+        testAdditiveIndexSurface,
+        testSnapshotInspectionAndRestore,
         testHeldOutRecallOracle,
         testHeldOutRecallAfterCompact,
         testFilteredHeldOutRecallOracle,

@@ -316,7 +316,7 @@ public:
         return inserted;
     }
 
-    std::vector<std::pair<uint32_t, float>> search(const float* query, size_t k) {
+    std::vector<std::pair<uint32_t, float>> search(const float* query, size_t k, size_t ef_search) {
         if (count_ == 0) return {};
 
         if (metric_ == DistanceMetric::Cosine) {
@@ -346,7 +346,7 @@ public:
             }
         }
 
-        auto candidates = search_layer_query(curr, std::max(ef_search_, k), 0);
+        auto candidates = search_layer_query(curr, std::max(ef_search, k), 0);
         std::vector<std::pair<uint32_t, float>> results;
         for (size_t i = 0; i < std::min(k, candidates.size()); ++i) {
             if (!deleted_[candidates[i].second]) {
@@ -358,7 +358,8 @@ public:
 
     std::vector<std::pair<uint32_t, float>> search_filtered(
         const float* query, size_t k,
-        const uint8_t* filter_bitset, size_t bitset_len
+        const uint8_t* filter_bitset, size_t bitset_len,
+        size_t ef_search
     ) {
         if (count_ == 0) return {};
 
@@ -389,7 +390,7 @@ public:
             }
         }
 
-        size_t initial_ef = std::max(ef_search_, k * 2);
+        size_t initial_ef = std::max(ef_search, k * 2);
         size_t max_ef = initial_ef * 4;
         size_t current_ef = initial_ef;
 
@@ -478,6 +479,17 @@ public:
     }
 
     void set_ef_search(size_t ef) { ef_search_ = ef; }
+
+    std::vector<std::pair<uint32_t, float>> search(const float* query, size_t k) {
+        return search(query, k, ef_search_);
+    }
+
+    std::vector<std::pair<uint32_t, float>> search_filtered(
+        const float* query, size_t k,
+        const uint8_t* filter_bitset, size_t bitset_len
+    ) {
+        return search_filtered(query, k, filter_bitset, bitset_len, ef_search_);
+    }
 
     size_t ghost_count() const { return num_deleted_; }
 
@@ -773,7 +785,7 @@ public:
 
         if (count_ > max_elements_) return fail();
         if (metric_val > static_cast<uint32_t>(DistanceMetric::Cosine)) return fail();
-        if (M_ <= 1 || M_ > 128 || M0_ == 0 || M0_ > 256) return fail();
+        if (M_ <= 1 || M_ > 128 || M0_ != M_ * 2) return fail();
         if (ef_construction_ == 0 || ef_construction_ > 4096) return fail();
         // Cap the level count read from an untrusted snapshot. Without this an
         // attacker-controlled level_val drives a multi-gigabyte upper_[i].resize()
@@ -1007,7 +1019,9 @@ private:
 
     void write_level_edges(uint32_t node, int level, const std::vector<Edge>& edges) {
         if (level == 0) {
-            uint16_t sz = static_cast<uint16_t>(edges.size());
+            // Base-layer storage is a fixed-width slot. Keep this boundary safe
+            // even if a future caller accidentally supplies an oversized list.
+            uint16_t sz = static_cast<uint16_t>(std::min(edges.size(), M0_));
             base_sizes_[node] = sz;
             Edge* slot = base_slot(node);
             for (uint16_t i = 0; i < sz; ++i) slot[i] = edges[i];
@@ -1117,59 +1131,6 @@ private:
         for (size_t d = 0; d < dims_; d++) {
             dst[d] = o + s * static_cast<float>(data[d]);
         }
-    }
-
-    float l2_float(const float* a, const float* b) const {
-        float sum = 0.0f;
-        size_t d = 0;
-#ifdef INT8_HNSW_WASM_SIMD
-        v128_t acc = wasm_f32x4_splat(0.0f);
-        for (; d + 4 <= dims_; d += 4) {
-            v128_t diff = wasm_f32x4_sub(wasm_v128_load(a + d), wasm_v128_load(b + d));
-            acc = wasm_f32x4_add(acc, wasm_f32x4_mul(diff, diff));
-        }
-        sum = wasm_f32x4_extract_lane(acc, 0) + wasm_f32x4_extract_lane(acc, 1) +
-              wasm_f32x4_extract_lane(acc, 2) + wasm_f32x4_extract_lane(acc, 3);
-#elif defined(INT8_HNSW_SSE2_SIMD)
-        __m128 acc = _mm_setzero_ps();
-        for (; d + 4 <= dims_; d += 4) {
-            __m128 diff = _mm_sub_ps(_mm_loadu_ps(a + d), _mm_loadu_ps(b + d));
-            acc = _mm_add_ps(acc, _mm_mul_ps(diff, diff));
-        }
-        alignas(16) float tmp[4];
-        _mm_store_ps(tmp, acc);
-        sum = tmp[0] + tmp[1] + tmp[2] + tmp[3];
-#endif
-        for (; d < dims_; d++) {
-            float diff = a[d] - b[d];
-            sum += diff * diff;
-        }
-        return sum;
-    }
-
-    float cosine_dist_float(const float* a, const float* b) const {
-        float dot = 0.0f;
-        size_t d = 0;
-#ifdef INT8_HNSW_WASM_SIMD
-        v128_t acc = wasm_f32x4_splat(0.0f);
-        for (; d + 4 <= dims_; d += 4) {
-            acc = wasm_f32x4_add(acc, wasm_f32x4_mul(wasm_v128_load(a + d), wasm_v128_load(b + d)));
-        }
-        dot = wasm_f32x4_extract_lane(acc, 0) + wasm_f32x4_extract_lane(acc, 1) +
-              wasm_f32x4_extract_lane(acc, 2) + wasm_f32x4_extract_lane(acc, 3);
-#elif defined(INT8_HNSW_SSE2_SIMD)
-        __m128 acc = _mm_setzero_ps();
-        for (; d + 4 <= dims_; d += 4) {
-            acc = _mm_add_ps(acc, _mm_mul_ps(_mm_loadu_ps(a + d), _mm_loadu_ps(b + d)));
-        }
-        alignas(16) float tmp[4];
-        _mm_store_ps(tmp, acc);
-        dot = tmp[0] + tmp[1] + tmp[2] + tmp[3];
-#endif
-        for (; d < dims_; d++) dot += a[d] * b[d];
-        if (dot > 1.0f) dot = 1.0f;
-        else if (dot < -1.0f) dot = -1.0f;
-        return 1.0f - dot;
     }
 
     float asymmetric_cosine(const float* query, uint32_t db_id) const {
@@ -1543,7 +1504,9 @@ private:
 
     int random_level() {
         std::uniform_real_distribution<double> dist(0.0, 1.0);
-        return static_cast<int>(-std::log(dist(rng_)) * level_mult_);
+        double sample = dist(rng_);
+        if (sample <= 0.0) sample = std::numeric_limits<double>::min();
+        return static_cast<int>(-std::log(sample) * level_mult_);
     }
 
     template<typename DistFunc>

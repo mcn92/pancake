@@ -252,7 +252,7 @@ async function buildIndex(train, dim) {
 }
 
 function measureRecall(index, queries, groundTruth) {
-  index._setEfSearch(EF_SEARCH);
+  index.setEfSearch(EF_SEARCH);
   const latencies = new Array(queries.length);
   let totalRecall = 0;
   for (let i = 0; i < queries.length; i++) {

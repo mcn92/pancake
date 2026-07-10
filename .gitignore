@@ -58,6 +58,7 @@ docs/html/
 dbpedia/
 glove/
 dist/vectors.bin
+dist/vectors.bin.manifest.json
 dist/vectors_100k.bin
 sift/
 sift10m_streaming_gt/

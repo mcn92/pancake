@@ -898,7 +898,7 @@ async function handleSearch(request, env) {
 
   const loadInfo = await ensureLoaded(env);
   const t0 = performance.now();
-  index._setEfSearch(ef);
+  index.setEfSearch(ef);
   let hits;
   let filterLabel = null;
   if (source) {

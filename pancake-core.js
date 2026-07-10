@@ -1,5 +1,11 @@
 'use strict';
 
+const {
+    PancakeError,
+    PANCAKE_ERROR_CODES,
+    pancakeError,
+} = require('./pancake-errors.js');
+
 // Envelope header for validated export/import
 const PANCAKE_MAGIC = 0x504E434B; // "PNCK"
 const ENVELOPE_VERSION = 3;
@@ -11,6 +17,27 @@ const FLOAT_HNSW_MAGIC_V0 = 0x464C4857; // "FLHW"
 const FLOAT_HNSW_MAGIC_V1 = 0x464C4831; // "FLH1"
 const INT8_HNSW_MAGIC_V0 = 0x49384857; // "I8HW"
 const INT8_HNSW_MAGIC_V1 = 0x49384831; // "I8H1"
+const MAX_EF = 4096;
+
+function validateEfSearch(value, label = 'efSearch') {
+    if (!Number.isInteger(value) || value < 1 || value > MAX_EF) {
+        throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+            `${label} must be an integer between 1 and ${MAX_EF}`,
+            { argument: label, value, min: 1, max: MAX_EF });
+    }
+    return value;
+}
+
+function resolveSearchEf(options, fallback, methodName) {
+    if (options === undefined) return fallback;
+    if (!options || typeof options !== 'object' || Array.isArray(options)) {
+        throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+            `${methodName}() options must be an object`, { argument: 'options' });
+    }
+    return options.efSearch === undefined
+        ? fallback
+        : validateEfSearch(options.efSearch, `${methodName}() options.efSearch`);
+}
 
 // Reject non-numeric elements in a plain-array vector input. A Float32Array
 // already guarantees numeric storage, but `new Float32Array([...])` silently
@@ -24,7 +51,9 @@ function assertNumericVector(vec, label) {
     if (vec == null || typeof vec.length !== 'number') return; // length check handles these
     for (let i = 0; i < vec.length; i++) {
         if (typeof vec[i] !== 'number') {
-            throw new Error(`${label} must contain only numbers; found ${typeof vec[i]} at index ${i}`);
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_VECTOR,
+                `${label} must contain only numbers; found ${typeof vec[i]} at index ${i}`,
+                { index: i, actualType: typeof vec[i] });
         }
     }
 }
@@ -34,12 +63,14 @@ function validateVectorValues(f32, label, validateCosineNorm) {
     for (let i = 0; i < f32.length; i++) {
         const value = f32[i];
         if (!Number.isFinite(value)) {
-            throw new Error(`${label} contains non-finite value (NaN or Infinity)`);
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_VECTOR,
+                `${label} contains non-finite value (NaN or Infinity)`, { reason: 'non_finite' });
         }
         if (validateCosineNorm) normSq += value * value;
     }
     if (validateCosineNorm && (!(normSq > 0) || !Number.isFinite(normSq))) {
-        throw new Error(`${label} has invalid cosine norm`);
+        throw pancakeError(PANCAKE_ERROR_CODES.INVALID_VECTOR,
+            `${label} has invalid cosine norm`, { reason: 'invalid_cosine_norm' });
     }
 }
 
@@ -50,11 +81,15 @@ class PancakeIndex {
         this._maxElements = opts.maxElements;
         this._quantized = !!opts.quantized;
         this._isL2 = (opts.metric === 'l2');
+        this._M = opts.M;
+        this._efConstruction = opts.efConstruction;
+        this._efSearch = opts.efSearch;
         this._handle = handle;
         this._vecPtr = vecPtr;
         this._idPtr = idPtr;
         this._distPtr = distPtr;
         this._bufferCapacity = bufferCapacity;
+        this._snapshotBufferBytes = 0;
         this._disposed = false;
 
         // ID translation layer -- WASM compact() reassigns sequential IDs,
@@ -70,13 +105,16 @@ class PancakeIndex {
         assertNumericVector(vec, 'Vector');
         const f32 = vec instanceof Float32Array ? vec : new Float32Array(vec);
         if (f32.length !== this._dim) {
-            throw new Error(`Expected vector of length ${this._dim}, got ${f32.length}`);
+            throw pancakeError(PANCAKE_ERROR_CODES.DIMENSION_MISMATCH,
+                `Expected vector of length ${this._dim}, got ${f32.length}`,
+                { expected: this._dim, actual: f32.length });
         }
         validateVectorValues(f32, 'Vector', !this._isL2);
         this._e.HEAPF32.set(f32, this._vecPtr >> 2);
         const intId = this._e._pancake_add(this._handle, this._vecPtr);
         if (intId === 0xFFFFFFFF || intId < 0) {
-            throw new Error('Insert failed (index full or not initialized)');
+            throw pancakeError(PANCAKE_ERROR_CODES.INDEX_FULL,
+                'Insert failed (index full or not initialized)');
         }
 
         const extId = this._nextExtId++;
@@ -88,11 +126,13 @@ class PancakeIndex {
     addBatch(vectors) {
         this._checkDisposed();
         if (!Array.isArray(vectors)) {
-            throw new Error('addBatch() requires an array of vectors');
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+                'addBatch() requires an array of vectors');
         }
         if (vectors.length === 0) return [];
         if (this.count + vectors.length > this._maxElements) {
-            throw new Error('Insert failed (index full or not initialized)');
+            throw pancakeError(PANCAKE_ERROR_CODES.INDEX_FULL,
+                'Insert failed (index full or not initialized)');
         }
 
         // Validate ALL vectors first before mutating the index, so a bad
@@ -104,7 +144,9 @@ class PancakeIndex {
             const v = vectors[i];
             const len = (v instanceof Float32Array) ? v.length : (v && v.length);
             if (len !== this._dim) {
-                throw new Error(`Expected vector of length ${this._dim}, got ${len} at index ${i}`);
+                throw pancakeError(PANCAKE_ERROR_CODES.DIMENSION_MISMATCH,
+                    `Expected vector of length ${this._dim}, got ${len} at index ${i}`,
+                    { expected: this._dim, actual: len, index: i });
             }
             assertNumericVector(v, `Vector at index ${i}`);
             const f32 = v instanceof Float32Array ? v : new Float32Array(v);
@@ -116,7 +158,8 @@ class PancakeIndex {
         // intermediate JS Float32Array), call bulk_insert once.
         const totalFloats = vectors.length * this._dim;
         const dataPtr = this._e._emsc_malloc(totalFloats * 4);
-        if (!dataPtr) throw new Error('WASM malloc failed for bulk insert');
+        if (!dataPtr) throw pancakeError(PANCAKE_ERROR_CODES.WASM_ALLOCATION_FAILED,
+            'WASM malloc failed for bulk insert');
 
         try {
             const heapOffset = dataPtr >> 2;
@@ -127,7 +170,8 @@ class PancakeIndex {
             const inserted = this._e._pancake_bulk_insert(this._handle, dataPtr, vectors.length);
             const ids = this._recordInsertedRange(countBefore, inserted);
             if (inserted !== vectors.length) {
-                throw new Error('Insert failed (index full or not initialized)');
+                throw pancakeError(PANCAKE_ERROR_CODES.INDEX_FULL,
+                    'Insert failed (index full or not initialized)');
             }
             return ids;
         } finally {
@@ -135,46 +179,65 @@ class PancakeIndex {
         }
     }
 
-    search(query, k) {
+    search(query, k, options) {
         this._checkDisposed();
-        if (!Number.isInteger(k) || k < 0) {
-            throw new Error('search() requires a non-negative integer k');
+        if (!Number.isSafeInteger(k) || k < 0) {
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+                'search() requires a non-negative integer k', { argument: 'k', value: k });
         }
         assertNumericVector(query, 'Query vector');
         const f32 = query instanceof Float32Array ? query : new Float32Array(query);
         if (f32.length !== this._dim) {
-            throw new Error(`Expected query of length ${this._dim}, got ${f32.length}`);
+            throw pancakeError(PANCAKE_ERROR_CODES.DIMENSION_MISMATCH,
+                `Expected query of length ${this._dim}, got ${f32.length}`,
+                { expected: this._dim, actual: f32.length });
         }
         validateVectorValues(f32, 'Query vector', !this._isL2);
-        if (k === 0) return [];
-        this._ensureSearchCapacity(k);
+        const efSearch = resolveSearchEf(options, this._efSearch, 'search');
+        // The C ABI takes a signed 32-bit k and the WASM allocations take
+        // 32-bit byte sizes. Passing a larger JS integer through either boundary
+        // can wrap and allocate undersized output buffers. An index cannot
+        // return more than count results, so cap k before allocating or calling
+        // into WASM while preserving the documented k > count behavior.
+        const boundedK = Math.min(k, this.count);
+        if (boundedK === 0) return [];
+        this._ensureSearchCapacity(boundedK);
         this._e.HEAPF32.set(f32, this._vecPtr >> 2);
-        const found = this._e._pancake_query(this._handle, this._vecPtr, k, this._idPtr, this._distPtr);
+        const found = this._e._pancake_query(
+            this._handle, this._vecPtr, boundedK, efSearch, this._idPtr, this._distPtr
+        );
         return this._readResults(found);
     }
 
-    searchFiltered(query, k, allowedIds) {
+    searchFiltered(query, k, allowedIds, options) {
         this._checkDisposed();
-        if (!Number.isInteger(k) || k < 0) {
-            throw new Error('searchFiltered() requires a non-negative integer k');
+        if (!Number.isSafeInteger(k) || k < 0) {
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+                'searchFiltered() requires a non-negative integer k', { argument: 'k', value: k });
         }
         assertNumericVector(query, 'Query vector');
         const f32 = query instanceof Float32Array ? query : new Float32Array(query);
         if (f32.length !== this._dim) {
-            throw new Error(`Expected query of length ${this._dim}, got ${f32.length}`);
+            throw pancakeError(PANCAKE_ERROR_CODES.DIMENSION_MISMATCH,
+                `Expected query of length ${this._dim}, got ${f32.length}`,
+                { expected: this._dim, actual: f32.length });
         }
         validateVectorValues(f32, 'Query vector', !this._isL2);
+        const efSearch = resolveSearchEf(options, this._efSearch, 'searchFiltered');
         if (!(allowedIds instanceof Set)) {
-            throw new Error('searchFiltered() requires allowedIds to be a Set<number>');
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+                'searchFiltered() requires allowedIds to be a Set<number>', { argument: 'allowedIds' });
         }
-        if (k === 0 || !allowedIds || allowedIds.size === 0) return [];
-        this._ensureSearchCapacity(k);
+        const boundedK = Math.min(k, this.count);
+        if (boundedK === 0 || allowedIds.size === 0) return [];
+        this._ensureSearchCapacity(boundedK);
 
         // Build bitset over internal IDs
         const count = this._e._pancake_count(this._handle);
         const bitsetLen = (count + 7) >> 3;
         const bitsetPtr = this._e._emsc_malloc(bitsetLen);
-        if (!bitsetPtr) throw new Error('WASM malloc failed for filter bitset');
+        if (!bitsetPtr) throw pancakeError(PANCAKE_ERROR_CODES.WASM_ALLOCATION_FAILED,
+            'WASM malloc failed for filter bitset');
 
         try {
             // Zero the bitset
@@ -190,7 +253,7 @@ class PancakeIndex {
 
             this._e.HEAPF32.set(f32, this._vecPtr >> 2);
             const found = this._e._pancake_query_filtered(
-                this._handle, this._vecPtr, k,
+                this._handle, this._vecPtr, boundedK, efSearch,
                 this._idPtr, this._distPtr,
                 bitsetPtr, bitsetLen
             );
@@ -203,9 +266,20 @@ class PancakeIndex {
     delete(id) {
         this._checkDisposed();
         const intId = this._extToInt.get(id);
-        if (intId === undefined) return;
+        if (intId === undefined || this._deletedExt.has(id)) return false;
         this._e._pancake_delete(this._handle, intId);
         this._deletedExt.add(id);
+        return true;
+    }
+
+    has(id) {
+        this._checkDisposed();
+        return this._extToInt.has(id) && !this._deletedExt.has(id);
+    }
+
+    isDeleted(id) {
+        this._checkDisposed();
+        return this._deletedExt.has(id);
     }
 
     compact() {
@@ -222,7 +296,8 @@ class PancakeIndex {
         }
 
         const mapPtr = this._e._emsc_malloc(countBefore * 4);
-        if (!mapPtr) throw new Error('WASM malloc failed for compact remap');
+        if (!mapPtr) throw pancakeError(PANCAKE_ERROR_CODES.WASM_ALLOCATION_FAILED,
+            'WASM malloc failed for compact remap');
 
         try {
             const written = this._e._pancake_compact_remap(this._handle, mapPtr, countBefore);
@@ -247,9 +322,9 @@ class PancakeIndex {
             const liveCount = this._e._pancake_count(this._handle);
             if (this._intToExt.size !== liveCount) {
                 this._clearMappings();
-                throw new Error(
-                    `compact() remap mismatch: engine reports ${liveCount} live vectors, remap yielded ${this._intToExt.size}`
-                );
+                throw pancakeError(PANCAKE_ERROR_CODES.INTERNAL_INVARIANT,
+                    `compact() remap mismatch: engine reports ${liveCount} live vectors, remap yielded ${this._intToExt.size}`,
+                    { liveCount, mappingCount: this._intToExt.size });
             }
         } finally {
             this._e._emsc_free(mapPtr);
@@ -259,18 +334,22 @@ class PancakeIndex {
     export() {
         this._checkDisposed();
         if (this.ghostCount > 0) {
-            throw new Error('Export failed: compact() required before export when ghostCount > 0');
+            throw pancakeError(PANCAKE_ERROR_CODES.COMPACTION_REQUIRED,
+                'Export failed: compact() required before export when ghostCount > 0',
+                { deletedCount: this.ghostCount });
         }
 
         const sizePtr = this._e._emsc_malloc(4);
-        if (!sizePtr) throw new Error('WASM malloc failed for export');
+        if (!sizePtr) throw pancakeError(PANCAKE_ERROR_CODES.WASM_ALLOCATION_FAILED,
+            'WASM malloc failed for export');
         try {
             const dataPtr = this._e._pancake_export(this._handle, sizePtr);
             if (!dataPtr) {
-                throw new Error('Export failed');
+                throw pancakeError(PANCAKE_ERROR_CODES.INTERNAL_INVARIANT, 'Export failed');
             }
 
             const wasmSize = this._e.HEAPU32[sizePtr >> 2];
+            this._snapshotBufferBytes = wasmSize;
             const liveMappings = Array.from(this._intToExt.entries()).sort((a, b) => a[0] - b[0]);
             const mappingBytes = liveMappings.length * MAPPING_ENTRY_SIZE;
             const result = new Uint8Array(V3_ENVELOPE_HEADER_SIZE + mappingBytes + wasmSize);
@@ -323,20 +402,21 @@ class PancakeIndex {
 
                 if (version === 1) {
                     if (bytes.length < V1_ENVELOPE_HEADER_SIZE) {
-                        throw new Error('Import failed: truncated v1 envelope');
+                        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Import failed: truncated v1 envelope');
                     }
 
                     dim = view.getUint32(8, true);
                     const compressed = view.getUint32(12, true);
                     if (compressed !== dim) {
-                        throw new Error('Import failed: DCT/PCA indexes are no longer supported');
+                        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                            'Import failed: DCT/PCA indexes are no longer supported');
                     }
 
                     metricVal = view.getUint32(16, true);
                     quantizedVal = view.getUint32(20, true);
                 } else if (version === ENVELOPE_VERSION) {
                     if (bytes.length < V3_ENVELOPE_HEADER_SIZE) {
-                        throw new Error('Import failed: truncated v3 envelope');
+                        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Import failed: truncated v3 envelope');
                     }
 
                     dim = view.getUint32(8, true);
@@ -349,11 +429,13 @@ class PancakeIndex {
                     wasmOffset = mappingOffset + mappingCount * MAPPING_ENTRY_SIZE;
 
                     if (wasmOffset > bytes.length || wasmOffset + wasmSize > bytes.length) {
-                        throw new Error('Import failed: truncated v3 envelope payload');
+                        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                            'Import failed: truncated v3 envelope payload');
                     }
                 } else {
                     if (version !== 2) {
-                        throw new Error(`Import failed: unsupported envelope version ${version}`);
+                        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                            `Import failed: unsupported envelope version ${version}`, { version });
                     }
 
                     dim = view.getUint32(8, true);
@@ -362,25 +444,37 @@ class PancakeIndex {
                 }
 
                 if (dim !== this._dim) {
-                    throw new Error(`Import failed: dim mismatch (exported ${dim}, expected ${this._dim})`);
+                    throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_CONFIG_MISMATCH,
+                        `Import failed: dim mismatch (exported ${dim}, expected ${this._dim})`,
+                        { field: 'dim', exported: dim, expected: this._dim });
                 }
 
                 const exportedL2 = metricVal === 0;
                 if (exportedL2 !== this._isL2) {
                     const got = exportedL2 ? 'l2' : 'cosine';
                     const want = this._isL2 ? 'l2' : 'cosine';
-                    throw new Error(`Import failed: metric mismatch (exported ${got}, expected ${want})`);
+                    throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_CONFIG_MISMATCH,
+                        `Import failed: metric mismatch (exported ${got}, expected ${want})`,
+                        { field: 'metric', exported: got, expected: want });
                 }
 
                 if (!!quantizedVal !== this._quantized) {
-                    throw new Error('Import failed: quantized mismatch');
+                    throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_CONFIG_MISMATCH,
+                        'Import failed: quantized mismatch',
+                        { field: 'quantized', exported: !!quantizedVal, expected: this._quantized });
                 }
 
                 if (version === ENVELOPE_VERSION) {
                     wasmBytes = bytes.subarray(wasmOffset, wasmOffset + wasmSize);
                     const metadata = parseRawSnapshotMetadata(wasmBytes);
                     if (metadata === null) {
-                        throw new Error('Import failed: unsupported raw snapshot format');
+                        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                            'Import failed: unsupported raw snapshot format');
+                    }
+                    this._validateRawSnapshotMetadata(metadata);
+                    if (mappingCount !== metadata.count) {
+                        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                            'Import failed: envelope mapping count mismatch');
                     }
                     pendingMappings = new Map();
                     let offset = mappingOffset;
@@ -402,16 +496,20 @@ class PancakeIndex {
             }
         }
 
-        if (wasmBytes === bytes) {
-            const metadata = parseRawSnapshotMetadata(wasmBytes);
-            if (metadata === null) {
-                throw new Error('Import failed: unsupported raw snapshot format');
-            }
-            this._validateRawSnapshotMetadata(metadata);
+        // Validate the embedded raw snapshot even when an envelope is present.
+        // The engine metric is restored from the raw header, so trusting only
+        // the envelope would allow the public wrapper and backend to disagree
+        // about both query behavior and distance interpretation.
+        const rawMetadata = parseRawSnapshotMetadata(wasmBytes);
+        if (rawMetadata === null) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                'Import failed: unsupported raw snapshot format');
         }
+        this._validateRawSnapshotMetadata(rawMetadata);
 
         const dataPtr = this._e._emsc_malloc(wasmBytes.length);
-        if (!dataPtr) throw new Error('WASM malloc failed for import');
+        if (!dataPtr) throw pancakeError(PANCAKE_ERROR_CODES.WASM_ALLOCATION_FAILED,
+            'WASM malloc failed for import');
 
         let status;
         try {
@@ -422,7 +520,7 @@ class PancakeIndex {
         }
 
         if (status !== 0) {
-            throw new Error('Import failed');
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Import failed');
         }
 
         const count = this._e._pancake_count(this._handle);
@@ -461,6 +559,49 @@ class PancakeIndex {
 
     get dim() { return this._dim; }
 
+    get liveCount() {
+        return this.count - this.deletedCount;
+    }
+
+    get deletedCount() {
+        return this.ghostCount;
+    }
+
+    get deletedRatio() {
+        return this.ghostRatio;
+    }
+
+    get capacity() {
+        this._checkDisposed();
+        return this._maxElements;
+    }
+
+    get remainingCapacity() {
+        return this.capacity - this.count;
+    }
+
+    get config() {
+        this._checkDisposed();
+        return Object.freeze({
+            dim: this._dim,
+            maxElements: this._maxElements,
+            metric: this._isL2 ? 'l2' : 'cosine',
+            quantized: this._quantized,
+            M: this._M,
+            efConstruction: this._efConstruction,
+            efSearch: this._efSearch,
+        });
+    }
+
+    get memoryUsage() {
+        this._checkDisposed();
+        return Object.freeze({
+            logicalIndexBytes: this._e._pancake_memory(this._handle),
+            wasmHeapBytes: this._e.HEAPU8.buffer.byteLength,
+            snapshotBufferBytes: this._snapshotBufferBytes,
+        });
+    }
+
     dispose() {
         if (this._disposed) return;
         let thrown = null;
@@ -481,12 +622,18 @@ class PancakeIndex {
         if (thrown !== null) throw thrown;
     }
 
-    _setEfSearch(ef) {
-        this._e._pancake_set_ef(this._handle, ef);
+    setEfSearch(ef) {
+        this._checkDisposed();
+        this._efSearch = validateEfSearch(ef, 'setEfSearch() efSearch');
     }
 
     _checkDisposed() {
-        if (this._disposed) throw new Error('PancakeIndex has been disposed');
+        if (this._disposed) {
+            throw pancakeError(
+                PANCAKE_ERROR_CODES.INDEX_DISPOSED,
+                'PancakeIndex has been disposed'
+            );
+        }
     }
 
     _ensureSearchCapacity(k) {
@@ -497,7 +644,8 @@ class PancakeIndex {
         if (!newIdPtr || !newDistPtr) {
             if (newIdPtr) this._e._emsc_free(newIdPtr);
             if (newDistPtr) this._e._emsc_free(newDistPtr);
-            throw new Error(`WASM malloc failed while growing search buffers to k=${k}`);
+            throw pancakeError(PANCAKE_ERROR_CODES.WASM_ALLOCATION_FAILED,
+                `WASM malloc failed while growing search buffers to k=${k}`, { k });
         }
 
         this._e._emsc_free(this._idPtr);
@@ -537,29 +685,35 @@ class PancakeIndex {
 
     _validateV3Mappings(intToExt, nextExtId, count) {
         if (intToExt.size !== count) {
-            throw new Error('Import failed: envelope mapping count mismatch');
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                'Import failed: envelope mapping count mismatch');
         }
         if (!Number.isInteger(nextExtId) || nextExtId < count) {
-            throw new Error('Import failed: envelope nextExtId is invalid');
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                'Import failed: envelope nextExtId is invalid');
         }
 
         const extIds = new Set();
         let maxExtId = -1;
         for (const [intId, extId] of intToExt) {
             if (!Number.isInteger(intId) || intId < 0 || intId >= count) {
-                throw new Error('Import failed: envelope mapping contains invalid internal ID');
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                    'Import failed: envelope mapping contains invalid internal ID');
             }
             if (!Number.isInteger(extId) || extId < 0) {
-                throw new Error('Import failed: envelope mapping contains invalid external ID');
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                    'Import failed: envelope mapping contains invalid external ID');
             }
             if (extIds.has(extId)) {
-                throw new Error('Import failed: envelope mapping contains duplicates');
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                    'Import failed: envelope mapping contains duplicates');
             }
             extIds.add(extId);
             if (extId > maxExtId) maxExtId = extId;
         }
         if (nextExtId <= maxExtId) {
-            throw new Error('Import failed: envelope nextExtId is invalid');
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                'Import failed: envelope nextExtId is invalid');
         }
     }
 
@@ -573,19 +727,46 @@ class PancakeIndex {
     }
 
     _validateRawSnapshotMetadata(metadata) {
+        if (!Number.isInteger(metadata.count) || metadata.count < 0) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                'Import failed: snapshot count is invalid');
+        }
+        if (metadata.count > this._maxElements) {
+            throw pancakeError(
+                PANCAKE_ERROR_CODES.SNAPSHOT_CAPACITY_EXCEEDED,
+                `Import failed: snapshot count ${metadata.count} exceeds maxElements ${this._maxElements}`,
+                { count: metadata.count, maxElements: this._maxElements }
+            );
+        }
         if (metadata.dim !== this._dim) {
-            throw new Error(`Import failed: dim mismatch (exported ${metadata.dim}, expected ${this._dim})`);
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_CONFIG_MISMATCH,
+                `Import failed: dim mismatch (exported ${metadata.dim}, expected ${this._dim})`,
+                { field: 'dim', exported: metadata.dim, expected: this._dim });
         }
 
         const exportedL2 = metadata.metric === 0;
         if (exportedL2 !== this._isL2) {
             const got = exportedL2 ? 'l2' : 'cosine';
             const want = this._isL2 ? 'l2' : 'cosine';
-            throw new Error(`Import failed: metric mismatch (exported ${got}, expected ${want})`);
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_CONFIG_MISMATCH,
+                `Import failed: metric mismatch (exported ${got}, expected ${want})`,
+                { field: 'metric', exported: got, expected: want });
         }
 
         if (metadata.quantized !== this._quantized) {
-            throw new Error('Import failed: quantized mismatch');
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_CONFIG_MISMATCH,
+                'Import failed: quantized mismatch',
+                { field: 'quantized', exported: metadata.quantized, expected: this._quantized });
+        }
+        if (metadata.M !== this._M) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_CONFIG_MISMATCH,
+                `Import failed: M mismatch (exported ${metadata.M}, expected ${this._M})`,
+                { field: 'M', exported: metadata.M, expected: this._M });
+        }
+        if (metadata.efConstruction !== this._efConstruction) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_CONFIG_MISMATCH,
+                `Import failed: efConstruction mismatch (exported ${metadata.efConstruction}, expected ${this._efConstruction})`,
+                { field: 'efConstruction', exported: metadata.efConstruction, expected: this._efConstruction });
         }
     }
 
@@ -599,7 +780,14 @@ class PancakeIndex {
             let distance = this._e.HEAPF32[(this._distPtr >> 2) + i];
             if (this._isL2) distance = Math.sqrt(distance);
             const extId = this._intToExt.get(intId);
-            results[i] = { id: extId !== undefined ? extId : intId, distance };
+            if (extId === undefined) {
+                throw pancakeError(
+                    PANCAKE_ERROR_CODES.INTERNAL_INVARIANT,
+                    `Search invariant failed: missing external ID mapping for internal ID ${intId}`,
+                    { internalId: intId }
+                );
+            }
+            results[i] = { id: extId, distance };
         }
         return results;
     }
@@ -615,7 +803,8 @@ function createPancakeApi(loadEngineImpl) {
             return { vector: item, hasSourceId: false, sourceId: undefined };
         }
         if (!item || typeof item !== 'object' || !('vector' in item)) {
-            throw new Error('fromVectors() requires vectors or { vector, id? } records');
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+                'fromVectors() requires vectors or { vector, id? } records');
         }
         const sourceId = item.id;
         const hasSourceId = Object.prototype.hasOwnProperty.call(item, 'id');
@@ -623,31 +812,36 @@ function createPancakeApi(loadEngineImpl) {
     }
 
     async function create(opts) {
-        if (!opts || !opts.dim) throw new Error('opts.dim is required');
+        if (!opts || !opts.dim) throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+            'opts.dim is required', { argument: 'dim' });
         if (!Number.isInteger(opts.dim) || opts.dim <= 0) {
-            throw new Error('opts.dim must be a positive integer');
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+                'opts.dim must be a positive integer', { argument: 'dim', value: opts.dim });
         }
         if ('compressed' in opts) {
-            throw new Error('opts.compressed has been removed');
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'opts.compressed has been removed');
         }
         if ('varianceSample' in opts) {
-            throw new Error('opts.varianceSample has been removed');
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'opts.varianceSample has been removed');
         }
         if (opts.metric !== undefined && opts.metric !== 'cosine' && opts.metric !== 'l2') {
-            throw new Error("opts.metric must be 'cosine' or 'l2'");
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+                "opts.metric must be 'cosine' or 'l2'", { argument: 'metric', value: opts.metric });
         }
         if (opts.maxElements !== undefined && (!Number.isInteger(opts.maxElements) || opts.maxElements <= 0)) {
-            throw new Error('opts.maxElements must be a positive integer');
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+                'opts.maxElements must be a positive integer', { argument: 'maxElements', value: opts.maxElements });
         }
         if (opts.M !== undefined && (!Number.isInteger(opts.M) || opts.M <= 1 || opts.M > 128)) {
-            throw new Error('opts.M must be an integer between 2 and 128');
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+                'opts.M must be an integer between 2 and 128', { argument: 'M', value: opts.M });
         }
         if (opts.efConstruction !== undefined && (!Number.isInteger(opts.efConstruction) || opts.efConstruction <= 0 || opts.efConstruction > 4096)) {
-            throw new Error('opts.efConstruction must be an integer between 1 and 4096');
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+                'opts.efConstruction must be an integer between 1 and 4096',
+                { argument: 'efConstruction', value: opts.efConstruction });
         }
-        if (opts.efSearch !== undefined && (!Number.isInteger(opts.efSearch) || opts.efSearch <= 0)) {
-            throw new Error('opts.efSearch must be a positive integer');
-        }
+        if (opts.efSearch !== undefined) validateEfSearch(opts.efSearch, 'opts.efSearch');
 
         const dim = opts.dim;
         const metric = (opts.metric === 'l2') ? 0 : 1;
@@ -658,7 +852,16 @@ function createPancakeApi(loadEngineImpl) {
         const efConstruction = opts.efConstruction ?? 50;
         const efSearch = opts.efSearch ?? 100;
 
-        const resolvedOpts = { ...opts, quantized: isQuantized, M, efConstruction, efSearch };
+        const resolvedOpts = {
+            ...opts,
+            dim,
+            maxElements,
+            metric: metric === 0 ? 'l2' : 'cosine',
+            quantized: isQuantized,
+            M,
+            efConstruction,
+            efSearch,
+        };
 
         const e = await loadEngineImpl();
 
@@ -671,7 +874,7 @@ function createPancakeApi(loadEngineImpl) {
             if (vecPtr) e._emsc_free(vecPtr);
             if (idPtr) e._emsc_free(idPtr);
             if (distPtr) e._emsc_free(distPtr);
-            throw new Error('WASM malloc failed');
+            throw pancakeError(PANCAKE_ERROR_CODES.WASM_ALLOCATION_FAILED, 'WASM malloc failed');
         }
 
         const handle = e._pancake_init(dim, maxElements, quantized, metric, M, efConstruction, efSearch);
@@ -680,7 +883,7 @@ function createPancakeApi(loadEngineImpl) {
             e._emsc_free(vecPtr);
             e._emsc_free(idPtr);
             e._emsc_free(distPtr);
-            throw new Error('Backend init failed');
+            throw pancakeError(PANCAKE_ERROR_CODES.WASM_ALLOCATION_FAILED, 'Backend init failed');
         }
 
         return new PancakeIndex(e, resolvedOpts, handle, vecPtr, idPtr, distPtr, initialBufferCapacity);
@@ -688,10 +891,11 @@ function createPancakeApi(loadEngineImpl) {
 
     async function fromVectors(items, opts = {}) {
         if (!Array.isArray(items)) {
-            throw new Error('fromVectors() requires an array');
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'fromVectors() requires an array');
         }
         if (items.length === 0) {
-            throw new Error('fromVectors() requires at least one vector');
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+                'fromVectors() requires at least one vector');
         }
 
         const vectors = new Array(items.length);
@@ -702,16 +906,20 @@ function createPancakeApi(loadEngineImpl) {
         for (let i = 0; i < items.length; i++) {
             const { vector, hasSourceId, sourceId } = extractVectorRecord(items[i]);
             if (!isVectorInput(vector)) {
-                throw new Error(`fromVectors() expected a vector at index ${i}`);
+                throw pancakeError(PANCAKE_ERROR_CODES.INVALID_VECTOR,
+                    `fromVectors() expected a vector at index ${i}`, { index: i });
             }
             const dim = vector.length;
             if (!Number.isInteger(dim) || dim <= 0) {
-                throw new Error(`fromVectors() expected a non-empty vector at index ${i}`);
+                throw pancakeError(PANCAKE_ERROR_CODES.INVALID_VECTOR,
+                    `fromVectors() expected a non-empty vector at index ${i}`, { index: i });
             }
             if (inferredDim === null) {
                 inferredDim = dim;
             } else if (dim !== inferredDim) {
-                throw new Error(`fromVectors() found mixed vector dimensions (${inferredDim} and ${dim})`);
+                throw pancakeError(PANCAKE_ERROR_CODES.DIMENSION_MISMATCH,
+                    `fromVectors() found mixed vector dimensions (${inferredDim} and ${dim})`,
+                    { expected: inferredDim, actual: dim, index: i });
             }
             vectors[i] = vector;
             sourceIds[i] = sourceId;
@@ -719,7 +927,9 @@ function createPancakeApi(loadEngineImpl) {
         }
 
         if (opts.dim !== undefined && opts.dim !== inferredDim) {
-            throw new Error(`fromVectors() dim mismatch (inferred ${inferredDim}, got opts.dim=${opts.dim})`);
+            throw pancakeError(PANCAKE_ERROR_CODES.DIMENSION_MISMATCH,
+                `fromVectors() dim mismatch (inferred ${inferredDim}, got opts.dim=${opts.dim})`,
+                { expected: inferredDim, actual: opts.dim });
         }
 
         const createOpts = {
@@ -746,7 +956,83 @@ function createPancakeApi(loadEngineImpl) {
         }
     }
 
-    return { create, fromVectors };
+    async function withIndex(options, fn) {
+        if (typeof fn !== 'function') {
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+                'withIndex() requires a callback function', { argument: 'fn' });
+        }
+        const index = await create(options);
+        try {
+            return await fn(index);
+        } finally {
+            index.dispose();
+        }
+    }
+
+    function inspectSnapshot(data) {
+        return inspectSnapshotMetadata(data);
+    }
+
+    async function restore(snapshot, overrides = {}) {
+        if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) {
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+                'restore() overrides must be an object', { argument: 'overrides' });
+        }
+
+        const metadata = inspectSnapshotMetadata(snapshot);
+        const fixedConfig = {
+            dim: metadata.dim,
+            metric: metadata.metric,
+            quantized: metadata.quantized,
+            M: metadata.M,
+            efConstruction: metadata.efConstruction,
+        };
+
+        if (metadata.format === 'raw') {
+            for (const field of Object.keys(fixedConfig)) {
+                if (overrides[field] === undefined) {
+                    throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+                        `restore() requires overrides.${field} for legacy raw snapshots`,
+                        { argument: field, format: 'raw' });
+                }
+            }
+        }
+
+        for (const [field, expected] of Object.entries(fixedConfig)) {
+            if (overrides[field] !== undefined && overrides[field] !== expected) {
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_CONFIG_MISMATCH,
+                    `restore() ${field} override does not match the snapshot`,
+                    { field, exported: expected, override: overrides[field] });
+            }
+        }
+
+        const options = {
+            ...overrides,
+            ...fixedConfig,
+            maxElements: overrides.maxElements ?? Math.max(1, metadata.count),
+            efSearch: overrides.efSearch ?? 100,
+        };
+        const index = await create(options);
+        try {
+            index.import(snapshot);
+            return index;
+        } catch (error) {
+            try {
+                index.dispose();
+            } catch {}
+            throw error;
+        }
+    }
+
+    return {
+        create,
+        fromVectors,
+        withIndex,
+        restore,
+        inspectSnapshot,
+        PancakeError,
+        PANCAKE_ERROR_CODES,
+    };
 }
 
 function parseRawSnapshotMetadata(bytes) {
@@ -758,9 +1044,13 @@ function parseRawSnapshotMetadata(bytes) {
     if (magic === FLOAT_HNSW_MAGIC_V1 || magic === INT8_HNSW_MAGIC_V1) {
         if (bytes.length < 40) return null;
         return {
+            version: view.getUint32(8, true),
             dim: view.getUint32(4, true),
             count: view.getUint32(12, true),
+            M: view.getUint32(24, true),
+            M0: view.getUint32(28, true),
             metric: view.getUint32(32, true),
+            efConstruction: view.getUint32(36, true),
             quantized: magic === INT8_HNSW_MAGIC_V1,
         };
     }
@@ -768,9 +1058,13 @@ function parseRawSnapshotMetadata(bytes) {
     if (magic === FLOAT_HNSW_MAGIC_V0 || magic === INT8_HNSW_MAGIC_V0) {
         if (bytes.length < 36) return null;
         return {
+            version: 0,
             dim: view.getUint32(4, true),
             count: view.getUint32(8, true),
+            M: view.getUint32(20, true),
+            M0: view.getUint32(24, true),
             metric: view.getUint32(28, true),
+            efConstruction: 200,
             quantized: magic === INT8_HNSW_MAGIC_V0,
         };
     }
@@ -778,5 +1072,125 @@ function parseRawSnapshotMetadata(bytes) {
     return null;
 }
 
+function snapshotBytes(data, methodName) {
+    if (data instanceof Uint8Array) return data;
+    if (data instanceof ArrayBuffer) return new Uint8Array(data);
+    if (typeof SharedArrayBuffer !== 'undefined' && data instanceof SharedArrayBuffer) {
+        return new Uint8Array(data);
+    }
+    if (ArrayBuffer.isView(data)) {
+        return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    }
+    throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+        `${methodName}() requires snapshot bytes`, { argument: 'snapshot' });
+}
+
+function inspectSnapshotMetadata(data) {
+    const bytes = snapshotBytes(data, 'inspectSnapshot');
+    if (bytes.byteLength < 4) {
+        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Snapshot is too small to inspect');
+    }
+
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    let rawBytes = bytes;
+    let format = 'raw';
+    let envelopeVersion = null;
+    let envelopeDim = null;
+    let envelopeMetric = null;
+    let envelopeQuantized = null;
+    let nextId = null;
+
+    if (view.getUint32(0, true) === PANCAKE_MAGIC) {
+        format = 'pancake';
+        if (bytes.byteLength < 8) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Snapshot envelope is truncated');
+        }
+        envelopeVersion = view.getUint32(4, true);
+        let rawOffset;
+        if (envelopeVersion === 1) {
+            if (bytes.byteLength < V1_ENVELOPE_HEADER_SIZE) {
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Snapshot v1 envelope is truncated');
+            }
+            envelopeDim = view.getUint32(8, true);
+            if (view.getUint32(12, true) !== envelopeDim) {
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                    'DCT/PCA snapshots are no longer supported');
+            }
+            envelopeMetric = view.getUint32(16, true);
+            envelopeQuantized = view.getUint32(20, true);
+            rawOffset = V1_ENVELOPE_HEADER_SIZE;
+        } else if (envelopeVersion === 2) {
+            if (bytes.byteLength < V2_ENVELOPE_HEADER_SIZE) {
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Snapshot v2 envelope is truncated');
+            }
+            envelopeDim = view.getUint32(8, true);
+            envelopeMetric = view.getUint32(12, true);
+            envelopeQuantized = view.getUint32(16, true);
+            rawOffset = V2_ENVELOPE_HEADER_SIZE;
+        } else if (envelopeVersion === ENVELOPE_VERSION) {
+            if (bytes.byteLength < V3_ENVELOPE_HEADER_SIZE) {
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Snapshot v3 envelope is truncated');
+            }
+            envelopeDim = view.getUint32(8, true);
+            envelopeMetric = view.getUint32(12, true);
+            envelopeQuantized = view.getUint32(16, true);
+            nextId = view.getUint32(20, true);
+            const mappingCount = view.getUint32(24, true);
+            const rawSize = view.getUint32(28, true);
+            rawOffset = V3_ENVELOPE_HEADER_SIZE + mappingCount * MAPPING_ENTRY_SIZE;
+            if (!Number.isSafeInteger(rawOffset) || rawOffset > bytes.byteLength ||
+                rawSize > bytes.byteLength - rawOffset) {
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                    'Snapshot v3 envelope payload is truncated');
+            }
+            rawBytes = bytes.subarray(rawOffset, rawOffset + rawSize);
+        } else {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                `Unsupported snapshot envelope version ${envelopeVersion}`, { version: envelopeVersion });
+        }
+        if (envelopeVersion !== ENVELOPE_VERSION) rawBytes = bytes.subarray(rawOffset);
+    }
+
+    const raw = parseRawSnapshotMetadata(rawBytes);
+    if (raw === null) {
+        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+            'Unsupported or truncated raw snapshot format');
+    }
+    if (raw.dim <= 0 || raw.metric > 1 || raw.M < 2 || raw.M > 128 ||
+        raw.M0 !== raw.M * 2 || raw.efConstruction < 1 || raw.efConstruction > 4096) {
+        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+            'Snapshot header contains invalid index configuration');
+    }
+    if (format === 'pancake' && (envelopeDim !== raw.dim || envelopeMetric !== raw.metric ||
+        !!envelopeQuantized !== raw.quantized)) {
+        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+            'Snapshot envelope does not match its raw index header');
+    }
+    if (nextId === null) nextId = raw.count;
+    if (nextId < raw.count) {
+        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Snapshot nextId is invalid');
+    }
+
+    return Object.freeze({
+        format,
+        version: format === 'pancake' ? envelopeVersion : raw.version,
+        dim: raw.dim,
+        count: raw.count,
+        metric: raw.metric === 0 ? 'l2' : 'cosine',
+        quantized: raw.quantized,
+        M: raw.M,
+        efConstruction: raw.efConstruction,
+        nextId,
+    });
+}
+
 module.exports = createPancakeApi;
 module.exports.default = createPancakeApi;
+module.exports.PancakeError = PancakeError;
+module.exports.PANCAKE_ERROR_CODES = PANCAKE_ERROR_CODES;
+
+if (typeof Symbol.dispose === 'symbol') {
+    PancakeIndex.prototype[Symbol.dispose] = function disposeWithSymbol() {
+        this.dispose();
+    };
+}

@@ -118,7 +118,7 @@ tunable.
 | `M` | Max neighbors per node on upper layers | |
 | `M0` | Max neighbors at layer 0 | Hard-coded `M0 = 2 * M`; not separately configurable. Layer 0 is denser because all searches terminate there. |
 | `ef_construction` | Beam width during insert | |
-| `ef_search` | Beam width during query | Mutable at runtime via `set_ef_search`. |
+| `ef_search` | Beam width during query | Passed per query; the JS wrapper owns the mutable default. |
 
 ### 3.2 Level assignment
 
@@ -183,7 +183,7 @@ rebuilds its own id map (§8).
 
 ### 3.6 Filtered search
 
-Both backends implement `search_filtered(query, k, filter_bitset, bitset_len)`.
+Both backends implement `search_filtered(query, k, filter_bitset, bitset_len, ef_search)`.
 The filter is a bitset over **internal** ids: bit `(id & 7)` of byte `(id >> 3)`.
 Filtering happens *inside* the layer-0 traversal, not as a post-filter:
 non-matching nodes still navigate the graph (they remain in the candidate queue),
@@ -317,7 +317,8 @@ under WASM's single-threaded execution model. (`engine.cpp:143–168`.)
 `IndexWrapper` (`engine.cpp:38`) is an abstract base with virtual `insert`,
 `bulk_insert`, `search`, `search_filtered`, `mark_delete`, `compact` (both void
 and `out_map` forms), `count`, `ghost_count`, `ghost_ratio`, `memory_bytes`,
-`serialize`, `deserialize`, `set_ef_search`, `dimension`. `pancake_init` picks
+`serialize`, `deserialize`, `dimension`. Query beam width is an explicit
+argument to `search` and `search_filtered`. `pancake_init` picks
 the concrete wrapper from the `quantized` flag and the metric (`metric == 1` →
 cosine, else L2):
 
@@ -357,12 +358,11 @@ snapshot that still slips an oversized allocation through the bounds checks
 ### 6.5 Utilities and lifecycle
 
 Beyond the index API, the ABI exports `emsc_malloc`/`emsc_free` (heap for
-marshalling), `dense_matmul`/`sparse_matmul`/`normalize` (SIMD helpers),
-`pancake_profile_print`/`pancake_profile_reset` (no-ops unless built with
+marshalling), `pancake_profile_print`/`pancake_profile_reset` (no-ops unless built with
 `PANCAKE_INT8_HNSW_BUILD_PROFILE`), and `pancake_shutdown_all` (frees all
 handles). The WASM ABI no longer exposes the earlier experimental `emb_*`
-embedding-model path; the public surface is the index API plus the small set of
-numeric/test helpers above.
+embedding-model or matrix-helper paths; the public surface is the index API plus
+allocation, profiling, and lifecycle helpers.
 
 The complete export list is in [Appendix A](#appendix-a-wasm-export-inventory).
 
@@ -390,16 +390,21 @@ distances), calls `_pancake_init`, and returns the wrapper.
 |--------|-------------|
 | `add(vec)` | validates element type (plain-array elements must be numbers, not coerced) + dim + finiteness, `HEAPF32.set` into the query buffer, `_pancake_add`, assigns an external id |
 | `addBatch(vecs)` | one `emsc_malloc` for the whole batch, `_pancake_bulk_insert`, records a contiguous id range |
-| `search(q,k)` | `_ensureSearchCapacity(k)`, marshal query, `_pancake_query`, translate ids + (for L2) `sqrt` the squared distance |
-| `searchFiltered(q,k,allowedIds)` | builds an internal-id bitset from the allowed external-id `Set`, `_pancake_query_filtered` |
-| `delete(id)` | external→internal, `_pancake_delete`, record in `_deletedExt` |
+| `search(q,k,options?)` | resolves the per-call/default `efSearch`, `_ensureSearchCapacity(k)`, marshals query, `_pancake_query`, translates ids + (for L2) `sqrt` the squared distance |
+| `searchFiltered(q,k,allowedIds,options?)` | resolves `efSearch`, builds an internal-id bitset from the allowed external-id `Set`, `_pancake_query_filtered` |
+| `setEfSearch(ef)` | validates and changes the JS-owned default for future queries; it does not mutate WASM engine state |
+| `delete(id)` | external→internal, `_pancake_delete`, record in `_deletedExt`; returns whether a live ID changed state |
+| `has(id)` / `isDeleted(id)` | inspect the stable external-ID maps without entering WASM |
 | `compact()` | rebuild id maps from survivors (§8) |
 | `export()` | guard `ghostCount===0`, prepend v3 envelope (§9.3) |
 | `import(data)` | parse + validate envelope, load WASM state, restore id maps |
-| `dispose()` | free handle + scratch buffers, idempotent |
+| `dispose()` / `Symbol.dispose` | free handle + scratch buffers, idempotent |
 
-Properties `count`, `ghostCount`, `ghostRatio`, `memory` proxy directly to WASM
-exports; `dim` is cached. `_setEfSearch(ef)` calls `_pancake_set_ef`.
+The preferred state properties are `liveCount`, `deletedCount`, `deletedRatio`,
+`capacity`, `remainingCapacity`, resolved `config`, and structured `memoryUsage`.
+`ghostCount`, `ghostRatio`, and `memory` remain aliases. `dim`, capacity, graph
+configuration, and the default `efSearch` are cached; backend counts and logical
+memory proxy to WASM.
 
 ### 7.3 Buffer management
 
@@ -713,7 +718,7 @@ write endpoints.
 | `quantized` | `true` | int8 backend when true |
 | `M` | `16` | |
 | `efConstruction` | `50` | |
-| `efSearch` | `100` | mutable via `_setEfSearch` |
+| `efSearch` | `100` | valid range 1–4096; mutable via `setEfSearch()` or overridden per query |
 
 Removed options (`compressed`, `varianceSample`) throw if passed.
 
@@ -728,7 +733,7 @@ value reaches `pancake_init`. Normal JS callers already pass these explicitly.
 |----------|-------|---|---------|---------|---------|
 | `MAX_RESULTS` | 100 | | `API_KEY` | required for admin routes unless `ALLOW_INSECURE_ADMIN=1` | bearer token |
 | `MAX_DIMS` | 4096 | | `ALLOWED_ORIGIN` | unset | opt-in CORS |
-| `MAX_EF` | 2000 | | `RATE_LIMIT_RPM` | 0 (off) | per-IP/min |
+| `MAX_EF` | 4096 | | `RATE_LIMIT_RPM` | 0 (off) | per-IP/min |
 | `MAX_M` | 128 | | `READ_ONLY` | off | reject admin routes |
 | `DEFAULT_MAX_ELEMENTS` | 5000 | | `MAX_ELEMENTS_LIMIT` | 5,000,000 | capacity ceiling |
 | `DEFAULT_MAX_JSON_BYTES` | 1 MiB | | `MAX_JSON_BYTES` | 1 MiB | JSON body cap |
@@ -791,17 +796,17 @@ value reaches `pancake_init`. Normal JS callers already pass these explicitly.
 
 ## Appendix A: WASM Export Inventory
 
-26 functions exported by `build.sh` (`-s EXPORTED_FUNCTIONS`):
+22 functions exported by `build.sh` (`-s EXPORTED_FUNCTIONS`):
 
 **Index API:** `_pancake_init`, `_pancake_add`, `_pancake_bulk_insert`,
 `_pancake_query`, `_pancake_query_filtered`, `_pancake_delete`,
 `_pancake_compact`, `_pancake_compact_remap`, `_pancake_count`,
 `_pancake_memory`, `_pancake_ghost_count`, `_pancake_ghost_ratio`,
-`_pancake_set_ef`, `_pancake_export`, `_pancake_import`, `_pancake_dispose`,
+`_pancake_export`, `_pancake_import`, `_pancake_dispose`,
 `_pancake_dimension`, `_pancake_shutdown_all`, `_shutdown_all`.
 
-**Utilities:** `_dense_matmul`, `_sparse_matmul`, `_normalize`, `_emsc_malloc`,
-`_emsc_free`, `_pancake_profile_print`, `_pancake_profile_reset`.
+**Utilities:** `_emsc_malloc`, `_emsc_free`, `_pancake_profile_print`,
+`_pancake_profile_reset`.
 
 **Runtime methods:** `ccall`, `cwrap`, `HEAPF32`, `HEAPU8`, `HEAPU32`, `HEAP32`.
 
@@ -812,12 +817,11 @@ Selected signatures:
 | `_pancake_init` | `(dim, max_elem, quantized, metric, M, ef_c, ef_s)` → handle / `0xFFFFFFFF` |
 | `_pancake_add` | `(handle, vec_ptr)` → id / `0xFFFFFFFF` |
 | `_pancake_bulk_insert` | `(handle, vecs_ptr, n)` → inserted count |
-| `_pancake_query` | `(handle, q_ptr, k, ids_ptr, dists_ptr)` → count |
-| `_pancake_query_filtered` | `(handle, q_ptr, k, ids_ptr, dists_ptr, bitset_ptr, bitset_len)` → count |
+| `_pancake_query` | `(handle, q_ptr, k, ef_search, ids_ptr, dists_ptr)` → count |
+| `_pancake_query_filtered` | `(handle, q_ptr, k, ef_search, ids_ptr, dists_ptr, bitset_ptr, bitset_len)` → count |
 | `_pancake_compact_remap` | `(handle, out_buf, out_capacity)` → pre-compaction count |
 | `_pancake_export` | `(handle, out_size_ptr)` → data_ptr / null |
 | `_pancake_import` | `(handle, data_ptr, size)` → `0` / `-1` |
-| `_pancake_set_ef` | `(handle, ef)` → void |
 
 The native N-API addon exposes an equivalent (smaller) surface; its
 `pancake_query` returns `{ ids: Uint32Array, distances: Float32Array, count }`
