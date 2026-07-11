@@ -59,7 +59,6 @@
         "default": "./pancake.js"
       }
     },
-    "./engine": "./dist/engine.js",
     "./engine.wasm": "./dist/engine.wasm"
   },
   "files": [
@@ -69,6 +68,7 @@
     "pancake.workerd.mjs",
     "pancake-core.js",
     "pancake-errors.js",
+    "pancake-loader.js",
     "pancake.d.ts",
     "pancake.web.d.ts",
     "dist/engine.js",
@@ -85,7 +85,7 @@
     "bench": "node benchmarks/run.js",
     "demo:data": "node scripts/make-demo-vectors.mjs",
     "demo": "npm run demo:data && node examples/demo/technical_demo_cli.js",
-    "test": "node run_tests.js",
+    "test": "node run_tests.js && node test/model_c_loader.js",
     "test:browser": "node test/browser_smoke.js",
     "test:worker-web": "node test/test_worker_web_entry.js",
     "test:simd": "node test/simd_parity.js",

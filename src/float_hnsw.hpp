@@ -396,6 +396,54 @@ public:
             return;
         }
 
+        // Once half the graph is hollow, repairing the surviving skeleton is
+        // no longer enough to restore connectivity reliably. Rebuild from the
+        // live vectors while retaining the stable old-to-new ID remap.
+        if (num_deleted_ >= (count_ + 1) / 2) {
+            out_map.assign(count_, UINT32_MAX);
+            std::vector<float> live_vectors;
+            live_vectors.reserve((count_ - num_deleted_) * dims_);
+            uint32_t live_id = 0;
+            for (uint32_t old_id = 0; old_id < count_; ++old_id) {
+                if (deleted_[old_id]) continue;
+                const float* vector = &vectors_[static_cast<size_t>(old_id) * dims_];
+                live_vectors.insert(live_vectors.end(), vector, vector + dims_);
+                out_map[old_id] = live_id++;
+            }
+
+            // Release the old graph before allocating its replacement. WASM
+            // memory cannot shrink, but emmalloc can reuse these blocks and
+            // avoid retaining the peak for two complete graphs.
+            std::vector<float>().swap(vectors_);
+            std::vector<uint32_t>().swap(base_neighbors_);
+            std::vector<uint16_t>().swap(base_sizes_);
+            decltype(upper_)().swap(upper_);
+            std::vector<int>().swap(levels_);
+            std::vector<uint8_t>().swap(deleted_);
+            std::vector<uint32_t>().swap(visited_list_);
+
+            FloatHNSWConfig config;
+            config.M = M_;
+            config.ef_construction = ef_construction_;
+            config.ef_search = ef_search_;
+            config.max_elements = max_elements_;
+            config.metric = metric_;
+            config.use_heuristic = use_heuristic_;
+            FloatHNSW rebuilt(dims_, config);
+
+            for (uint32_t new_id = 0; new_id < live_id; ++new_id) {
+                const uint32_t inserted = rebuilt.insert(
+                    &live_vectors[static_cast<size_t>(new_id) * dims_]
+                );
+                if (inserted == UINT32_MAX) {
+                    out_map.clear();
+                    return;
+                }
+            }
+            *this = std::move(rebuilt);
+            return;
+        }
+
         // Phase 1: Build id_map and compact arrays in-place.
         out_map.assign(count_, UINT32_MAX);
         auto& id_map = out_map;

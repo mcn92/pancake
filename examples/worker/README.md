@@ -38,10 +38,10 @@ This runs the Worker as a snapshot-backed search endpoint at the edge.
 
 | Endpoint | Description |
 |----------|-------------|
-| `POST /search` | k-NN search (`{ query: float[], k?, ef? }`) |
+| `POST /search` | k-NN search (`{ query: float[], k?, efSearch?, allowedIds? }`) |
 | `GET /health` | Health check (public, no auth required) |
 | `GET /readiness` | Readiness check with snapshot visibility (bearer auth once `API_KEY` is set) |
-| `GET /stats` | Index count, memory, ghost ratio |
+| `GET /stats` | Live/deleted counts, capacity, and structured memory |
 | `GET /export` | Serialize index to binary blob |
 | `POST /init` | Create an index (`{ dims, maxElements, M?, efConstruction?, efSearch?, vectors? }`) |
 | `POST /import` | Restore from a Pancake snapshot (`?dims=N` only needed for legacy raw snapshots) |
@@ -53,8 +53,8 @@ This runs the Worker as a snapshot-backed search endpoint at the edge.
 
 `/health` stays cheap and public. It reports whether the current isolate has an
 index loaded, but it does not trigger a restore. `/readiness` is the
-authenticated route for checking whether the Worker is loaded now and whether a
-snapshot is available to restore.
+authenticated route for checking whether the Worker is loaded now and inspecting
+the latest snapshot header without restoring it.
 
 ## Running locally
 
@@ -110,6 +110,10 @@ from R2 on cold start. This is the durable boundary. In-memory state is only a
 warm cache for the current isolate. Snapshot writes are append-only and restore
 loads the latest saved snapshot, which avoids older async writes overwriting a
 newer one under the same R2 key.
+
+Configure an R2 lifecycle rule or delete superseded keys when adapting the
+example for production; the reference implementation intentionally leaves
+snapshot retention to the application.
 
 Mutation routes exist for demos, local validation, and administrative flows,
 but they should not be treated as the primary production write path for a

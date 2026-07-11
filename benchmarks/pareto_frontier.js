@@ -4,17 +4,17 @@
 /**
  * Pareto-Frontier Benchmark Harness (QPS-Recall)
  *
- * Produces, for a fixed graph (M=16, ef_construction=50):
+ * Produces, for one configured graph (M and ef_construction are CLI-tunable):
  *   1. A QPS-recall sweep for every library that exposes a query-time knob
  *      (ef_search swept across a standard range), and
  *   2. The Pareto frontier over each library's sweep (non-dominated points), and
  *   3. Interpolated equal-recall curves: QPS for every library at a common grid
  *      of recall targets, log-linearly interpolated along each frontier.
  *
- * Configs (7):
+ * Configs (8):
  *   pancake-wasm   int8 / fp32   (Pancake.create, setEfSearch per ef)
  *   pancake-native int8 / fp32   (native.pancake_*, pancake_set_ef per ef)
- *   usearch        i8 / f32      (build-once-save-view per ef — JS binding
+ *   usearch        i8 / f16 / f32 (build-once-save-view per ef — JS binding
  *                                 only honors expansion_search at construction)
  *   hnswlib        f32           (HierarchicalNSW.setEf per ef)
  *
@@ -169,6 +169,7 @@ if (native) {
 }
 if (usearch) {
   CONFIGS.push({ label: 'usearch-int8', library: 'usearch', dtype: 'i8',  sweep: true });
+  CONFIGS.push({ label: 'usearch-f16',  library: 'usearch', dtype: 'f16', sweep: true });
   CONFIGS.push({ label: 'usearch-fp32', library: 'usearch', dtype: 'f32', sweep: true });
 }
 if (HierarchicalNSW) {
@@ -568,7 +569,7 @@ function queryPancakeNative(built, test, gt, ef) {
 // The JS binding only honors expansion_search at construction. We build once,
 // save to disk, then view() with a fresh index per ef_search value.
 function buildUsearch({ train, dim, dtype }) {
-  const quantization = dtype === 'i8' ? 'i8' : 'f32';
+  const quantization = dtype;
   const metric = usearchMetricValue();
   log(`  [usearch-${dtype}] build (connectivity=${M}, expansion_add=${EF_CONSTRUCTION}, metric=${metric}, quantization=${quantization})...`);
   const rssBefore = measureRssBytes();

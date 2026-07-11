@@ -102,13 +102,7 @@ index.compact();
 // Persist and restore
 // If you have deleted anything, compact() before export().
 const snapshot = index.export();
-const restored = await Pancake.create({
-  dim: 384,
-  maxElements: 100000,
-  metric: 'cosine',
-  quantized: true,
-});
-restored.import(snapshot);
+const restored = await Pancake.restore(snapshot, { maxElements: 100000 });
 ```
 
 If you already have vectors in memory, `fromVectors()` is the easiest ingest path:
@@ -153,22 +147,26 @@ If `ghostCount > 0`, `export()` throws. Call `compact()` first to produce a clea
 `import()` is atomic: the engine deserializes into a fresh internal index and only swaps it in on success, so a failed import — whether it's envelope validation or a backend-level rejection — leaves the destination index and its ID mappings unchanged.
 
 `compact()` is a stop-the-world maintenance pass over the surviving graph:
-live vectors are remapped down in place, their edges are rewritten to the new
-IDs, and nodes left isolated by the deletions are reconnected — survivors are
-not re-inserted from scratch. Its cost scales
-with the number of live vectors that remain after deletions, not just the
-number of ghosts removed, so treat it as maintenance work rather than something
-to run in a latency-sensitive path. On the current DBpedia 50K int8 benchmark
-(`1536D`, `M=16`, `efConstruction=50`, `efSearch=100`), compacting after 20%,
-50%, and 80% deletions took `23.7s`, `14.3s`, and `4.4s` respectively, while
-recall stayed within `0.14` points of baseline.
+below 50% deletions it remaps live vectors in place and repairs their edges; at
+50% or more it rebuilds the topology from the live vectors because a mostly
+hollow graph is no longer a reliable skeleton. Both paths preserve external
+IDs. Its cost scales with the number of live vectors that remain after
+deletions, not just the number of ghosts removed, so treat it as maintenance
+work rather than something to run in a latency-sensitive path.
+
+In the committed 100K clustered churn run, five complete population turnovers
+left 83.3% deleted nodes and reduced recall@10 from 96.0% to 7.2% (4.8 results
+returned on average). Compaction rebuilt the 100K live-vector graph in 17.6s,
+restoring 99.2% recall and a full top-10; a clean build of the same final
+population reached 97.2%. The rebuild reused the old graph's allocations, so
+the WASM heap did not grow during compaction. Run
+`node benchmarks/churn_scale.js` to reproduce it.
 
 The JavaScript package `export()` returns a `PNCK` envelope, not the bare raw engine payload.
 That wrapper preserves package-level metadata such as stable external IDs across
 `compact()`/`import()` round-trips. The underlying raw engine snapshot is stored inside that
-envelope. The Cloudflare Worker example wraps the package export again in a small `WRK1`
-envelope so it can persist Worker-specific metadata such as `maxElements`, init params, and
-deployment state alongside the packaged snapshot.
+envelope. The Cloudflare Worker stores this standard envelope directly and keeps
+capacity and runtime query policy in R2 custom metadata.
 
 ## API
 
@@ -395,6 +393,12 @@ truth is recomputed against the live set at each step.
 
 Recall holds within about 1.5 points of baseline through 70% ghosts. Search latency drops as ghosts accumulate (fewer live nodes to visit). The cliff beyond 90% is graph disconnection: the live subgraph is no longer well-connected enough to preserve recall. Compaction can be deferred until the main thread is idle.
 
+That progressive-delete result is not a substitute for insert/delete churn:
+replacing the live population changes graph topology much more aggressively.
+For sustained churn, use `deletedRatio >= 0.5` as the default maintenance
+trigger and validate a different threshold against your own data and latency
+budget.
+
 ### Reproducing
 
 Benchmark scripts are in `benchmarks/`. A shared runner discovers them by name,
@@ -423,6 +427,8 @@ Other useful scripts:
 - `pareto_frontier` — efSearch sweep producing the QPS-recall frontier CSVs
 - `benchmark_native` — direct Pancake native-vs-WASM comparison
 - `worker_restore_sweep` — cold/warm restore measurements through the Worker API
+- `runtime_ownership` — cold vs warm `create()`, concurrent creation, and
+  isolated per-index heap footprint
 
 ## Snapshot-first Worker deployment
 
@@ -496,7 +502,11 @@ Standard HNSW graph search with one modification: the neighbor selection heurist
 
 ### Handle-based C ABI
 
-The WASM module exposes a handle-based C API: `pancake_init` returns an opaque handle, and all operations take a handle as the first argument. This enables multiple independent indexes per WASM instance. The JavaScript wrapper (`pancake-core.js`) manages handles and ID translation. The Worker deployment wraps the raw engine export in the `WRK1` metadata envelope.
+The WASM module exposes a handle-based C API: `pancake_init` returns an opaque
+handle, and all operations take a handle as the first argument. The supported
+JavaScript loaders cache compiled modules but instantiate an isolated WASM heap
+for every index. The wrapper (`pancake-core.js`) manages the handle and stable
+external-ID translation inside that isolated instance.
 
 ## Examples
 
@@ -578,10 +588,16 @@ The script auto-detects whether the current Node runtime still needs
 - **Single-threaded by design.** Pancake is meant for runtimes where background threads are unavailable or unreliable. That is a deployment advantage, not just a limitation.
 - **Quantization is a real trade.** On the current 1536D DBpedia benchmark, the int8 path uses about `3.7x` less memory than float32 and gives up roughly 2.2 points of recall ceiling (`97.45%` vs `99.65%` in the 50K sweep at `efSearch=800`). Use float32 when you need the higher ceiling.
 - **Deterministic means per target/build.** Given the same inputs, the same build target will produce stable graph structure and query results, but bitwise-identical distances are not guaranteed across WASM SIMD, scalar WASM, AVX2, and SSE2 backends because their reduction orders differ. Treat tiny cross-backend floating-point deltas as expected, not as correctness bugs.
-- **One WASM instance can hold at most 64 live indexes.** The handle table in the shipped WASM engine is fixed at `MAX_HANDLES = 64`. If you need more concurrent indexes than that, dispose unused ones or spin up another module instance.
-- **Compaction is a stop-the-world maintenance pass.** Deletes are soft deletes. `compact()` remaps surviving vectors and their edges in place and reconnects nodes left isolated by deletions, rather than re-inserting survivors or relying on background maintenance threads.
+- **Each public index owns one isolated WASM instance.** Compiled module work is
+  cached per runtime entrypoint, while heaps and handle tables are not shared.
+  The engine retains a 64-slot handle table for future shared-runtime support,
+  but a public index normally occupies only slot zero of its own instance.
+- **Compaction is a stop-the-world maintenance pass.** Deletes are soft deletes. Below 50% deleted nodes, `compact()` remaps survivors in place and repairs connectivity; at 50% or more it rebuilds the graph from live vectors to recover from severe topology loss. Neither path runs in the background.
 - **`export()` retains a WASM-side buffer.** The engine keeps the most recent snapshot copy inside WASM memory until the next `export()` on the same index or `dispose()`. Budget for that when exporting large indexes in memory-constrained runtimes.
-- **Index instances are not a shared-memory concurrency primitive.** Treat a Pancake index like ordinary mutable in-process state: safe within one JavaScript thread/event loop, but not something to share concurrently across Node worker threads or isolates without your own coordination.
+- **Index instances are not a cross-thread concurrency primitive.** Treat a
+  Pancake index like ordinary mutable in-process state: safe within one
+  JavaScript thread/event loop, but not transferable across Node worker threads
+  or isolates.
 - **Workers are best used as snapshot-serving search frontends.** In a Cloudflare Worker, in-memory state is a warm cache, not durable authority. Persist snapshots explicitly and treat isolate reuse as opportunistic.
 - **Inputs are validated, not coerced.** Vectors and queries accept a `Float32Array` or a plain numeric array, but plain-array elements must be actual numbers — a non-numeric element (string, boolean, nested array, `null`) is rejected with an error rather than silently coerced (e.g. an empty CSV field becoming `0`). Non-finite values (`NaN`/`Infinity`) and dimension mismatches are likewise rejected at the boundary.
 - **This is an index, not an embedding stack.** Pancake does vector search only. Bring your own embedding pipeline.

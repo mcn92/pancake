@@ -21,15 +21,9 @@ async function run() {
 
     const snapshot = idx.export();
 
-    const restored = await Pancake.create({
-      dim: 4,
-      maxElements: 10,
-      metric: 'cosine',
-      quantized: true
-    });
+    const restored = await Pancake.restore(snapshot, { maxElements: 10 });
 
     try {
-      restored.import(snapshot);
       const after = restored.search(new Float32Array([1, 0, 0, 0]), 2);
       const importedCount = restored.count;
       const nextId = restored.add(new Float32Array([0, 0, 1, 0]));

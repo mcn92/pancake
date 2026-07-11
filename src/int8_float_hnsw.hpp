@@ -509,6 +509,71 @@ public:
             return;
         }
 
+        // A graph with at least half its nodes deleted needs fresh topology,
+        // not just edge repair. Dequantize the stored live vectors and rebuild
+        // in old-ID order so callers receive the same stable remapping contract.
+        if (num_deleted_ >= (count_ + 1) / 2) {
+            out_map.assign(count_, UINT32_MAX);
+            uint32_t live_id = 0;
+            for (uint32_t old_id = 0; old_id < count_; ++old_id) {
+                if (deleted_[old_id]) continue;
+                if (live_id != old_id) {
+                    std::memcpy(
+                        &qdata_[static_cast<size_t>(live_id) * dims_],
+                        &qdata_[static_cast<size_t>(old_id) * dims_],
+                        dims_
+                    );
+                    scales_[live_id] = scales_[old_id];
+                    offsets_[live_id] = offsets_[old_id];
+                    sum_q_[live_id] = sum_q_[old_id];
+                    sum_q2_[live_id] = sum_q2_[old_id];
+                }
+                out_map[old_id] = live_id++;
+            }
+
+            qdata_.resize(static_cast<size_t>(live_id) * dims_);
+            scales_.resize(live_id);
+            offsets_.resize(live_id);
+            sum_q_.resize(live_id);
+            sum_q2_.resize(live_id);
+            qdata_.shrink_to_fit();
+            scales_.shrink_to_fit();
+            offsets_.shrink_to_fit();
+            sum_q_.shrink_to_fit();
+            sum_q2_.shrink_to_fit();
+
+            // Free the hollow graph before constructing the replacement so
+            // the allocator can reuse its blocks instead of growing the WASM
+            // heap to hold both complete indexes at once.
+            std::vector<Edge>().swap(base_edges_);
+            std::vector<uint16_t>().swap(base_sizes_);
+            decltype(upper_)().swap(upper_);
+            std::vector<int>().swap(levels_);
+            std::vector<uint8_t>().swap(deleted_);
+            std::vector<uint32_t>().swap(visited_list_);
+
+            Int8FloatHNSWConfig config;
+            config.M = M_;
+            config.ef_construction = ef_construction_;
+            config.ef_search = ef_search_;
+            config.max_elements = max_elements_;
+            config.metric = metric_;
+            config.use_heuristic = use_heuristic_;
+            Int8FloatHNSW rebuilt(dims_, config);
+
+            std::vector<float> restored(dims_);
+            for (uint32_t new_id = 0; new_id < live_id; ++new_id) {
+                dequantize(new_id, restored.data());
+                const uint32_t inserted = rebuilt.insert(restored.data());
+                if (inserted == UINT32_MAX) {
+                    out_map.clear();
+                    return;
+                }
+            }
+            *this = std::move(rebuilt);
+            return;
+        }
+
         out_map.assign(count_, UINT32_MAX);
         auto& id_map = out_map;
         uint32_t new_id = 0;

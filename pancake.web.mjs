@@ -4,8 +4,10 @@ import simdWasmAsset from './dist/engine.wasm?url';
 import scalarWasmAsset from './dist/engine.scalar.wasm?url';
 import createPancakeApi from './pancake-core.js';
 import errorContract from './pancake-errors.js';
+import loaderContract from './pancake-loader.js';
 const { PancakeError, PANCAKE_ERROR_CODES, pancakeError } = errorContract;
-let engineVariant = null;
+const { createCachedModuleLoader } = loaderContract;
+let engineVariantPromise = null;
 
 function makeLoadError(message, error) {
   const detail = error && error.message ? error.message : String(error);
@@ -16,81 +18,45 @@ function isUrlLikeWasmAsset(asset) {
   return typeof asset === 'string' || asset instanceof URL;
 }
 
-function toWasmSource(asset) {
-  if (asset instanceof WebAssembly.Module) return asset;
-  if (asset instanceof ArrayBuffer) return asset;
-  if (ArrayBuffer.isView(asset)) {
-    return asset.buffer.slice(asset.byteOffset, asset.byteOffset + asset.byteLength);
+async function loadWasmAsset(asset) {
+  if (!isUrlLikeWasmAsset(asset)) return asset;
+  const href = asset instanceof URL ? asset.href : asset;
+  const response = await fetch(href, { credentials: 'same-origin' });
+  if (!response.ok) {
+    throw pancakeError(PANCAKE_ERROR_CODES.WASM_LOAD_FAILED,
+      `${response.status} ${response.statusText}`.trim(), { status: response.status });
   }
-  throw pancakeError(PANCAKE_ERROR_CODES.WASM_LOAD_FAILED, `Unsupported WASM asset type: ${typeof asset}`, { assetType: typeof asset });
+  return response.arrayBuffer();
 }
 
-async function instantiateEngineWithAsset(factory, expectedFileName, asset) {
-  if (isUrlLikeWasmAsset(asset)) {
-    const href = asset instanceof URL ? asset.href : asset;
-    return factory({
-      locateFile(path) {
-        if (path === expectedFileName) {
-          return href;
-        }
-        return path;
-      }
-    });
-  }
+const moduleLoader = createCachedModuleLoader((variant) =>
+  loadWasmAsset(variant === 'simd' ? simdWasmAsset : scalarWasmAsset)
+);
 
-  const compiled = asset instanceof WebAssembly.Module
-    ? asset
-    : await WebAssembly.compile(toWasmSource(asset));
-
-  return factory({
-    instantiateWasm(imports, successCallback) {
-      const instance = new WebAssembly.Instance(compiled, imports);
-      successCallback(instance, compiled);
-      return instance.exports;
-    }
-  });
-}
-
-async function detectEngineVariant(simdAsset) {
-  if (!isUrlLikeWasmAsset(simdAsset)) {
-    if (simdAsset instanceof WebAssembly.Module) {
-      return 'simd';
-    }
-    return WebAssembly.validate(toWasmSource(simdAsset)) ? 'simd' : 'scalar';
-  }
-
-  try {
-    const href = simdAsset instanceof URL ? simdAsset.href : simdAsset;
-    const response = await fetch(href, { credentials: 'same-origin' });
-    if (!response.ok) {
-      throw pancakeError(PANCAKE_ERROR_CODES.WASM_LOAD_FAILED, `${response.status} ${response.statusText}`.trim(), { status: response.status });
-    }
-    const binary = await response.arrayBuffer();
-    return WebAssembly.validate(binary) ? 'simd' : 'scalar';
-  } catch (error) {
-    throw makeLoadError('Failed to probe Pancake SIMD WASM support', error);
-  }
+function selectEngineVariant() {
+  engineVariantPromise ??= moduleLoader.supports('simd')
+    .then((supported) => supported ? 'simd' : 'scalar')
+    .catch((error) => { throw makeLoadError('Failed to probe Pancake SIMD WASM support', error); });
+  return engineVariantPromise;
 }
 
 async function loadWebEngine() {
-  if (engineVariant === null) {
-    engineVariant = await detectEngineVariant(simdWasmAsset);
-  }
+  const engineVariant = await selectEngineVariant();
 
   if (engineVariant === 'scalar') {
     try {
-      return await instantiateEngineWithAsset(loadScalarEngine, 'engine.scalar.wasm', scalarWasmAsset);
+      return await moduleLoader.instantiate(loadScalarEngine, 'scalar');
     } catch (error) {
       throw makeLoadError('Pancake failed to load the scalar WASM engine', error);
     }
   }
 
   try {
-    return await instantiateEngineWithAsset(loadEngine, 'engine.wasm', simdWasmAsset);
+    return await moduleLoader.instantiate(loadEngine, 'simd');
   } catch (simdError) {
     try {
-      const engine = await instantiateEngineWithAsset(loadScalarEngine, 'engine.scalar.wasm', scalarWasmAsset);
-      engineVariant = 'scalar';
+      const engine = await moduleLoader.instantiate(loadScalarEngine, 'scalar');
+      engineVariantPromise = Promise.resolve('scalar');
       return engine;
     } catch (scalarError) {
       throw makeLoadError(

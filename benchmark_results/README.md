@@ -32,6 +32,18 @@ Each result set includes:
 - `.log`: console output from the benchmark run
 - `.png`: Pareto frontier plot
 
+## Scaled churn confirmation
+
+`churn_scale_100k.json` records a deterministic 100K-vector clustered cosine
+run with five complete population turnovers (`M=8`, `efConstruction=100`,
+`efSearch=200`). Recall@10 fell from 96.0% at baseline to 7.2% at 83.3%
+deleted nodes, with only 4.8 results returned on average. The high-deletion
+rebuild compaction took 17.6s and restored 99.2% recall with a full top-10; a
+fresh index over the identical final population reached 97.2%. The WASM heap
+was 171.6 MB immediately before and after compaction, confirming that the
+replacement graph reused released engine allocations rather than retaining a
+two-graph peak. Reproduce with `node benchmarks/churn_scale.js`.
+
 ## DBpedia-50K (50,000 x 1536D, L2)
 
 | Backend | Build | Memory | ef=100 recall | ef=100 QPS | ef=800 recall | ef=800 QPS |
@@ -87,3 +99,18 @@ runtime memory counter in this harness, so its table value is the saved index
 file size. hnswlib is reported as process RSS delta. RSS deltas are useful for
 order-of-magnitude comparisons but can include allocator and runtime effects
 outside the index itself.
+
+## Comparison Scope
+
+The Pareto harness now includes USearch `f16` alongside `i8` and `f32`; those
+rows will appear when the matrix is next regenerated. The installed USearch npm
+package (`2.25.1`) exposes native Node prebuilds but does not ship a USearch WASM
+artifact or browser/WASM package entrypoint, so this harness cannot make a
+like-for-like WASM comparison from the published dependency. A custom USearch
+WASM build would introduce build-flag and wrapper choices that are outside the
+as-shipped comparison.
+
+Repeated 1M-vector runs on the current laptop show substantial system noise at
+some points (maximum observed QPS coefficient of variation up to roughly 56%).
+Treat differences below about 10% as inconclusive unless they reproduce on a
+quieter machine or across additional repetitions.

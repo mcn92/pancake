@@ -6,8 +6,7 @@
  *
  * Measures the Node deployment path from snapshot bytes on disk to first query:
  *   - file read time
- *   - Pancake.create() / WASM engine instantiation time
- *   - index.import() / deserialize time
+ *   - Pancake.restore() time (warm compiled module + deserialize)
  *   - first query latency
  *   - warm query latency
  *
@@ -26,12 +25,6 @@ const path = require('path');
 const { performance } = require('perf_hooks');
 const Pancake = require('../pancake.js');
 const { parseBenchmarkArgs, resolveSingleValue } = require('./bench_args');
-
-const PANCAKE_MAGIC = 0x504E434B;
-const FLOAT_HNSW_MAGIC_V0 = 0x464C4857;
-const FLOAT_HNSW_MAGIC_V1 = 0x464C4831;
-const INT8_HNSW_MAGIC_V0 = 0x49384857;
-const INT8_HNSW_MAGIC_V1 = 0x49384831;
 
 const parsedArgs = parseBenchmarkArgs();
 const rawArgs = process.argv.slice(2);
@@ -116,59 +109,6 @@ function makeVector(seed, dim, normalized) {
   return normalized ? normalize(vec) : vec;
 }
 
-function rawMetadata(bytes) {
-  if (!bytes || bytes.byteLength < 12) return null;
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const magic = view.getUint32(0, true);
-  if (magic === FLOAT_HNSW_MAGIC_V1 || magic === INT8_HNSW_MAGIC_V1) {
-    if (bytes.byteLength < 40) return null;
-    return {
-      dim: view.getUint32(4, true),
-      count: view.getUint32(12, true),
-      metric: view.getUint32(32, true) === 0 ? 'l2' : 'cosine',
-      quantized: magic === INT8_HNSW_MAGIC_V1,
-    };
-  }
-  if (magic === FLOAT_HNSW_MAGIC_V0 || magic === INT8_HNSW_MAGIC_V0) {
-    if (bytes.byteLength < 36) return null;
-    return {
-      dim: view.getUint32(4, true),
-      count: view.getUint32(8, true),
-      metric: view.getUint32(28, true) === 0 ? 'l2' : 'cosine',
-      quantized: magic === INT8_HNSW_MAGIC_V0,
-    };
-  }
-  return null;
-}
-
-function inferSnapshotOptions(bytes) {
-  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  if (u8.byteLength < 4) return null;
-  const view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
-  if (view.getUint32(0, true) !== PANCAKE_MAGIC) return rawMetadata(u8);
-
-  const version = view.getUint32(4, true);
-  const dim = view.getUint32(8, true);
-  const metric = view.getUint32(12, true) === 0 ? 'l2' : 'cosine';
-  const quantized = view.getUint32(16, true) !== 0;
-  let raw;
-  if (version === 3) {
-    const mappingCount = view.getUint32(24, true);
-    const wasmSize = view.getUint32(28, true);
-    const wasmOffset = 32 + mappingCount * 8;
-    raw = u8.subarray(wasmOffset, wasmOffset + wasmSize);
-  } else {
-    raw = u8.subarray(20);
-  }
-  const metadata = rawMetadata(raw);
-  return {
-    dim,
-    metric,
-    quantized,
-    count: metadata ? metadata.count : undefined,
-  };
-}
-
 async function buildSyntheticSnapshot(count) {
   fs.mkdirSync(OUT_DIR, { recursive: true });
   const normalized = METRIC === 'cosine';
@@ -208,20 +148,26 @@ async function buildSyntheticSnapshot(count) {
 
 function resolveSnapshotCase(filePath) {
   const bytes = fs.readFileSync(filePath);
-  const inferred = inferSnapshotOptions(bytes) || {};
-  const dim = inferred.dim || DIM;
-  const metric = inferred.metric || METRIC;
-  const quantized = inferred.quantized !== undefined ? inferred.quantized : QUANTIZED;
-  const count = inferred.count;
-  const maxElements = getIntArg('max-elements', count || 100000);
+  const inspected = Pancake.inspectSnapshot(bytes);
+  const maxElements = getIntArg('max-elements', Math.max(1, inspected.count));
+  const overrides = { maxElements, efSearch: EF_SEARCH };
+  if (inspected.format === 'raw') {
+    Object.assign(overrides, {
+      dim: inspected.dim,
+      metric: inspected.metric,
+      quantized: inspected.quantized,
+      M: inspected.M,
+      efConstruction: inspected.efConstruction,
+    });
+  }
 
   return {
     filePath,
-    opts: { dim, maxElements, metric, quantized, M, efConstruction: EF_CONSTRUCTION, efSearch: EF_SEARCH },
-    dim,
-    metric,
-    quantized,
-    query: makeVector(999999, dim, metric === 'cosine'),
+    overrides,
+    dim: inspected.dim,
+    metric: inspected.metric,
+    quantized: inspected.quantized,
+    query: makeVector(999999, inspected.dim, inspected.metric === 'cosine'),
     snapshotBytes: bytes.byteLength,
     builtHere: false,
   };
@@ -229,8 +175,7 @@ function resolveSnapshotCase(filePath) {
 
 async function measureRestore(snapshotCase) {
   const readTimes = [];
-  const createTimes = [];
-  const importTimes = [];
+  const restoreTimes = [];
   const firstQueryTimes = [];
   const totalToQueryTimes = [];
   const warmTimes = [];
@@ -244,13 +189,12 @@ async function measureRestore(snapshotCase) {
     const bytes = fs.readFileSync(snapshotCase.filePath);
     const readMs = performance.now() - readStart;
 
-    const createStart = performance.now();
-    const index = await Pancake.create(snapshotCase.opts);
-    const createMs = performance.now() - createStart;
-
-    const importStart = performance.now();
-    index.import(bytes);
-    const importMs = performance.now() - importStart;
+    const restoreStart = performance.now();
+    const index = await Pancake.restore(bytes, snapshotCase.overrides || {
+      maxElements: snapshotCase.opts.maxElements,
+      efSearch: snapshotCase.opts.efSearch,
+    });
+    const restoreMs = performance.now() - restoreStart;
 
     const firstQueryStart = performance.now();
     index.search(snapshotCase.query, 10);
@@ -267,8 +211,7 @@ async function measureRestore(snapshotCase) {
     localWarm.sort((a, b) => a - b);
 
     readTimes.push(readMs);
-    createTimes.push(createMs);
-    importTimes.push(importMs);
+    restoreTimes.push(restoreMs);
     firstQueryTimes.push(firstQueryMs);
     totalToQueryTimes.push(totalToQueryMs);
     warmTimes.push(percentile(localWarm, 0.5));
@@ -278,8 +221,7 @@ async function measureRestore(snapshotCase) {
   }
 
   readTimes.sort((a, b) => a - b);
-  createTimes.sort((a, b) => a - b);
-  importTimes.sort((a, b) => a - b);
+  restoreTimes.sort((a, b) => a - b);
   firstQueryTimes.sort((a, b) => a - b);
   totalToQueryTimes.sort((a, b) => a - b);
   warmTimes.sort((a, b) => a - b);
@@ -290,8 +232,7 @@ async function measureRestore(snapshotCase) {
     snapshotBytes: snapshotCase.snapshotBytes,
     memoryBytes,
     readP50Ms: percentile(readTimes, 0.5),
-    createP50Ms: percentile(createTimes, 0.5),
-    importP50Ms: percentile(importTimes, 0.5),
+    restoreP50Ms: percentile(restoreTimes, 0.5),
     firstQueryP50Ms: percentile(firstQueryTimes, 0.5),
     totalToQueryP50Ms: percentile(totalToQueryTimes, 0.5),
     warmQueryP50Ms: percentile(warmTimes, 0.5),
@@ -320,7 +261,7 @@ async function main() {
     console.log(`dim=${DIM} metric=${METRIC} quantized=${QUANTIZED} M=${M} efConstruction=${EF_CONSTRUCTION} efSearch=${EF_SEARCH}`);
   }
   console.log('');
-  console.log('count\tdim\tmetric\tquantized\tsnapshot_kb\tmemory_mb\tread_p50_ms\tcreate_p50_ms\timport_p50_ms\tfirst_query_p50_ms\ttotal_to_query_p50_ms\ttotal_to_query_p95_ms\twarm_query_p50_ms\tpath');
+  console.log('count\tdim\tmetric\tquantized\tsnapshot_kb\tmemory_mb\tread_p50_ms\trestore_p50_ms\tfirst_query_p50_ms\ttotal_to_query_p50_ms\ttotal_to_query_p95_ms\twarm_query_p50_ms\tpath');
 
   for (const snapshotCase of cases) {
     const row = await measureRestore(snapshotCase);
@@ -332,8 +273,7 @@ async function main() {
       fmtKb(row.snapshotBytes),
       (row.memoryBytes / 1024 / 1024).toFixed(2),
       fmtMs(row.readP50Ms),
-      fmtMs(row.createP50Ms),
-      fmtMs(row.importP50Ms),
+      fmtMs(row.restoreP50Ms),
       fmtMs(row.firstQueryP50Ms),
       fmtMs(row.totalToQueryP50Ms),
       fmtMs(row.totalToQueryP95Ms),

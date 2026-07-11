@@ -4,9 +4,10 @@ const loadEngine = require('./dist/engine.js');
 const loadScalarEngine = require('./dist/engine.scalar.js');
 const createPancakeApi = require('./pancake-core.js');
 const { PancakeError, PANCAKE_ERROR_CODES, pancakeError } = require('./pancake-errors.js');
+const { createCachedModuleLoader } = require('./pancake-loader.js');
 const _path = require('path');
 const _fs = require('fs');
-let _engineVariant = null;
+let _engineVariantPromise = null;
 
 const DEFAULT_JSON_FILE_BYTES = 64 * 1024 * 1024;
 const DEFAULT_SNAPSHOT_FILE_BYTES = 512 * 1024 * 1024;
@@ -36,12 +37,14 @@ function makeLoadError(message, error) {
     return pancakeError(PANCAKE_ERROR_CODES.WASM_LOAD_FAILED, `${message}: ${detail}`, undefined, error);
 }
 
-function hasSimdSupport(binary) {
-    try {
-        return WebAssembly.validate(binary);
-    } catch {
-        return false;
-    }
+const _moduleLoader = createCachedModuleLoader((variant) =>
+    readWasmBinary(variant === 'simd' ? 'engine.wasm' : 'engine.scalar.wasm')
+);
+
+function selectEngineVariant() {
+    _engineVariantPromise ??= _moduleLoader.supports('simd')
+        .then((supported) => supported ? 'simd' : 'scalar');
+    return _engineVariantPromise;
 }
 
 function parseJsonLines(text, filePath) {
@@ -158,30 +161,22 @@ function validateSnapshotBytes(snapshot, filePath) {
 }
 
 async function loadNodeEngine() {
-    if (_engineVariant === null) {
-        _engineVariant = hasSimdSupport(readWasmBinary('engine.wasm')) ? 'simd' : 'scalar';
-    }
+    const engineVariant = await selectEngineVariant();
 
-    if (_engineVariant === 'scalar') {
+    if (engineVariant === 'scalar') {
         try {
-            return await loadScalarEngine({
-                wasmBinary: readWasmBinary('engine.scalar.wasm')
-            });
+            return await _moduleLoader.instantiate(loadScalarEngine, 'scalar');
         } catch (error) {
             throw makeLoadError('Pancake failed to load the scalar WASM engine', error);
         }
     }
 
     try {
-        return await loadEngine({
-            wasmBinary: readWasmBinary('engine.wasm')
-        });
+        return await _moduleLoader.instantiate(loadEngine, 'simd');
     } catch (simdError) {
         try {
-            const engine = await loadScalarEngine({
-                wasmBinary: readWasmBinary('engine.scalar.wasm')
-            });
-            _engineVariant = 'scalar';
+            const engine = await _moduleLoader.instantiate(loadScalarEngine, 'scalar');
+            _engineVariantPromise = Promise.resolve('scalar');
             return engine;
         } catch (scalarError) {
             throw makeLoadError(

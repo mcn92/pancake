@@ -169,13 +169,17 @@ node's slot, or overrun the buffer on the last node). The int8 backend's
   (one byte per node, not a packed bitset — a deliberate trade of memory for a
   branch-free check). The node stays in the graph and is skipped during
   traversal. (`float_hnsw.hpp:346`, `int8_float_hnsw.hpp:483`.)
-- **Compaction** is a rebuild-with-remap: it builds an `old_id → new_id` map over
-  survivors, physically moves vector/graph data into the compacted positions,
-  remaps every neighbor id, and runs a **backfill pass** that re-expands
-  under-connected nodes via their neighbors-of-neighbors and re-applies the
-  selection heuristic. Deletion state is reset. The remap is returned to the
-  caller via an `out_map` out-parameter. (`float_hnsw.hpp:360`,
-  `int8_float_hnsw.hpp:497`.)
+- **Compaction** has two topology strategies behind one stable-remap contract.
+  Below 50% deletions it physically moves survivors into compacted positions,
+  remaps every neighbor id, and backfills under-connected nodes through
+  neighbors-of-neighbors. At 50% or more deletions, it rebuilds the HNSW graph
+  from the live vectors in old-ID order; repairing a mostly hollow skeleton did
+  not recover recall reliably at scale. The int8 rebuild compacts its quantized
+  rows first and releases the old topology before reinsertion so the WASM
+  allocator can reuse those blocks without increasing the retained heap.
+  Deletion state is reset and the `old_id → new_id` map is returned through an
+  `out_map` out-parameter. (`float_hnsw.hpp:392`,
+  `int8_float_hnsw.hpp:505`.)
 
 The C ABI exposes both a void `compact()` and a `compact_remap()` that surfaces
 the `out_map`; in practice the current JS layer calls plain `compact()` and
@@ -374,15 +378,17 @@ The complete export list is in [Appendix A](#appendix-a-wasm-export-inventory).
 
 | Entry | File | WASM resolution |
 |-------|------|-----------------|
-| CJS (Node) | `pancake.js` | `fs.readFileSync('dist/engine.wasm')`, passed as `wasmBinary` |
+| CJS (Node) | `pancake.js` | reads each selected asset once, compiles once, instantiates per index |
 | ESM (Node) | `pancake.node.mjs` | same, via `node:fs` + `fileURLToPath` |
-| Web / Workers | `pancake.web.mjs` | `locateFile()` returns `new URL('./dist/engine.wasm', import.meta.url)`, engine fetches it |
+| Web | `pancake.web.mjs` | fetches each selected asset once, compiles once, instantiates per index |
+| workerd | `pancake.workerd.mjs` | consumes the bundled precompiled module and instantiates per index |
 
-All three call the Emscripten factory (exported as `P`, `MODULARIZE=1`) and then
-construct the same `PancakeIndex` from `pancake-core.js`. `Pancake.create()`
-allocates the per-index WASM scratch buffers (query vector, result ids, result
-distances), calls `_pancake_init`, and returns the wrapper.
-(`pancake-core.js:598`.)
+All entrypoints share `pancake-loader.js`, which memoizes source and compiled
+module promises per SIMD/scalar variant. Concurrent `create()` calls therefore
+share fetch/read/compile work but each call invokes the Emscripten factory with
+a fresh `WebAssembly.Instance`. Heaps, handle tables, growth, failure, and
+disposal remain isolated per index. `Pancake.create()` then allocates per-index
+scratch buffers, calls `_pancake_init`, and returns the wrapper.
 
 ### 7.2 PancakeIndex API
 
@@ -440,17 +446,17 @@ External ids are assigned at insert and never change. On `compact()`
    id (its index in the sorted survivor list); clear `_deletedExt`.
 
 The correctness hinge: the JS layer assumes WASM compaction preserves the
-**relative order** of survivors when renumbering them `0..n-1`, which is why it
-sorts by old internal id before reassigning. It does **not** consume the
-`compact_remap` out-map; it reconstructs the mapping itself. (The Worker keeps an
-equivalent map and does the same thing — §11.5.)
+**relative order** of survivors when renumbering them `0..n-1`. The wrapper
+consumes the engine's `compact_remap` out-map rather than reimplementing that
+assignment rule, then rebuilds its stable external-ID maps from the returned
+mapping.
 
 ---
 
 ## 9. Serialization Formats
 
-There are three nested layers. From innermost out: the backend blob, the
-JS export envelope, and (Worker only) the WRK1 envelope.
+There are two nested layers: the backend blob and the JavaScript export
+envelope. The Worker persists the same package snapshot format.
 
 ### 9.1 Backend blobs
 
@@ -539,14 +545,6 @@ Per-edge neighbor ids are also validated `< count_`, and vector/scale/offset
 components are rejected if non-finite (bit-level exponent check, since
 `std::isfinite` is unreliable under `-ffast-math`).
 
-### 9.5 WRK1 (Worker envelope)
-
-The Worker wraps the *JS-envelope* export in its own `WRK1` envelope to persist
-Worker-specific metadata (init params, `maxElements`, id mapping) as JSON
-alongside the bytes. Detailed in §11.3.
-
----
-
 ## 10. Build Pipeline (WASM and Native)
 
 ### 10.1 WASM (`build.sh`)
@@ -614,9 +612,9 @@ the edge**, not a durable mutable database inside one isolate.
 
 ### 11.1 Request lifecycle
 
-Each isolate holds two module-global references: the Emscripten engine
-(`pancake`, lazily initialized once) and the active `index`. They stay warm
-across requests within an isolate. On any non-trivial route, if `index` is null
+Each isolate holds the active public `PancakeIndex` and a memoized restore
+promise. The index stays warm across requests within an isolate. On any
+non-trivial route, if `index` is null
 and a bucket is bound, the Worker lazily **restores from R2** before serving
 (`/health`, `/readiness`, `/reset_cache`, `/init`, `/import` skip auto-restore).
 (`examples/worker/worker.js`, `restoreIndex()`.)
@@ -626,16 +624,16 @@ and a bucket is bound, the Worker lazily **restores from R2** before serving
 | Endpoint | Method | Body → Response | Admin? |
 |----------|--------|-----------------|--------|
 | `/health` | GET | — → status, count, memory, restore timings, read_only | no (public) |
-| `/readiness` | GET | — → loaded + snapshot availability (no restore) | no (bearer once `API_KEY` set) |
-| `/search` | POST | `{query,k?,ef?}` → `{neighbors,distances,latency_ms}` | no (bearer once `API_KEY` set) |
-| `/stats` | GET | — → count, memory, ghost stats, dims | no (bearer once `API_KEY` set) |
+| `/readiness` | GET | — → loaded state + inspected latest snapshot header (no restore) | no (bearer once `API_KEY` set) |
+| `/search` | POST | `{query,k?,efSearch?,allowedIds?}` → `{neighbors,search_ms}` | no (bearer once `API_KEY` set) |
+| `/stats` | GET | — → live/deleted counts, capacity, and structured memory | no (bearer once `API_KEY` set) |
 | `/init` | POST | `{dims,maxElements,M?,efConstruction?,efSearch?,vectors?}` → init result | yes |
 | `/add` | POST | `{vector}` → `{id,count}` | yes |
 | `/add_batch` | POST | `{vectors}` → `{inserted,ids,count}` | yes |
-| `/delete` | POST | `{id}` → ghost stats | yes |
+| `/delete` | POST | `{id}` → boolean deletion result + deleted count | yes |
 | `/compact` | POST | — → compaction result (awaits persist) | yes |
-| `/export` | GET | — → WRK1 binary | yes |
-| `/import` | POST | WRK1 binary (`?dims=` fallback) → import result | yes |
+| `/export` | GET | — → standard Pancake snapshot | yes |
+| `/import` | POST | Pancake snapshot → config-inferred restore | yes |
 | `/reset_cache` | POST | — → drops warm index, forces cold restore | yes |
 | `/search_debug` | POST | `{query,k?}` → raw vs translated ids | yes |
 
@@ -653,26 +651,22 @@ snapshot import (`MAX_SNAPSHOT_BYTES`); and opt-in CORS via `ALLOWED_ORIGIN`
 ### 11.3 R2 persistence
 
 Snapshots are written under **timestamped, append-only keys**
-(`pancake-index-<13-digit-ms>-<6-digit-seq>.bin`); restore lists the prefix and
+(`pancake-index-<13-digit-ms>-<6-digit-seq>.pnck`); restore lists the prefix and
 picks the lexicographically greatest key (zero-padding makes string order match
-time order), with a fallback to a legacy fixed key. Mutating routes
-(`/add`, `/add_batch`, `/delete`) schedule a **fire-and-forget** persist via
-`ctx.waitUntil`; `/compact` and `/import` **await** the persist. Before export
-the Worker compacts if there are ghosts (so the snapshot has no live ghosts).
-(`examples/worker/worker.js`, `SNAPSHOT_KEY_PREFIX` / `restoreIndex()` /
-`schedulePersist()`.)
+time order), with a fallback to a legacy fixed key. Mutating routes await
+persistence in this reference implementation. Before export the Worker compacts
+if there are deleted nodes. A production deployment should add an R2 lifecycle
+rule or delete superseded keys; retention is deliberately left to the
+application.
 
 The append-only scheme means a slow/late async write cannot clobber a newer
 snapshot under a shared key — restore always loads the newest. The durability
 boundary is R2; in-memory isolate state is a warm cache only.
 
-The **WRK1 envelope** (`0x57524B31`, version 1) is a 16-byte header
-(magic, version, JSON-metadata length, raw-blob length) followed by JSON metadata
-then the raw `pancake-core` export bytes. The metadata carries `dims`,
-`maxElements`, `nextExtId`, `initParams {M, efC, efS}`, and the full
-`[intId, extId]` mapping — everything needed to reconstruct the index *and* its
-external-id mapping on cold restore.
-(`examples/worker/worker.js`, `encodeWorkerExportEnvelope()`.)
+The stored object is the standard Pancake v3 envelope. `inspectSnapshot()` reads
+its construction fields for readiness and `restore()` reconstructs the index on
+cold start. R2 custom metadata retains capacity and runtime `efSearch` policy;
+it is not trusted for the snapshot's fixed construction fields.
 
 ### 11.4 READ_ONLY mode
 
@@ -683,15 +677,12 @@ remain available. This is the recommended posture for a public,
 snapshot-backed search endpoint: publish the index out-of-band, deploy read-only,
 expose only search. (`examples/worker/worker.js`, `isReadOnly()` / `isAdminRoute()`.)
 
-### 11.5 Worker-side id mapping
+### 11.5 ID mapping
 
-The Worker maintains its own `_extToInt` / `_intToExt` / `_deletedExt` /
-`_nextExtId` (and an optional `_vectors` stash), independent of `pancake-core.js`,
-because it drives the WASM exports directly. Its `compact()` mirrors the core
-logic (sort survivors by old internal id, `_pancake_compact`, rebuild maps); no
-vector re-insertion is required. On cold restore, `_restoreMapping` rehydrates
-the maps from the WRK1 metadata (or seeds identity ids for legacy snapshots).
-(`examples/worker/worker.js`, `compact()` / `_restoreMapping()`.)
+The Worker uses the public API and does not maintain a second mapping layer.
+Stable external IDs live in `pancake-core.js` and are serialized inside the v3
+snapshot envelope. Cold restore, compaction, and subsequent insertion therefore
+exercise the same mapping contract as Node and browser consumers.
 
 ### 11.6 Semantic-search demo differences
 
@@ -876,17 +867,6 @@ distances and have them recomputed on import. Deletion state not serialized.
 ### JS export envelope (v3) — magic `0x504E434B` ("PNCK")
 
 See §9.3. 32-byte header + `[intId,extId]` mapping table + backend blob.
-
-### WRK1 Worker envelope — magic `0x57524B31` ("WRK1"), version 1
-
-```
-0   u32   magic 0x57524B31
-4   u32   version (1)
-8   u32   JSON metadata length
-12  u32   raw blob length
-16  ...   JSON metadata { dims, maxElements, nextExtId, initParams{M,efC,efS}, mapping }
-...  ...  raw pancake-core export bytes (itself a PNCK v3 envelope)
-```
 
 ---
 

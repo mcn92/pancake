@@ -814,6 +814,13 @@ async function testSearchDuringMutation() {
 async function testRuntimeEntryPoints() {
     section('Runtime entry points');
 
+    assert(require.resolve('pancake-wasm/engine.wasm').endsWith(path.join('dist', 'engine.wasm')),
+        'engine.wasm remains a stable package asset path');
+    assertThrows(
+        () => require.resolve('pancake-wasm/engine'),
+        'generated Emscripten glue is not a public package export'
+    );
+
     // CommonJS package entry
     {
         const CjsPancake = require('./pancake.js');
@@ -2430,6 +2437,10 @@ async function testCompactReconnectsIsolatedSurvivors() {
 
         idx.compact();
 
+        assert(idx.count === survivors.length, `${quantized ? 'quantized' : 'float'}: rebuild compaction retains every survivor`);
+        assert(idx.deletedCount === 0, `${quantized ? 'quantized' : 'float'}: rebuild compaction clears deleted state`);
+        const survivorIds = new Set(survivors.map(i => ids[i]));
+
         for (const i of survivors) {
             const postCompact = idx.search(vecs[i], 1);
             assert(
@@ -2437,6 +2448,18 @@ async function testCompactReconnectsIsolatedSurvivors() {
                 `${quantized ? 'quantized' : 'float'}: survivor ${i} still finds itself after compact`
             );
         }
+
+        const breadth = Math.min(10, survivors.length);
+        const results = idx.search(vecs[survivors[0]], breadth);
+        assert(results.length === breadth, `${quantized ? 'quantized' : 'float'}: rebuild compaction returns a full result set`);
+        assert(results.every(result => survivorIds.has(result.id)), `${quantized ? 'quantized' : 'float'}: rebuild compaction never leaks deleted IDs`);
+
+        const appended = new Float32Array([20, 20, 20, 20]);
+        const appendedId = idx.add(appended);
+        assert(appendedId === 80, `${quantized ? 'quantized' : 'float'}: external ID allocation remains monotonic after rebuild compaction`);
+        const appendedResult = idx.search(appended, 1);
+        assert(appendedResult.length === 1 && appendedResult[0].id === appendedId,
+            `${quantized ? 'quantized' : 'float'}: index accepts searchable inserts after rebuild compaction`);
 
         idx.dispose();
     };

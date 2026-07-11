@@ -22,6 +22,8 @@
  *   - Worker running: cd examples/worker && npx wrangler dev --port 8787
  *   - Set MAX_ELEMENTS_LIMIT in examples/worker/wrangler.toml high enough
  *     for the largest requested count.
+ *   - Set ALLOW_INSECURE_ADMIN=1 for a local-only run, or export
+ *     PANCAKE_API_KEY to match the Worker's API_KEY.
  */
 
 const { parseBenchmarkArgs, resolveSingleValue } = require('./bench_args');
@@ -34,6 +36,7 @@ const POSITIONAL_ARGS = parsedArgs.args.filter((arg, idx, arr) => {
   return true;
 });
 const WORKER_URL = POSITIONAL_ARGS[0] || 'http://localhost:8787';
+const API_KEY = process.env.PANCAKE_API_KEY || '';
 const COUNTS = (() => {
   const idx = process.argv.indexOf('--counts');
   if (idx !== -1 && process.argv[idx + 1]) {
@@ -55,9 +58,9 @@ const QUERY_REPS = 10;
 function log(msg = '') { console.log(msg); }
 
 async function post(path, body = null) {
-  const opts = { method: 'POST' };
+  const opts = { method: 'POST', headers: API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {} };
   if (body !== null) {
-    opts.headers = { 'Content-Type': 'application/json' };
+    opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
   }
   const res = await fetch(`${WORKER_URL}${path}`, opts);
@@ -67,7 +70,8 @@ async function post(path, body = null) {
 }
 
 async function get(path) {
-  const res = await fetch(`${WORKER_URL}${path}`);
+  const headers = API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {};
+  const res = await fetch(`${WORKER_URL}${path}`, { headers });
   let data = null;
   try { data = await res.json(); } catch {}
   return { status: res.status, data };
@@ -129,7 +133,8 @@ async function buildIndex(count, queryVec) {
   if (initRes.status !== 200) {
     throw new Error(`/init failed for count=${count}: ${JSON.stringify(initRes.data)}`);
   }
-  const emptyMemoryBytes = initRes.data?.memory_bytes ?? null;
+  const emptyStats = await get('/stats');
+  const emptyMemoryBytes = emptyStats.data?.memory_usage?.wasmHeapBytes ?? null;
 
   log(`[count=${count}] insert (${BATCH_SIZE}/batch)`);
   for (let start = 0; start < count; start += BATCH_SIZE) {
@@ -142,7 +147,8 @@ async function buildIndex(count, queryVec) {
     }
   }
 
-  const exportRes = await fetch(`${WORKER_URL}/export`);
+  const exportHeaders = API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {};
+  const exportRes = await fetch(`${WORKER_URL}/export`, { headers: exportHeaders });
   if (!exportRes.ok) {
     throw new Error(`/export failed: ${exportRes.status}`);
   }
@@ -154,7 +160,7 @@ async function buildIndex(count, queryVec) {
   }
 
   const coldT0 = performance.now();
-  const coldSearch = await post('/search', { query: queryVec, k: 10, ef: EF_SEARCH });
+  const coldSearch = await post('/search', { query: queryVec, k: 10, efSearch: EF_SEARCH });
   const coldWallMs = performance.now() - coldT0;
   if (coldSearch.status !== 200) {
     throw new Error(`/search after reset failed: ${JSON.stringify(coldSearch.data)}`);
@@ -164,12 +170,13 @@ async function buildIndex(count, queryVec) {
   if (health.status !== 200) {
     throw new Error(`/health failed after restore`);
   }
-  const restoredMemoryBytes = health.data.memory_bytes;
+  const restoredStats = await get('/stats');
+  const restoredMemoryBytes = restoredStats.data?.memory_usage?.wasmHeapBytes ?? null;
 
   const warmLatencies = [];
   for (let i = 0; i < QUERY_REPS; i++) {
     const t0 = performance.now();
-    const res = await post('/search', { query: queryVec, k: 10, ef: EF_SEARCH });
+    const res = await post('/search', { query: queryVec, k: 10, efSearch: EF_SEARCH });
     if (res.status !== 200) throw new Error(`/search warm failed`);
     warmLatencies.push(performance.now() - t0);
   }
@@ -178,9 +185,9 @@ async function buildIndex(count, queryVec) {
   return {
     count,
     snapshotBytes,
-    fetchMs: health.data.last_fetch_ms,
-    deserializeMs: health.data.last_deserialize_ms,
-    restoreMs: health.data.last_restore_ms,
+    fetchMs: health.data.restore?.lastFetchMs,
+    deserializeMs: health.data.restore?.lastDeserializeMs,
+    restoreMs: health.data.restore?.lastRestoreMs,
     emptyMemoryBytes,
     restoredMemoryBytes,
     materializedDeltaBytes:
@@ -188,7 +195,7 @@ async function buildIndex(count, queryVec) {
         ? restoredMemoryBytes - emptyMemoryBytes
         : null,
     coldWallMs,
-    coldSearchMs: coldSearch.data.latency_ms,
+    coldSearchMs: coldSearch.data.search_ms,
     warmP50Ms: percentile(warmLatencies, 0.5),
     warmP95Ms: percentile(warmLatencies, 0.95)
   };
