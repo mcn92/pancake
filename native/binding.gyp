@@ -21,6 +21,7 @@
         "-march=native",
         "-mavx2",
         "-msse2",
+        "-DPANCAKE_ENABLE_AVX512_SIMD",
         "-DPANCAKE_ENABLE_AVX2_SIMD",
         "-DPANCAKE_ENABLE_SSE2_SIMD"
       ],
@@ -32,6 +33,7 @@
             "OTHER_CPLUSPLUSFLAGS": [
               "-O3", "-ffast-math", "-fvectorize", "-fslp-vectorize",
               "-fno-rtti", "-mavx2",
+              "-DPANCAKE_ENABLE_AVX512_SIMD",
               "-DPANCAKE_ENABLE_AVX2_SIMD", "-DPANCAKE_ENABLE_SSE2_SIMD"
             ]
           }

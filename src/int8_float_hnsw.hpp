@@ -29,6 +29,9 @@
 #if defined(__wasm_simd128__)
     #include <wasm_simd128.h>
     #define INT8_HNSW_WASM_SIMD 1
+#elif defined(PANCAKE_ENABLE_AVX512_SIMD) && defined(__AVX512F__) && defined(__AVX512BW__)
+    #include <immintrin.h>
+    #define INT8_HNSW_AVX512_SIMD 1
 #elif defined(PANCAKE_ENABLE_AVX2_SIMD) && defined(__AVX2__)
     #include <immintrin.h>
     #define INT8_HNSW_AVX2_SIMD 1
@@ -1240,6 +1243,40 @@ private:
                                     wasm_f32x4_add(acc2, acc3));
         dot = wasm_f32x4_extract_lane(acc, 0) + wasm_f32x4_extract_lane(acc, 1) +
               wasm_f32x4_extract_lane(acc, 2) + wasm_f32x4_extract_lane(acc, 3);
+#elif defined(INT8_HNSW_AVX512_SIMD)
+        __m512 acc0 = _mm512_setzero_ps();
+        __m512 acc1 = _mm512_setzero_ps();
+        __m512 acc2 = _mm512_setzero_ps();
+        __m512 acc3 = _mm512_setzero_ps();
+        __m512 v_scale = _mm512_set1_ps(s);
+        __m512 v_offset = _mm512_set1_ps(o);
+
+        for (; d + 64 <= dims_; d += 64) {
+            __m512 ff0 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(
+                _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + d))));
+            __m512 val0 = _mm512_add_ps(v_offset, _mm512_mul_ps(ff0, v_scale));
+            acc0 = _mm512_add_ps(acc0, _mm512_mul_ps(_mm512_loadu_ps(query + d), val0));
+
+            __m512 ff1 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(
+                _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + d + 16))));
+            __m512 val1 = _mm512_add_ps(v_offset, _mm512_mul_ps(ff1, v_scale));
+            acc1 = _mm512_add_ps(acc1, _mm512_mul_ps(_mm512_loadu_ps(query + d + 16), val1));
+
+            __m512 ff2 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(
+                _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + d + 32))));
+            __m512 val2 = _mm512_add_ps(v_offset, _mm512_mul_ps(ff2, v_scale));
+            acc2 = _mm512_add_ps(acc2, _mm512_mul_ps(_mm512_loadu_ps(query + d + 32), val2));
+
+            __m512 ff3 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(
+                _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + d + 48))));
+            __m512 val3 = _mm512_add_ps(v_offset, _mm512_mul_ps(ff3, v_scale));
+            acc3 = _mm512_add_ps(acc3, _mm512_mul_ps(_mm512_loadu_ps(query + d + 48), val3));
+        }
+
+        __m512 acc = _mm512_add_ps(_mm512_add_ps(acc0, acc1), _mm512_add_ps(acc2, acc3));
+        alignas(64) float tmp[16];
+        _mm512_store_ps(tmp, acc);
+        for (int i = 0; i < 16; ++i) dot += tmp[i];
 #elif defined(INT8_HNSW_AVX2_SIMD)
         __m256 acc0 = _mm256_setzero_ps();
         __m256 acc1 = _mm256_setzero_ps();
@@ -1364,6 +1401,44 @@ private:
                                     wasm_f32x4_add(acc2, acc3));
         sum = wasm_f32x4_extract_lane(acc, 0) + wasm_f32x4_extract_lane(acc, 1) +
               wasm_f32x4_extract_lane(acc, 2) + wasm_f32x4_extract_lane(acc, 3);
+#elif defined(INT8_HNSW_AVX512_SIMD)
+        __m512 acc0 = _mm512_setzero_ps();
+        __m512 acc1 = _mm512_setzero_ps();
+        __m512 acc2 = _mm512_setzero_ps();
+        __m512 acc3 = _mm512_setzero_ps();
+        __m512 v_scale = _mm512_set1_ps(s);
+        __m512 v_offset = _mm512_set1_ps(o);
+
+        for (; d + 64 <= dims_; d += 64) {
+            __m512 ff0 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(
+                _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + d))));
+            __m512 val0 = _mm512_add_ps(v_offset, _mm512_mul_ps(ff0, v_scale));
+            __m512 diff0 = _mm512_sub_ps(_mm512_loadu_ps(query + d), val0);
+            acc0 = _mm512_add_ps(acc0, _mm512_mul_ps(diff0, diff0));
+
+            __m512 ff1 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(
+                _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + d + 16))));
+            __m512 val1 = _mm512_add_ps(v_offset, _mm512_mul_ps(ff1, v_scale));
+            __m512 diff1 = _mm512_sub_ps(_mm512_loadu_ps(query + d + 16), val1);
+            acc1 = _mm512_add_ps(acc1, _mm512_mul_ps(diff1, diff1));
+
+            __m512 ff2 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(
+                _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + d + 32))));
+            __m512 val2 = _mm512_add_ps(v_offset, _mm512_mul_ps(ff2, v_scale));
+            __m512 diff2 = _mm512_sub_ps(_mm512_loadu_ps(query + d + 32), val2);
+            acc2 = _mm512_add_ps(acc2, _mm512_mul_ps(diff2, diff2));
+
+            __m512 ff3 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(
+                _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + d + 48))));
+            __m512 val3 = _mm512_add_ps(v_offset, _mm512_mul_ps(ff3, v_scale));
+            __m512 diff3 = _mm512_sub_ps(_mm512_loadu_ps(query + d + 48), val3);
+            acc3 = _mm512_add_ps(acc3, _mm512_mul_ps(diff3, diff3));
+        }
+
+        __m512 acc = _mm512_add_ps(_mm512_add_ps(acc0, acc1), _mm512_add_ps(acc2, acc3));
+        alignas(64) float tmp[16];
+        _mm512_store_ps(tmp, acc);
+        for (int i = 0; i < 16; ++i) sum += tmp[i];
 #elif defined(INT8_HNSW_AVX2_SIMD)
         __m256 acc0 = _mm256_setzero_ps();
         __m256 acc1 = _mm256_setzero_ps();
