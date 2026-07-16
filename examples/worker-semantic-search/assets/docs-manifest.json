@@ -1,0 +1,42 @@
+{
+  "generatedAt": "2026-07-12T16:36:32.628Z",
+  "dim": 384,
+  "metric": "cosine",
+  "quantized": true,
+  "maxElements": 211,
+  "M": 12,
+  "efConstruction": 150,
+  "efSearch": 120,
+  "chunkCount": 195,
+  "docsCount": 4,
+  "sampleQueries": [
+    "How do Cloudflare Workers restore snapshots from R2?",
+    "Why do I need compact before export after deletes?",
+    "How does filtered search work in Pancake?",
+    "What are the memory tradeoffs for quantized indexes?"
+  ],
+  "corpusKey": "docs-corpus.json",
+  "indexKey": "docs-index.bin",
+  "studentKey": "docs-student.bin",
+  "encoder": {
+    "format": "pancake-distilled-student",
+    "architecture": "hashed word/character n-grams -> mean pool -> tanh -> linear -> L2 normalize",
+    "teacher": "sentence-transformers/all-MiniLM-L6-v2",
+    "teacherRevision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    "modelBytes": 1133600,
+    "modelSha256": "2e0339aa79dacebdeee8709786ab27d9b562577daf432b2af73eebd15a7b435a",
+    "runtimeDependencies": 0,
+    "outboundRequests": 0,
+    "evaluation": {
+      "heldoutQueries": 218,
+      "validationQueries": 105,
+      "meanTeacherCosine": 0.8913005590438843,
+      "p10TeacherCosine": 0.8359848260879517,
+      "teacherTop1Agreement": 0.8486238532110092,
+      "teacherTop3Overlap": 0.7905198776758409,
+      "teacherTop5Overlap": 0.791743119266055,
+      "studentOriginRecallAt5": 0.5857142857142857,
+      "teacherOriginRecallAt5": 0.5523809523809524
+    }
+  }
+}

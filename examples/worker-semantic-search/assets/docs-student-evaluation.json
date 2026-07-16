@@ -1,0 +1,1757 @@
+{
+  "heldoutQueries": 218,
+  "validationQueries": 105,
+  "meanTeacherCosine": 0.8913005590438843,
+  "p10TeacherCosine": 0.8359848260879517,
+  "teacherTop1Agreement": 0.8486238532110092,
+  "teacherTop3Overlap": 0.7905198776758409,
+  "teacherTop5Overlap": 0.791743119266055,
+  "studentOriginRecallAt5": 0.5857142857142857,
+  "teacherOriginRecallAt5": 0.5523809523809524,
+  "queries": [
+    {
+      "text": "tell me about Pancake",
+      "family": "tell",
+      "origin": 0,
+      "teacherTop": 126,
+      "studentTop": 129,
+      "teacherCosine": 0.8037259578704834
+    },
+    {
+      "text": "i need help with Pancake",
+      "family": "help",
+      "origin": 0,
+      "teacherTop": 6,
+      "studentTop": 0,
+      "teacherCosine": 0.7104284763336182
+    },
+    {
+      "text": "tell me about Pancake Install",
+      "family": "tell",
+      "origin": 3,
+      "teacherTop": 15,
+      "studentTop": 129,
+      "teacherCosine": 0.8209356069564819
+    },
+    {
+      "text": "i need help with Pancake Install",
+      "family": "help",
+      "origin": 3,
+      "teacherTop": 169,
+      "studentTop": 0,
+      "teacherCosine": 0.7784987688064575
+    },
+    {
+      "text": "tell me about Pancake Runtime entry points",
+      "family": "tell",
+      "origin": 4,
+      "teacherTop": 30,
+      "studentTop": 30,
+      "teacherCosine": 0.87890625
+    },
+    {
+      "text": "i need help with Pancake Runtime entry points",
+      "family": "help",
+      "origin": 4,
+      "teacherTop": 123,
+      "studentTop": 123,
+      "teacherCosine": 0.8272645473480225
+    },
+    {
+      "text": "tell me about Pancake Quick start",
+      "family": "tell",
+      "origin": 5,
+      "teacherTop": 67,
+      "studentTop": 67,
+      "teacherCosine": 0.8791899085044861
+    },
+    {
+      "text": "i need help with Pancake Quick start",
+      "family": "help",
+      "origin": 5,
+      "teacherTop": 6,
+      "studentTop": 67,
+      "teacherCosine": 0.8207048177719116
+    },
+    {
+      "text": "tell me about Pancake API await Pancake.create(opts)",
+      "family": "tell",
+      "origin": 14,
+      "teacherTop": 126,
+      "studentTop": 15,
+      "teacherCosine": 0.9059734344482422
+    },
+    {
+      "text": "i need help with Pancake API await Pancake.create(opts)",
+      "family": "help",
+      "origin": 14,
+      "teacherTop": 16,
+      "studentTop": 16,
+      "teacherCosine": 0.8902577757835388
+    },
+    {
+      "text": "tell me about Pancake API await Pancake.fromVectors(rows, opts)",
+      "family": "tell",
+      "origin": 17,
+      "teacherTop": 16,
+      "studentTop": 16,
+      "teacherCosine": 0.9100366830825806
+    },
+    {
+      "text": "i need help with Pancake API await Pancake.fromVectors(rows, opts)",
+      "family": "help",
+      "origin": 17,
+      "teacherTop": 16,
+      "studentTop": 16,
+      "teacherCosine": 0.8797805309295654
+    },
+    {
+      "text": "tell me about Pancake API Snapshot restore",
+      "family": "tell",
+      "origin": 18,
+      "teacherTop": 18,
+      "studentTop": 18,
+      "teacherCosine": 0.8918884992599487
+    },
+    {
+      "text": "i need help with Pancake API Snapshot restore",
+      "family": "help",
+      "origin": 18,
+      "teacherTop": 18,
+      "studentTop": 18,
+      "teacherCosine": 0.8438465595245361
+    },
+    {
+      "text": "tell me about Pancake API Methods",
+      "family": "tell",
+      "origin": 19,
+      "teacherTop": 20,
+      "studentTop": 20,
+      "teacherCosine": 0.8854995965957642
+    },
+    {
+      "text": "i need help with Pancake API Methods",
+      "family": "help",
+      "origin": 19,
+      "teacherTop": 20,
+      "studentTop": 20,
+      "teacherCosine": 0.8063791990280151
+    },
+    {
+      "text": "tell me about Pancake API Distance values",
+      "family": "tell",
+      "origin": 22,
+      "teacherTop": 22,
+      "studentTop": 22,
+      "teacherCosine": 0.9014118909835815
+    },
+    {
+      "text": "i need help with Pancake API Distance values",
+      "family": "help",
+      "origin": 22,
+      "teacherTop": 22,
+      "studentTop": 22,
+      "teacherCosine": 0.8470765948295593
+    },
+    {
+      "text": "tell me about Pancake API Node-only file helpers",
+      "family": "tell",
+      "origin": 23,
+      "teacherTop": 23,
+      "studentTop": 23,
+      "teacherCosine": 0.8904285430908203
+    },
+    {
+      "text": "i need help with Pancake API Node-only file helpers",
+      "family": "help",
+      "origin": 23,
+      "teacherTop": 23,
+      "studentTop": 23,
+      "teacherCosine": 0.8777202367782593
+    },
+    {
+      "text": "tell me about Pancake API Properties",
+      "family": "tell",
+      "origin": 24,
+      "teacherTop": 126,
+      "studentTop": 126,
+      "teacherCosine": 0.8942652940750122
+    },
+    {
+      "text": "i need help with Pancake API Properties",
+      "family": "help",
+      "origin": 24,
+      "teacherTop": 126,
+      "studentTop": 126,
+      "teacherCosine": 0.7818266153335571
+    },
+    {
+      "text": "tell me about Pancake API Backend dispatch",
+      "family": "tell",
+      "origin": 25,
+      "teacherTop": 128,
+      "studentTop": 129,
+      "teacherCosine": 0.9000113010406494
+    },
+    {
+      "text": "i need help with Pancake API Backend dispatch",
+      "family": "help",
+      "origin": 25,
+      "teacherTop": 117,
+      "studentTop": 118,
+      "teacherCosine": 0.8465152978897095
+    },
+    {
+      "text": "tell me about Pancake Filtered search",
+      "family": "tell",
+      "origin": 26,
+      "teacherTop": 29,
+      "studentTop": 29,
+      "teacherCosine": 0.9131631255149841
+    },
+    {
+      "text": "i need help with Pancake Filtered search",
+      "family": "help",
+      "origin": 26,
+      "teacherTop": 27,
+      "studentTop": 29,
+      "teacherCosine": 0.8630671501159668
+    },
+    {
+      "text": "tell me about Pancake Performance",
+      "family": "tell",
+      "origin": 30,
+      "teacherTop": 30,
+      "studentTop": 30,
+      "teacherCosine": 0.837334394454956
+    },
+    {
+      "text": "i need help with Pancake Performance",
+      "family": "help",
+      "origin": 30,
+      "teacherTop": 15,
+      "studentTop": 88,
+      "teacherCosine": 0.7818249464035034
+    },
+    {
+      "text": "tell me about Pancake Performance DBpedia-50K: WASM vs native (50k x 1536D, L2)",
+      "family": "tell",
+      "origin": 31,
+      "teacherTop": 33,
+      "studentTop": 33,
+      "teacherCosine": 0.9492671489715576
+    },
+    {
+      "text": "i need help with Pancake Performance DBpedia-50K: WASM vs native (50k x 1536D, L2)",
+      "family": "help",
+      "origin": 31,
+      "teacherTop": 33,
+      "studentTop": 33,
+      "teacherCosine": 0.9241260290145874
+    },
+    {
+      "text": "tell me about Pancake Performance QPS-recall frontier",
+      "family": "tell",
+      "origin": 34,
+      "teacherTop": 35,
+      "studentTop": 34,
+      "teacherCosine": 0.9310551881790161
+    },
+    {
+      "text": "i need help with Pancake Performance QPS-recall frontier",
+      "family": "help",
+      "origin": 34,
+      "teacherTop": 35,
+      "studentTop": 35,
+      "teacherCosine": 0.8913989663124084
+    },
+    {
+      "text": "tell me about Pancake Performance Deletion tolerance",
+      "family": "tell",
+      "origin": 37,
+      "teacherTop": 38,
+      "studentTop": 38,
+      "teacherCosine": 0.8924017548561096
+    },
+    {
+      "text": "i need help with Pancake Performance Deletion tolerance",
+      "family": "help",
+      "origin": 37,
+      "teacherTop": 38,
+      "studentTop": 38,
+      "teacherCosine": 0.8543357849121094
+    },
+    {
+      "text": "tell me about Pancake Performance Reproducing",
+      "family": "tell",
+      "origin": 40,
+      "teacherTop": 40,
+      "studentTop": 40,
+      "teacherCosine": 0.8936797976493835
+    },
+    {
+      "text": "i need help with Pancake Performance Reproducing",
+      "family": "help",
+      "origin": 40,
+      "teacherTop": 40,
+      "studentTop": 40,
+      "teacherCosine": 0.8536862134933472
+    },
+    {
+      "text": "tell me about The Pancake-only WASM vs native comparison:",
+      "family": "tell",
+      "origin": 41,
+      "teacherTop": 41,
+      "studentTop": 41,
+      "teacherCosine": 0.9032639265060425
+    },
+    {
+      "text": "i need help with The Pancake-only WASM vs native comparison:",
+      "family": "help",
+      "origin": 41,
+      "teacherTop": 41,
+      "studentTop": 41,
+      "teacherCosine": 0.8783475160598755
+    },
+    {
+      "text": "tell me about Full comparison including hnswlib, USearch, and Faiss on the same data:",
+      "family": "tell",
+      "origin": 42,
+      "teacherTop": 42,
+      "studentTop": 42,
+      "teacherCosine": 0.9156677722930908
+    },
+    {
+      "text": "i need help with Full comparison including hnswlib, USearch, and Faiss on the same data:",
+      "family": "help",
+      "origin": 42,
+      "teacherTop": 42,
+      "studentTop": 42,
+      "teacherCosine": 0.8622175455093384
+    },
+    {
+      "text": "tell me about QPS-recall frontier (efSearch sweep) behind the plot above:",
+      "family": "tell",
+      "origin": 43,
+      "teacherTop": 66,
+      "studentTop": 66,
+      "teacherCosine": 0.9656172394752502
+    },
+    {
+      "text": "i need help with QPS-recall frontier (efSearch sweep) behind the plot above:",
+      "family": "help",
+      "origin": 43,
+      "teacherTop": 66,
+      "studentTop": 66,
+      "teacherCosine": 0.9448914527893066
+    },
+    {
+      "text": "tell me about QPS-recall frontier (efSearch sweep) behind the plot above: Snapshot-first Worker deployment",
+      "family": "tell",
+      "origin": 44,
+      "teacherTop": 45,
+      "studentTop": 45,
+      "teacherCosine": 0.9609155654907227
+    },
+    {
+      "text": "i need help with QPS-recall frontier (efSearch sweep) behind the plot above: Snapshot-first Worker deployment",
+      "family": "help",
+      "origin": 44,
+      "teacherTop": 45,
+      "studentTop": 45,
+      "teacherCosine": 0.9202109575271606
+    },
+    {
+      "text": "tell me about QPS-recall frontier (efSearch sweep) behind the plot above: When to use Pancake",
+      "family": "tell",
+      "origin": 49,
+      "teacherTop": 66,
+      "studentTop": 66,
+      "teacherCosine": 0.9549940228462219
+    },
+    {
+      "text": "i need help with QPS-recall frontier (efSearch sweep) behind the plot above: When to use Pancake",
+      "family": "help",
+      "origin": 49,
+      "teacherTop": 66,
+      "studentTop": 66,
+      "teacherCosine": 0.9399001598358154
+    },
+    {
+      "text": "tell me about QPS-recall frontier (efSearch sweep) behind the plot above: How it works Quantization",
+      "family": "tell",
+      "origin": 51,
+      "teacherTop": 51,
+      "studentTop": 51,
+      "teacherCosine": 0.9598003029823303
+    },
+    {
+      "text": "i need help with QPS-recall frontier (efSearch sweep) behind the plot above: How it works Quantization",
+      "family": "help",
+      "origin": 51,
+      "teacherTop": 66,
+      "studentTop": 51,
+      "teacherCosine": 0.9395131468772888
+    },
+    {
+      "text": "tell me about QPS-recall frontier (efSearch sweep) behind the plot above: How it works HNSW",
+      "family": "tell",
+      "origin": 52,
+      "teacherTop": 52,
+      "studentTop": 66,
+      "teacherCosine": 0.9735320210456848
+    },
+    {
+      "text": "i need help with QPS-recall frontier (efSearch sweep) behind the plot above: How it works HNSW",
+      "family": "help",
+      "origin": 52,
+      "teacherTop": 66,
+      "studentTop": 66,
+      "teacherCosine": 0.9468080997467041
+    },
+    {
+      "text": "tell me about QPS-recall frontier (efSearch sweep) behind the plot above: How it works Handle-based C ABI",
+      "family": "tell",
+      "origin": 53,
+      "teacherTop": 60,
+      "studentTop": 60,
+      "teacherCosine": 0.9526683688163757
+    },
+    {
+      "text": "i need help with QPS-recall frontier (efSearch sweep) behind the plot above: How it works Handle-based C ABI",
+      "family": "help",
+      "origin": 53,
+      "teacherTop": 66,
+      "studentTop": 66,
+      "teacherCosine": 0.9418193697929382
+    },
+    {
+      "text": "tell me about QPS-recall frontier (efSearch sweep) behind the plot above: Examples",
+      "family": "tell",
+      "origin": 54,
+      "teacherTop": 66,
+      "studentTop": 66,
+      "teacherCosine": 0.9657769203186035
+    },
+    {
+      "text": "i need help with QPS-recall frontier (efSearch sweep) behind the plot above: Examples",
+      "family": "help",
+      "origin": 54,
+      "teacherTop": 66,
+      "studentTop": 66,
+      "teacherCosine": 0.9363417625427246
+    },
+    {
+      "text": "tell me about QPS-recall frontier (efSearch sweep) behind the plot above: Architecture",
+      "family": "tell",
+      "origin": 55,
+      "teacherTop": 66,
+      "studentTop": 66,
+      "teacherCosine": 0.9651648998260498
+    },
+    {
+      "text": "i need help with QPS-recall frontier (efSearch sweep) behind the plot above: Architecture",
+      "family": "help",
+      "origin": 55,
+      "teacherTop": 66,
+      "studentTop": 66,
+      "teacherCosine": 0.9361412525177002
+    },
+    {
+      "text": "tell me about QPS-recall frontier (efSearch sweep) behind the plot above: Compatibility",
+      "family": "tell",
+      "origin": 56,
+      "teacherTop": 66,
+      "studentTop": 66,
+      "teacherCosine": 0.953253984451294
+    },
+    {
+      "text": "i need help with QPS-recall frontier (efSearch sweep) behind the plot above: Compatibility",
+      "family": "help",
+      "origin": 56,
+      "teacherTop": 66,
+      "studentTop": 66,
+      "teacherCosine": 0.9419128894805908
+    },
+    {
+      "text": "tell me about QPS-recall frontier (efSearch sweep) behind the plot above: Tests",
+      "family": "tell",
+      "origin": 57,
+      "teacherTop": 66,
+      "studentTop": 66,
+      "teacherCosine": 0.9597529768943787
+    },
+    {
+      "text": "i need help with QPS-recall frontier (efSearch sweep) behind the plot above: Tests",
+      "family": "help",
+      "origin": 57,
+      "teacherTop": 66,
+      "studentTop": 66,
+      "teacherCosine": 0.9417029023170471
+    },
+    {
+      "text": "tell me about QPS-recall frontier (efSearch sweep) behind the plot above: Building from source",
+      "family": "tell",
+      "origin": 58,
+      "teacherTop": 66,
+      "studentTop": 66,
+      "teacherCosine": 0.9629193544387817
+    },
+    {
+      "text": "i need help with QPS-recall frontier (efSearch sweep) behind the plot above: Building from source",
+      "family": "help",
+      "origin": 58,
+      "teacherTop": 66,
+      "studentTop": 66,
+      "teacherCosine": 0.9252709150314331
+    },
+    {
+      "text": "tell me about QPS-recall frontier (efSearch sweep) behind the plot above: Tradeoffs",
+      "family": "tell",
+      "origin": 59,
+      "teacherTop": 60,
+      "studentTop": 60,
+      "teacherCosine": 0.9471769332885742
+    },
+    {
+      "text": "i need help with QPS-recall frontier (efSearch sweep) behind the plot above: Tradeoffs",
+      "family": "help",
+      "origin": 59,
+      "teacherTop": 66,
+      "studentTop": 66,
+      "teacherCosine": 0.9319218993186951
+    },
+    {
+      "text": "tell me about QPS-recall frontier (efSearch sweep) behind the plot above: License",
+      "family": "tell",
+      "origin": 66,
+      "teacherTop": 66,
+      "studentTop": 66,
+      "teacherCosine": 0.9527937769889832
+    },
+    {
+      "text": "i need help with QPS-recall frontier (efSearch sweep) behind the plot above: License",
+      "family": "help",
+      "origin": 66,
+      "teacherTop": 66,
+      "studentTop": 66,
+      "teacherCosine": 0.9413811564445496
+    },
+    {
+      "text": "tell me about Pancake Quick Start What This Guide Covers",
+      "family": "tell",
+      "origin": 68,
+      "teacherTop": 67,
+      "studentTop": 67,
+      "teacherCosine": 0.9240869879722595
+    },
+    {
+      "text": "i need help with Pancake Quick Start What This Guide Covers",
+      "family": "help",
+      "origin": 68,
+      "teacherTop": 67,
+      "studentTop": 67,
+      "teacherCosine": 0.8894497752189636
+    },
+    {
+      "text": "tell me about Pancake Quick Start Install Repository checkout",
+      "family": "tell",
+      "origin": 69,
+      "teacherTop": 69,
+      "studentTop": 69,
+      "teacherCosine": 0.8929252624511719
+    },
+    {
+      "text": "i need help with Pancake Quick Start Install Repository checkout",
+      "family": "help",
+      "origin": 69,
+      "teacherTop": 6,
+      "studentTop": 69,
+      "teacherCosine": 0.8642076253890991
+    },
+    {
+      "text": "tell me about Pancake Quick Start Pick An Ingest Path",
+      "family": "tell",
+      "origin": 70,
+      "teacherTop": 67,
+      "studentTop": 70,
+      "teacherCosine": 0.8588260412216187
+    },
+    {
+      "text": "i need help with Pancake Quick Start Pick An Ingest Path",
+      "family": "help",
+      "origin": 70,
+      "teacherTop": 70,
+      "studentTop": 70,
+      "teacherCosine": 0.8228205442428589
+    },
+    {
+      "text": "tell me about Pancake Quick Start Local Node.js Workflow Build An Index From In-Memory Vectors",
+      "family": "tell",
+      "origin": 71,
+      "teacherTop": 68,
+      "studentTop": 68,
+      "teacherCosine": 0.9532550573348999
+    },
+    {
+      "text": "i need help with Pancake Quick Start Local Node.js Workflow Build An Index From In-Memory Vectors",
+      "family": "help",
+      "origin": 71,
+      "teacherTop": 71,
+      "studentTop": 68,
+      "teacherCosine": 0.9298651218414307
+    },
+    {
+      "text": "tell me about Pancake Quick Start Local Node.js Workflow Build An Index From JSON Or JSONL",
+      "family": "tell",
+      "origin": 72,
+      "teacherTop": 68,
+      "studentTop": 68,
+      "teacherCosine": 0.9381207227706909
+    },
+    {
+      "text": "i need help with Pancake Quick Start Local Node.js Workflow Build An Index From JSON Or JSONL",
+      "family": "help",
+      "origin": 72,
+      "teacherTop": 68,
+      "studentTop": 68,
+      "teacherCosine": 0.916135311126709
+    },
+    {
+      "text": "tell me about Pancake Quick Start Local Node.js Workflow Export And Restore A Snapshot",
+      "family": "tell",
+      "origin": 73,
+      "teacherTop": 73,
+      "studentTop": 73,
+      "teacherCosine": 0.9392296075820923
+    },
+    {
+      "text": "i need help with Pancake Quick Start Local Node.js Workflow Export And Restore A Snapshot",
+      "family": "help",
+      "origin": 73,
+      "teacherTop": 73,
+      "studentTop": 73,
+      "teacherCosine": 0.9078468084335327
+    },
+    {
+      "text": "tell me about Pancake Quick Start Embedding Your Own Documents",
+      "family": "tell",
+      "origin": 74,
+      "teacherTop": 74,
+      "studentTop": 74,
+      "teacherCosine": 0.8912556767463684
+    },
+    {
+      "text": "i need help with Pancake Quick Start Embedding Your Own Documents",
+      "family": "help",
+      "origin": 74,
+      "teacherTop": 74,
+      "studentTop": 74,
+      "teacherCosine": 0.8891822099685669
+    },
+    {
+      "text": "tell me about Pancake Quick Start Worker Example",
+      "family": "tell",
+      "origin": 75,
+      "teacherTop": 78,
+      "studentTop": 78,
+      "teacherCosine": 0.9181733131408691
+    },
+    {
+      "text": "i need help with Pancake Quick Start Worker Example",
+      "family": "help",
+      "origin": 75,
+      "teacherTop": 78,
+      "studentTop": 78,
+      "teacherCosine": 0.866733193397522
+    },
+    {
+      "text": "tell me about Pancake Quick Start Worker Example Initialize A Small Index Over HTTP",
+      "family": "tell",
+      "origin": 76,
+      "teacherTop": 76,
+      "studentTop": 76,
+      "teacherCosine": 0.9248265027999878
+    },
+    {
+      "text": "i need help with Pancake Quick Start Worker Example Initialize A Small Index Over HTTP",
+      "family": "help",
+      "origin": 76,
+      "teacherTop": 76,
+      "studentTop": 76,
+      "teacherCosine": 0.8957391381263733
+    },
+    {
+      "text": "tell me about Pancake Quick Start Worker Example Worker Import Export Contract",
+      "family": "tell",
+      "origin": 77,
+      "teacherTop": 77,
+      "studentTop": 77,
+      "teacherCosine": 0.9145798683166504
+    },
+    {
+      "text": "i need help with Pancake Quick Start Worker Example Worker Import Export Contract",
+      "family": "help",
+      "origin": 77,
+      "teacherTop": 82,
+      "studentTop": 77,
+      "teacherCosine": 0.8926808834075928
+    },
+    {
+      "text": "tell me about Pancake Quick Start Worker Example Worker Demo Scripts",
+      "family": "tell",
+      "origin": 78,
+      "teacherTop": 78,
+      "studentTop": 78,
+      "teacherCosine": 0.9126580953598022
+    },
+    {
+      "text": "i need help with Pancake Quick Start Worker Example Worker Demo Scripts",
+      "family": "help",
+      "origin": 78,
+      "teacherTop": 78,
+      "studentTop": 78,
+      "teacherCosine": 0.8708913326263428
+    },
+    {
+      "text": "tell me about Pancake Quick Start Sizing And Tuning",
+      "family": "tell",
+      "origin": 79,
+      "teacherTop": 15,
+      "studentTop": 15,
+      "teacherCosine": 0.8638035655021667
+    },
+    {
+      "text": "i need help with Pancake Quick Start Sizing And Tuning",
+      "family": "help",
+      "origin": 79,
+      "teacherTop": 67,
+      "studentTop": 67,
+      "teacherCosine": 0.8312689065933228
+    },
+    {
+      "text": "tell me about Pancake Quick Start Troubleshooting loadJsonFile() rejects my file",
+      "family": "tell",
+      "origin": 80,
+      "teacherTop": 80,
+      "studentTop": 80,
+      "teacherCosine": 0.9352314472198486
+    },
+    {
+      "text": "i need help with Pancake Quick Start Troubleshooting loadJsonFile() rejects my file",
+      "family": "help",
+      "origin": 80,
+      "teacherTop": 80,
+      "studentTop": 80,
+      "teacherCosine": 0.9286919832229614
+    },
+    {
+      "text": "tell me about Pancake Quick Start Troubleshooting I already have vectors in another format",
+      "family": "tell",
+      "origin": 81,
+      "teacherTop": 81,
+      "studentTop": 81,
+      "teacherCosine": 0.9132662415504456
+    },
+    {
+      "text": "i need help with Pancake Quick Start Troubleshooting I already have vectors in another format",
+      "family": "help",
+      "origin": 81,
+      "teacherTop": 81,
+      "studentTop": 81,
+      "teacherCosine": 0.8917460441589355
+    },
+    {
+      "text": "tell me about Pancake Quick Start Troubleshooting Worker import does not accept my local snapshot",
+      "family": "tell",
+      "origin": 82,
+      "teacherTop": 82,
+      "studentTop": 82,
+      "teacherCosine": 0.9540723562240601
+    },
+    {
+      "text": "i need help with Pancake Quick Start Troubleshooting Worker import does not accept my local snapshot",
+      "family": "help",
+      "origin": 82,
+      "teacherTop": 82,
+      "studentTop": 82,
+      "teacherCosine": 0.9545837044715881
+    },
+    {
+      "text": "tell me about Pancake Quick Start Next Steps",
+      "family": "tell",
+      "origin": 83,
+      "teacherTop": 67,
+      "studentTop": 67,
+      "teacherCosine": 0.8781805634498596
+    },
+    {
+      "text": "i need help with Pancake Quick Start Next Steps",
+      "family": "help",
+      "origin": 83,
+      "teacherTop": 6,
+      "studentTop": 67,
+      "teacherCosine": 0.813019335269928
+    },
+    {
+      "text": "tell me about Pancake — System Design",
+      "family": "tell",
+      "origin": 84,
+      "teacherTop": 90,
+      "studentTop": 90,
+      "teacherCosine": 0.9120279550552368
+    },
+    {
+      "text": "i need help with Pancake — System Design",
+      "family": "help",
+      "origin": 84,
+      "teacherTop": 90,
+      "studentTop": 90,
+      "teacherCosine": 0.8240339756011963
+    },
+    {
+      "text": "tell me about Pancake — System Design Table of Contents",
+      "family": "tell",
+      "origin": 85,
+      "teacherTop": 90,
+      "studentTop": 90,
+      "teacherCosine": 0.9038499593734741
+    },
+    {
+      "text": "i need help with Pancake — System Design Table of Contents",
+      "family": "help",
+      "origin": 85,
+      "teacherTop": 90,
+      "studentTop": 90,
+      "teacherCosine": 0.832835853099823
+    },
+    {
+      "text": "tell me about Pancake — System Design Overview",
+      "family": "tell",
+      "origin": 86,
+      "teacherTop": 90,
+      "studentTop": 90,
+      "teacherCosine": 0.9037661552429199
+    },
+    {
+      "text": "i need help with Pancake — System Design Overview",
+      "family": "help",
+      "origin": 86,
+      "teacherTop": 90,
+      "studentTop": 90,
+      "teacherCosine": 0.8675130605697632
+    },
+    {
+      "text": "tell me about Pancake — System Design Layered Architecture",
+      "family": "tell",
+      "origin": 89,
+      "teacherTop": 90,
+      "studentTop": 90,
+      "teacherCosine": 0.9411197304725647
+    },
+    {
+      "text": "i need help with Pancake — System Design Layered Architecture",
+      "family": "help",
+      "origin": 89,
+      "teacherTop": 90,
+      "studentTop": 90,
+      "teacherCosine": 0.9113937616348267
+    },
+    {
+      "text": "tell me about Pancake — System Design The Two HNSW Backends",
+      "family": "tell",
+      "origin": 94,
+      "teacherTop": 98,
+      "studentTop": 98,
+      "teacherCosine": 0.9355250000953674
+    },
+    {
+      "text": "i need help with Pancake — System Design The Two HNSW Backends",
+      "family": "help",
+      "origin": 94,
+      "teacherTop": 98,
+      "studentTop": 98,
+      "teacherCosine": 0.8960409164428711
+    },
+    {
+      "text": "tell me about Pancake — System Design The Two HNSW Backends 3.1 Graph parameters",
+      "family": "tell",
+      "origin": 95,
+      "teacherTop": 94,
+      "studentTop": 94,
+      "teacherCosine": 0.9374385476112366
+    },
+    {
+      "text": "i need help with Pancake — System Design The Two HNSW Backends 3.1 Graph parameters",
+      "family": "help",
+      "origin": 95,
+      "teacherTop": 94,
+      "studentTop": 94,
+      "teacherCosine": 0.8843690156936646
+    },
+    {
+      "text": "tell me about Pancake — System Design The Two HNSW Backends 3.2 Level assignment",
+      "family": "tell",
+      "origin": 96,
+      "teacherTop": 98,
+      "studentTop": 98,
+      "teacherCosine": 0.9333521127700806
+    },
+    {
+      "text": "i need help with Pancake — System Design The Two HNSW Backends 3.2 Level assignment",
+      "family": "help",
+      "origin": 96,
+      "teacherTop": 98,
+      "studentTop": 98,
+      "teacherCosine": 0.9037971496582031
+    },
+    {
+      "text": "tell me about Pancake — System Design The Two HNSW Backends 3.3 Insert",
+      "family": "tell",
+      "origin": 97,
+      "teacherTop": 98,
+      "studentTop": 98,
+      "teacherCosine": 0.9336176514625549
+    },
+    {
+      "text": "i need help with Pancake — System Design The Two HNSW Backends 3.3 Insert",
+      "family": "help",
+      "origin": 97,
+      "teacherTop": 98,
+      "studentTop": 98,
+      "teacherCosine": 0.8903576731681824
+    },
+    {
+      "text": "tell me about Pancake — System Design The Two HNSW Backends 3.4 Neighbor-selection heuristic",
+      "family": "tell",
+      "origin": 99,
+      "teacherTop": 100,
+      "studentTop": 100,
+      "teacherCosine": 0.9481555819511414
+    },
+    {
+      "text": "i need help with Pancake — System Design The Two HNSW Backends 3.4 Neighbor-selection heuristic",
+      "family": "help",
+      "origin": 99,
+      "teacherTop": 100,
+      "studentTop": 100,
+      "teacherCosine": 0.9219138026237488
+    },
+    {
+      "text": "tell me about Pancake — System Design The Two HNSW Backends 3.5 Delete and compaction",
+      "family": "tell",
+      "origin": 102,
+      "teacherTop": 103,
+      "studentTop": 103,
+      "teacherCosine": 0.9432567358016968
+    },
+    {
+      "text": "i need help with Pancake — System Design The Two HNSW Backends 3.5 Delete and compaction",
+      "family": "help",
+      "origin": 102,
+      "teacherTop": 103,
+      "studentTop": 103,
+      "teacherCosine": 0.9138408899307251
+    },
+    {
+      "text": "tell me about Pancake — System Design The Two HNSW Backends 3.6 Filtered search",
+      "family": "tell",
+      "origin": 105,
+      "teacherTop": 106,
+      "studentTop": 106,
+      "teacherCosine": 0.9484180212020874
+    },
+    {
+      "text": "i need help with Pancake — System Design The Two HNSW Backends 3.6 Filtered search",
+      "family": "help",
+      "origin": 105,
+      "teacherTop": 106,
+      "studentTop": 106,
+      "teacherCosine": 0.9076082110404968
+    },
+    {
+      "text": "tell me about Pancake — System Design The Two HNSW Backends 3.7 The visited-set generation trick",
+      "family": "tell",
+      "origin": 107,
+      "teacherTop": 98,
+      "studentTop": 98,
+      "teacherCosine": 0.9372244477272034
+    },
+    {
+      "text": "i need help with Pancake — System Design The Two HNSW Backends 3.7 The visited-set generation trick",
+      "family": "help",
+      "origin": 107,
+      "teacherTop": 98,
+      "studentTop": 98,
+      "teacherCosine": 0.901037335395813
+    },
+    {
+      "text": "tell me about Pancake — System Design Quantization and Asymmetric Distance 4.1 Row-wise affine quantization (int8 backend)",
+      "family": "tell",
+      "origin": 108,
+      "teacherTop": 108,
+      "studentTop": 108,
+      "teacherCosine": 0.9442183971405029
+    },
+    {
+      "text": "i need help with Pancake — System Design Quantization and Asymmetric Distance 4.1 Row-wise affine quantization (int8 backend)",
+      "family": "help",
+      "origin": 108,
+      "teacherTop": 108,
+      "studentTop": 108,
+      "teacherCosine": 0.9196218252182007
+    },
+    {
+      "text": "tell me about Pancake — System Design Quantization and Asymmetric Distance 4.2 Asymmetric search distance",
+      "family": "tell",
+      "origin": 109,
+      "teacherTop": 109,
+      "studentTop": 109,
+      "teacherCosine": 0.9415606260299683
+    },
+    {
+      "text": "i need help with Pancake — System Design Quantization and Asymmetric Distance 4.2 Asymmetric search distance",
+      "family": "help",
+      "origin": 109,
+      "teacherTop": 109,
+      "studentTop": 109,
+      "teacherCosine": 0.9191337823867798
+    },
+    {
+      "text": "tell me about Pancake — System Design Quantization and Asymmetric Distance 4.3 Closed-form symmetric distance",
+      "family": "tell",
+      "origin": 110,
+      "teacherTop": 108,
+      "studentTop": 108,
+      "teacherCosine": 0.9381039142608643
+    },
+    {
+      "text": "i need help with Pancake — System Design Quantization and Asymmetric Distance 4.3 Closed-form symmetric distance",
+      "family": "help",
+      "origin": 110,
+      "teacherTop": 108,
+      "studentTop": 108,
+      "teacherCosine": 0.9153339862823486
+    },
+    {
+      "text": "tell me about Pancake — System Design SIMD and Distance Kernels",
+      "family": "tell",
+      "origin": 111,
+      "teacherTop": 112,
+      "studentTop": 112,
+      "teacherCosine": 0.9262216687202454
+    },
+    {
+      "text": "i need help with Pancake — System Design SIMD and Distance Kernels",
+      "family": "help",
+      "origin": 111,
+      "teacherTop": 112,
+      "studentTop": 112,
+      "teacherCosine": 0.8891301155090332
+    },
+    {
+      "text": "tell me about Pancake — System Design The C ABI and Handle Table",
+      "family": "tell",
+      "origin": 114,
+      "teacherTop": 118,
+      "studentTop": 118,
+      "teacherCosine": 0.9387893676757812
+    },
+    {
+      "text": "i need help with Pancake — System Design The C ABI and Handle Table",
+      "family": "help",
+      "origin": 114,
+      "teacherTop": 118,
+      "studentTop": 118,
+      "teacherCosine": 0.8952240943908691
+    },
+    {
+      "text": "tell me about Pancake — System Design The C ABI and Handle Table 6.1 Handle table",
+      "family": "tell",
+      "origin": 115,
+      "teacherTop": 118,
+      "studentTop": 118,
+      "teacherCosine": 0.9425578713417053
+    },
+    {
+      "text": "i need help with Pancake — System Design The C ABI and Handle Table 6.1 Handle table",
+      "family": "help",
+      "origin": 115,
+      "teacherTop": 118,
+      "studentTop": 118,
+      "teacherCosine": 0.913974404335022
+    },
+    {
+      "text": "tell me about Pancake — System Design The C ABI and Handle Table 6.2 Backend dispatch",
+      "family": "tell",
+      "origin": 116,
+      "teacherTop": 118,
+      "studentTop": 118,
+      "teacherCosine": 0.9570132493972778
+    },
+    {
+      "text": "i need help with Pancake — System Design The C ABI and Handle Table 6.2 Backend dispatch",
+      "family": "help",
+      "origin": 116,
+      "teacherTop": 118,
+      "studentTop": 118,
+      "teacherCosine": 0.931599497795105
+    },
+    {
+      "text": "tell me about Pancake — System Design The C ABI and Handle Table 6.3 Result marshalling",
+      "family": "tell",
+      "origin": 119,
+      "teacherTop": 118,
+      "studentTop": 118,
+      "teacherCosine": 0.9314733743667603
+    },
+    {
+      "text": "i need help with Pancake — System Design The C ABI and Handle Table 6.3 Result marshalling",
+      "family": "help",
+      "origin": 119,
+      "teacherTop": 118,
+      "studentTop": 118,
+      "teacherCosine": 0.8945194482803345
+    },
+    {
+      "text": "tell me about Pancake — System Design The C ABI and Handle Table 6.4 Export buffer ownership",
+      "family": "tell",
+      "origin": 120,
+      "teacherTop": 118,
+      "studentTop": 118,
+      "teacherCosine": 0.9327070713043213
+    },
+    {
+      "text": "i need help with Pancake — System Design The C ABI and Handle Table 6.4 Export buffer ownership",
+      "family": "help",
+      "origin": 120,
+      "teacherTop": 118,
+      "studentTop": 118,
+      "teacherCosine": 0.9015300273895264
+    },
+    {
+      "text": "tell me about Pancake — System Design The C ABI and Handle Table 6.5 Utilities and lifecycle",
+      "family": "tell",
+      "origin": 121,
+      "teacherTop": 118,
+      "studentTop": 118,
+      "teacherCosine": 0.9444648027420044
+    },
+    {
+      "text": "i need help with Pancake — System Design The C ABI and Handle Table 6.5 Utilities and lifecycle",
+      "family": "help",
+      "origin": 121,
+      "teacherTop": 118,
+      "studentTop": 118,
+      "teacherCosine": 0.9235910177230835
+    },
+    {
+      "text": "tell me about Pancake — System Design The JavaScript Wrapper 7.1 Entry points and engine loading",
+      "family": "tell",
+      "origin": 122,
+      "teacherTop": 123,
+      "studentTop": 123,
+      "teacherCosine": 0.9503624439239502
+    },
+    {
+      "text": "i need help with Pancake — System Design The JavaScript Wrapper 7.1 Entry points and engine loading",
+      "family": "help",
+      "origin": 122,
+      "teacherTop": 123,
+      "studentTop": 123,
+      "teacherCosine": 0.8961151838302612
+    },
+    {
+      "text": "tell me about Pancake — System Design The JavaScript Wrapper 7.2 PancakeIndex API",
+      "family": "tell",
+      "origin": 125,
+      "teacherTop": 126,
+      "studentTop": 126,
+      "teacherCosine": 0.9423069953918457
+    },
+    {
+      "text": "i need help with Pancake — System Design The JavaScript Wrapper 7.2 PancakeIndex API",
+      "family": "help",
+      "origin": 125,
+      "teacherTop": 126,
+      "studentTop": 126,
+      "teacherCosine": 0.9184544682502747
+    },
+    {
+      "text": "tell me about Pancake — System Design The JavaScript Wrapper 7.3 Buffer management",
+      "family": "tell",
+      "origin": 130,
+      "teacherTop": 123,
+      "studentTop": 123,
+      "teacherCosine": 0.939126193523407
+    },
+    {
+      "text": "i need help with Pancake — System Design The JavaScript Wrapper 7.3 Buffer management",
+      "family": "help",
+      "origin": 130,
+      "teacherTop": 123,
+      "studentTop": 123,
+      "teacherCosine": 0.8903266191482544
+    },
+    {
+      "text": "tell me about Pancake — System Design ID Translation and Compaction",
+      "family": "tell",
+      "origin": 131,
+      "teacherTop": 171,
+      "studentTop": 171,
+      "teacherCosine": 0.9261612892150879
+    },
+    {
+      "text": "i need help with Pancake — System Design ID Translation and Compaction",
+      "family": "help",
+      "origin": 131,
+      "teacherTop": 90,
+      "studentTop": 171,
+      "teacherCosine": 0.8776929974555969
+    },
+    {
+      "text": "tell me about Pancake — System Design Serialization Formats",
+      "family": "tell",
+      "origin": 134,
+      "teacherTop": 142,
+      "studentTop": 142,
+      "teacherCosine": 0.9321954250335693
+    },
+    {
+      "text": "i need help with Pancake — System Design Serialization Formats",
+      "family": "help",
+      "origin": 134,
+      "teacherTop": 142,
+      "studentTop": 142,
+      "teacherCosine": 0.9044021368026733
+    },
+    {
+      "text": "tell me about Pancake — System Design Serialization Formats 9.1 Backend blobs",
+      "family": "tell",
+      "origin": 135,
+      "teacherTop": 142,
+      "studentTop": 142,
+      "teacherCosine": 0.9496738910675049
+    },
+    {
+      "text": "i need help with Pancake — System Design Serialization Formats 9.1 Backend blobs",
+      "family": "help",
+      "origin": 135,
+      "teacherTop": 136,
+      "studentTop": 136,
+      "teacherCosine": 0.9127194285392761
+    },
+    {
+      "text": "tell me about Pancake — System Design Serialization Formats 9.2 Statistics reconstruction (int8)",
+      "family": "tell",
+      "origin": 138,
+      "teacherTop": 138,
+      "studentTop": 138,
+      "teacherCosine": 0.9212111234664917
+    },
+    {
+      "text": "i need help with Pancake — System Design Serialization Formats 9.2 Statistics reconstruction (int8)",
+      "family": "help",
+      "origin": 138,
+      "teacherTop": 138,
+      "studentTop": 138,
+      "teacherCosine": 0.8927541971206665
+    },
+    {
+      "text": "tell me about Pancake — System Design Serialization Formats 9.3 JS export envelope (v3)",
+      "family": "tell",
+      "origin": 139,
+      "teacherTop": 140,
+      "studentTop": 140,
+      "teacherCosine": 0.9451704025268555
+    },
+    {
+      "text": "i need help with Pancake — System Design Serialization Formats 9.3 JS export envelope (v3)",
+      "family": "help",
+      "origin": 139,
+      "teacherTop": 140,
+      "studentTop": 140,
+      "teacherCosine": 0.9051212072372437
+    },
+    {
+      "text": "tell me about Pancake — System Design Serialization Formats 9.4 Untrusted-snapshot hardening (backend deserialize)",
+      "family": "tell",
+      "origin": 141,
+      "teacherTop": 142,
+      "studentTop": 142,
+      "teacherCosine": 0.9546838402748108
+    },
+    {
+      "text": "i need help with Pancake — System Design Serialization Formats 9.4 Untrusted-snapshot hardening (backend deserialize)",
+      "family": "help",
+      "origin": 141,
+      "teacherTop": 142,
+      "studentTop": 142,
+      "teacherCosine": 0.9255249500274658
+    },
+    {
+      "text": "tell me about Pancake — System Design Build Pipeline (WASM and Native) 10.1 WASM ( build.sh )",
+      "family": "tell",
+      "origin": 146,
+      "teacherTop": 149,
+      "studentTop": 147,
+      "teacherCosine": 0.9460979104042053
+    },
+    {
+      "text": "i need help with Pancake — System Design Build Pipeline (WASM and Native) 10.1 WASM ( build.sh )",
+      "family": "help",
+      "origin": 146,
+      "teacherTop": 147,
+      "studentTop": 147,
+      "teacherCosine": 0.9200854301452637
+    },
+    {
+      "text": "tell me about Pancake — System Design Build Pipeline (WASM and Native) 10.2 Native ( native binding.gyp )",
+      "family": "tell",
+      "origin": 151,
+      "teacherTop": 149,
+      "studentTop": 150,
+      "teacherCosine": 0.9281582832336426
+    },
+    {
+      "text": "i need help with Pancake — System Design Build Pipeline (WASM and Native) 10.2 Native ( native binding.gyp )",
+      "family": "help",
+      "origin": 151,
+      "teacherTop": 151,
+      "studentTop": 151,
+      "teacherCosine": 0.8821930885314941
+    },
+    {
+      "text": "tell me about Pancake — System Design Build Pipeline (WASM and Native) 10.3 Native vs WASM divergence",
+      "family": "tell",
+      "origin": 152,
+      "teacherTop": 152,
+      "studentTop": 152,
+      "teacherCosine": 0.9361734390258789
+    },
+    {
+      "text": "i need help with Pancake — System Design Build Pipeline (WASM and Native) 10.3 Native vs WASM divergence",
+      "family": "help",
+      "origin": 152,
+      "teacherTop": 147,
+      "studentTop": 152,
+      "teacherCosine": 0.9114841222763062
+    },
+    {
+      "text": "tell me about Pancake — System Design Cloudflare Worker Deployment",
+      "family": "tell",
+      "origin": 153,
+      "teacherTop": 156,
+      "studentTop": 156,
+      "teacherCosine": 0.9547786712646484
+    },
+    {
+      "text": "i need help with Pancake — System Design Cloudflare Worker Deployment",
+      "family": "help",
+      "origin": 153,
+      "teacherTop": 156,
+      "studentTop": 156,
+      "teacherCosine": 0.9223944544792175
+    },
+    {
+      "text": "tell me about Pancake — System Design Cloudflare Worker Deployment 11.1 Request lifecycle",
+      "family": "tell",
+      "origin": 154,
+      "teacherTop": 156,
+      "studentTop": 156,
+      "teacherCosine": 0.9438116550445557
+    },
+    {
+      "text": "i need help with Pancake — System Design Cloudflare Worker Deployment 11.1 Request lifecycle",
+      "family": "help",
+      "origin": 154,
+      "teacherTop": 156,
+      "studentTop": 156,
+      "teacherCosine": 0.9186680316925049
+    },
+    {
+      "text": "tell me about Pancake — System Design Cloudflare Worker Deployment 11.2 Endpoints",
+      "family": "tell",
+      "origin": 155,
+      "teacherTop": 156,
+      "studentTop": 156,
+      "teacherCosine": 0.9516674280166626
+    },
+    {
+      "text": "i need help with Pancake — System Design Cloudflare Worker Deployment 11.2 Endpoints",
+      "family": "help",
+      "origin": 155,
+      "teacherTop": 156,
+      "studentTop": 156,
+      "teacherCosine": 0.9240958094596863
+    },
+    {
+      "text": "tell me about Pancake — System Design Cloudflare Worker Deployment 11.3 R2 persistence",
+      "family": "tell",
+      "origin": 160,
+      "teacherTop": 161,
+      "studentTop": 161,
+      "teacherCosine": 0.9346376061439514
+    },
+    {
+      "text": "i need help with Pancake — System Design Cloudflare Worker Deployment 11.3 R2 persistence",
+      "family": "help",
+      "origin": 160,
+      "teacherTop": 161,
+      "studentTop": 161,
+      "teacherCosine": 0.9030429124832153
+    },
+    {
+      "text": "tell me about Pancake — System Design Cloudflare Worker Deployment 11.4 READ ONLY mode",
+      "family": "tell",
+      "origin": 163,
+      "teacherTop": 163,
+      "studentTop": 163,
+      "teacherCosine": 0.9163245558738708
+    },
+    {
+      "text": "i need help with Pancake — System Design Cloudflare Worker Deployment 11.4 READ ONLY mode",
+      "family": "help",
+      "origin": 163,
+      "teacherTop": 163,
+      "studentTop": 163,
+      "teacherCosine": 0.872586727142334
+    },
+    {
+      "text": "tell me about Pancake — System Design Cloudflare Worker Deployment 11.5 ID mapping",
+      "family": "tell",
+      "origin": 164,
+      "teacherTop": 164,
+      "studentTop": 164,
+      "teacherCosine": 0.9283462762832642
+    },
+    {
+      "text": "i need help with Pancake — System Design Cloudflare Worker Deployment 11.5 ID mapping",
+      "family": "help",
+      "origin": 164,
+      "teacherTop": 164,
+      "studentTop": 164,
+      "teacherCosine": 0.8942481875419617
+    },
+    {
+      "text": "tell me about Pancake — System Design Cloudflare Worker Deployment 11.6 Semantic-search demo differences",
+      "family": "tell",
+      "origin": 165,
+      "teacherTop": 165,
+      "studentTop": 165,
+      "teacherCosine": 0.9432166814804077
+    },
+    {
+      "text": "i need help with Pancake — System Design Cloudflare Worker Deployment 11.6 Semantic-search demo differences",
+      "family": "help",
+      "origin": 165,
+      "teacherTop": 165,
+      "studentTop": 165,
+      "teacherCosine": 0.9160159826278687
+    },
+    {
+      "text": "tell me about Pancake — System Design Configuration Reference 12.1 Pancake.create(opts) — JS defaults (the effective ones)",
+      "family": "tell",
+      "origin": 166,
+      "teacherTop": 126,
+      "studentTop": 126,
+      "teacherCosine": 0.9320187568664551
+    },
+    {
+      "text": "i need help with Pancake — System Design Configuration Reference 12.1 Pancake.create(opts) — JS defaults (the effective ones)",
+      "family": "help",
+      "origin": 166,
+      "teacherTop": 126,
+      "studentTop": 126,
+      "teacherCosine": 0.906140148639679
+    },
+    {
+      "text": "tell me about Pancake — System Design Configuration Reference 12.2 C ABI fallback defaults (direct-ABI callers only)",
+      "family": "tell",
+      "origin": 167,
+      "teacherTop": 167,
+      "studentTop": 167,
+      "teacherCosine": 0.9350159168243408
+    },
+    {
+      "text": "i need help with Pancake — System Design Configuration Reference 12.2 C ABI fallback defaults (direct-ABI callers only)",
+      "family": "help",
+      "origin": 167,
+      "teacherTop": 167,
+      "studentTop": 167,
+      "teacherCosine": 0.9130086898803711
+    },
+    {
+      "text": "tell me about Pancake — System Design Configuration Reference 12.3 Worker limits and env",
+      "family": "tell",
+      "origin": 168,
+      "teacherTop": 168,
+      "studentTop": 168,
+      "teacherCosine": 0.9202219843864441
+    },
+    {
+      "text": "i need help with Pancake — System Design Configuration Reference 12.3 Worker limits and env",
+      "family": "help",
+      "origin": 168,
+      "teacherTop": 168,
+      "studentTop": 168,
+      "teacherCosine": 0.8958492279052734
+    },
+    {
+      "text": "tell me about Pancake — System Design Configuration Reference 12.4 Build constants",
+      "family": "tell",
+      "origin": 169,
+      "teacherTop": 169,
+      "studentTop": 169,
+      "teacherCosine": 0.92452073097229
+    },
+    {
+      "text": "i need help with Pancake — System Design Configuration Reference 12.4 Build constants",
+      "family": "help",
+      "origin": 169,
+      "teacherTop": 169,
+      "studentTop": 169,
+      "teacherCosine": 0.8947073221206665
+    },
+    {
+      "text": "tell me about Pancake — System Design Invariants",
+      "family": "tell",
+      "origin": 170,
+      "teacherTop": 90,
+      "studentTop": 90,
+      "teacherCosine": 0.912714958190918
+    },
+    {
+      "text": "i need help with Pancake — System Design Invariants",
+      "family": "help",
+      "origin": 170,
+      "teacherTop": 90,
+      "studentTop": 90,
+      "teacherCosine": 0.8819262385368347
+    },
+    {
+      "text": "tell me about Pancake — System Design Limitations and Non-Goals",
+      "family": "tell",
+      "origin": 173,
+      "teacherTop": 90,
+      "studentTop": 90,
+      "teacherCosine": 0.9143344759941101
+    },
+    {
+      "text": "i need help with Pancake — System Design Limitations and Non-Goals",
+      "family": "help",
+      "origin": 173,
+      "teacherTop": 90,
+      "studentTop": 90,
+      "teacherCosine": 0.8777855634689331
+    },
+    {
+      "text": "tell me about Pancake — System Design Appendix A: WASM Export Inventory",
+      "family": "tell",
+      "origin": 176,
+      "teacherTop": 177,
+      "studentTop": 177,
+      "teacherCosine": 0.9281455278396606
+    },
+    {
+      "text": "i need help with Pancake — System Design Appendix A: WASM Export Inventory",
+      "family": "help",
+      "origin": 176,
+      "teacherTop": 177,
+      "studentTop": 177,
+      "teacherCosine": 0.8983974456787109
+    },
+    {
+      "text": "tell me about Pancake — System Design Appendix B: Serialization Byte Layouts FloatHNSW blob — magic 0x464C4831 (\"FLH1\"), version 1",
+      "family": "tell",
+      "origin": 179,
+      "teacherTop": 179,
+      "studentTop": 179,
+      "teacherCosine": 0.9404460191726685
+    },
+    {
+      "text": "i need help with Pancake — System Design Appendix B: Serialization Byte Layouts FloatHNSW blob — magic 0x464C4831 (\"FLH1\"), version 1",
+      "family": "help",
+      "origin": 179,
+      "teacherTop": 179,
+      "studentTop": 179,
+      "teacherCosine": 0.9033360481262207
+    },
+    {
+      "text": "tell me about Pancake — System Design Appendix B: Serialization Byte Layouts Int8FloatHNSW blob — magic 0x49384831 (\"I8H1\"), version 2",
+      "family": "tell",
+      "origin": 180,
+      "teacherTop": 180,
+      "studentTop": 180,
+      "teacherCosine": 0.9406418204307556
+    },
+    {
+      "text": "i need help with Pancake — System Design Appendix B: Serialization Byte Layouts Int8FloatHNSW blob — magic 0x49384831 (\"I8H1\"), version 2",
+      "family": "help",
+      "origin": 180,
+      "teacherTop": 180,
+      "studentTop": 180,
+      "teacherCosine": 0.8954201340675354
+    },
+    {
+      "text": "tell me about Pancake — System Design Appendix B: Serialization Byte Layouts JS export envelope (v3) — magic 0x504E434B (\"PNCK\")",
+      "family": "tell",
+      "origin": 181,
+      "teacherTop": 181,
+      "studentTop": 181,
+      "teacherCosine": 0.9345426559448242
+    },
+    {
+      "text": "i need help with Pancake — System Design Appendix B: Serialization Byte Layouts JS export envelope (v3) — magic 0x504E434B (\"PNCK\")",
+      "family": "help",
+      "origin": 181,
+      "teacherTop": 181,
+      "studentTop": 181,
+      "teacherCosine": 0.8939868211746216
+    },
+    {
+      "text": "tell me about Pancake Worker Reference Architecture",
+      "family": "tell",
+      "origin": 182,
+      "teacherTop": 191,
+      "studentTop": 183,
+      "teacherCosine": 0.9206441640853882
+    },
+    {
+      "text": "i need help with Pancake Worker Reference Architecture",
+      "family": "help",
+      "origin": 182,
+      "teacherTop": 191,
+      "studentTop": 193,
+      "teacherCosine": 0.8911679983139038
+    },
+    {
+      "text": "tell me about Pancake Worker Reference Architecture Recommended deployment shape",
+      "family": "tell",
+      "origin": 185,
+      "teacherTop": 185,
+      "studentTop": 185,
+      "teacherCosine": 0.9181898236274719
+    },
+    {
+      "text": "i need help with Pancake Worker Reference Architecture Recommended deployment shape",
+      "family": "help",
+      "origin": 185,
+      "teacherTop": 185,
+      "studentTop": 185,
+      "teacherCosine": 0.9182528257369995
+    },
+    {
+      "text": "tell me about Pancake Worker Reference Architecture Endpoints",
+      "family": "tell",
+      "origin": 186,
+      "teacherTop": 191,
+      "studentTop": 183,
+      "teacherCosine": 0.9357537627220154
+    },
+    {
+      "text": "i need help with Pancake Worker Reference Architecture Endpoints",
+      "family": "help",
+      "origin": 186,
+      "teacherTop": 187,
+      "studentTop": 193,
+      "teacherCosine": 0.9258191585540771
+    },
+    {
+      "text": "tell me about Pancake Worker Reference Architecture Deploying",
+      "family": "tell",
+      "origin": 189,
+      "teacherTop": 193,
+      "studentTop": 193,
+      "teacherCosine": 0.9404085874557495
+    },
+    {
+      "text": "i need help with Pancake Worker Reference Architecture Deploying",
+      "family": "help",
+      "origin": 189,
+      "teacherTop": 193,
+      "studentTop": 193,
+      "teacherCosine": 0.9065504670143127
+    },
+    {
+      "text": "tell me about Pancake Worker Reference Architecture Deployment notes",
+      "family": "tell",
+      "origin": 190,
+      "teacherTop": 191,
+      "studentTop": 193,
+      "teacherCosine": 0.9422762393951416
+    },
+    {
+      "text": "i need help with Pancake Worker Reference Architecture Deployment notes",
+      "family": "help",
+      "origin": 190,
+      "teacherTop": 191,
+      "studentTop": 193,
+      "teacherCosine": 0.9198530912399292
+    },
+    {
+      "text": "How does an edge isolate recover a saved vector index?",
+      "family": "curated",
+      "origin": null,
+      "teacherTop": 173,
+      "studentTop": 173,
+      "teacherCosine": 0.575104832649231
+    },
+    {
+      "text": "Can I reclaim space after removing lots of records?",
+      "family": "curated",
+      "origin": null,
+      "teacherTop": 24,
+      "studentTop": 104,
+      "teacherCosine": 0.22572195529937744
+    },
+    {
+      "text": "How can searches be restricted to one tenant?",
+      "family": "curated",
+      "origin": null,
+      "teacherTop": 26,
+      "studentTop": 28,
+      "teacherCosine": 0.5026271343231201
+    },
+    {
+      "text": "What is the RAM cost of storing vectors as eight bit values?",
+      "family": "curated",
+      "origin": null,
+      "teacherTop": 108,
+      "studentTop": 51,
+      "teacherCosine": 0.45472973585128784
+    },
+    {
+      "text": "Can a snapshot be opened without repeating its construction settings?",
+      "family": "curated",
+      "origin": null,
+      "teacherTop": 18,
+      "studentTop": 18,
+      "teacherCosine": 0.4195029139518738
+    },
+    {
+      "text": "Does every index share the same WebAssembly memory?",
+      "family": "curated",
+      "origin": null,
+      "teacherTop": 173,
+      "studentTop": 139,
+      "teacherCosine": 0.5828887224197388
+    },
+    {
+      "text": "What happens when several requests arrive during a cold start?",
+      "family": "curated",
+      "origin": null,
+      "teacherTop": 154,
+      "studentTop": 84,
+      "teacherCosine": 0.1873169094324112
+    },
+    {
+      "text": "How do I change search accuracy for only one request?",
+      "family": "curated",
+      "origin": null,
+      "teacherTop": 28,
+      "studentTop": 28,
+      "teacherCosine": 0.47133564949035645
+    }
+  ]
+}

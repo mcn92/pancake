@@ -4,11 +4,14 @@ compatibility_date = "2025-04-09"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
+READ_ONLY = "1"
 # API_KEY = "replace-me-with-a-secret"      # Recommended for /readiness and /reset_cache
 # ALLOWED_ORIGIN = "https://yourdomain.com" # Unset => no cross-origin browser access
 # MAX_JSON_BYTES = "262144"                 # Optional JSON body cap override (default: 256 KiB)
+# MAX_STUDENT_BYTES = "4194304"              # Optional distilled-model cap (default: 4 MiB)
 # ALLOW_INSECURE_ADMIN = "1"                # Local/demo opt-in only
 
-[[r2_buckets]]
-binding = "DOCS_BUCKET"
-bucket_name = "pancake-docs-demo"
+[[rules]]
+type = "Data"
+globs = ["**/*.bin"]
+fallthrough = true

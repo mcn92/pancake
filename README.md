@@ -460,6 +460,12 @@ The Worker example still exposes add/delete/compact routes because they are
 useful for demos, admin tooling, and local validation, but the main use case
 is snapshot-backed search rather than a fully stateful ANN service.
 
+For a deployable public webpage with no storage or inference bindings, see the
+[`worker-semantic-search`](examples/worker-semantic-search/) demo. It bundles a
+1.08 MB domain-distilled int8 query encoder, a quantized Pancake snapshot, and
+the result corpus directly into one Worker. Query embedding and Pancake search
+both run locally with zero outbound requests; the offline teacher never ships.
+
 See [`examples/worker/README.md`](examples/worker/README.md) for:
 
 - endpoint documentation
@@ -516,7 +522,7 @@ external-ID translation inside that isolated instance.
 - [`dist/technical-demo.html`](https://github.com/mcn92/pancake/blob/main/dist/technical-demo.html) -- browser demo page with latency and stress views
 - [`examples/browser-vite/`](https://github.com/mcn92/pancake/tree/main/examples/browser-vite) -- minimal bundled browser consumer fixture used by `npm run test:browser`
 - [`examples/worker/`](https://github.com/mcn92/pancake/tree/main/examples/worker) -- reference Cloudflare Worker deployment built on top of Pancake
-- [`examples/worker-semantic-search/`](https://github.com/mcn92/pancake/tree/main/examples/worker-semantic-search) -- snapshot-first semantic docs search demo for Cloudflare Workers
+- [`examples/worker-semantic-search/`](https://github.com/mcn92/pancake/tree/main/examples/worker-semantic-search) -- zero-runtime-dependency distilled docs search webpage bundled into one Worker
 
 ## Architecture
 
@@ -559,7 +565,7 @@ For the Worker reference deployment, run:
 node test/test_worker_features.js
 ```
 
-Current core suite status on this tree: **1010 passed, 0 failed**.
+Current core suite status on this tree: **1191 passed, 0 failed**.
 
 ## Building from source
 

@@ -1,0 +1,1757 @@
+[
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake",
+    "anchor": "pancake",
+    "text": "HNSW vector search in about 49 KB of gzipped WebAssembly (137 KB uncompressed). Runs in Node.js, browser-bundled web apps, and Cloudflare Workers with no native dependencies in the default package path. Most ANN libraries ship as platform-specific native binaries, which means they do not work in browser tabs or JavaScript runtimes without native extensions. Pancake's primary package is a single portable WASM module built for JavaScript environments where native addons are not an option",
+    "preview": "HNSW vector search in about 49 KB of gzipped WebAssembly (137 KB uncompressed). Runs in Node.js, browser-bundled web apps, and Cloudflare Workers with no native dependencies in the default package path. Most ANN...",
+    "id": 0
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake",
+    "anchor": "pancake",
+    "text": ". Pancake ships two backends in the WASM engine: an int8 quantized backend that cuts memory by about 3.7x on the current 1536D DBpedia run, with roughly a 2 point recall-ceiling tradeoff versus float32, and a full float32 backend for higher precision distances. Both use WASM SIMD acceleration. The repo also includes an experimental native Node addon with AVX2 distance kernels for direct native-vs-WASM comparisons and local benchmarks.",
+    "preview": ". Pancake ships two backends in the WASM engine: an int8 quantized backend that cuts memory by about 3.7x on the current 1536D DBpedia run, with roughly a 2 point recall-ceiling tradeoff versus float32, and a full...",
+    "id": 1
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake",
+    "anchor": "pancake",
+    "text": "Pancake is an ANN library -- it doesn't ship an embedding model. Use any embedder (sentence-transformers, OpenAI, Cohere, etc.) and feed the resulting vectors to Pancake.",
+    "preview": "Pancake is an ANN library -- it doesn't ship an embedding model. Use any embedder (sentence-transformers, OpenAI, Cohere, etc.) and feed the resulting vectors to Pancake.",
+    "id": 2
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Install",
+    "anchor": "install",
+    "text": "Install from npm: Or work from a repository checkout: The root pancake.js / pancake.node.mjs / pancake.web.mjs entry points are the same files that ship in the npm package, so code written against the repo checkout works unchanged against the installed package. The native addon under native/ is not part of the npm package. It is an opt-in benchmarking tool used in this repo to separate runtime overhead from graph quality.",
+    "preview": "Install from npm: Or work from a repository checkout: The root pancake.js / pancake.node.mjs / pancake.web.mjs entry points are the same files that ship in the npm package, so code written against the repo checkout works...",
+    "id": 3
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Runtime entry points",
+    "anchor": "runtime-entry-points",
+    "text": "From the published package, import the entry points by name: From a repository checkout, import the same entry points by relative path instead: The pancake-wasm/web entry ( ./pancake.web.mjs in a checkout) expects a bundler or runtime that can resolve the packaged ./dist/engine.wasm asset. This is tested with a bundled Vite + Chromium flow. For a raw no-bundler demo, see the repo copy of dist/technical-demo.html .",
+    "preview": "From the published package, import the entry points by name: From a repository checkout, import the same entry points by relative path instead: The pancake-wasm/web entry (./pancake.web.mjs in a checkout) expects a...",
+    "id": 4
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Quick start",
+    "anchor": "quick-start",
+    "text": "The examples below import pancake-wasm by name. From a repository checkout, replace that import with a relative path — import Pancake from './pancake.node.mjs' (ESM) or const Pancake = require('./pancake.js') (CJS). The API is identical either way. js import Pancake from 'pancake-wasm'; const index = await Pancake.create({ dim: 384, maxElements: 100000, metric: 'cosine', quantized: true, }); const id = index.add(new Float32Array(384)); // populate with your embedding index.addBatch([ new Float32Array(384), // populate with your embeddings new Float32Array(384), ]); const results = index.search(new Float32Array(384), 10); // [{ id: 0, distance: 0.12 }, ...] index.delete(id); index.compact();",
+    "preview": "The examples below import pancake-wasm by name. From a repository checkout, replace that import with a relative path — import Pancake from './pancake.node.mjs' (ESM) or const Pancake = require('./pancake.js') (CJS). The...",
+    "id": 5
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Quick start",
+    "anchor": "quick-start",
+    "text": "// Persist and restore",
+    "preview": "// Persist and restore",
+    "id": 6
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Quick start",
+    "anchor": "quick-start",
+    "text": "// If you have deleted anything, compact() before export(). const snapshot = index.export(); const restored = await Pancake.restore(snapshot, { maxElements: 100000 }); js const rows = [ { id: 'doc-1', vector: embedding1 }, { id: 'doc-2', vector: embedding2 }, ]; const { index, ids, idMap } = await Pancake.fromVectors(rows, { metric: 'cosine', quantized: true, }); const hits = index.search(queryEmbedding, 5); console.log(idMap.get(hits[0].id)); // - 'doc-1' js const { index, idMap } = await Pancake.loadJsonFile('vectors.jsonl', { metric: 'cosine', vectorKey: 'embedding', // default: 'vector' idKey: 'docId', // default: 'id' maxFileBytes: 64 1024 1024, }); const restored = await",
+    "preview": "// If you have deleted anything, compact() before export(). const snapshot = index.export(); const restored = await Pancake.restore(snapshot, { maxElements: 100000 }); js const rows = [ { id: 'doc-1', vector: embedding1...",
+    "id": 7
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Quick start",
+    "anchor": "quick-start",
+    "text": "Pancake.loadSnapshotFile('index.pnck', {",
+    "preview": "Pancake.loadSnapshotFile('index.pnck', {",
+    "id": 8
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Quick start",
+    "anchor": "quick-start",
+    "text": "dim: 384, maxElements: 100000, metric: 'cosine', quantized: true, maxFileBytes: 512 1024 1024, }); If ghostCount 0 , export() throws. Call compact() first to produce a clean snapshot. import() also requires the target index config to match the export's dim , metric , and quantized mode. import() is atomic: the engine deserializes into a fresh internal index and only swaps it in on success, so a failed import — whether it's envelope validation or a backend-level rejection — leaves the destination index and its ID mappings unchanged",
+    "preview": "dim: 384, maxElements: 100000, metric: 'cosine', quantized: true, maxFileBytes: 512 1024 1024, }); If ghostCount 0, export() throws. Call compact() first to produce a clean snapshot. import() also requires the target...",
+    "id": 9
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Quick start",
+    "anchor": "quick-start",
+    "text": ". compact() is a stop-the-world maintenance pass over the surviving graph: below 50% deletions it remaps live vectors in place and repairs their edges; at 50% or more it rebuilds the topology from the live vectors because a mostly",
+    "preview": ". compact() is a stop-the-world maintenance pass over the surviving graph: below 50% deletions it remaps live vectors in place and repairs their edges; at 50% or more it rebuilds the topology from the live vectors...",
+    "id": 10
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Quick start",
+    "anchor": "quick-start",
+    "text": "hollow graph is no longer a reliable skeleton. Both paths preserve external IDs. Its cost scales with the number of live vectors that remain after deletions, not just the number of ghosts removed, so treat it as maintenance work rather than something to run in a latency-sensitive path. In the committed 100K clustered churn run, five complete population turnovers left 83.3% deleted nodes and reduced recall@10 from 96.0% to 7.2% (4.8 results returned on average). Compaction rebuilt the 100K live-vector graph in 17.6s, restoring 99.2% recall and a full top-10; a clean build of the same final population reached 97.2%",
+    "preview": "hollow graph is no longer a reliable skeleton. Both paths preserve external IDs. Its cost scales with the number of live vectors that remain after deletions, not just the number of ghosts removed, so treat it as...",
+    "id": 11
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Quick start",
+    "anchor": "quick-start",
+    "text": ". The rebuild reused the old graph's allocations, so the WASM heap did not grow during compaction. Run",
+    "preview": ". The rebuild reused the old graph's allocations, so the WASM heap did not grow during compaction. Run",
+    "id": 12
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Quick start",
+    "anchor": "quick-start",
+    "text": "node benchmarks/churn scale.js to reproduce it. The JavaScript package export() returns a PNCK envelope, not the bare raw engine payload. That wrapper preserves package-level metadata such as stable external IDs across compact() / import() round-trips. The underlying raw engine snapshot is stored inside that envelope. The Cloudflare Worker stores this standard envelope directly and keeps capacity and runtime query policy in R2 custom metadata.",
+    "preview": "node benchmarks/churn scale.js to reproduce it. The JavaScript package export() returns a PNCK envelope, not the bare raw engine payload. That wrapper preserves package-level metadata such as stable external IDs across...",
+    "id": 13
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / API / await Pancake.create(opts)",
+    "anchor": "await-pancake-create-opts",
+    "text": "Option Type Default Description -------- ------ --------- ------------- dim number required Vector dimension maxElements number 100000 Pre-allocated capacity metric string 'cosine' 'cosine' or 'l2' quantized boolean true Use int8 storage. Cuts memory by about 3.7x on the current 1536D DBpedia run, with roughly a 2 point recall-ceiling tradeoff versus float32. Set to false for full float32 storage",
+    "preview": "Option Type Default Description -------- ------ --------- ------------- dim number required Vector dimension maxElements number 100000 Pre-allocated capacity metric string 'cosine' 'cosine' or 'l2' quantized boolean true...",
+    "id": 14
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / API / await Pancake.create(opts)",
+    "anchor": "await-pancake-create-opts",
+    "text": ". M number 16 HNSW connectivity efConstruction number 50 Build-time beam width ( 1 – 4096 ) efSearch number 100 Default query-time beam width ( 1 – 4096 ) maxElements pre-allocates graph structure eagerly: the default 100000 costs about 25 MB of index memory (and roughly 75 MB of WASM heap at 384D) before the first vector is added. In memory-constrained runtimes",
+    "preview": ". M number 16 HNSW connectivity efConstruction number 50 Build-time beam width ( 1 – 4096 ) efSearch number 100 Default query-time beam width ( 1 – 4096 ) maxElements pre-allocates graph structure eagerly: the default...",
+    "id": 15
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / API / await Pancake.create(opts)",
+    "anchor": "await-pancake-create-opts",
+    "text": "(Workers, browser tabs), size it to your expected corpus — fromVectors() does this automatically by defaulting it to rows.length .",
+    "preview": "(Workers, browser tabs), size it to your expected corpus — fromVectors() does this automatically by defaulting it to rows.length.",
+    "id": 16
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / API / await Pancake.fromVectors(rows, opts)",
+    "anchor": "await-pancake-fromvectors-rows-opts",
+    "text": "Creates an index and bulk-loads either: Float32Array[] / number[][] { id?, vector }[] Returns: index — the populated PancakeIndex ids — Pancake's stable numeric IDs in insertion order idMap — Map<number, sourceId for rows that supplied caller IDs dim defaults to the first vector's length. maxElements defaults to rows.length .",
+    "preview": "Creates an index and bulk-loads either: Float32Array[] / number[][] { id?, vector }[] Returns: index — the populated PancakeIndex ids — Pancake's stable numeric IDs in insertion order idMap — Map<number, sourceId for...",
+    "id": 17
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / API / Snapshot restore",
+    "anchor": "snapshot-restore",
+    "text": "await Pancake.restore(snapshot, overrides?) infers dim , metric , quantized , M , and efConstruction from a Pancake envelope. Capacity defaults to the restored count, so pass { maxElements } when the restored index must accept more vectors. efSearch is runtime policy and defaults to 100 ; it can also be overridden during restore. Pancake.inspectSnapshot(snapshot) validates the headers without creating a WASM instance and returns the format, version, resolved construction fields, count, and next external ID. Legacy raw engine snapshots remain supported, but restore() requires their construction fields to be supplied explicitly.",
+    "preview": "await Pancake.restore(snapshot, overrides?) infers dim, metric, quantized, M, and efConstruction from a Pancake envelope. Capacity defaults to the restored count, so pass { maxElements } when the restored index must...",
+    "id": 18
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / API / Methods",
+    "anchor": "methods",
+    "text": "Method Returns Description -------- --------- ------------- add(vector) number Insert one vector, returns its ID addBatch(vectors) number[] Insert multiple vectors search(query, k, { efSearch? }) {id, distance}[] k-nearest-neighbor search, optionally overriding beam width for this call searchFiltered(query, k, allowedIds, { efSearch? }) {id, distance}[] k-NN restricted to an ID set, with the same per-call override setEfSearch(value) -- Change the default beam width for future searches delete(id) boolean Soft-delete a live ID; false means unknown or already deleted has(id) boolean Whether an ID is live isDeleted(id) boolean Whether an ID is awaiting compaction compact() -- Rebuild graph",
+    "preview": "Method Returns Description -------- --------- ------------- add(vector) number Insert one vector, returns its ID addBatch(vectors) number[] Insert multiple vectors search(query, k, { efSearch? }) {id, distance}[]...",
+    "id": 19
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / API / Methods",
+    "anchor": "methods",
+    "text": "without soft-deleted entries",
+    "preview": "without soft-deleted entries",
+    "id": 20
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / API / Methods",
+    "anchor": "methods",
+    "text": "export() Uint8Array Serialize index state. Requires ghostCount === 0 ; call compact() first after deletions. import(data) -- Restore a previous export dispose() -- Free WASM buffers Pancake.withIndex(opts, fn) callback result Create, use, and always dispose an index",
+    "preview": "export() Uint8Array Serialize index state. Requires ghostCount === 0; call compact() first after deletions. import(data) -- Restore a previous export dispose() -- Free WASM buffers Pancake.withIndex(opts, fn) callback...",
+    "id": 21
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / API / Distance values",
+    "anchor": "distance-values",
+    "text": "search() and searchFiltered() report a distance per hit: metric: 'l2' — Euclidean distance (the square root is applied; this is not squared L2). metric: 'cosine' — cosine distance, 1 - cosine similarity , ranging over [0, 2] : 0 is identical direction, 1 is orthogonal, 2 is opposite. Vectors are normalized internally at insert and query time, so inputs do not need to be pre-normalized. These semantics are part of the API contract and stable across snapshot envelope versions. (On the int8 backend, quantization adds small error to stored-side values, as described under Quantization.)",
+    "preview": "search() and searchFiltered() report a distance per hit: metric: 'l2' — Euclidean distance (the square root is applied; this is not squared L2). metric: 'cosine' — cosine distance, 1 - cosine similarity, ranging over [0,...",
+    "id": 22
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / API / Node-only file helpers",
+    "anchor": "node-only-file-helpers",
+    "text": "Helper Returns Description -------- --------- ------------- loadJsonFile(path, opts) { index, ids, idMap } Build an index from a JSON array or JSONL file loadSnapshotFile(path, overrides?) PancakeIndex Restore a previous export() from disk with inferred config File-helper notes: loadJsonFile() only auto-detects .json , .jsonl , and .ndjson . For other extensions, pass opts.format . loadJsonFile() defaults maxFileBytes to 64 MiB . loadSnapshotFile() defaults maxFileBytes to 512 MiB . loadSnapshotFile() checks the file header before import and rejects files that do not look like a Pancake envelope or raw engine snapshot.",
+    "preview": "Helper Returns Description -------- --------- ------------- loadJsonFile(path, opts) { index, ids, idMap } Build an index from a JSON array or JSONL file loadSnapshotFile(path, overrides?) PancakeIndex Restore a previous...",
+    "id": 23
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / API / Properties",
+    "anchor": "properties",
+    "text": "Property Description ---------- ------------- count Vectors stored (includes soft-deleted until compact() ) liveCount Live, searchable vectors deletedCount / deletedRatio Soft-deleted vectors awaiting compaction and their fraction capacity / remainingCapacity Fixed insertion capacity and unused slots; soft deletion does not free a slot config Fully resolved construction config and current default efSearch memoryUsage { logicalIndexBytes, wasmHeapBytes, snapshotBufferBytes } ghostCount / ghostRatio Backward-compatible aliases for the deleted state memory Alias for memoryUsage.logicalIndexBytes dim Vector dimension",
+    "preview": "Property Description ---------- ------------- count Vectors stored (includes soft-deleted until compact() ) liveCount Live, searchable vectors deletedCount / deletedRatio Soft-deleted vectors awaiting compaction and...",
+    "id": 24
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / API / Backend dispatch",
+    "anchor": "backend-dispatch",
+    "text": "Pancake picks one of two HNSW backends based on the quantized option. This is transparent -- the API is the same regardless of backend: Condition Backend Notes ----------- --------- ------- quantized: true Int8 HNSW Asymmetric distance: queries stay in float32, database vectors stored as int8. Preserves query-side precision while cutting memory by about 3.7x on the current 1536D DBpedia run. quantized: false Float32 HNSW Full precision, any dimension",
+    "preview": "Pancake picks one of two HNSW backends based on the quantized option. This is transparent -- the API is the same regardless of backend: Condition Backend Notes ----------- --------- ------- quantized: true Int8 HNSW...",
+    "id": 25
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Filtered search",
+    "anchor": "filtered-search",
+    "text": "searchFiltered(query, k, allowedIds) finds the k nearest neighbors restricted to a caller-supplied Set<number of IDs. Pancake is an index, not a database, so it doesn't store metadata. The caller maintains their own ID-to-metadata mapping and builds the allowed set before searching. js // Maintain metadata alongside the index const metadata = new Map(); const id1 = index.add(embedding1); metadata.set(id1, { tenant: 'acme', category: 'shoes' }); const id2 = index.add(embedding2); metadata.set(id2, { tenant: 'acme', category: 'hats' }); const id3 = index.add(embedding3); metadata.set(id3, { tenant: 'other', category: 'shoes' }); // Filter by tenant, then search within that set const acmeIds =",
+    "preview": "searchFiltered(query, k, allowedIds) finds the k nearest neighbors restricted to a caller-supplied Set<number of IDs. Pancake is an index, not a database, so it doesn't store metadata. The caller maintains their own...",
+    "id": 26
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Filtered search",
+    "anchor": "filtered-search",
+    "text": "new Set();",
+    "preview": "new Set();",
+    "id": 27
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Filtered search",
+    "anchor": "filtered-search",
+    "text": "for (const [id, meta] of metadata) { if (meta.tenant === 'acme') acmeIds.add(id); } const results = index.searchFiltered(query, 10, acmeIds); Filtering happens during HNSW layer-0 traversal, not as a post-filter on top of search() . Non-matching nodes still participate in graph navigation (they stay in the candidate queue) but are excluded from the result set. The search widens ef dynamically within a single traversal when too few filtered results have been found. This works well for moderate selectivity (roughly 1% of the index or more). At very low selectivity (< 1%), the graph may not contain enough navigable paths to the sparse target set, and recall drops",
+    "preview": "for (const [id, meta] of metadata) { if (meta.tenant === 'acme') acmeIds.add(id); } const results = index.searchFiltered(query, 10, acmeIds); Filtering happens during HNSW layer-0 traversal, not as a post-filter on top...",
+    "id": 28
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Filtered search",
+    "anchor": "filtered-search",
+    "text": ". For extremely selective filters, brute-force over the allowed set is more reliable than in-graph filtering.",
+    "preview": ". For extremely selective filters, brute-force over the allowed set is more reliable than in-graph filtering.",
+    "id": 29
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Performance",
+    "anchor": "performance",
+    "text": "The primary benchmark is DBpedia-50K ( 50,000 x 1536D , L2), the operating point Pancake is built for: in-process ANN at moderate scale across portable JavaScript runtimes. Pancake's default package path is WASM; the native addon is an experimental in-repo tool, included here to separate runtime overhead from graph quality, and is not part of the npm package. The latest committed Pareto sweeps were generated on an AMD Ryzen 9 4900HS laptop, Node v22.19.0 , single-threaded, k=10 , M=8 , efConstruction=50 , 3 repetitions, and an efSearch sweep from 10 to 800. The full CSV/JSON/log/PNG artifacts are indexed in benchmark results/ .",
+    "preview": "The primary benchmark is DBpedia-50K ( 50,000 x 1536D, L2), the operating point Pancake is built for: in-process ANN at moderate scale across portable JavaScript runtimes. Pancake's default package path is WASM; the...",
+    "id": 30
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Performance / DBpedia-50K: WASM vs native (50k x 1536D, L2)",
+    "anchor": "dbpedia-50k-wasm-vs-native-50k-x-1536d-l2",
+    "text": "Mode Build Memory ef=100 Recall@10 ef=100 QPS ef=800 Recall@10 ef=800 QPS :----- ------: -------: -----------------: -----------: -----------------: -----------: int8 WASM 30.6s 80.3 MB 95.11% 1,704 97.45% 303 f32 WASM 56.6s 296.3 MB 96.76% 1,244 99.65% 222 int8 native 19.7s 80.3 MB 95.12% 2,008 97.46% 387 f32 native 38.9s 296.3 MB 96.76% 1,352 99.65% 287 These are the Pancake rows from pareto dbpedia 2026-07-07T19-04-37-320Z . The same run includes USearch and hnswlib baselines. Takeaways: int8 is the memory/throughput operating point: on DBpedia-50K, int8 WASM uses 80.3 MB vs 296.3 MB for float32, about 3.7x less memory",
+    "preview": "Mode Build Memory ef=100 Recall@10 ef=100 QPS ef=800 Recall@10 ef=800 QPS: ----- ------: -------: -----------------: -----------: -----------------: -----------: int8 WASM 30.6s 80.3 MB 95.11% 1,704 97.45% 303 f32 WASM...",
+    "id": 31
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Performance / DBpedia-50K: WASM vs native (50k x 1536D, L2)",
+    "anchor": "dbpedia-50k-wasm-vs-native-50k-x-1536d-l2",
+    "text": ". float32 is the high-recall operating point: DBpedia float32 reaches 99.65% recall at the high- efSearch end of the frontier; int8 reaches",
+    "preview": ". float32 is the high-recall operating point: DBpedia float32 reaches 99.65% recall at the high- efSearch end of the frontier; int8 reaches",
+    "id": 32
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Performance / DBpedia-50K: WASM vs native (50k x 1536D, L2)",
+    "anchor": "dbpedia-50k-wasm-vs-native-50k-x-1536d-l2",
+    "text": "97.45% on the same sweep. Native vs WASM isolates runtime overhead: the native addon runs the same engine and lands at essentially identical recall. It is faster on DBpedia, but the gap narrows or reverses depending on dataset dimensionality and memory behavior.",
+    "preview": "97.45% on the same sweep. Native vs WASM isolates runtime overhead: the native addon runs the same engine and lands at essentially identical recall. It is faster on DBpedia, but the gap narrows or reverses depending on...",
+    "id": 33
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Performance / QPS-recall frontier",
+    "anchor": "qps-recall-frontier",
+    "text": "Sweeping efSearch (10-800) traces Pancake's full QPS-recall frontier. The latest committed sweeps cover DBpedia-50K (1536D, L2), NYTimes-256 (256D, cosine), SIFT-1M (128D, L2), and GloVe-100 (100D, cosine): Dataset Backend ef=100 Recall@10 ef=100 QPS ef=800 Recall@10 ef=800 QPS Memory :-------- :-------- -----------------: -----------: -----------------: -----------: -------: DBpedia-50K int8 WASM 95.11% 1,704 97.45% 303 80.3 MB DBpedia-50K f32 WASM 96.76% 1,244 99.65% 222 296.3 MB NYTimes-256 int8 WASM 64.56% 2,908 81.78% 484 111.4 MB NYTimes-256 f32 WASM 63.48% 1,825 81.84% 359 302.5 MB SIFT-1M int8 WASM 91.52% 2,972 98.20% 488 262.4 MB SIFT-1M f32 WASM 91.86% 2,502 98.81% 414 555.6 MB",
+    "preview": "Sweeping efSearch (10-800) traces Pancake's full QPS-recall frontier. The latest committed sweeps cover DBpedia-50K (1536D, L2), NYTimes-256 (256D, cosine), SIFT-1M (128D, L2), and GloVe-100 (100D, cosine): Dataset...",
+    "id": 34
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Performance / QPS-recall frontier",
+    "anchor": "qps-recall-frontier",
+    "text": "GloVe-100 int8 WASM 62.42% 2,455 81.22% 427 278.9 MB",
+    "preview": "GloVe-100 int8 WASM 62.42% 2,455 81.22% 427 278.9 MB",
+    "id": 35
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Performance / QPS-recall frontier",
+    "anchor": "qps-recall-frontier",
+    "text": "GloVe-100 f32 WASM 63.75% 2,074 82.20% 364 531.1 MB The cross-library comparison is in the committed benchmark results rather than asserted here; exact numbers depend on library versions, build flags, CPU, and memory pressure. Run pareto frontier to reproduce or extend the sweeps on your own data (see Reproducing).",
+    "preview": "GloVe-100 f32 WASM 63.75% 2,074 82.20% 364 531.1 MB The cross-library comparison is in the committed benchmark results rather than asserted here; exact numbers depend on library versions, build flags, CPU, and memory...",
+    "id": 36
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Performance / Deletion tolerance",
+    "anchor": "deletion-tolerance",
+    "text": "DBpedia 5K x 1536D, L2, int8, M=16 , efConstruction=50 , efSearch=100 , 100 held-out queries. Vectors are progressively soft-deleted; brute-force ground truth is recomputed against the live set at each step. Ghost % Live Vectors Recall@10 p50 Latency ---: ---: ---: ---: 0% 4,900 96.8% 0.71ms 30% 3,430 97.5% 0.56ms 50% 2,450 96.5% 0.43ms 70% 1,470 95.5% 0.32ms 90% 490 81.4% 0.17ms Recall holds within about 1.5 points of baseline through 70% ghosts. Search latency drops as ghosts accumulate (fewer live nodes to visit). The cliff beyond 90% is graph disconnection: the live subgraph is no longer well-connected enough to preserve recall. Compaction can be deferred until the main thread is idle",
+    "preview": "DBpedia 5K x 1536D, L2, int8, M=16, efConstruction=50, efSearch=100, 100 held-out queries. Vectors are progressively soft-deleted; brute-force ground truth is recomputed against the live set at each step. Ghost % Live...",
+    "id": 37
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Performance / Deletion tolerance",
+    "anchor": "deletion-tolerance",
+    "text": ". That progressive-delete result is not a substitute for insert/delete churn:",
+    "preview": ". That progressive-delete result is not a substitute for insert/delete churn:",
+    "id": 38
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Performance / Deletion tolerance",
+    "anchor": "deletion-tolerance",
+    "text": "replacing the live population changes graph topology much more aggressively. For sustained churn, use deletedRatio = 0.5 as the default maintenance trigger and validate a different threshold against your own data and latency budget.",
+    "preview": "replacing the live population changes graph topology much more aggressively. For sustained churn, use deletedRatio = 0.5 as the default maintenance trigger and validate a different threshold against your own data and...",
+    "id": 39
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Pancake / Performance / Reproducing",
+    "anchor": "reproducing",
+    "text": "Benchmark scripts are in benchmarks/ . A shared runner discovers them by name, so you can list and run them with: bash npm run bench -- --list",
+    "preview": "Benchmark scripts are in benchmarks/. A shared runner discovers them by name, so you can list and run them with: bash npm run bench -- --list",
+    "id": 40
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "The Pancake-only WASM vs native comparison:",
+    "anchor": "the-pancake-only-wasm-vs-native-comparison",
+    "text": "npm run bench -- benchmark native",
+    "preview": "npm run bench -- benchmark native",
+    "id": 41
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "Full comparison including hnswlib, USearch, and Faiss on the same data:",
+    "anchor": "full-comparison-including-hnswlib-usearch-and-faiss-on-the-same-data",
+    "text": "npm run bench -- benchmark dbpedia 50k full --count 50000 --m 16 --ef-construction 50 --ef-search 100",
+    "preview": "npm run bench -- benchmark dbpedia 50k full --count 50000 --m 16 --ef-construction 50 --ef-search 100",
+    "id": 42
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above:",
+    "anchor": "qps-recall-frontier-efsearch-sweep-behind-the-plot-above",
+    "text": "npm run bench -- pareto frontier The first run computes brute-force ground truth and caches it under benchmark results/cache/ ; later runs reuse it. Results depend on dimension, corpus size, HNSW parameters, and hardware. Other useful scripts: benchmark dbpedia 50k full — unified comparison vs hnswlib, USearch, and Faiss pareto frontier — efSearch sweep producing the QPS-recall frontier CSVs benchmark native — direct Pancake native-vs-WASM comparison worker restore sweep — cold/warm restore measurements through the Worker API runtime ownership — cold vs warm create() , concurrent creation, and isolated per-index heap footprint",
+    "preview": "npm run bench -- pareto frontier The first run computes brute-force ground truth and caches it under benchmark results/cache/; later runs reuse it. Results depend on dimension, corpus size, HNSW parameters, and hardware....",
+    "id": 43
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / Snapshot-first Worker deployment",
+    "anchor": "snapshot-first-worker-deployment",
+    "text": "Pancake can also run inside Cloudflare Workers, but the right mental model is snapshot search at the edge , not a durable mutable vector database inside one long-lived isolate . The reference Worker in examples/worker/ keeps a Pancake index warm in process when possible and restores snapshots from R2 on cold start. It works well for: read-heavy semantic search modest-sized indexes that fit comfortably inside Worker memory limits periodic snapshot rebuilds or explicit import/export admin flows edge serving where cold restore is acceptable As a rough guide, the current 1536D DBpedia runs put 50K vectors at about 86 MB in int8 mode and 299 MB in float32 mode",
+    "preview": "Pancake can also run inside Cloudflare Workers, but the right mental model is snapshot search at the edge, not a durable mutable vector database inside one long-lived isolate. The reference Worker in examples/worker/...",
+    "id": 44
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / Snapshot-first Worker deployment",
+    "anchor": "snapshot-first-worker-deployment",
+    "text": ". In practice that means Worker deployments are most comfortable in the tens-of-thousands range unless",
+    "preview": ". In practice that means Worker deployments are most comfortable in the tens-of-thousands range unless",
+    "id": 45
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / Snapshot-first Worker deployment",
+    "anchor": "snapshot-first-worker-deployment",
+    "text": "you are being very deliberate about memory headroom. It is a weaker fit for: high-write online mutation as the primary production path strict cross-request write durability inside plain Worker memory “one always-live authoritative index instance” semantics The Worker example still exposes add/delete/compact routes because they are useful for demos, admin tooling, and local validation, but the main use case is snapshot-backed search rather than a fully stateful ANN service. For a deployable public webpage with no storage or inference bindings, see the worker-semantic-search demo",
+    "preview": "you are being very deliberate about memory headroom. It is a weaker fit for: high-write online mutation as the primary production path strict cross-request write durability inside plain Worker memory “one always-live...",
+    "id": 46
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / Snapshot-first Worker deployment",
+    "anchor": "snapshot-first-worker-deployment",
+    "text": ". It bundles a 1.08 MB domain-distilled int8 query encoder, a quantized Pancake snapshot, and the result corpus directly into one Worker. Query embedding and Pancake search",
+    "preview": ". It bundles a 1.08 MB domain-distilled int8 query encoder, a quantized Pancake snapshot, and the result corpus directly into one Worker. Query embedding and Pancake search",
+    "id": 47
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / Snapshot-first Worker deployment",
+    "anchor": "snapshot-first-worker-deployment",
+    "text": "both run locally with zero outbound requests; the offline teacher never ships. See examples/worker/README.md for: endpoint documentation local development and deployment steps environment variables and Wrangler configuration memory, cold-start, and persistence tradeoffs",
+    "preview": "both run locally with zero outbound requests; the offline teacher never ships. See examples/worker/README.md for: endpoint documentation local development and deployment steps environment variables and Wrangler...",
+    "id": 48
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / When to use Pancake",
+    "anchor": "when-to-use-pancake",
+    "text": "Pancake makes sense when you want one engine that spans browser, Worker, and Node without much fuss: Browser-based search -- client-side retrieval without a server round-trip Portable applications -- one artifact, same behavior across every JavaScript runtime Node.js without native addons -- in-process ANN without native binary packaging Small to medium indexes -- in-process search without external infrastructure If you only care about native server throughput and do not need portability, Faiss, hnswlib, or USearch are good baselines to compare against — run benchmark dbpedia 50k full to see how they land against Pancake on your own hardware",
+    "preview": "Pancake makes sense when you want one engine that spans browser, Worker, and Node without much fuss: Browser-based search -- client-side retrieval without a server round-trip Portable applications -- one artifact, same...",
+    "id": 49
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / When to use Pancake",
+    "anchor": "when-to-use-pancake",
+    "text": ". On the DBpedia-50K run above, the int8 backend offers a lower-memory operating point with about a 2.2 point recall-ceiling tradeoff versus float32 ( 97.45% vs 99.65% on DBpedia-50K). The native addon in this repo is there to help separate runtime overhead from graph quality.",
+    "preview": ". On the DBpedia-50K run above, the int8 backend offers a lower-memory operating point with about a 2.2 point recall-ceiling tradeoff versus float32 ( 97.45% vs 99.65% on DBpedia-50K). The native addon in this repo is...",
+    "id": 50
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / How it works / Quantization",
+    "anchor": "quantization",
+    "text": "Stored vectors use row-wise affine quantization. Each vector gets its own scale and offset derived from its own min/max: This preserves per-vector dynamic range better than global quantization, at the cost of 8 bytes of overhead per vector for the scale and offset. The quantized backend uses asymmetric distance: queries stay in float32 while database vectors are dequantized from int8 on the fly. This preserves full query-side precision -- quantization error only affects the stored side.",
+    "preview": "Stored vectors use row-wise affine quantization. Each vector gets its own scale and offset derived from its own min/max: This preserves per-vector dynamic range better than global quantization, at the cost of 8 bytes of...",
+    "id": 51
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / How it works / HNSW",
+    "anchor": "hnsw",
+    "text": "Standard HNSW graph search with one modification: the neighbor selection heuristic uses backfill (the \"keep pruned connections\" option from the HNSW paper). After the diversity heuristic rejects candidates, the closest rejected candidates are added back until M slots are filled. This guarantees minimum connectivity and prevents weakly-connected nodes in clustered data, where the diversity heuristic can otherwise reject most same-cluster candidates. M controls graph connectivity, efConstruction controls build quality, efSearch controls query quality. Higher values improve recall at the cost of build or query speed.",
+    "preview": "Standard HNSW graph search with one modification: the neighbor selection heuristic uses backfill (the \"keep pruned connections\" option from the HNSW paper). After the diversity heuristic rejects candidates, the closest...",
+    "id": 52
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / How it works / Handle-based C ABI",
+    "anchor": "handle-based-c-abi",
+    "text": "The WASM module exposes a handle-based C API: pancake init returns an opaque handle, and all operations take a handle as the first argument. The supported JavaScript loaders cache compiled modules but instantiate an isolated WASM heap for every index. The wrapper ( pancake-core.js ) manages the handle and stable external-ID translation inside that isolated instance.",
+    "preview": "The WASM module exposes a handle-based C API: pancake init returns an opaque handle, and all operations take a handle as the first argument. The supported JavaScript loaders cache compiled modules but instantiate an...",
+    "id": 53
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / Examples",
+    "anchor": "examples",
+    "text": "examples/cli/build index.js -- build an HNSW index from precomputed embeddings examples/demo/technical demo cli.js -- interactive local REPL examples/demo/technical demo worker.js -- interactive Worker-targeted REPL dist/technical-demo.html -- browser demo page with latency and stress views examples/browser-vite/ -- minimal bundled browser consumer fixture used by npm run test:browser examples/worker/ -- reference Cloudflare Worker deployment built on top of Pancake examples/worker-semantic-search/ -- zero-runtime-dependency distilled docs search webpage bundled into one Worker",
+    "preview": "examples/cli/build index.js -- build an HNSW index from precomputed embeddings examples/demo/technical demo cli.js -- interactive local REPL examples/demo/technical demo worker.js -- interactive Worker-targeted REPL...",
+    "id": 54
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / Architecture",
+    "anchor": "architecture",
+    "text": "See docs/SYSTEM DESIGN.md for a detailed design document covering the C++ engine, WASM compilation, JavaScript wrapper, serialization formats, and the reference Worker deployment.",
+    "preview": "See docs/SYSTEM DESIGN.md for a detailed design document covering the C++ engine, WASM compilation, JavaScript wrapper, serialization formats, and the reference Worker deployment.",
+    "id": 55
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / Compatibility",
+    "anchor": "compatibility",
+    "text": "Node.js = 16 (uses WebAssembly , performance.now ) Browsers : any browser with WebAssembly SIMD (Chrome 91+, Firefox 89+, Safari 16.4+) plus a bundler/runtime that supports importing the packaged engine.wasm TypeScript : type definitions included ( pancake.d.ts )",
+    "preview": "Node.js = 16 (uses WebAssembly, performance.now ) Browsers: any browser with WebAssembly SIMD (Chrome 91+, Firefox 89+, Safari 16.4+) plus a bundler/runtime that supports importing the packaged engine.wasm TypeScript:...",
+    "id": 56
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / Tests",
+    "anchor": "tests",
+    "text": "This covers the core API, Node CJS and ESM entrypoints, browser-style instantiateWasm loading, held-out brute-force recall oracles, filtered-search oracles, golden search-output checks, and determinism checks. For a real bundled browser-consumer check of import Pancake from 'pancake-wasm/web' , run: This starts a minimal Vite app in examples/browser-vite/ and verifies the published web entry in Chromium via Playwright. For SIMD parity coverage, run: For the Worker reference deployment, run: Current core suite status on this tree: 1191 passed, 0 failed .",
+    "preview": "This covers the core API, Node CJS and ESM entrypoints, browser-style instantiateWasm loading, held-out brute-force recall oracles, filtered-search oracles, golden search-output checks, and determinism checks. For a real...",
+    "id": 57
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / Building from source",
+    "anchor": "building-from-source",
+    "text": "The npm package ships prebuilt WASM artifacts. Rebuild only if you're modifying the C++ engine: Requires an Emscripten toolchain with WASM SIMD support. The default build is plain WASM SIMD for broader compatibility. To opt into relaxed SIMD on supporting runtimes: Relaxed SIMD is an opt-in fast path for supporting runtimes. The default build stays on plain WASM SIMD so the checked-in artifact remains broadly compatible, but local builds can enable relaxed SIMD when you want the faster vectorized path. The script auto-detects whether the current Node runtime still needs --experimental-wasm-relaxed-simd for its post-build test step.",
+    "preview": "The npm package ships prebuilt WASM artifacts. Rebuild only if you're modifying the C++ engine: Requires an Emscripten toolchain with WASM SIMD support. The default build is plain WASM SIMD for broader compatibility. To...",
+    "id": 58
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / Tradeoffs",
+    "anchor": "tradeoffs",
+    "text": "Single-threaded by design. Pancake is meant for runtimes where background threads are unavailable or unreliable. That is a deployment advantage, not just a limitation. Quantization is a real trade. On the current 1536D DBpedia benchmark, the int8 path uses about 3.7x less memory than float32 and gives up roughly 2.2 points of recall ceiling ( 97.45% vs 99.65% in the 50K sweep at efSearch=800 ). Use float32 when you need the higher ceiling. Deterministic means per target/build",
+    "preview": "Single-threaded by design. Pancake is meant for runtimes where background threads are unavailable or unreliable. That is a deployment advantage, not just a limitation. Quantization is a real trade. On the current 1536D...",
+    "id": 59
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / Tradeoffs",
+    "anchor": "tradeoffs",
+    "text": ". Given the same inputs, the same build target will produce stable graph structure and query results, but bitwise-identical distances are not guaranteed across WASM SIMD, scalar WASM, AVX2, and SSE2 backends because their reduction orders differ. Treat tiny cross-backend floating-point deltas as expected, not as correctness bugs.",
+    "preview": ". Given the same inputs, the same build target will produce stable graph structure and query results, but bitwise-identical distances are not guaranteed across WASM SIMD, scalar WASM, AVX2, and SSE2 backends because...",
+    "id": 60
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / Tradeoffs",
+    "anchor": "tradeoffs",
+    "text": "Each public index owns one isolated WASM instance. Compiled module work is cached per runtime entrypoint, while heaps and handle tables are not shared. The engine retains a 64-slot handle table for future shared-runtime support, but a public index normally occupies only slot zero of its own instance. Compaction is a stop-the-world maintenance pass. Deletes are soft deletes. Below 50% deleted nodes, compact() remaps survivors in place and repairs connectivity; at 50% or more it rebuilds the graph from live vectors to recover from severe topology loss. Neither path runs in the background. export() retains a WASM-side buffer",
+    "preview": "Each public index owns one isolated WASM instance. Compiled module work is cached per runtime entrypoint, while heaps and handle tables are not shared. The engine retains a 64-slot handle table for future shared-runtime...",
+    "id": 61
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / Tradeoffs",
+    "anchor": "tradeoffs",
+    "text": ". The engine keeps the most recent snapshot copy inside WASM memory until the next export() on the same index or dispose() . Budget for that when exporting large indexes in memory-constrained runtimes.",
+    "preview": ". The engine keeps the most recent snapshot copy inside WASM memory until the next export() on the same index or dispose(). Budget for that when exporting large indexes in memory-constrained runtimes.",
+    "id": 62
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / Tradeoffs",
+    "anchor": "tradeoffs",
+    "text": "Index instances are not a cross-thread concurrency primitive. Treat a Pancake index like ordinary mutable in-process state: safe within one JavaScript thread/event loop, but not transferable across Node worker threads or isolates. Workers are best used as snapshot-serving search frontends. In a Cloudflare Worker, in-memory state is a warm cache, not durable authority. Persist snapshots explicitly and treat isolate reuse as opportunistic. Inputs are validated, not coerced",
+    "preview": "Index instances are not a cross-thread concurrency primitive. Treat a Pancake index like ordinary mutable in-process state: safe within one JavaScript thread/event loop, but not transferable across Node worker threads or...",
+    "id": 63
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / Tradeoffs",
+    "anchor": "tradeoffs",
+    "text": ". Vectors and queries accept a Float32Array or a plain numeric array, but plain-array elements must be actual numbers — a non-numeric element (string, boolean, nested array, null ) is rejected with an error rather than silently coerced (e.g. an empty CSV field becoming 0 ). Non-finite values ( NaN / Infinity ) and dimension mismatches are likewise rejected at the boundary.",
+    "preview": ". Vectors and queries accept a Float32Array or a plain numeric array, but plain-array elements must be actual numbers — a non-numeric element (string, boolean, nested array, null ) is rejected with an error rather than...",
+    "id": 64
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / Tradeoffs",
+    "anchor": "tradeoffs",
+    "text": "This is an index, not an embedding stack. Pancake does vector search only. Bring your own embedding pipeline.",
+    "preview": "This is an index, not an embedding stack. Pancake does vector search only. Bring your own embedding pipeline.",
+    "id": 65
+  },
+  {
+    "sourcePath": "README.md",
+    "docTitle": "Pancake",
+    "title": "QPS-recall frontier (efSearch sweep) behind the plot above: / License",
+    "anchor": "license",
+    "text": "Apache 2.0",
+    "preview": "Apache 2.0",
+    "id": 66
+  },
+  {
+    "sourcePath": "QUICKSTART.md",
+    "docTitle": "Pancake Quick Start",
+    "title": "Pancake Quick Start",
+    "anchor": "pancake-quick-start",
+    "text": "Practical getting-started paths for building a Pancake index from your own embeddings, searching it locally, and running the Cloudflare Worker example.",
+    "preview": "Practical getting-started paths for building a Pancake index from your own embeddings, searching it locally, and running the Cloudflare Worker example.",
+    "id": 67
+  },
+  {
+    "sourcePath": "QUICKSTART.md",
+    "docTitle": "Pancake Quick Start",
+    "title": "Pancake Quick Start / What This Guide Covers",
+    "anchor": "what-this-guide-covers",
+    "text": "This guide focuses on the current supported flows: Node.js indexing from vectors already in memory Node.js indexing from JSON / JSONL / NDJSON files Snapshot export / restore in Node.js Running the reference Cloudflare Worker example from a repository checkout Pancake is an ANN library. It does not embed raw documents for you, and it is not a hosted search service. Bring your own embedding model or embedding pipeline, then feed the resulting vectors into Pancake.",
+    "preview": "This guide focuses on the current supported flows: Node.js indexing from vectors already in memory Node.js indexing from JSON / JSONL / NDJSON files Snapshot export / restore in Node.js Running the reference Cloudflare...",
+    "id": 68
+  },
+  {
+    "sourcePath": "QUICKSTART.md",
+    "docTitle": "Pancake Quick Start",
+    "title": "Pancake Quick Start / Install / Repository checkout",
+    "anchor": "repository-checkout",
+    "text": "The repo build produces the WASM engine artifacts used by the local entrypoints and Worker example: dist/engine.js dist/engine.wasm dist/engine.scalar.js dist/engine.scalar.wasm",
+    "preview": "The repo build produces the WASM engine artifacts used by the local entrypoints and Worker example: dist/engine.js dist/engine.wasm dist/engine.scalar.js dist/engine.scalar.wasm",
+    "id": 69
+  },
+  {
+    "sourcePath": "QUICKSTART.md",
+    "docTitle": "Pancake Quick Start",
+    "title": "Pancake Quick Start / Pick An Ingest Path",
+    "anchor": "pick-an-ingest-path",
+    "text": "Use the path that matches what you already have: Vectors already in memory: Pancake.fromVectors(...) Vectors saved as JSON / JSONL: Pancake.loadJsonFile(...) on the Node entrypoints Existing Pancake snapshot on disk: Pancake.loadSnapshotFile(...) on the Node entrypoints If you are working from a repo checkout, replace require('pancake-wasm') with require('./pancake.js') or import Pancake from './pancake.node.mjs' .",
+    "preview": "Use the path that matches what you already have: Vectors already in memory: Pancake.fromVectors(...) Vectors saved as JSON / JSONL: Pancake.loadJsonFile(...) on the Node entrypoints Existing Pancake snapshot on disk:...",
+    "id": 70
+  },
+  {
+    "sourcePath": "QUICKSTART.md",
+    "docTitle": "Pancake Quick Start",
+    "title": "Pancake Quick Start / Local Node.js Workflow / Build An Index From In-Memory Vectors",
+    "anchor": "build-an-index-from-in-memory-vectors",
+    "text": "Use this path when your embedder already returns arrays or Float32Array s in the current process.",
+    "preview": "Use this path when your embedder already returns arrays or Float32Array s in the current process.",
+    "id": 71
+  },
+  {
+    "sourcePath": "QUICKSTART.md",
+    "docTitle": "Pancake Quick Start",
+    "title": "Pancake Quick Start / Local Node.js Workflow / Build An Index From JSON Or JSONL",
+    "anchor": "build-an-index-from-json-or-jsonl",
+    "text": "On the Node.js entrypoints, Pancake can load vectors directly from disk: Supported file types: .json .jsonl .ndjson Accepted row shapes: [1, 2, 3, ...] { \"id\": \"doc-1\", \"vector\": [1, 2, 3, ...] } { \"docId\": \"doc-1\", \"embedding\": [1, 2, 3, ...] } with idKey / vectorKey If your embedding pipeline already writes JSONL, this is the simplest file-based path.",
+    "preview": "On the Node.js entrypoints, Pancake can load vectors directly from disk: Supported file types:.json.jsonl.ndjson Accepted row shapes: [1, 2, 3,...] { \"id\": \"doc-1\", \"vector\": [1, 2, 3,...] } { \"docId\": \"doc-1\",...",
+    "id": 72
+  },
+  {
+    "sourcePath": "QUICKSTART.md",
+    "docTitle": "Pancake Quick Start",
+    "title": "Pancake Quick Start / Local Node.js Workflow / Export And Restore A Snapshot",
+    "anchor": "export-and-restore-a-snapshot",
+    "text": "If you want to reuse a built index later, export a snapshot: Snapshot notes: export() throws if ghostCount 0 ; call compact() first after deletions loadSnapshotFile() is Node-only loadSnapshotFile() restores Pancake snapshots from disk, not arbitrary ANN binary formats",
+    "preview": "If you want to reuse a built index later, export a snapshot: Snapshot notes: export() throws if ghostCount 0; call compact() first after deletions loadSnapshotFile() is Node-only loadSnapshotFile() restores Pancake...",
+    "id": 73
+  },
+  {
+    "sourcePath": "QUICKSTART.md",
+    "docTitle": "Pancake Quick Start",
+    "title": "Pancake Quick Start / Embedding Your Own Documents",
+    "anchor": "embedding-your-own-documents",
+    "text": "Pancake does not care which embedder you use, as long as you end up with vectors. Typical workflow: Read your source documents. Generate embeddings with your model or API of choice. Store them either: directly in memory and call fromVectors() , or in JSON / JSONL and call loadJsonFile() Query the built index with new query embeddings produced by the same model family. If you already have parquet, numpy, or another upstream format, convert it into JSONL or feed the vectors into fromVectors() directly from your application code.",
+    "preview": "Pancake does not care which embedder you use, as long as you end up with vectors. Typical workflow: Read your source documents. Generate embeddings with your model or API of choice. Store them either: directly in memory...",
+    "id": 74
+  },
+  {
+    "sourcePath": "QUICKSTART.md",
+    "docTitle": "Pancake Quick Start",
+    "title": "Pancake Quick Start / Worker Example",
+    "anchor": "worker-example",
+    "text": "The reference Worker example is repo-based. It loads the checked-in WASM engine artifacts and exposes Pancake over HTTP. Treat it as a deployment pattern you run in your own Cloudflare account, not as a centrally hosted Pancake service. When you run or deploy this example, it runs in your own Cloudflare environment: npx wrangler dev starts a local dev instance on your machine wrangler deploy publishes the Worker into the Cloudflare account authenticated in your local Wrangler setup any R2 bucket, auth settings, and rate limits belong to your own deployment, not to this repository",
+    "preview": "The reference Worker example is repo-based. It loads the checked-in WASM engine artifacts and exposes Pancake over HTTP. Treat it as a deployment pattern you run in your own Cloudflare account, not as a centrally hosted...",
+    "id": 75
+  },
+  {
+    "sourcePath": "QUICKSTART.md",
+    "docTitle": "Pancake Quick Start",
+    "title": "Pancake Quick Start / Worker Example / Initialize A Small Index Over HTTP",
+    "anchor": "initialize-a-small-index-over-http",
+    "text": "In another terminal: Then query it: Useful local checks:",
+    "preview": "In another terminal: Then query it: Useful local checks:",
+    "id": 76
+  },
+  {
+    "sourcePath": "QUICKSTART.md",
+    "docTitle": "Pancake Quick Start",
+    "title": "Pancake Quick Start / Worker Example / Worker Import / Export Contract",
+    "anchor": "worker-import-export-contract",
+    "text": "The Worker has its own binary envelope for /export and /import . GET /export returns a Worker snapshot blob POST /import expects a previous blob from that Worker /export path Do not assume that a Node.js index.export() snapshot is interchangeable with the Worker /import format. The Worker wraps the engine snapshot with additional metadata for its own restore path.",
+    "preview": "The Worker has its own binary envelope for /export and /import. GET /export returns a Worker snapshot blob POST /import expects a previous blob from that Worker /export path Do not assume that a Node.js index.export()...",
+    "id": 77
+  },
+  {
+    "sourcePath": "QUICKSTART.md",
+    "docTitle": "Pancake Quick Start",
+    "title": "Pancake Quick Start / Worker Example / Worker Demo Scripts",
+    "anchor": "worker-demo-scripts",
+    "text": "From the repo root, with the Worker already running: The demos exercise different paths: test worker.js : synthetic 1536D Worker/API integration test technical demo worker.js : interactive REPL against the Worker using the repo's dist/vectors.bin asset",
+    "preview": "From the repo root, with the Worker already running: The demos exercise different paths: test worker.js: synthetic 1536D Worker/API integration test technical demo worker.js: interactive REPL against the Worker using the...",
+    "id": 78
+  },
+  {
+    "sourcePath": "QUICKSTART.md",
+    "docTitle": "Pancake Quick Start",
+    "title": "Pancake Quick Start / Sizing And Tuning",
+    "anchor": "sizing-and-tuning",
+    "text": "Parameter Typical range Effect ----------- --------------- -------- M 8–32 Graph connectivity. Higher improves recall, increases memory and build time. efConstruction 50–400 Build beam width. Higher improves graph quality, slows build. efSearch / ef 50–500 Query beam width. Higher improves recall, slows search. quantized true / false Int8 quantization cuts memory significantly with some recall tradeoff. metric 'cosine' / 'l2' Use cosine for normalized embeddings and L2 for unnormalized vectors. For memory-constrained Worker deployments, the quantized path is usually the right default.",
+    "preview": "Parameter Typical range Effect ----------- --------------- -------- M 8–32 Graph connectivity. Higher improves recall, increases memory and build time. efConstruction 50–400 Build beam width. Higher improves graph...",
+    "id": 79
+  },
+  {
+    "sourcePath": "QUICKSTART.md",
+    "docTitle": "Pancake Quick Start",
+    "title": "Pancake Quick Start / Troubleshooting / loadJsonFile() rejects my file",
+    "anchor": "loadjsonfile-rejects-my-file",
+    "text": "Check: the extension is .json , .jsonl , or .ndjson the rows contain vectors under the expected field name vectorKey / idKey match your actual JSON schema",
+    "preview": "Check: the extension is.json,.jsonl, or.ndjson the rows contain vectors under the expected field name vectorKey / idKey match your actual JSON schema",
+    "id": 80
+  },
+  {
+    "sourcePath": "QUICKSTART.md",
+    "docTitle": "Pancake Quick Start",
+    "title": "Pancake Quick Start / Troubleshooting / I already have vectors in another format",
+    "anchor": "i-already-have-vectors-in-another-format",
+    "text": "Pancake does not currently load formats like .fvecs , .npy , or .parquet directly. Use one of these instead: convert the vectors to JSONL and call loadJsonFile() load them in your own code and pass them to fromVectors()",
+    "preview": "Pancake does not currently load formats like.fvecs,.npy, or.parquet directly. Use one of these instead: convert the vectors to JSONL and call loadJsonFile() load them in your own code and pass them to fromVectors()",
+    "id": 81
+  },
+  {
+    "sourcePath": "QUICKSTART.md",
+    "docTitle": "Pancake Quick Start",
+    "title": "Pancake Quick Start / Troubleshooting / Worker /import does not accept my local snapshot",
+    "anchor": "worker-import-does-not-accept-my-local-snapshot",
+    "text": "The Worker /import route expects the Worker export format, not a raw local package snapshot. Use the Worker's own /export output when testing /import .",
+    "preview": "The Worker /import route expects the Worker export format, not a raw local package snapshot. Use the Worker's own /export output when testing /import.",
+    "id": 82
+  },
+  {
+    "sourcePath": "QUICKSTART.md",
+    "docTitle": "Pancake Quick Start",
+    "title": "Pancake Quick Start / Next Steps",
+    "anchor": "next-steps",
+    "text": "README.md for the full package API surface examples/worker/README.md for the reference Worker deployment model docs/SYSTEM DESIGN.md for the deeper system design document",
+    "preview": "README.md for the full package API surface examples/worker/README.md for the reference Worker deployment model docs/SYSTEM DESIGN.md for the deeper system design document",
+    "id": 83
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design",
+    "anchor": "pancake-system-design",
+    "text": "Scope: The full Pancake vector-search system as built today — the C++ HNSW backends, the WASM C ABI, the JavaScript wrapper, the native benchmarking addon, serialization, and the Cloudflare Worker reference deployments. Last updated: 2026-06-26 Status: Reflects the current source tree ( src/ , pancake-core.js , native/ , examples/worker ). This document was written from a ground-up re-read of the code. Verification note: every mechanism below was read out of the source. Where a behavior is subtle (default divergence between layers, deletion state on import, ID remap on compaction), the exact code path is named so it can be re-checked. ---",
+    "preview": "Scope: The full Pancake vector-search system as built today — the C++ HNSW backends, the WASM C ABI, the JavaScript wrapper, the native benchmarking addon, serialization, and the Cloudflare Worker reference deployments....",
+    "id": 84
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Table of Contents",
+    "anchor": "table-of-contents",
+    "text": "Overview Layered Architecture The Two HNSW Backends Quantization and Asymmetric Distance SIMD and Distance Kernels The C ABI and Handle Table The JavaScript Wrapper ID Translation and Compaction Serialization Formats Build Pipeline (WASM and Native) Cloudflare Worker Deployment Configuration Reference Invariants Limitations and Non-Goals Appendix A: WASM Export Inventory Appendix B: Serialization Byte Layouts ---",
+    "preview": "Overview Layered Architecture The Two HNSW Backends Quantization and Asymmetric Distance SIMD and Distance Kernels The C ABI and Handle Table The JavaScript Wrapper ID Translation and Compaction Serialization Formats...",
+    "id": 85
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Overview",
+    "anchor": "overview",
+    "text": "Pancake is an HNSW (Hierarchical Navigable Small World) approximate nearest-neighbor index compiled from C++ to WebAssembly. The primary artifact is a single portable WASM module ( dist/engine.wasm , 137 KB raw / 49 KB gzipped, plus a 17 KB engine.js loader / 5 KB gzipped) that runs unchanged in Node.js, browsers, and Cloudflare Workers — no native dependency on the default path. The engine provides two interchangeable HNSW backends behind one API: FloatHNSW — full-precision float32 storage and distances. Int8FloatHNSW — row-wise int8 quantized storage with asymmetric search (float32 query against int8 database), roughly 3.5× smaller than float32 at 1536D with a modest recall-ceiling cost",
+    "preview": "Pancake is an HNSW (Hierarchical Navigable Small World) approximate nearest-neighbor index compiled from C++ to WebAssembly. The primary artifact is a single portable WASM module ( dist/engine.wasm, 137 KB raw / 49 KB...",
+    "id": 86
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Overview",
+    "anchor": "overview",
+    "text": ". A separate native Node N-API addon ( native/ ) compiles the same two C++",
+    "preview": ". A separate native Node N-API addon ( native/ ) compiles the same two C++",
+    "id": 87
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Overview",
+    "anchor": "overview",
+    "text": "backend classes with AVX2/SSE2 SIMD. It is a benchmarking tool — it is not part of the shipped package — and exists to separate runtime overhead (WASM vs native) from graph quality (which is identical because the backend code is shared). Pancake is an index, not a database and not an embedding model. It stores vectors and graph edges only; metadata, persistence policy, and embedding are the caller's responsibility. ---",
+    "preview": "backend classes with AVX2/SSE2 SIMD. It is a benchmarking tool — it is not part of the shipped package — and exists to separate runtime overhead (WASM vs native) from graph quality (which is identical because the backend...",
+    "id": 88
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Layered Architecture",
+    "anchor": "layered-architecture",
+    "text": "┌──────────────────────────────────────────────────────────────────┐ │ Application │ │ Node.js app │ Cloudflare Worker │ Browser (ESM import) │ ├─────────┬───────┴───────────┬───────────┴──────────┬──────────────┤ │ JS Wrapper Layer │ │ │ │ pancake.js (CJS) / pancake.node.mjs (ESM) / pancake.web.mjs (web)│ │ └──────────── pancake-core.js ──────────┘ │ │ PancakeIndex: marshalling, ID translation, │ │ export envelope, buffer management │ ├──────────────────────────────┬────────────────────────────────────┤ │ C ABI (WASM exports) │ │ │ src/engine.cpp — handle table, IndexWrapper dispatch │ │ pancake init / add / query / query filtered / export / ..",
+    "preview": "┌──────────────────────────────────────────────────────────────────┐ │ Application │ │ Node.js app │ Cloudflare Worker │ Browser (ESM import) │ ├─────────┬───────┴───────────┬───────────┴──────────┬──────────────┤ │ JS...",
+    "id": 89
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Layered Architecture",
+    "anchor": "layered-architecture",
+    "text": ". │ ├──────────────────────────────┬────────────────────────────────────┤",
+    "preview": ". │ ├──────────────────────────────┬────────────────────────────────────┤",
+    "id": 90
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Layered Architecture",
+    "anchor": "layered-architecture",
+    "text": "│ Backend Layer (C++ templates-free, runtime dimension) │ │ ┌──────────────────┐ ┌────────────────────────────────────┐ │ │ │ FloatHNSW │ │ Int8FloatHNSW │ │ │ │ float hnsw.hpp │ │ int8 float hnsw.hpp │ │ │ └──────────────────┘ └────────────────────────────────────┘ │ │ Distance kernels: WASM SIMD128 / AVX2 / SSE2 / scalar │ └──────────────────────────────────────────────────────────────────┘ The native addon ( native/pancake napi.cpp ) replaces the C ABI layer with an N-API binding but reuses the identical backend layer — it include s float hnsw.hpp and int8 float hnsw.hpp directly",
+    "preview": "│ Backend Layer (C++ templates-free, runtime dimension) │ │ ┌──────────────────┐ ┌────────────────────────────────────┐ │ │ │ FloatHNSW │ │ Int8FloatHNSW │ │ │ │ float hnsw.hpp │ │ int8 float hnsw.hpp │ │ │...",
+    "id": 91
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Layered Architecture",
+    "anchor": "layered-architecture",
+    "text": ". The same IndexWrapper abstraction ( src/engine.cpp:26 ) is used by both the WASM C ABI and the native addon (the native addon defines an equivalent wrapper",
+    "preview": ". The same IndexWrapper abstraction ( src/engine.cpp: 26 ) is used by both the WASM C ABI and the native addon (the native addon defines an equivalent wrapper",
+    "id": 92
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Layered Architecture",
+    "anchor": "layered-architecture",
+    "text": "pair in pancake napi.cpp ). Backend choice is made once, at construction, from the quantized flag, and dispatched through virtual calls thereafter — there is no per-call branching on a backend type. ---",
+    "preview": "pair in pancake napi.cpp ). Backend choice is made once, at construction, from the quantized flag, and dispatched through virtual calls thereafter — there is no per-call branching on a backend type. ---",
+    "id": 93
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The Two HNSW Backends",
+    "anchor": "the-two-hnsw-backends",
+    "text": "Both backends are runtime-dimension (no compile-time DIMS template specialization) and implement the same HNSW algorithm with backend-specific storage and distance kernels. The graph algorithm code (level assignment, greedy descent, layer beam search, neighbor selection, compaction) is largely duplicated between float hnsw.hpp ( 1080 lines) and int8 float hnsw.hpp ( 1740 lines) rather than shared through a common base — a deliberate trade of DRY-ness for keeping each backend's hot path self-contained and independently tunable.",
+    "preview": "Both backends are runtime-dimension (no compile-time DIMS template specialization) and implement the same HNSW algorithm with backend-specific storage and distance kernels. The graph algorithm code (level assignment,...",
+    "id": 94
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The Two HNSW Backends / 3.1 Graph parameters",
+    "anchor": "3-1-graph-parameters",
+    "text": "Parameter Meaning Notes ----------- --------- ------- M Max neighbors per node on upper layers M0 Max neighbors at layer 0 Hard-coded M0 = 2 M ; not separately configurable. Layer 0 is denser because all searches terminate there. ef construction Beam width during insert ef search Beam width during query Passed per query; the JS wrapper owns the mutable default.",
+    "preview": "Parameter Meaning Notes ----------- --------- ------- M Max neighbors per node on upper layers M0 Max neighbors at layer 0 Hard-coded M0 = 2 M; not separately configurable. Layer 0 is denser because all searches...",
+    "id": 95
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The Two HNSW Backends / 3.2 Level assignment",
+    "anchor": "3-2-level-assignment",
+    "text": "Identical in both backends: an exponential distribution level = floor(-ln(U) level mult) where level mult = 1 / ln(M) and U is uniform (0,1) from a seeded std::mt19937 . ( float hnsw.hpp:115 , int8 float hnsw.hpp:244 .)",
+    "preview": "Identical in both backends: an exponential distribution level = floor(-ln(U) level mult) where level mult = 1 / ln(M) and U is uniform (0,1) from a seeded std:: mt19937. ( float hnsw.hpp: 115, int8 float hnsw.hpp: 244.)",
+    "id": 96
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The Two HNSW Backends / 3.3 Insert",
+    "anchor": "3-3-insert",
+    "text": "Capacity check — returns UINT32 MAX if count == max elements (no resize). ( float hnsw.hpp:98 , int8 float hnsw.hpp:191 .) Assign sequential internal id count ++ . Store the vector (float32 stored raw, or normalized-then-quantized for the int8 cosine path — see §4). Greedy descent from the entry point through the upper layers to the new node's top level (exhaustive per-layer neighbor scan, no beam). For each layer from the node's level down to 0: a beam search of width ef construction collects candidates; the neighbor-selection heuristic picks up to M (or M0 at layer 0); reciprocal edges are added to neighbors with pruning",
+    "preview": "Capacity check — returns UINT32 MAX if count == max elements (no resize). ( float hnsw.hpp: 98, int8 float hnsw.hpp: 191.) Assign sequential internal id count ++. Store the vector (float32 stored raw, or...",
+    "id": 97
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The Two HNSW Backends / 3.3 Insert",
+    "anchor": "3-3-insert",
+    "text": ". Update the entry point if the new node's level exceeds the current max.",
+    "preview": ". Update the entry point if the new node's level exceeds the current max.",
+    "id": 98
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The Two HNSW Backends / 3.4 Neighbor-selection heuristic",
+    "anchor": "3-4-neighbor-selection-heuristic",
+    "text": "Both backends default to use heuristic = true and implement the HNSW diversity heuristic with backfill (the paper's \"keep pruned connections\"): a candidate is kept only if it is not closer to an already-selected neighbor than to the inserting node; if fewer than M survive, the closest rejected candidates are added back until M slots are filled. ( float hnsw.hpp:954 , int8 float hnsw.hpp:1620 .) The float backend caches pairwise candidate distances during selection to avoid recomputing them; the int8 backend leans on its closed-form symmetric distance (§4.3) instead. Per-node slot capacity is hard",
+    "preview": "Both backends default to use heuristic = true and implement the HNSW diversity heuristic with backfill (the paper's \"keep pruned connections\"): a candidate is kept only if it is not closer to an already-selected neighbor...",
+    "id": 99
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The Two HNSW Backends / 3.4 Neighbor-selection heuristic",
+    "anchor": "3-4-neighbor-selection-heuristic",
+    "text": ". Layer-0 neighbor slots are pre-allocated at exactly M0 entries per node with no headroom between adjacent slots, so adding",
+    "preview": ". Layer-0 neighbor slots are pre-allocated at exactly M0 entries per node with no headroom between adjacent slots, so adding",
+    "id": 100
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The Two HNSW Backends / 3.4 Neighbor-selection heuristic",
+    "anchor": "3-4-neighbor-selection-heuristic",
+    "text": "a reciprocal edge to a node already holding M0 neighbors must not append past M0 . When a node is saturated, append neighbor runs the diversity heuristic over the existing neighbors plus the new candidate and re-selects within M0 rather than writing a transient M0+1 th entry (which would corrupt the next node's slot, or overrun the buffer on the last node). The int8 backend's append edge with prune follows the same rule. ( float hnsw.hpp:773 , int8 float hnsw.hpp:1028 .)",
+    "preview": "a reciprocal edge to a node already holding M0 neighbors must not append past M0. When a node is saturated, append neighbor runs the diversity heuristic over the existing neighbors plus the new candidate and re-selects...",
+    "id": 101
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The Two HNSW Backends / 3.5 Delete and compaction",
+    "anchor": "3-5-delete-and-compaction",
+    "text": "Soft delete sets a per-node flag in a std::vector<uint8 t deleted (one byte per node, not a packed bitset — a deliberate trade of memory for a branch-free check). The node stays in the graph and is skipped during traversal. ( float hnsw.hpp:346 , int8 float hnsw.hpp:483 .) Compaction has two topology strategies behind one stable-remap contract. Below 50% deletions it physically moves survivors into compacted positions, remaps every neighbor id, and backfills under-connected nodes through neighbors-of-neighbors. At 50% or more deletions, it rebuilds the HNSW graph from the live vectors in old-ID order; repairing a mostly hollow skeleton did not recover recall reliably at scale",
+    "preview": "Soft delete sets a per-node flag in a std:: vector<uint8 t deleted (one byte per node, not a packed bitset — a deliberate trade of memory for a branch-free check). The node stays in the graph and is skipped during...",
+    "id": 102
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The Two HNSW Backends / 3.5 Delete and compaction",
+    "anchor": "3-5-delete-and-compaction",
+    "text": ". The int8 rebuild compacts its quantized",
+    "preview": ". The int8 rebuild compacts its quantized",
+    "id": 103
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The Two HNSW Backends / 3.5 Delete and compaction",
+    "anchor": "3-5-delete-and-compaction",
+    "text": "rows first and releases the old topology before reinsertion so the WASM allocator can reuse those blocks without increasing the retained heap. Deletion state is reset and the old id → new id map is returned through an out map out-parameter. ( float hnsw.hpp:392 , int8 float hnsw.hpp:505 .) The C ABI exposes both a void compact() and a compact remap() that surfaces the out map ; in practice the current JS layer calls plain compact() and rebuilds its own id map (§8).",
+    "preview": "rows first and releases the old topology before reinsertion so the WASM allocator can reuse those blocks without increasing the retained heap. Deletion state is reset and the old id → new id map is returned through an...",
+    "id": 104
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The Two HNSW Backends / 3.6 Filtered search",
+    "anchor": "3-6-filtered-search",
+    "text": "Both backends implement search filtered(query, k, filter bitset, bitset len, ef search) . The filter is a bitset over internal ids: bit (id & 7) of byte (id 3) . Filtering happens inside the layer-0 traversal, not as a post-filter: non-matching nodes still navigate the graph (they remain in the candidate queue), but only matching nodes enter the result heap. The search starts with ef = max(ef search, k 2) and dynamically widens ef (up to 4× initial) when too few filtered results have been found, so that restrictive filters still return k results where the graph allows",
+    "preview": "Both backends implement search filtered(query, k, filter bitset, bitset len, ef search). The filter is a bitset over internal ids: bit (id & 7) of byte (id 3). Filtering happens inside the layer-0 traversal, not as a...",
+    "id": 105
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The Two HNSW Backends / 3.6 Filtered search",
+    "anchor": "3-6-filtered-search",
+    "text": ". ( float hnsw.hpp:216 , int8 float hnsw.hpp:365 .) Effectiveness degrades below 1% selectivity, where the graph may lack navigable paths to the target set.",
+    "preview": ". ( float hnsw.hpp: 216, int8 float hnsw.hpp: 365.) Effectiveness degrades below 1% selectivity, where the graph may lack navigable paths to the target set.",
+    "id": 106
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The Two HNSW Backends / 3.7 The visited-set generation trick",
+    "anchor": "3-7-the-visited-set-generation-trick",
+    "text": "Rather than clearing a visited bitmap before each search, both backends keep a std::vector<uint32 t visited list and a monotonically increasing visited curr counter; a node is \"visited this search\" iff visited list [id] == visited curr . Each search just increments the counter; the array is only zeroed on the rare uint32 t wraparound. This avoids an O(max elements) clear per query. ( float hnsw.hpp:95 , int8 float hnsw.hpp:187 .) ---",
+    "preview": "Rather than clearing a visited bitmap before each search, both backends keep a std:: vector<uint32 t visited list and a monotonically increasing visited curr counter; a node is \"visited this search\" iff visited list [id]...",
+    "id": 107
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Quantization and Asymmetric Distance / 4.1 Row-wise affine quantization (int8 backend)",
+    "anchor": "4-1-row-wise-affine-quantization-int8-backend",
+    "text": "Each vector is quantized independently to uint8 using its own min/max ( int8 float hnsw.hpp:213 ): Dequantization is v[d] ≈ offset + scale q[d] ( int8 float hnsw.hpp:1122 ). Per-vector storage: D bytes (quantized data) + 4 (scale) + 4 (offset) + 4 ( sum q ) + 4 ( sum q2 ) = D + 16 bytes , versus 4D for float32. The two extra uint32 sums are precomputed statistics used by the symmetric distance (§4.3). (Fields: int8 float hnsw.hpp:1719–1722 .)",
+    "preview": "Each vector is quantized independently to uint8 using its own min/max ( int8 float hnsw.hpp: 213 ): Dequantization is v[d] ≈ offset + scale q[d] ( int8 float hnsw.hpp: 1122 ). Per-vector storage: D bytes (quantized data)...",
+    "id": 108
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Quantization and Asymmetric Distance / 4.2 Asymmetric search distance",
+    "anchor": "4-2-asymmetric-search-distance",
+    "text": "At query time the query stays float32 ; the database vector is dequantized on the fly during the distance computation. This avoids quantizing the query (which would compound error and require knowing the query's scale before the distance is computed) and preserves query-side precision. For cosine, both the stored vectors (at insert) and the query (at search) are L2-normalized first; distance is 1 − clamp(dot, −1, 1) . ( int8 float hnsw.hpp:199 , :1184 .)",
+    "preview": "At query time the query stays float32; the database vector is dequantized on the fly during the distance computation. This avoids quantizing the query (which would compound error and require knowing the query's scale...",
+    "id": 109
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Quantization and Asymmetric Distance / 4.3 Closed-form symmetric distance",
+    "anchor": "4-3-closed-form-symmetric-distance",
+    "text": "Graph maintenance (neighbor selection, edge-distance recomputation) needs node-to-node distances between two stored int8 vectors. Instead of dequantizing both, the int8 backend computes the distance algebraically from the quantized bytes and the cached sum q / sum q2 statistics plus an integer int8 dot ( int8 float hnsw.hpp:1433 ): This makes graph construction distance evaluations cheap and is the main reason the int8 build path stays competitive with float32. The float backend has no analog — it computes node-to-node distance directly on the stored float vectors. ---",
+    "preview": "Graph maintenance (neighbor selection, edge-distance recomputation) needs node-to-node distances between two stored int8 vectors. Instead of dequantizing both, the int8 backend computes the distance algebraically from...",
+    "id": 110
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / SIMD and Distance Kernels",
+    "anchor": "simd-and-distance-kernels",
+    "text": "Both backends select a kernel at compile time: Priority is WASM SIMD128 → AVX2 → SSE2 → scalar. Each kernel processes the dimension in SIMD-width chunks with a scalar tail for the remainder. Float L2: load 4/8 floats, subtract, square, accumulate ( float hnsw.hpp:803 ). Float cosine: dot-product accumulate, then 1 − clamp(dot) ( float hnsw.hpp:841 ). Int8 asymmetric: load 16 uint8, widen u8→u16→f32, dequantize in-register ( offset + scale·q ) via FMA, subtract the float query, square/dot, accumulate. Multiple independent accumulators ( acc0..acc3 ) hide FMA latency",
+    "preview": "Both backends select a kernel at compile time: Priority is WASM SIMD128 → AVX2 → SSE2 → scalar. Each kernel processes the dimension in SIMD-width chunks with a scalar tail for the remainder. Float L2: load 4/8 floats,...",
+    "id": 111
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / SIMD and Distance Kernels",
+    "anchor": "simd-and-distance-kernels",
+    "text": ". ( int8 float hnsw.hpp:1184 , :1305 .) Relaxed SIMD: an opt-in WASM build path uses wasm f32x4 relaxed madd (fused multiply-add) where available, falling back to separate mul+add",
+    "preview": ". ( int8 float hnsw.hpp: 1184,: 1305.) Relaxed SIMD: an opt-in WASM build path uses wasm f32x4 relaxed madd (fused multiply-add) where available, falling back to separate mul+add",
+    "id": 112
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / SIMD and Distance Kernels",
+    "anchor": "simd-and-distance-kernels",
+    "text": "otherwise ( int8 float hnsw.hpp:57 ). Relaxed-SIMD reductions are non-deterministic across runtimes; this is why it is opt-in (see §10). The native AVX2 build is the fastest distance path; the shipped WASM SIMD128 build is the portable one. Recall is identical across all of them because they compute the same distances — only throughput differs. ---",
+    "preview": "otherwise ( int8 float hnsw.hpp: 57 ). Relaxed-SIMD reductions are non-deterministic across runtimes; this is why it is opt-in (see §10). The native AVX2 build is the fastest distance path; the shipped WASM SIMD128 build...",
+    "id": 113
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The C ABI and Handle Table",
+    "anchor": "the-c-abi-and-handle-table",
+    "text": "src/engine.cpp (433 lines) is the boundary between WASM and the C++ backends.",
+    "preview": "src/engine.cpp (433 lines) is the boundary between WASM and the C++ backends.",
+    "id": 114
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The C ABI and Handle Table / 6.1 Handle table",
+    "anchor": "6-1-handle-table",
+    "text": "A fixed 64-slot static array. alloc handle() linear-scans for the first free slot (or returns INVALID HANDLE ); free handle() deletes the wrapper and clears the slot. Multiple independent indexes can coexist in one WASM instance — e.g., one per tenant — up to 64. State is plain mutable globals, which is safe under WASM's single-threaded execution model. ( engine.cpp:143–168 .)",
+    "preview": "A fixed 64-slot static array. alloc handle() linear-scans for the first free slot (or returns INVALID HANDLE ); free handle() deletes the wrapper and clears the slot. Multiple independent indexes can coexist in one WASM...",
+    "id": 115
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The C ABI and Handle Table / 6.2 Backend dispatch",
+    "anchor": "6-2-backend-dispatch",
+    "text": "IndexWrapper ( engine.cpp:38 ) is an abstract base with virtual insert , bulk insert , search , search filtered , mark delete , compact (both void and out map forms), count , ghost count , ghost ratio , memory bytes , serialize , deserialize , dimension . Query beam width is an explicit argument to search and search filtered . pancake init picks the concrete wrapper from the quantized flag and the metric ( metric == 1 → cosine, else L2): ( engine.cpp:181 .) Defaults. The library defaults are M=16 , efConstruction=50 , efSearch=100 , and the JavaScript wrapper passes them explicitly",
+    "preview": "IndexWrapper ( engine.cpp: 38 ) is an abstract base with virtual insert, bulk insert, search, search filtered, mark delete, compact (both void and out map forms), count, ghost count, ghost ratio, memory bytes, serialize,...",
+    "id": 116
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The C ABI and Handle Table / 6.2 Backend dispatch",
+    "anchor": "6-2-backend-dispatch",
+    "text": ". The C ABI only falls back to its internal defaults when a direct caller passes non-positive values to pancake init ; normal JS callers use the canonical",
+    "preview": ". The C ABI only falls back to its internal defaults when a direct caller passes non-positive values to pancake init; normal JS callers use the canonical",
+    "id": 117
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The C ABI and Handle Table / 6.2 Backend dispatch",
+    "anchor": "6-2-backend-dispatch",
+    "text": "library defaults.",
+    "preview": "library defaults.",
+    "id": 118
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The C ABI and Handle Table / 6.3 Result marshalling",
+    "anchor": "6-3-result-marshalling",
+    "text": "pancake query / pancake query filtered take caller-allocated uint64 t ids and float dists buffers, run the search, and copy results in — widening the backend's internal uint32 t ids to uint64 t on the way out (the BigInt-wide ABI is why WASM BIGINT=1 is set at build time). They return the result count. ( engine.cpp:223 , :233 .)",
+    "preview": "pancake query / pancake query filtered take caller-allocated uint64 t ids and float dists buffers, run the search, and copy results in — widening the backend's internal uint32 t ids to uint64 t on the way out (the...",
+    "id": 119
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The C ABI and Handle Table / 6.4 Export buffer ownership",
+    "anchor": "6-4-export-buffer-ownership",
+    "text": "pancake export serializes into the per-handle static g export bufs[h] and returns a pointer + size; the pointer is valid only until the next export on that handle or pancake dispose . The caller must copy promptly. pancake import returns 0 / -1 ; on failure the existing index is left intact. The wrapper's deserialize builds a fresh backend into a unique ptr and only swaps it in on success, and pancake import wraps the call in a try/catch so a hostile snapshot that still slips an oversized allocation through the bounds checks (below) returns -1 instead of aborting the WASM instance. ( engine.cpp:297 , :304 .)",
+    "preview": "pancake export serializes into the per-handle static g export bufs[h] and returns a pointer + size; the pointer is valid only until the next export on that handle or pancake dispose. The caller must copy promptly....",
+    "id": 120
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The C ABI and Handle Table / 6.5 Utilities and lifecycle",
+    "anchor": "6-5-utilities-and-lifecycle",
+    "text": "Beyond the index API, the ABI exports emsc malloc / emsc free (heap for marshalling), pancake profile print / pancake profile reset (no-ops unless built with PANCAKE INT8 HNSW BUILD PROFILE ), and pancake shutdown all (frees all handles). The WASM ABI no longer exposes the earlier experimental emb embedding-model or matrix-helper paths; the public surface is the index API plus allocation, profiling, and lifecycle helpers. The complete export list is in Appendix A. ---",
+    "preview": "Beyond the index API, the ABI exports emsc malloc / emsc free (heap for marshalling), pancake profile print / pancake profile reset (no-ops unless built with PANCAKE INT8 HNSW BUILD PROFILE ), and pancake shutdown all...",
+    "id": 121
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The JavaScript Wrapper / 7.1 Entry points and engine loading",
+    "anchor": "7-1-entry-points-and-engine-loading",
+    "text": "Entry File WASM resolution ------- ------ ----------------- CJS (Node) pancake.js reads each selected asset once, compiles once, instantiates per index ESM (Node) pancake.node.mjs same, via node:fs + fileURLToPath Web pancake.web.mjs fetches each selected asset once, compiles once, instantiates per index workerd pancake.workerd.mjs consumes the bundled precompiled module and instantiates per index All entrypoints share pancake-loader.js , which memoizes source and compiled module promises per SIMD/scalar variant. Concurrent create() calls therefore share fetch/read/compile work but each call invokes the Emscripten factory with a fresh WebAssembly.Instance",
+    "preview": "Entry File WASM resolution ------- ------ ----------------- CJS (Node) pancake.js reads each selected asset once, compiles once, instantiates per index ESM (Node) pancake.node.mjs same, via node: fs + fileURLToPath Web...",
+    "id": 122
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The JavaScript Wrapper / 7.1 Entry points and engine loading",
+    "anchor": "7-1-entry-points-and-engine-loading",
+    "text": ". Heaps, handle tables, growth, failure, and",
+    "preview": ". Heaps, handle tables, growth, failure, and",
+    "id": 123
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The JavaScript Wrapper / 7.1 Entry points and engine loading",
+    "anchor": "7-1-entry-points-and-engine-loading",
+    "text": "disposal remain isolated per index. Pancake.create() then allocates per-index scratch buffers, calls pancake init , and returns the wrapper.",
+    "preview": "disposal remain isolated per index. Pancake.create() then allocates per-index scratch buffers, calls pancake init, and returns the wrapper.",
+    "id": 124
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The JavaScript Wrapper / 7.2 PancakeIndex API",
+    "anchor": "7-2-pancakeindex-api",
+    "text": "Method Marshalling -------- ------------- add(vec) validates element type (plain-array elements must be numbers, not coerced) + dim + finiteness, HEAPF32.set into the query buffer, pancake add , assigns an external id addBatch(vecs) one emsc malloc for the whole batch, pancake bulk insert , records a contiguous id range search(q,k,options?) resolves the per-call/default efSearch , ensureSearchCapacity(k) , marshals query, pancake query , translates ids + (for L2) sqrt the squared distance searchFiltered(q,k,allowedIds,options?) resolves efSearch , builds an internal-id bitset from the allowed external-id Set , pancake query filtered setEfSearch(ef) validates and changes the JS-owned default",
+    "preview": "Method Marshalling -------- ------------- add(vec) validates element type (plain-array elements must be numbers, not coerced) + dim + finiteness, HEAPF32.set into the query buffer, pancake add, assigns an external id...",
+    "id": 125
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The JavaScript Wrapper / 7.2 PancakeIndex API",
+    "anchor": "7-2-pancakeindex-api",
+    "text": "for future queries; it does not mutate WASM engine state",
+    "preview": "for future queries; it does not mutate WASM engine state",
+    "id": 126
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The JavaScript Wrapper / 7.2 PancakeIndex API",
+    "anchor": "7-2-pancakeindex-api",
+    "text": "delete(id) external→internal, pancake delete , record in deletedExt ; returns whether a live ID changed state has(id) / isDeleted(id) inspect the stable external-ID maps without entering WASM compact() rebuild id maps from survivors (§8) export() guard ghostCount===0 , prepend v3 envelope (§9.3) import(data) parse + validate envelope, load WASM state, restore id maps dispose() / Symbol.dispose free handle + scratch buffers, idempotent The preferred state properties are liveCount , deletedCount , deletedRatio , capacity , remainingCapacity , resolved config , and structured memoryUsage . ghostCount , ghostRatio , and memory remain aliases",
+    "preview": "delete(id) external→internal, pancake delete, record in deletedExt; returns whether a live ID changed state has(id) / isDeleted(id) inspect the stable external-ID maps without entering WASM compact() rebuild id maps from...",
+    "id": 127
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The JavaScript Wrapper / 7.2 PancakeIndex API",
+    "anchor": "7-2-pancakeindex-api",
+    "text": ". dim , capacity, graph configuration, and the default efSearch are cached; backend counts and logical",
+    "preview": ". dim, capacity, graph configuration, and the default efSearch are cached; backend counts and logical",
+    "id": 128
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The JavaScript Wrapper / 7.2 PancakeIndex API",
+    "anchor": "7-2-pancakeindex-api",
+    "text": "memory proxy to WASM.",
+    "preview": "memory proxy to WASM.",
+    "id": 129
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / The JavaScript Wrapper / 7.3 Buffer management",
+    "anchor": "7-3-buffer-management",
+    "text": "Search result buffers ( idPtr , distPtr ) are reused across queries and grown on demand by ensureSearchCapacity when k exceeds the current capacity ( pancake-core.js:465 ). Result ids are read back as a uint64 (two uint32 halves recombined) from the heap and translated to external ids; for L2 the stored squared distance is Math.sqrt -ed before being returned ( pancake-core.js:573 ). dispose() frees all three scratch pointers even if the handle dispose throws, then sets a disposed flag that every method checks. ---",
+    "preview": "Search result buffers ( idPtr, distPtr ) are reused across queries and grown on demand by ensureSearchCapacity when k exceeds the current capacity ( pancake-core.js: 465 ). Result ids are read back as a uint64 (two...",
+    "id": 130
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / ID Translation and Compaction",
+    "anchor": "id-translation-and-compaction",
+    "text": "The WASM backend assigns sequential internal ids (0, 1, 2, …) and reassigns them on compaction (gaps from deletes are closed). To give callers stable ids, pancake-core.js keeps a bidirectional map: extToInt: Map<extId, intId intToExt: Map<intId, extId deletedExt: Set<extId nextExtId : monotonic external-id counter, never reused External ids are assigned at insert and never change. On compact() ( pancake-core.js:210 ): Collect surviving {extId, intId} pairs (skip deletedExt ). Sort by old internal id. Call pancake compact — the WASM layer reassigns internal ids 0..n-1 in that same surviving order",
+    "preview": "The WASM backend assigns sequential internal ids (0, 1, 2, …) and reassigns them on compaction (gaps from deletes are closed). To give callers stable ids, pancake-core.js keeps a bidirectional map: extToInt: Map<extId,...",
+    "id": 131
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / ID Translation and Compaction",
+    "anchor": "id-translation-and-compaction",
+    "text": ". Clear and rebuild both maps so external id e now points at its new internal id (its index in the sorted survivor list); clear deletedExt .",
+    "preview": ". Clear and rebuild both maps so external id e now points at its new internal id (its index in the sorted survivor list); clear deletedExt.",
+    "id": 132
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / ID Translation and Compaction",
+    "anchor": "id-translation-and-compaction",
+    "text": "The correctness hinge: the JS layer assumes WASM compaction preserves the relative order of survivors when renumbering them 0..n-1 . The wrapper consumes the engine's compact remap out-map rather than reimplementing that assignment rule, then rebuilds its stable external-ID maps from the returned mapping. ---",
+    "preview": "The correctness hinge: the JS layer assumes WASM compaction preserves the relative order of survivors when renumbering them 0..n-1. The wrapper consumes the engine's compact remap out-map rather than reimplementing that...",
+    "id": 133
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Serialization Formats",
+    "anchor": "serialization-formats",
+    "text": "There are two nested layers: the backend blob and the JavaScript export envelope. The Worker persists the same package snapshot format.",
+    "preview": "There are two nested layers: the backend blob and the JavaScript export envelope. The Worker persists the same package snapshot format.",
+    "id": 134
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Serialization Formats / 9.1 Backend blobs",
+    "anchor": "9-1-backend-blobs",
+    "text": "Both backends emit little-endian blobs with a magic, a version, a fixed header, the vector data, then the per-node graph (level, base edges, upper-level edges). Byte layouts are in Appendix B. FloatHNSW: magic 0x464C4831 (\"FLH1\"), current version 1 ; also reads a legacy magic. Stores raw (or normalized) float vectors + graph. ( float hnsw.hpp:513 .) Int8FloatHNSW: magic 0x49384831 (\"I8H1\"), current version 2 ; reads a legacy magic and older versions. Stores scales, offsets, quantized bytes, then graph. Version 2 stores edge distances inline; importing an older version recomputes them. ( int8 float hnsw.hpp:660 .) Deletion state does not survive a round-trip",
+    "preview": "Both backends emit little-endian blobs with a magic, a version, a fixed header, the vector data, then the per-node graph (level, base edges, upper-level edges). Byte layouts are in Appendix B. FloatHNSW: magic 0x464C4831...",
+    "id": 135
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Serialization Formats / 9.1 Backend blobs",
+    "anchor": "9-1-backend-blobs",
+    "text": ". Neither backend serializes the deleted flags — ghosts are written as ordinary vectors and come back",
+    "preview": ". Neither backend serializes the deleted flags — ghosts are written as ordinary vectors and come back",
+    "id": 136
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Serialization Formats / 9.1 Backend blobs",
+    "anchor": "9-1-backend-blobs",
+    "text": "live on import, and num deleted resets to 0. The contract is: compact before export if deletes must persist. The JS export() enforces this by throwing when ghostCount 0 ; the Worker's persist path compacts first. ( float hnsw.hpp:513 , int8 float hnsw.hpp:660 .)",
+    "preview": "live on import, and num deleted resets to 0. The contract is: compact before export if deletes must persist. The JS export() enforces this by throwing when ghostCount 0; the Worker's persist path compacts first. ( float...",
+    "id": 137
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Serialization Formats / 9.2 Statistics reconstruction (int8)",
+    "anchor": "9-2-statistics-reconstruction-int8",
+    "text": "The int8 deserializer recomputes sum q / sum q2 from the loaded quantized bytes rather than storing them, and (for pre-v2 blobs) recomputes all edge distances. So the on-disk format is slightly smaller than the in-memory footprint.",
+    "preview": "The int8 deserializer recomputes sum q / sum q2 from the loaded quantized bytes rather than storing them, and (for pre-v2 blobs) recomputes all edge distances. So the on-disk format is slightly smaller than the in-memory...",
+    "id": 138
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Serialization Formats / 9.3 JS export envelope (v3)",
+    "anchor": "9-3-js-export-envelope-v3",
+    "text": "PancakeIndex.export() wraps the backend blob with a 32-byte header plus an embedded id-mapping table so external ids survive an export/import cycle. This is new in v3 — earlier envelopes (v1/v2, 20-byte header, still accepted on import) carried no mapping. ( pancake-core.js:4 , :250 .) import() validates magic, version (1/2/3 accepted, ≥4 rejected), and that the embedded dim / metric / quantized match the target index — mismatches throw before the WASM import runs, preventing silent memory corruption. For v3 it also checks that the mapping count equals the post-import vector count and that nextExtId ≥ count , then commits the restored maps",
+    "preview": "PancakeIndex.export() wraps the backend blob with a 32-byte header plus an embedded id-mapping table so external ids survive an export/import cycle. This is new in v3 — earlier envelopes (v1/v2, 20-byte header, still...",
+    "id": 139
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Serialization Formats / 9.3 JS export envelope (v3)",
+    "anchor": "9-3-js-export-envelope-v3",
+    "text": ". A bare backend blob with no envelope is imported with identity id mappings.",
+    "preview": ". A bare backend blob with no envelope is imported with identity id mappings.",
+    "id": 140
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Serialization Formats / 9.4 Untrusted-snapshot hardening (backend deserialize)",
+    "anchor": "9-4-untrusted-snapshot-hardening-backend-deserialize",
+    "text": "The JS envelope checks in §9.3 are the outer gate. The backend deserialize() in each .hpp parses an attacker-controlled byte buffer directly (anything reaching index.import() or the raw-blob path), so it is hardened to fail closed rather than corrupt memory or abort the instance: Bounds checks use subtraction, not addition. size t is 32-bit under Emscripten (wasm32), so an offset + len data size test could wrap and pass while the following memcpy ran out of bounds. Every block-size check is written as offset data size data size - offset < len , and the float backend adds an explicit count dims multiply-overflow guard before sizing the vector store",
+    "preview": "The JS envelope checks in §9.3 are the outer gate. The backend deserialize() in each.hpp parses an attacker-controlled byte buffer directly (anything reaching index.import() or the raw-blob path), so it is hardened to...",
+    "id": 141
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Serialization Formats / 9.4 Untrusted-snapshot hardening (backend deserialize)",
+    "anchor": "9-4-untrusted-snapshot-hardening-backend-deserialize",
+    "text": ". ( float hnsw.hpp:560 , int8 float hnsw.hpp:720 .)",
+    "preview": ". ( float hnsw.hpp: 560, int8 float hnsw.hpp: 720.)",
+    "id": 142
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Serialization Formats / 9.4 Untrusted-snapshot hardening (backend deserialize)",
+    "anchor": "9-4-untrusted-snapshot-hardening-backend-deserialize",
+    "text": "The HNSW level count is capped at MAX DESERIALIZE LEVEL (64). An unbounded max level read from a snapshot would otherwise drive a multi-gigabyte per-node upper [i].resize() , throwing length error / bad alloc . 64 levels covers any realistic element count. ( int8 float hnsw.hpp:156 .) Quantization scales are validated 0 (and finite, and ≤ 1e20 ). A zero/negative stored scale would collapse a vector to a constant and poison every distance to it; insert() never produces one, so a snapshot may not carry one either",
+    "preview": "The HNSW level count is capped at MAX DESERIALIZE LEVEL (64). An unbounded max level read from a snapshot would otherwise drive a multi-gigabyte per-node upper [i].resize(), throwing length error / bad alloc. 64 levels...",
+    "id": 143
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Serialization Formats / 9.4 Untrusted-snapshot hardening (backend deserialize)",
+    "anchor": "9-4-untrusted-snapshot-hardening-backend-deserialize",
+    "text": ". ( int8 float hnsw.hpp:213 for the insert-side guard the importer mirrors.) Exceptions are contained at the pancake import boundary (§6.4): any remaining oversized allocation returns -1 rather than unwinding out of the",
+    "preview": ". ( int8 float hnsw.hpp: 213 for the insert-side guard the importer mirrors.) Exceptions are contained at the pancake import boundary (§6.4): any remaining oversized allocation returns -1 rather than unwinding out of the",
+    "id": 144
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Serialization Formats / 9.4 Untrusted-snapshot hardening (backend deserialize)",
+    "anchor": "9-4-untrusted-snapshot-hardening-backend-deserialize",
+    "text": "WASM module. Per-edge neighbor ids are also validated < count , and vector/scale/offset components are rejected if non-finite (bit-level exponent check, since std::isfinite is unreliable under -ffast-math ).",
+    "preview": "WASM module. Per-edge neighbor ids are also validated < count, and vector/scale/offset components are rejected if non-finite (bit-level exponent check, since std:: isfinite is unreliable under -ffast-math ).",
+    "id": 145
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Build Pipeline (WASM and Native) / 10.1 WASM ( build.sh )",
+    "anchor": "10-1-wasm-build-sh",
+    "text": "Single translation unit ( src/engine.cpp ) compiled with Emscripten. Key flags: Optimization: -O3 (release) / -O2 -gsource-map (debug). Speed, not size — the binary is small enough that the speed trade wins. SIMD: -msimd128 by default. WASM RELAXED SIMD=1 adds -mrelaxed-simd (opt-in; the default build stays on plain SIMD so the checked-in artifact is broadly compatible and bit-reproducible). Also -mnontrapping-fptoint , -msign-ext , -mbulk-memory",
+    "preview": "Single translation unit ( src/engine.cpp ) compiled with Emscripten. Key flags: Optimization: -O3 (release) / -O2 -gsource-map (debug). Speed, not size — the binary is small enough that the speed trade wins. SIMD:...",
+    "id": 146
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Build Pipeline (WASM and Native) / 10.1 WASM ( build.sh )",
+    "anchor": "10-1-wasm-build-sh",
+    "text": ". Runtime: MODULARIZE=1 EXPORT NAME=\"P\" , ENVIRONMENT='web,node' , ALLOW MEMORY GROWTH=1 , INITIAL MEMORY=16MB , STACK SIZE=64KB , MALLOC=emmalloc , WASM BIGINT=1 (64-bit ids across the boundary), FILESYSTEM=0 , DYNAMIC EXECUTION=0 , ASSERTIONS=0 , DISABLE EXCEPTION CATCHING=0 (C++ exceptions on).",
+    "preview": ". Runtime: MODULARIZE=1 EXPORT NAME=\"P\", ENVIRONMENT='web,node', ALLOW MEMORY GROWTH=1, INITIAL MEMORY=16MB, STACK SIZE=64KB, MALLOC=emmalloc, WASM BIGINT=1 (64-bit ids across the boundary), FILESYSTEM=0, DYNAMIC...",
+    "id": 147
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Build Pipeline (WASM and Native) / 10.1 WASM ( build.sh )",
+    "anchor": "10-1-wasm-build-sh",
+    "text": "Exports: the 26-function list in Appendix A; runtime methods ccall, cwrap, HEAPF32, HEAPU8, HEAPU32, HEAP32 . Output: dist/engine.js ( 17 KB) + dist/engine.wasm ( 137 KB; 49 KB gzipped). A post-build patch engine.py rewrites the Emscripten-generated environment detection, forcing ENVIRONMENT IS NODE = false in engine.js so the modular factory loads cleanly across Node, browser, and Workers rather than taking Emscripten's CommonJS auto-path. ( patch engine.py .) Scalar fallback. npm run build:all ( scripts/build-all.mjs ) builds the SIMD engine above and then re-runs the same compile with WASM SIMD=0 to emit dist/engine.scalar.{js,wasm} , a non-SIMD engine for runtimes without WASM SIMD",
+    "preview": "Exports: the 26-function list in Appendix A; runtime methods ccall, cwrap, HEAPF32, HEAPU8, HEAPU32, HEAP32. Output: dist/engine.js ( 17 KB) + dist/engine.wasm ( 137 KB; 49 KB gzipped). A post-build patch engine.py...",
+    "id": 148
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Build Pipeline (WASM and Native) / 10.1 WASM ( build.sh )",
+    "anchor": "10-1-wasm-build-sh",
+    "text": ". The JS loaders probe WebAssembly.validate for SIMD support and pick the",
+    "preview": ". The JS loaders probe WebAssembly.validate for SIMD support and pick the",
+    "id": 149
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Build Pipeline (WASM and Native) / 10.1 WASM ( build.sh )",
+    "anchor": "10-1-wasm-build-sh",
+    "text": "scalar artifact when it is absent. Both engines compile from the same source, so prepublishOnly runs build:all first to keep the shipped SIMD and scalar artifacts in lockstep with the current src/ .",
+    "preview": "scalar artifact when it is absent. Both engines compile from the same source, so prepublishOnly runs build: all first to keep the shipped SIMD and scalar artifacts in lockstep with the current src/.",
+    "id": 150
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Build Pipeline (WASM and Native) / 10.2 Native ( native/binding.gyp )",
+    "anchor": "10-2-native-native-binding-gyp",
+    "text": "node-gyp compiles pancake napi.cpp (which includes the same backend headers from ../src ) with -O3 -std=c++17 -ffast-math -march=native -mavx2 -msse2 -fno-rtti and -DPANCAKE ENABLE AVX2 SIMD -DPANCAKE ENABLE SSE2 SIMD (with macOS/Windows equivalents). Output: native/build/Release/pancake native.node .",
+    "preview": "node-gyp compiles pancake napi.cpp (which includes the same backend headers from../src ) with -O3 -std=c++17 -ffast-math -march=native -mavx2 -msse2 -fno-rtti and -DPANCAKE ENABLE AVX2 SIMD -DPANCAKE ENABLE SSE2 SIMD...",
+    "id": 151
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Build Pipeline (WASM and Native) / 10.3 Native vs WASM divergence",
+    "anchor": "10-3-native-vs-wasm-divergence",
+    "text": "WASM Native --- --- --- Compiler Emscripten system clang/gcc/MSVC SIMD SIMD128 (opt. relaxed) AVX2 + SSE2 Boundary C ABI + Emscripten heap N-API Query result caller buffers ( uint64 ids) JS object { ids: Uint32Array, distances: Float32Array, count } Exported surface 26 C functions 15 N-API functions Backends identical ( src/ .hpp ) identical ( src/ .hpp ) Because the backend code is shared, recall and graph structure are identical; the native build exists only to measure the runtime-overhead delta. ---",
+    "preview": "WASM Native --- --- --- Compiler Emscripten system clang/gcc/MSVC SIMD SIMD128 (opt. relaxed) AVX2 + SSE2 Boundary C ABI + Emscripten heap N-API Query result caller buffers ( uint64 ids) JS object { ids: Uint32Array,...",
+    "id": 152
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Cloudflare Worker Deployment",
+    "anchor": "cloudflare-worker-deployment",
+    "text": "Two reference Workers live under examples/ . The first ( examples/worker/ ) is a full read/write reference; the second ( examples/worker-semantic-search/ ) is a hardened snapshot-first demo. The mental model for both is snapshot search at the edge , not a durable mutable database inside one isolate.",
+    "preview": "Two reference Workers live under examples/. The first ( examples/worker/ ) is a full read/write reference; the second ( examples/worker-semantic-search/ ) is a hardened snapshot-first demo. The mental model for both is...",
+    "id": 153
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Cloudflare Worker Deployment / 11.1 Request lifecycle",
+    "anchor": "11-1-request-lifecycle",
+    "text": "Each isolate holds the active public PancakeIndex and a memoized restore promise. The index stays warm across requests within an isolate. On any non-trivial route, if index is null and a bucket is bound, the Worker lazily restores from R2 before serving ( /health , /readiness , /reset cache , /init , /import skip auto-restore). ( examples/worker/worker.js , restoreIndex() .)",
+    "preview": "Each isolate holds the active public PancakeIndex and a memoized restore promise. The index stays warm across requests within an isolate. On any non-trivial route, if index is null and a bucket is bound, the Worker...",
+    "id": 154
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Cloudflare Worker Deployment / 11.2 Endpoints",
+    "anchor": "11-2-endpoints",
+    "text": "Endpoint Method Body → Response Admin? ---------- -------- ----------------- -------- /health GET — → status, count, memory, restore timings, read only no (public) /readiness GET — → loaded state + inspected latest snapshot header (no restore) no (bearer once API KEY set) /search POST {query,k?,efSearch?,allowedIds?} → {neighbors,search ms} no (bearer once API KEY set) /stats GET — → live/deleted counts, capacity, and structured memory no (bearer once API KEY set) /init POST {dims,maxElements,M?,efConstruction?,efSearch?,vectors?} → init result yes /add POST {vector} → {id,count} yes /add batch POST {vectors} → {inserted,ids,count} yes /delete POST {id} → boolean deletion result + deleted",
+    "preview": "Endpoint Method Body → Response Admin? ---------- -------- ----------------- -------- /health GET — → status, count, memory, restore timings, read only no (public) /readiness GET — → loaded state + inspected latest...",
+    "id": 155
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Cloudflare Worker Deployment / 11.2 Endpoints",
+    "anchor": "11-2-endpoints",
+    "text": "count yes",
+    "preview": "count yes",
+    "id": 156
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Cloudflare Worker Deployment / 11.2 Endpoints",
+    "anchor": "11-2-endpoints",
+    "text": "/compact POST — → compaction result (awaits persist) yes /export GET — → standard Pancake snapshot yes /import POST Pancake snapshot → config-inferred restore yes /reset cache POST — → drops warm index, forces cold restore yes /search debug POST {query,k?} → raw vs translated ids yes Cross-cutting: /health always stays public, but admin routes now fail closed unless API KEY is set or ALLOW INSECURE ADMIN=1 is explicitly enabled for a local/demo deployment. Once API KEY is set, every route except /health requires the bearer token — including /search , /stats , and /readiness ; without API KEY , those non-admin routes stay open while the admin routes return 403",
+    "preview": "/compact POST — → compaction result (awaits persist) yes /export GET — → standard Pancake snapshot yes /import POST Pancake snapshot → config-inferred restore yes /reset cache POST — → drops warm index, forces cold...",
+    "id": 157
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Cloudflare Worker Deployment / 11.2 Endpoints",
+    "anchor": "11-2-endpoints",
+    "text": ". Also: optional per-IP sliding-window rate limiting",
+    "preview": ". Also: optional per-IP sliding-window rate limiting",
+    "id": 158
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Cloudflare Worker Deployment / 11.2 Endpoints",
+    "anchor": "11-2-endpoints",
+    "text": "( RATE LIMIT RPM , 60 s window, per-isolate so the effective global limit is limit × isolates ); request-body caps for JSON ( MAX JSON BYTES ) and binary snapshot import ( MAX SNAPSHOT BYTES ); and opt-in CORS via ALLOWED ORIGIN (unset = no Access-Control-Allow-Origin header).",
+    "preview": "( RATE LIMIT RPM, 60 s window, per-isolate so the effective global limit is limit × isolates ); request-body caps for JSON ( MAX JSON BYTES ) and binary snapshot import ( MAX SNAPSHOT BYTES ); and opt-in CORS via ALLOWED...",
+    "id": 159
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Cloudflare Worker Deployment / 11.3 R2 persistence",
+    "anchor": "11-3-r2-persistence",
+    "text": "Snapshots are written under timestamped, append-only keys ( pancake-index-<13-digit-ms -<6-digit-seq .pnck ); restore lists the prefix and picks the lexicographically greatest key (zero-padding makes string order match time order), with a fallback to a legacy fixed key. Mutating routes await persistence in this reference implementation. Before export the Worker compacts if there are deleted nodes. A production deployment should add an R2 lifecycle rule or delete superseded keys; retention is deliberately left to the application. The append-only scheme means a slow/late async write cannot clobber a newer snapshot under a shared key — restore always loads the newest",
+    "preview": "Snapshots are written under timestamped, append-only keys ( pancake-index-<13-digit-ms -<6-digit-seq.pnck ); restore lists the prefix and picks the lexicographically greatest key (zero-padding makes string order match...",
+    "id": 160
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Cloudflare Worker Deployment / 11.3 R2 persistence",
+    "anchor": "11-3-r2-persistence",
+    "text": ". The durability boundary is R2; in-memory isolate state is a warm cache only.",
+    "preview": ". The durability boundary is R2; in-memory isolate state is a warm cache only.",
+    "id": 161
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Cloudflare Worker Deployment / 11.3 R2 persistence",
+    "anchor": "11-3-r2-persistence",
+    "text": "The stored object is the standard Pancake v3 envelope. inspectSnapshot() reads its construction fields for readiness and restore() reconstructs the index on cold start. R2 custom metadata retains capacity and runtime efSearch policy; it is not trusted for the snapshot's fixed construction fields.",
+    "preview": "The stored object is the standard Pancake v3 envelope. inspectSnapshot() reads its construction fields for readiness and restore() reconstructs the index on cold start. R2 custom metadata retains capacity and runtime...",
+    "id": 162
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Cloudflare Worker Deployment / 11.4 READ ONLY mode",
+    "anchor": "11-4-read-only-mode",
+    "text": "READ ONLY ( 1/true/yes/on ) makes every admin route return 403 . The check is a single guard after auth/rate-limit: if (isReadOnly(env) && isAdminRoute(path)) return 403 . /search , /stats , /health , /readiness remain available. This is the recommended posture for a public, snapshot-backed search endpoint: publish the index out-of-band, deploy read-only, expose only search. ( examples/worker/worker.js , isReadOnly() / isAdminRoute() .)",
+    "preview": "READ ONLY ( 1/true/yes/on ) makes every admin route return 403. The check is a single guard after auth/rate-limit: if (isReadOnly(env) && isAdminRoute(path)) return 403. /search, /stats, /health, /readiness remain...",
+    "id": 163
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Cloudflare Worker Deployment / 11.5 ID mapping",
+    "anchor": "11-5-id-mapping",
+    "text": "The Worker uses the public API and does not maintain a second mapping layer. Stable external IDs live in pancake-core.js and are serialized inside the v3 snapshot envelope. Cold restore, compaction, and subsequent insertion therefore exercise the same mapping contract as Node and browser consumers.",
+    "preview": "The Worker uses the public API and does not maintain a second mapping layer. Stable external IDs live in pancake-core.js and are serialized inside the v3 snapshot envelope. Cold restore, compaction, and subsequent...",
+    "id": 164
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Cloudflare Worker Deployment / 11.6 Semantic-search demo differences",
+    "anchor": "11-6-semantic-search-demo-differences",
+    "text": "examples/worker-semantic-search/ is snapshot-first and read-oriented: it builds the index offline, stores three R2 objects ( docs-index.bin , docs-corpus.json , docs-manifest.json ), validates the manifest's dim against the demo embedder before deserializing, and serves /search (with optional source-filtered search via searchFiltered ), /health , /readiness , /reset cache plus a minimal UI. It uses the high-level pancake-core.js API rather than raw WASM exports, and a deterministic hash-based embedder so it runs without API keys. It has no write endpoints. ---",
+    "preview": "examples/worker-semantic-search/ is snapshot-first and read-oriented: it builds the index offline, stores three R2 objects ( docs-index.bin, docs-corpus.json, docs-manifest.json ), validates the manifest's dim against...",
+    "id": 165
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Configuration Reference / 12.1 Pancake.create(opts) — JS defaults (the effective ones)",
+    "anchor": "12-1-pancake-create-opts-js-defaults-the-effective-ones",
+    "text": "Option Default Notes -------- --------- ------- dim required positive integer maxElements 100000 capacity, pre-allocated metric 'cosine' 'cosine' or 'l2' quantized true int8 backend when true M 16 efConstruction 50 efSearch 100 valid range 1–4096; mutable via setEfSearch() or overridden per query Removed options ( compressed , varianceSample ) throw if passed.",
+    "preview": "Option Default Notes -------- --------- ------- dim required positive integer maxElements 100000 capacity, pre-allocated metric 'cosine' 'cosine' or 'l2' quantized true int8 backend when true M 16 efConstruction 50...",
+    "id": 166
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Configuration Reference / 12.2 C ABI fallback defaults (direct-ABI callers only)",
+    "anchor": "12-2-c-abi-fallback-defaults-direct-abi-callers-only",
+    "text": "M=16 , ef construction=50 , ef search=100 , applied only when a non-positive value reaches pancake init . Normal JS callers already pass these explicitly.",
+    "preview": "M=16, ef construction=50, ef search=100, applied only when a non-positive value reaches pancake init. Normal JS callers already pass these explicitly.",
+    "id": 167
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Configuration Reference / 12.3 Worker limits and env",
+    "anchor": "12-3-worker-limits-and-env",
+    "text": "Constant Value Env var Default Purpose ---------- ------- --- --------- --------- --------- MAX RESULTS 100 API KEY required for admin routes unless ALLOW INSECURE ADMIN=1 bearer token MAX DIMS 4096 ALLOWED ORIGIN unset opt-in CORS MAX EF 4096 RATE LIMIT RPM 0 (off) per-IP/min MAX M 128 READ ONLY off reject admin routes DEFAULT MAX ELEMENTS 5000 MAX ELEMENTS LIMIT 5,000,000 capacity ceiling DEFAULT MAX JSON BYTES 1 MiB MAX JSON BYTES 1 MiB JSON body cap RATE LIMIT WINDOW MS 60000 ALLOW INSECURE ADMIN off local/demo opt-in for unauthenticated admin routes",
+    "preview": "Constant Value Env var Default Purpose ---------- ------- --- --------- --------- --------- MAX RESULTS 100 API KEY required for admin routes unless ALLOW INSECURE ADMIN=1 bearer token MAX DIMS 4096 ALLOWED ORIGIN unset...",
+    "id": 168
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Configuration Reference / 12.4 Build constants",
+    "anchor": "12-4-build-constants",
+    "text": "MAX HANDLES=64 , INVALID HANDLE=0xFFFFFFFF (engine.cpp); INITIAL MEMORY=16MB , STACK SIZE=64KB (build.sh). ---",
+    "preview": "MAX HANDLES=64, INVALID HANDLE=0xFFFFFFFF (engine.cpp); INITIAL MEMORY=16MB, STACK SIZE=64KB (build.sh). ---",
+    "id": 169
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Invariants",
+    "anchor": "invariants",
+    "text": "I1 — Handle validity. A handle is valid from pancake init until pancake dispose ; range and null checks guard every ABI call. Max 64 live. I2 — Single-threaded. All access to a WASM instance must be from one thread; enforced by the WASM model, not the code. Each Worker isolate / worker thread needs its own instance. I3 — Insert ids are sequential and unique within a handle ( count ++ ), until compaction renumbers survivors (transparent through the JS id map). I4 — Capacity is hard. Insert at count == max elements returns UINT32 MAX and mutates nothing. I5 — Delete is immediate and permanent (no undelete); the node is skipped from the next search on",
+    "preview": "I1 — Handle validity. A handle is valid from pancake init until pancake dispose; range and null checks guard every ABI call. Max 64 live. I2 — Single-threaded. All access to a WASM instance must be from one thread;...",
+    "id": 170
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Invariants",
+    "anchor": "invariants",
+    "text": ". I6 — Compact preserves the live set , rebuilds the graph (quality may shift),",
+    "preview": ". I6 — Compact preserves the live set, rebuilds the graph (quality may shift),",
+    "id": 171
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Invariants",
+    "anchor": "invariants",
+    "text": "and renumbers survivors in old-id order. I7 — Deletion state is not serialized. Import returns all vectors live; compact before export to persist deletes. JS export() enforces ghostCount===0 . I8 — Envelope validation on import. dim/metric/quantized mismatches (and, for v3, mapping-count / nextExtId inconsistencies) throw before the WASM import. I9 — Export pointer lifetime. The pancake export pointer is valid only until the next export on that handle or dispose; copy immediately. ---",
+    "preview": "and renumbers survivors in old-id order. I7 — Deletion state is not serialized. Import returns all vectors live; compact before export to persist deletes. JS export() enforces ghostCount===0. I8 — Envelope validation on...",
+    "id": 172
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Limitations and Non-Goals",
+    "anchor": "limitations-and-non-goals",
+    "text": "No metadata storage. The index stores vectors + graph only. Filtered search exists ( searchFiltered ), but the caller supplies the allowed-id set and owns all id→metadata mapping. No server-side persistence in Node. In-memory only; persistence is export() / import() that the application drives. (The Worker adds R2.) No concurrency within an instance. Single-threaded by design. No cross-handle / multi-index query merge. Each handle is independent. No incremental serialization. export writes the whole index. No automatic compaction. The host (or Worker /compact ) triggers it. No dimensionality reduction. Vectors arrive at their final dimension. Worker isolates are independent",
+    "preview": "No metadata storage. The index stores vectors + graph only. Filtered search exists ( searchFiltered ), but the caller supplies the allowed-id set and owns all id→metadata mapping. No server-side persistence in Node....",
+    "id": 173
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Limitations and Non-Goals",
+    "anchor": "limitations-and-non-goals",
+    "text": ". No cross-isolate read-after-write",
+    "preview": ". No cross-isolate read-after-write",
+    "id": 174
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Limitations and Non-Goals",
+    "anchor": "limitations-and-non-goals",
+    "text": "consistency; R2 is the only durability boundary and uses last-write-wins by newest key. Backend code is duplicated, not shared. float and int8 backends repeat the graph algorithm; a change to HNSW logic must be made in both. Relaxed SIMD is non-deterministic and therefore opt-in; the default build is the reproducible one. ---",
+    "preview": "consistency; R2 is the only durability boundary and uses last-write-wins by newest key. Backend code is duplicated, not shared. float and int8 backends repeat the graph algorithm; a change to HNSW logic must be made in...",
+    "id": 175
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Appendix A: WASM Export Inventory",
+    "anchor": "appendix-a-wasm-export-inventory",
+    "text": "22 functions exported by build.sh ( -s EXPORTED FUNCTIONS ): Index API: pancake init , pancake add , pancake bulk insert , pancake query , pancake query filtered , pancake delete , pancake compact , pancake compact remap , pancake count , pancake memory , pancake ghost count , pancake ghost ratio , pancake export , pancake import , pancake dispose , pancake dimension , pancake shutdown all , shutdown all . Utilities: emsc malloc , emsc free , pancake profile print , pancake profile reset . Runtime methods: ccall , cwrap , HEAPF32 , HEAPU8 , HEAPU32 , HEAP32",
+    "preview": "22 functions exported by build.sh ( -s EXPORTED FUNCTIONS ): Index API: pancake init, pancake add, pancake bulk insert, pancake query, pancake query filtered, pancake delete, pancake compact, pancake compact remap,...",
+    "id": 176
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Appendix A: WASM Export Inventory",
+    "anchor": "appendix-a-wasm-export-inventory",
+    "text": ". Selected signatures: Export Signature → returns -------- --------------------- pancake init (dim, max elem, quantized, metric, M, ef c, ef s) → handle / 0xFFFFFFFF",
+    "preview": ". Selected signatures: Export Signature → returns -------- --------------------- pancake init (dim, max elem, quantized, metric, M, ef c, ef s) → handle / 0xFFFFFFFF",
+    "id": 177
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Appendix A: WASM Export Inventory",
+    "anchor": "appendix-a-wasm-export-inventory",
+    "text": "pancake add (handle, vec ptr) → id / 0xFFFFFFFF pancake bulk insert (handle, vecs ptr, n) → inserted count pancake query (handle, q ptr, k, ef search, ids ptr, dists ptr) → count pancake query filtered (handle, q ptr, k, ef search, ids ptr, dists ptr, bitset ptr, bitset len) → count pancake compact remap (handle, out buf, out capacity) → pre-compaction count pancake export (handle, out size ptr) → data ptr / null pancake import (handle, data ptr, size) → 0 / -1 The native N-API addon exposes an equivalent (smaller) surface; its pancake query returns { ids: Uint32Array, distances: Float32Array, count } rather than writing into caller buffers. ---",
+    "preview": "pancake add (handle, vec ptr) → id / 0xFFFFFFFF pancake bulk insert (handle, vecs ptr, n) → inserted count pancake query (handle, q ptr, k, ef search, ids ptr, dists ptr) → count pancake query filtered (handle, q ptr, k,...",
+    "id": 178
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Appendix B: Serialization Byte Layouts / FloatHNSW blob — magic 0x464C4831 (\"FLH1\"), version 1",
+    "anchor": "floathnsw-blob-magic-0x464c4831-flh1-version-1",
+    "text": "Deletion state not serialized.",
+    "preview": "Deletion state not serialized.",
+    "id": 179
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Appendix B: Serialization Byte Layouts / Int8FloatHNSW blob — magic 0x49384831 (\"I8H1\"), version 2",
+    "anchor": "int8floathnsw-blob-magic-0x49384831-i8h1-version-2",
+    "text": "sum q / sum q2 are recomputed on load, not stored. Pre-v2 blobs omit edge distances and have them recomputed on import. Deletion state not serialized.",
+    "preview": "sum q / sum q2 are recomputed on load, not stored. Pre-v2 blobs omit edge distances and have them recomputed on import. Deletion state not serialized.",
+    "id": 180
+  },
+  {
+    "sourcePath": "docs/SYSTEM_DESIGN.md",
+    "docTitle": "Pancake — System Design",
+    "title": "Pancake — System Design / Appendix B: Serialization Byte Layouts / JS export envelope (v3) — magic 0x504E434B (\"PNCK\")",
+    "anchor": "js-export-envelope-v3-magic-0x504e434b-pnck",
+    "text": "See §9.3. 32-byte header + [intId,extId] mapping table + backend blob. --- End of document.",
+    "preview": "See §9.3. 32-byte header + [intId,extId] mapping table + backend blob. --- End of document.",
+    "id": 181
+  },
+  {
+    "sourcePath": "examples/worker/README.md",
+    "docTitle": "Pancake Worker Reference Architecture",
+    "title": "Pancake Worker Reference Architecture",
+    "anchor": "pancake-worker-reference-architecture",
+    "text": "This directory contains a reference Cloudflare Worker deployment built on top of pancake-wasm . Note: pancake-wasm is not yet published to npm. This example runs from the repository checkout and imports the same public Worker entrypoint that the package exports as pancake-wasm/web . npm publishing is coming soon. See the root README. The Worker keeps a Pancake index in-process when hot and persists snapshots to Cloudflare R2. Treat it as a snapshot-first ANN serving layer rather than as a durable mutable vector database",
+    "preview": "This directory contains a reference Cloudflare Worker deployment built on top of pancake-wasm. Note: pancake-wasm is not yet published to npm. This example runs from the repository checkout and imports the same public...",
+    "id": 182
+  },
+  {
+    "sourcePath": "examples/worker/README.md",
+    "docTitle": "Pancake Worker Reference Architecture",
+    "title": "Pancake Worker Reference Architecture",
+    "anchor": "pancake-worker-reference-architecture",
+    "text": ". Best fit: read-heavy search workloads modest-sized indexes that can be restored into Worker memory explicit import/export flows periodic snapshot rebuilds published to R2 Less suitable:",
+    "preview": ". Best fit: read-heavy search workloads modest-sized indexes that can be restored into Worker memory explicit import/export flows periodic snapshot rebuilds published to R2 Less suitable:",
+    "id": 183
+  },
+  {
+    "sourcePath": "examples/worker/README.md",
+    "docTitle": "Pancake Worker Reference Architecture",
+    "title": "Pancake Worker Reference Architecture",
+    "anchor": "pancake-worker-reference-architecture",
+    "text": "high-write authoritative online mutation strict cross-isolate read-after-write guarantees relying on in-memory Worker state as the only source of truth",
+    "preview": "high-write authoritative online mutation strict cross-isolate read-after-write guarantees relying on in-memory Worker state as the only source of truth",
+    "id": 184
+  },
+  {
+    "sourcePath": "examples/worker/README.md",
+    "docTitle": "Pancake Worker Reference Architecture",
+    "title": "Pancake Worker Reference Architecture / Recommended deployment shape",
+    "anchor": "recommended-deployment-shape",
+    "text": "build or update the index outside the Worker publish a clean snapshot to R2 deploy the Worker in READ ONLY=1 expose /search and /health publicly keep mutation routes for admin-only workflows or local development This runs the Worker as a snapshot-backed search endpoint at the edge.",
+    "preview": "build or update the index outside the Worker publish a clean snapshot to R2 deploy the Worker in READ ONLY=1 expose /search and /health publicly keep mutation routes for admin-only workflows or local development This...",
+    "id": 185
+  },
+  {
+    "sourcePath": "examples/worker/README.md",
+    "docTitle": "Pancake Worker Reference Architecture",
+    "title": "Pancake Worker Reference Architecture / Endpoints",
+    "anchor": "endpoints",
+    "text": "Endpoint Description ---------- ------------- POST /search k-NN search ( { query: float[], k?, efSearch?, allowedIds? } ) GET /health Health check (public, no auth required) GET /readiness Readiness check with snapshot visibility (bearer auth once API KEY is set) GET /stats Live/deleted counts, capacity, and structured memory GET /export Serialize index to binary blob POST /init Create an index ( { dims, maxElements, M?, efConstruction?, efSearch?, vectors? } ) POST /import Restore from a Pancake snapshot ( ?dims=N only needed for legacy raw snapshots) POST /add Insert a vector ( { vector: float[] } ) POST /add batch Insert multiple vectors ( { vectors: float[][] } ) POST /delete Soft-delete",
+    "preview": "Endpoint Description ---------- ------------- POST /search k-NN search ( { query: float[], k?, efSearch?, allowedIds? } ) GET /health Health check (public, no auth required) GET /readiness Readiness check with snapshot...",
+    "id": 186
+  },
+  {
+    "sourcePath": "examples/worker/README.md",
+    "docTitle": "Pancake Worker Reference Architecture",
+    "title": "Pancake Worker Reference Architecture / Endpoints",
+    "anchor": "endpoints",
+    "text": "by ID ( { id: number } )",
+    "preview": "by ID ( { id: number } )",
+    "id": 187
+  },
+  {
+    "sourcePath": "examples/worker/README.md",
+    "docTitle": "Pancake Worker Reference Architecture",
+    "title": "Pancake Worker Reference Architecture / Endpoints",
+    "anchor": "endpoints",
+    "text": "POST /compact Rebuild graph without deleted entries POST /reset cache Drop the warm in-memory index so the next query restores from R2 /health stays cheap and public. It reports whether the current isolate has an index loaded, but it does not trigger a restore. /readiness is the authenticated route for checking whether the Worker is loaded now and inspecting the latest snapshot header without restoring it.",
+    "preview": "POST /compact Rebuild graph without deleted entries POST /reset cache Drop the warm in-memory index so the next query restores from R2 /health stays cheap and public. It reports whether the current isolate has an index...",
+    "id": 188
+  },
+  {
+    "sourcePath": "examples/worker/README.md",
+    "docTitle": "Pancake Worker Reference Architecture",
+    "title": "Pancake Worker Reference Architecture / Deploying",
+    "anchor": "deploying",
+    "text": "See wrangler.toml for the full configuration. Key env vars: API KEY for bearer auth ALLOWED ORIGIN for browser CORS access RATE LIMIT RPM for per-IP rate limiting MAX JSON BYTES to cap JSON request bodies READ ONLY=1 to reject mutation/admin routes ALLOW INSECURE ADMIN=1 only for local/demo deployments where you explicitly want unauthenticated admin routes For a safer internet-facing deployment, set at least: API KEY ALLOWED ORIGIN READ ONLY=1 By default, admin routes now fail closed unless API KEY is set or ALLOW INSECURE ADMIN=1 is explicitly enabled. CORS also fails closed by default: if ALLOWED ORIGIN is unset, the Worker omits Access-Control-Allow-Origin instead of returning .",
+    "preview": "See wrangler.toml for the full configuration. Key env vars: API KEY for bearer auth ALLOWED ORIGIN for browser CORS access RATE LIMIT RPM for per-IP rate limiting MAX JSON BYTES to cap JSON request bodies READ ONLY=1 to...",
+    "id": 189
+  },
+  {
+    "sourcePath": "examples/worker/README.md",
+    "docTitle": "Pancake Worker Reference Architecture",
+    "title": "Pancake Worker Reference Architecture / Deployment notes",
+    "anchor": "deployment-notes",
+    "text": "Memory. Workers have a 128 MB memory ceiling per isolate. Rough formula for quantized index memory: At M=16 this is (dim + 120) bytes per vector. Examples: 30k x 256D = 10 MB , 200k x 384D = 100 MB . The fp32 backend uses (4 dim + 8 + 7 M) bytes per vector, roughly 4x more. CPU time. Workers paid plan allows 50ms CPU per request (free tier: 10ms). Search comfortably fits within both tiers. Heavy operations such as /import , /compact , and large /add batch requests can exceed free-tier limits on larger indexes. Cold starts and R2 restore. Worker isolates are not persistent. On cold start, the Worker fetches the index from R2 and deserializes it lazily on the first request",
+    "preview": "Memory. Workers have a 128 MB memory ceiling per isolate. Rough formula for quantized index memory: At M=16 this is (dim + 120) bytes per vector. Examples: 30k x 256D = 10 MB, 200k x 384D = 100 MB. The fp32 backend uses...",
+    "id": 190
+  },
+  {
+    "sourcePath": "examples/worker/README.md",
+    "docTitle": "Pancake Worker Reference Architecture",
+    "title": "Pancake Worker Reference Architecture / Deployment notes",
+    "anchor": "deployment-notes",
+    "text": ". For a large index, the first request after idle will be slow.",
+    "preview": ". For a large index, the first request after idle will be slow.",
+    "id": 191
+  },
+  {
+    "sourcePath": "examples/worker/README.md",
+    "docTitle": "Pancake Worker Reference Architecture",
+    "title": "Pancake Worker Reference Architecture / Deployment notes",
+    "anchor": "deployment-notes",
+    "text": "Persistence. The current Worker example writes standard Pancake snapshots to R2 and restores from R2 on cold start. This is the durable boundary. In-memory state is only a warm cache for the current isolate. Snapshot writes are append-only and restore loads the latest saved snapshot, which avoids older async writes overwriting a newer one under the same R2 key. Configure an R2 lifecycle rule or delete superseded keys when adapting the example for production; the reference implementation intentionally leaves snapshot retention to the application",
+    "preview": "Persistence. The current Worker example writes standard Pancake snapshots to R2 and restores from R2 on cold start. This is the durable boundary. In-memory state is only a warm cache for the current isolate. Snapshot...",
+    "id": 192
+  },
+  {
+    "sourcePath": "examples/worker/README.md",
+    "docTitle": "Pancake Worker Reference Architecture",
+    "title": "Pancake Worker Reference Architecture / Deployment notes",
+    "anchor": "deployment-notes",
+    "text": ". Mutation routes exist for demos, local validation, and administrative flows, but they should not be treated as the primary production write path for a",
+    "preview": ". Mutation routes exist for demos, local validation, and administrative flows, but they should not be treated as the primary production write path for a",
+    "id": 193
+  },
+  {
+    "sourcePath": "examples/worker/README.md",
+    "docTitle": "Pancake Worker Reference Architecture",
+    "title": "Pancake Worker Reference Architecture / Deployment notes",
+    "anchor": "deployment-notes",
+    "text": "stateful vector database. If you need stronger mutation semantics, put an authoritative layer elsewhere and use the Worker as the search-serving frontend. Read-only mode. When READ ONLY=1 , the Worker rejects /init , /import , /add , /add batch , /delete , /compact , /export , /reset cache , and /search debug with 403 . This is the recommended production setting for a public search endpoint backed by snapshots. Rate limiting. Rate limiting is in-memory per isolate. Each isolate tracks its own sliding-window counter, so the effective limit across multiple isolates is approximately limit number of isolates .",
+    "preview": "stateful vector database. If you need stronger mutation semantics, put an authoritative layer elsewhere and use the Worker as the search-serving frontend. Read-only mode. When READ ONLY=1, the Worker rejects /init,...",
+    "id": 194
+  }
+]

@@ -1,139 +1,187 @@
-# Semantic Docs Search on Workers
+# Zero-dependency distilled docs search
 
-> **Note:** `pancake-wasm` is not yet published to npm. This demo runs from the
-> repository checkout (build the engine with `./build.sh` at the repo root
-> first). npm publishing is coming soon. See the [root README](../../README.md#install).
+This is the public, webpage-shaped Pancake demo. A Cloudflare Worker serves the
+UI, restores a bundled quantized Pancake snapshot, embeds each query locally,
+and searches the in-memory index. The deployed Worker has no service bindings
+and makes no outbound requests.
 
-A `pancake-wasm` + Cloudflare Workers example that:
+There is no embedding API and no runtime ML framework. The complete query path is:
 
-- builds a search index offline from markdown docs
-- exports a Pancake snapshot
-- stores the snapshot and corpus metadata in R2
-- lets the Worker restore on cold start
-- serves text queries from in-memory state
-
-The Worker is a snapshot-serving search frontend, not the source of truth.
-
-The recommended deployment shape is read-only search:
-
-- publish the snapshot assets to R2
-- serve `/search` and `/health` publicly
-- keep `/readiness` and `/reset_cache` as admin-only routes
-- set `READ_ONLY=1` if you want to disable even admin cache resets
-- set `API_KEY` for `/readiness` and `/reset_cache`, or explicitly opt into
-  unauthenticated admin access with `ALLOW_INSECURE_ADMIN=1` for local demos
-- set `ALLOWED_ORIGIN` if you need cross-origin browser access; unset means the
-  Worker omits CORS headers by default
-
-## Scope
-
-This demo covers the Worker usage patterns that fit Pancake:
-
-- read-heavy semantic search
-- low-latency hot-path retrieval
-- explicit restore from durable object storage
-- cold-start restore from R2
-
-It does not cover:
-
-- live mutable authoritative edge state
-- read-after-write across isolates
-- using Worker memory as the system of record
-
-## How it works
-
-1. `build_demo.mjs` chunks repo markdown files into searchable sections.
-2. A deterministic local text embedder hashes text into 256D vectors.
-3. The script builds a Pancake index and writes:
-   - `docs-index.bin`
-   - `docs-corpus.json`
-   - `docs-manifest.json`
-4. Upload those files to R2.
-5. The Worker fetches them on first query, restores the index, and serves `/search`.
-
-The local embedder is a hash-based stand-in so the demo runs without API keys.
-In a real deployment, replace it with your embedding pipeline and keep the same
-snapshot-serving Worker shape.
-
-## Build demo assets
-
-```bash
-cd /mnt/c/pancake1.0.0
-node examples/worker-semantic-search/build_demo.mjs --out /tmp/pancake-docs-demo
+```text
+text
+  -> hashed word and character n-grams
+  -> 1.08 MB int8 distilled student
+  -> normalized 384D query vector
+  -> Pancake WASM
+  -> matching documentation chunks
 ```
 
-That writes:
+The large teacher model is an offline build dependency. It is never bundled
+with the Worker or contacted at query time.
 
-- `/tmp/pancake-docs-demo/docs-index.bin`
-- `/tmp/pancake-docs-demo/docs-corpus.json`
-- `/tmp/pancake-docs-demo/docs-manifest.json`
+## What the demo proves
 
-The script also prints a few preview queries and top matches so you can sanity-check
-the corpus before deployment.
+- Pancake runs inside a Cloudflare Worker without a native addon.
+- A snapshot can be restored directly from a Worker data module on cold start.
+- Query embedding and vector retrieval run without outbound API requests or storage bindings.
+- The embedding model is application data, not a Pancake dependency.
+- Embedding, Pancake search, and cold-restore latency are reported separately.
+- `efSearch` and source filters are applied per query through the public API.
 
-## Upload to R2
+This is a domain-specific encoder, not a general-purpose replacement for a
+large embedding model. It is deliberately small enough to make the entire demo
+self-contained.
+
+## Distillation design
+
+Documents are embedded offline with `sentence-transformers/all-MiniLM-L6-v2`,
+pinned to revision `1110a243fdf4706b3f48f1d95db1a4f5529b4d41`.
+The student learns to place queries in that same 384D space. Its loss combines:
+
+- cosine imitation of the teacher query vector; and
+- retrieval-distribution imitation against every documentation chunk.
+
+The runtime student is:
+
+```text
+8,192 hashed n-gram buckets x 128 hidden dimensions
+  -> mean pool
+  -> tanh
+  -> 128 x 384 projection
+  -> L2 normalization
+```
+
+Both parameter matrices use symmetric per-row int8 quantization. The exported
+`PSTU` artifact is approximately 1.08 MB.
+
+On the current 195-chunk corpus, the selected model was evaluated on 218 query
+forms that were not used for training or model selection:
+
+- mean cosine to teacher query vectors: `0.891`
+- teacher top-result agreement: `84.9%`
+- overlap with the teacher's top five: `79.2%`
+- JavaScript/Python exported-model parity: `218/218` top results
+
+Validation queries are separate from this final test set and select the early-
+stopping checkpoint. The full per-query results are written to
+`student-evaluation.json` during training.
+
+## Runtime assets
+
+The build produces four runtime assets that Wrangler bundles into the Worker:
+
+- `docs-index.bin` — standard Pancake snapshot
+- `docs-corpus.json` — result metadata and previews
+- `docs-manifest.json` — dimensions, construction config, hashes, and evaluation summary
+- `docs-student.bin` — quantized query encoder
+
+`docs-student-evaluation.json` is also produced for inspection but is not
+imported by the Worker.
+
+The current artifacts are committed under `assets/`, so deployment does not
+require Python, PyTorch, or retraining. The build instructions below regenerate
+them when the documentation or encoder changes.
+
+## Build the demo
+
+Build Pancake at the repository root first:
+
+```bash
+npm run build:all
+```
+
+Extract the documentation corpus:
+
+```bash
+node examples/worker-semantic-search/build_demo.mjs \
+  --out /tmp/pancake-docs-demo \
+  --corpus-only
+```
+
+Create an isolated training environment. These packages are offline build tools,
+not runtime dependencies:
+
+```bash
+python3 -m venv /tmp/pancake-student-venv
+/tmp/pancake-student-venv/bin/pip install \
+  -r examples/worker-semantic-search/requirements-train.txt
+```
+
+Train and export the student. The first run downloads the teacher checkpoint to
+the selected Hugging Face cache:
+
+```bash
+HF_HOME=/tmp/pancake-hf \
+/tmp/pancake-student-venv/bin/python \
+  examples/worker-semantic-search/train_student.py \
+  --corpus /tmp/pancake-docs-demo/docs-corpus.json \
+  --out /tmp/pancake-student
+```
+
+Verify that plain JavaScript reproduces the exported Python model:
+
+```bash
+node examples/worker-semantic-search/verify_student.mjs \
+  --student-dir /tmp/pancake-student
+```
+
+Build the Pancake snapshot and bundled asset directory:
+
+```bash
+node examples/worker-semantic-search/build_demo.mjs \
+  --out examples/worker-semantic-search/assets \
+  --student-dir /tmp/pancake-student
+```
+
+The build prints preview results for the sample queries before deployment.
+
+Build and exercise the actual workerd bundle with an in-process Worker and its
+bundled binary data modules:
 
 ```bash
 cd examples/worker-semantic-search
-wrangler r2 bucket create pancake-docs-demo
-wrangler r2 object put pancake-docs-demo/docs-index.bin --file=/tmp/pancake-docs-demo/docs-index.bin --remote
-wrangler r2 object put pancake-docs-demo/docs-corpus.json --file=/tmp/pancake-docs-demo/docs-corpus.json --remote
-wrangler r2 object put pancake-docs-demo/docs-manifest.json --file=/tmp/pancake-docs-demo/docs-manifest.json --remote
+npx wrangler deploy --dry-run \
+  --outdir ../../.tmp-test-work/student-worker-distilled
+cd ../..
+node examples/worker-semantic-search/test_worker.mjs
 ```
 
-## Run locally
+## Run and deploy
 
 ```bash
 cd examples/worker-semantic-search
-npx wrangler dev --remote --port 8787
+npx wrangler dev --port 8787
 ```
 
-Then open:
-
-```txt
-http://localhost:8787/
-```
-
-Use `--remote` so the local Worker can access the real R2 bucket binding.
-
-## Deploy
+Open `http://localhost:8787/`, then deploy when ready:
 
 ```bash
-cd examples/worker-semantic-search
-wrangler deploy
+npx wrangler deploy
 ```
+
+The committed configuration sets `READ_ONLY=1`. Public visitors can search and
+inspect `/health`; cache reset and readiness details remain authenticated admin
+operations.
 
 ## Endpoints
 
-- `GET /` minimal interactive UI
-- `GET /health` cache/restore status
-- `GET /readiness` authenticated snapshot visibility and warm-load state
-- `GET /search?q=...&k=5`
-- `POST /search` with `{ query, k? }`
-- `POST /reset_cache` authenticated admin cache reset
+- `GET /` — interactive webpage
+- `GET /health` — public cache, encoder, and restore status
+- `GET /readiness` — authenticated bundled-asset metadata
+- `GET /search?q=...&k=5&ef=120` — public search
+- `POST /search` — `{ query, k?, ef?, source? }`
+- `POST /reset_cache` — authenticated and disabled in read-only deployments
 
-Search responses include:
+Search responses report `embedding_ms`, `search_ms`, `restore_ms`, cache state,
+encoder metadata, and the matching chunks.
 
-- whether the request triggered an R2 restore
-- restore latency
-- search latency
-- the top matching doc chunks
+## Security and deployment boundary
 
-`/search` is public; it is the snapshot-serving read path. `/readiness` and
-`/reset_cache` are the admin-facing routes. If
-`API_KEY` is set, those routes require `Authorization: Bearer ...`. If
-`READ_ONLY=1` is set, `/reset_cache` returns `403`.
+The bundled snapshot is immutable deployment data; the in-memory index is a
+disposable query-optimized copy. Concurrent cold requests share one restore
+promise. Snapshot and student-model byte limits are checked before restoration,
+and the student artifact is checked against the manifest SHA-256 before use.
 
-## Good demo queries
-
-- `How do Cloudflare Workers restore snapshots from R2?`
-- `Why do I need compact before export after deletes?`
-- `How does filtered search work in Pancake?`
-- `What are the memory tradeoffs for quantized indexes?`
-
-## Architecture summary
-
-- R2 holds the durable snapshot
-- the Worker restores a copy from that snapshot
-- in-memory state serves search
-- on eviction, the copy is restored again from R2
+The demo intentionally does not provide live index mutation. Applications that
+need authoritative writes should build and publish new snapshots or place their
+write coordination in an appropriate durable system.

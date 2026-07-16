@@ -1,17 +1,20 @@
 import Pancake from '../../pancake.workerd.mjs';
-import { DEMO_DIM, embedText } from './embedder.mjs';
+import { embedTextWithStudent, loadStudentModel } from './student-embedder.mjs';
+import SNAPSHOT_ASSET from './assets/docs-index.bin';
+import STUDENT_ASSET from './assets/docs-student.bin';
+import CORPUS_ASSET from './assets/docs-corpus.json';
+import MANIFEST_ASSET from './assets/docs-manifest.json';
 
-const INDEX_KEY = 'docs-index.bin';
-const CORPUS_KEY = 'docs-corpus.json';
-const MANIFEST_KEY = 'docs-manifest.json';
 const MAX_RESULTS = 8;
 const DEFAULT_MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
+const DEFAULT_MAX_STUDENT_BYTES = 4 * 1024 * 1024;
 const DEFAULT_MAX_JSON_BYTES = 256 * 1024;
 let index = null;
 let manifest = null;
 let corpus = [];
 let corpusById = new Map();
 let sourceFilters = new Map();
+let studentModel = null;
 let loadPromise = null;
 let state = {
   restoreCount: 0,
@@ -64,6 +67,19 @@ function getMaxJsonBytes(env) {
   const parsed = parseInt(raw, 10);
   if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_MAX_JSON_BYTES;
   return parsed;
+}
+
+function getMaxStudentBytes(env) {
+  const raw = env?.MAX_STUDENT_BYTES;
+  if (raw === undefined || raw === null || raw === '') return DEFAULT_MAX_STUDENT_BYTES;
+  const parsed = parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_MAX_STUDENT_BYTES;
+  return parsed;
+}
+
+async function sha256Hex(buffer) {
+  const digest = await crypto.subtle.digest('SHA-256', buffer);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function getCorsOrigin() {
@@ -480,6 +496,11 @@ function renderPage() {
       line-height: 1.25;
       font-family: var(--serif);
     }
+    .card h2 a {
+      color: inherit;
+      text-decoration-color: rgba(15, 123, 99, 0.35);
+      text-underline-offset: 0.18em;
+    }
     .path {
       font-family: var(--mono);
       color: var(--signal);
@@ -543,23 +564,23 @@ function renderPage() {
         <div class="hero-copy">
           <p class="eyebrow">Pancake + Cloudflare Workers</p>
           <div class="stats">
-            <span class="pill">Snapshot in R2</span>
-            <span class="pill">Cold restore</span>
-            <span class="pill">Hot in-memory search</span>
+            <span class="pill">Zero runtime dependencies</span>
+            <span class="pill">No model API</span>
+            <span class="pill">Pancake WASM in a Worker</span>
           </div>
-          <h1>Docs search with a visible cold-start story.</h1>
+          <h1>Distilled docs search with nothing to call.</h1>
           <p class="lede">
-            The point of this demo is not “edge database.” It is a query-optimized copy:
-            the index is built offline, restored from object storage when an isolate wakes up,
-            and then served fast while that isolate stays warm.
+            A 1.08 MB domain-specific student turns text into 384D vectors locally. Pancake
+            restores its bundled quantized index and searches it in memory. The Worker makes
+            no outbound requests at any point in the query path.
           </p>
         </div>
         <aside class="hero-side">
           <p class="side-kicker">What to look for</p>
-          <p class="side-value">First query pays for restore. The next ones should feel cheap.</p>
+          <p class="side-value">Teacher quality offline. Tiny student and vector index at runtime.</p>
           <p class="side-note">
-            Ask about snapshot restore, compaction after deletes, filtered search, or quantized
-            memory tradeoffs. The response panel calls out whether you hit a cold restore or warm cache.
+            The teacher never ships. The response separates student embedding time, Pancake
+            search time, and any cold snapshot restore so the boundary stays visible.
           </p>
         </aside>
       </div>
@@ -596,13 +617,13 @@ function renderPage() {
             <div class="stats-grid" id="stats-grid">
               <div class="stat"><span class="stat-k">Cache</span><span class="stat-v">Not loaded</span></div>
               <div class="stat"><span class="stat-k">Chunks</span><span class="stat-v">-</span></div>
-              <div class="stat"><span class="stat-k">Dim</span><span class="stat-v">256</span></div>
+              <div class="stat"><span class="stat-k">Dim</span><span class="stat-v">384</span></div>
               <div class="stat"><span class="stat-k">Quantized</span><span class="stat-v">Yes</span></div>
-              <div class="stat"><span class="stat-k">Mode</span><span class="stat-v">Public search</span></div>
+              <div class="stat"><span class="stat-k">Student</span><span class="stat-v">1.08 MB int8</span></div>
+              <div class="stat"><span class="stat-k">Outbound</span><span class="stat-v">None</span></div>
               <div class="stat"><span class="stat-k">Restores</span><span class="stat-v">0</span></div>
               <div class="stat"><span class="stat-k">Last restore</span><span class="stat-v">-</span></div>
             </div>
-            <button class="ghost" id="reset-cache" type="button">Force cold reload</button>
           </aside>
         </div>
         <div class="samples">
@@ -637,7 +658,6 @@ function renderPage() {
     const results = document.getElementById('results');
     const resultsList = document.querySelector('.results-list');
     const statsGrid = document.getElementById('stats-grid');
-    const resetButton = document.getElementById('reset-cache');
 
     function escapeHtml(value) {
       return String(value)
@@ -652,19 +672,16 @@ function renderPage() {
       const rows = [
         ['Cache', payload.loaded ? 'Warm' : 'Not loaded'],
         ['Chunks', payload.corpus_chunks ?? '-'],
-        ['Dim', payload.dim ?? '256'],
+        ['Dim', payload.dim ?? '384'],
         ['Quantized', payload.quantized ? 'Yes' : 'No'],
-        ['Mode', payload.read_only ? 'Read-only' : 'Admin-capable'],
+        ['Student', payload.encoder?.modelBytes ? (payload.encoder.modelBytes / 1048576).toFixed(2) + ' MB int8' : '1.08 MB int8'],
+        ['Outbound', 'None'],
         ['Restores', payload.restore_count ?? 0],
         ['Last restore', payload.last_restore_ms ? payload.last_restore_ms.toFixed(2) + 'ms' : '-'],
       ];
       statsGrid.innerHTML = rows.map(([k, v]) =>
         '<div class="stat"><span class="stat-k">' + escapeHtml(k) + '</span><span class="stat-v">' + escapeHtml(v) + '</span></div>'
       ).join('');
-      resetButton.disabled = !!payload.read_only;
-      resetButton.title = payload.read_only
-        ? 'Read-only mode blocks cache reset.'
-        : 'Drop the warm in-memory cache so the next query restores from R2.';
     }
 
     async function refreshStats() {
@@ -675,7 +692,8 @@ function renderPage() {
 
     function renderResults(payload) {
       meta.textContent =
-        'Search ' + payload.search_ms.toFixed(2) + 'ms' +
+        'Embed ' + payload.embedding_ms.toFixed(2) + 'ms' +
+        ' • Pancake ' + payload.search_ms.toFixed(2) + 'ms' +
         (payload.cache_state === 'cold-restored'
           ? ' • cold restore ' + payload.restore_ms.toFixed(2) + 'ms'
           : ' • warm cache') +
@@ -700,7 +718,7 @@ function renderPage() {
               '<span class="path">' + escapeHtml(item.source_path) + '</span>' +
               '<span class="anchor">#' + escapeHtml(item.anchor) + '</span>' +
             '</div>' +
-            '<h2>' + escapeHtml(item.title) + '</h2>' +
+            '<h2><a href="' + escapeHtml(item.source_url) + '" target="_blank" rel="noreferrer">' + escapeHtml(item.title) + '</a></h2>' +
             '<p>' + escapeHtml(item.preview) + '</p>' +
           '</div>' +
           '</article>';
@@ -727,6 +745,7 @@ function renderPage() {
         corpus_chunks: payload.corpus_chunks,
         dim: payload.dim,
         quantized: payload.quantized,
+        encoder: payload.encoder,
         restore_count: payload.restore_count,
         last_restore_ms: payload.cache_state === 'cold-restored' ? payload.restore_ms : payload.last_restore_ms
       });
@@ -744,76 +763,60 @@ function renderPage() {
       });
     });
 
-    resetButton.addEventListener('click', async () => {
-      meta.textContent = 'Clearing in-memory cache...';
-      const res = await fetch('/reset_cache', { method: 'POST' });
-      const payload = await res.json();
-      if (!res.ok) {
-        meta.textContent = payload.error || 'Reset failed';
-        return;
-      }
-      meta.textContent = 'Cache cleared. Next query will restore from R2.';
-      await refreshStats();
-    });
-
     refreshStats();
   </script>
 </body>
 </html>`;
 }
 
-async function loadJson(obj) {
-  return JSON.parse(await obj.text());
+function assetBytes(asset, label) {
+  if (asset instanceof ArrayBuffer) return new Uint8Array(asset);
+  if (ArrayBuffer.isView(asset)) {
+    return new Uint8Array(asset.buffer, asset.byteOffset, asset.byteLength);
+  }
+  throw new Error(`${label} was not bundled as binary data`);
 }
 
-async function restoreFromR2(env) {
-  if (!env.DOCS_BUCKET) {
-    throw new Error('DOCS_BUCKET binding is missing');
-  }
-
+async function restoreBundledAssets(env) {
   const t0 = performance.now();
-  const [manifestObj, corpusObj, indexObj] = await Promise.all([
-    env.DOCS_BUCKET.get(MANIFEST_KEY),
-    env.DOCS_BUCKET.get(CORPUS_KEY),
-    env.DOCS_BUCKET.get(INDEX_KEY)
-  ]);
-
-  if (!manifestObj || !corpusObj || !indexObj) {
-    throw new Error(`Expected ${MANIFEST_KEY}, ${CORPUS_KEY}, and ${INDEX_KEY} in R2`);
-  }
+  const loadedManifest = MANIFEST_ASSET;
+  const loadedCorpus = CORPUS_ASSET;
+  const snapshotBytes = assetBytes(SNAPSHOT_ASSET, 'Snapshot');
+  const studentBytes = assetBytes(STUDENT_ASSET, 'Student model');
   const maxSnapshotBytes = getMaxSnapshotBytes(env);
-  if (Number.isInteger(indexObj.size) && indexObj.size > maxSnapshotBytes) {
-    throw new Error(`Index snapshot exceeds MAX_SNAPSHOT_BYTES (${indexObj.size} > ${maxSnapshotBytes})`);
+  const maxStudentBytes = getMaxStudentBytes(env);
+  if (snapshotBytes.byteLength > maxSnapshotBytes) {
+    throw new Error(`Index snapshot exceeds MAX_SNAPSHOT_BYTES (${snapshotBytes.byteLength} > ${maxSnapshotBytes})`);
+  }
+  if (studentBytes.byteLength > maxStudentBytes) {
+    throw new Error(`Student model exceeds MAX_STUDENT_BYTES (${studentBytes.byteLength} > ${maxStudentBytes})`);
   }
 
-  const loadedManifest = await loadJson(manifestObj);
-  if (loadedManifest.dim !== DEMO_DIM) {
-    throw new Error(`Manifest dim ${loadedManifest.dim} does not match demo dim ${DEMO_DIM}`);
+  const loadedStudent = loadStudentModel(studentBytes);
+  if (loadedStudent.outputDim !== loadedManifest.dim) {
+    throw new Error(`Student dim ${loadedStudent.outputDim} does not match index dim ${loadedManifest.dim}`);
+  }
+  if (loadedManifest.encoder?.modelBytes !== undefined
+      && loadedManifest.encoder.modelBytes !== studentBytes.byteLength) {
+    throw new Error('Student model byte length does not match the manifest');
+  }
+  if (loadedManifest.encoder?.modelSha256) {
+    const actualHash = await sha256Hex(studentBytes);
+    if (actualHash !== loadedManifest.encoder.modelSha256) {
+      throw new Error('Student model SHA-256 does not match the manifest');
+    }
   }
 
-  const [loadedCorpus, snapshotBuffer] = await Promise.all([
-    loadJson(corpusObj),
-    indexObj.arrayBuffer()
-  ]);
-  if (snapshotBuffer.byteLength > maxSnapshotBytes) {
-    throw new Error(`Index snapshot exceeds MAX_SNAPSHOT_BYTES (${snapshotBuffer.byteLength} > ${maxSnapshotBytes})`);
-  }
-
-  const restored = await Pancake.create({
-    dim: loadedManifest.dim,
+  const restored = await Pancake.restore(snapshotBytes, {
     maxElements: loadedManifest.maxElements,
-    metric: loadedManifest.metric,
-    quantized: loadedManifest.quantized,
-    M: loadedManifest.M,
-    efConstruction: loadedManifest.efConstruction,
-    efSearch: loadedManifest.efSearch
+    efSearch: loadedManifest.efSearch,
   });
-  restored.import(new Uint8Array(snapshotBuffer));
 
   corpus = loadedCorpus;
   corpusById = new Map(corpus.map((entry) => [entry.id, entry]));
   rebuildSourceFilters();
   manifest = loadedManifest;
+  studentModel = loadedStudent;
   index = restored;
   state.restoreCount += 1;
   state.lastRestoreMs = performance.now() - t0;
@@ -821,49 +824,46 @@ async function restoreFromR2(env) {
 }
 
 async function ensureLoaded(env) {
-  if (index) {
-    return { loadedFromR2: false, restoreMs: 0 };
+  if (index && studentModel) {
+    return { loadedFromBundle: false, restoreMs: 0 };
   }
 
   const callerTriggeredRestore = !loadPromise;
   if (!loadPromise) {
-    loadPromise = restoreFromR2(env).finally(() => {
+    loadPromise = restoreBundledAssets(env).finally(() => {
       loadPromise = null;
     });
   }
 
   await loadPromise;
   return {
-    loadedFromR2: callerTriggeredRestore,
+    loadedFromBundle: callerTriggeredRestore,
     restoreMs: callerTriggeredRestore ? state.lastRestoreMs : 0
   };
 }
 
-async function getSnapshotAvailability(env) {
-  if (!env.DOCS_BUCKET) {
-    return { available: false, missing: ['DOCS_BUCKET binding'] };
-  }
-  const [manifestObj, corpusObj, indexObj] = await Promise.all([
-    env.DOCS_BUCKET.head(MANIFEST_KEY),
-    env.DOCS_BUCKET.head(CORPUS_KEY),
-    env.DOCS_BUCKET.head(INDEX_KEY)
-  ]);
-  const missing = [];
-  if (!manifestObj) missing.push(MANIFEST_KEY);
-  if (!corpusObj) missing.push(CORPUS_KEY);
-  if (!indexObj) missing.push(INDEX_KEY);
-  return { available: missing.length === 0, missing };
+function getBundledAssetAvailability() {
+  return {
+    available: true,
+    missing: [],
+    snapshotBytes: assetBytes(SNAPSHOT_ASSET, 'Snapshot').byteLength,
+    studentBytes: assetBytes(STUDENT_ASSET, 'Student model').byteLength,
+    corpusChunks: CORPUS_ASSET.length,
+  };
 }
 
 function buildResult(hit) {
   const chunk = corpusById.get(hit.id);
+  const sourcePath = chunk?.sourcePath || '';
+  const anchor = chunk?.anchor || '';
   return {
     id: hit.id,
     distance: hit.distance,
     title: chunk?.title || `Chunk ${hit.id}`,
     preview: chunk?.preview || '',
-    source_path: chunk?.sourcePath || '',
-    anchor: chunk?.anchor || ''
+    source_path: sourcePath,
+    anchor,
+    source_url: `https://github.com/mcn92/pancake/blob/main/${sourcePath}${anchor ? `#${anchor}` : ''}`
   };
 }
 
@@ -897,33 +897,39 @@ async function handleSearch(request, env) {
   ef = Math.min(ef, 400);
 
   const loadInfo = await ensureLoaded(env);
-  const t0 = performance.now();
-  index.setEfSearch(ef);
+  const embeddingStart = performance.now();
+  const queryVector = embedTextWithStudent(query, studentModel);
+  const embeddingMs = performance.now() - embeddingStart;
+  const searchStart = performance.now();
   let hits;
   let filterLabel = null;
   if (source) {
     const allowedIds = sourceFilters.get(source);
     filterLabel = sourceLabelFromPath(source);
-    hits = allowedIds ? index.searchFiltered(embedText(query), k, allowedIds) : [];
+    hits = allowedIds
+      ? index.searchFiltered(queryVector, k, allowedIds, { efSearch: ef })
+      : [];
   } else {
-    hits = index.search(embedText(query), k);
+    hits = index.search(queryVector, k, { efSearch: ef });
   }
-  const searchMs = performance.now() - t0;
+  const searchMs = performance.now() - searchStart;
 
   return jsonResponse({
     query,
     result_count: hits.length,
-    loaded_from_r2: loadInfo.loadedFromR2,
-    cache_state: loadInfo.loadedFromR2 ? 'cold-restored' : 'warm-cache',
+    loaded_from_bundle: loadInfo.loadedFromBundle,
+    cache_state: loadInfo.loadedFromBundle ? 'cold-restored' : 'warm-cache',
     restore_ms: formatMs(loadInfo.restoreMs),
+    embedding_ms: formatMs(embeddingMs),
     search_ms: formatMs(searchMs),
     corpus_chunks: manifest?.chunkCount || corpus.length,
-    dim: manifest?.dim || DEMO_DIM,
+    dim: manifest?.dim || null,
     quantized: manifest?.quantized ?? true,
     ef_search: ef,
     restore_count: state.restoreCount,
     last_restore_ms: formatMs(state.lastRestoreMs || 0),
     filter_label: filterLabel,
+    encoder: manifest?.encoder || null,
     results: hits.map(buildResult)
   });
 }
@@ -960,13 +966,14 @@ export default {
         loaded: !!index,
         manifest_loaded: !!manifest,
         corpus_chunks: corpus.length,
-        dim: manifest?.dim || DEMO_DIM,
+        dim: manifest?.dim || null,
         quantized: manifest?.quantized ?? true,
         default_ef_search: manifest?.efSearch || 120,
         restore_count: state.restoreCount,
         restored_at: state.restoredAt,
         last_restore_ms: state.lastRestoreMs ? formatMs(state.lastRestoreMs) : null,
         read_only: isReadOnly(env),
+        encoder: manifest?.encoder || null,
         sources: Array.from(sourceFilters.keys()).map((source) => ({
           value: source,
           label: sourceLabelFromPath(source),
@@ -976,12 +983,15 @@ export default {
     }
 
     if (url.pathname === '/readiness') {
-      const snapshot = await getSnapshotAvailability(env);
+      const snapshot = getBundledAssetAvailability();
       return jsonResponse({
         ready: !!index || snapshot.available,
         loaded: !!index,
         snapshot_available: snapshot.available,
         missing_assets: snapshot.missing,
+        snapshot_bytes: snapshot.snapshotBytes,
+        student_bytes: snapshot.studentBytes,
+        bundled_corpus_chunks: snapshot.corpusChunks,
         restore_count: state.restoreCount,
         restored_at: state.restoredAt,
         last_restore_ms: state.lastRestoreMs ? formatMs(state.lastRestoreMs) : null,
@@ -997,6 +1007,7 @@ export default {
         index.dispose();
       }
       index = null;
+      studentModel = null;
       manifest = null;
       corpus = [];
       corpusById = new Map();

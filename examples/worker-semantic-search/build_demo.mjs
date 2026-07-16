@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Pancake from '../../pancake.node.mjs';
-import { DEMO_DIM, embedText } from './embedder.mjs';
+import { embedTextWithStudent, loadStudentModel } from './student-embedder.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,8 +33,13 @@ function parseArgs(argv) {
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i];
     if (!arg.startsWith('--')) continue;
-    out[arg.slice(2)] = argv[i + 1];
-    i++;
+    const next = argv[i + 1];
+    if (next === undefined || next.startsWith('--')) {
+      out[arg.slice(2)] = true;
+    } else {
+      out[arg.slice(2)] = next;
+      i++;
+    }
   }
   return out;
 }
@@ -175,8 +180,42 @@ async function main() {
   }
 
   console.log(`[build] generated ${corpus.length} chunks from ${DOC_SOURCES.length} markdown files`);
+  const corpusPath = path.join(outDir, 'docs-corpus.json');
+  fs.writeFileSync(corpusPath, JSON.stringify(corpus, null, 2));
+  console.log(`[write] ${corpusPath}`);
+  if (args['corpus-only']) return;
+
+  if (!args['student-dir']) {
+    throw new Error('--student-dir is required unless --corpus-only is used');
+  }
+  const studentDir = path.resolve(args['student-dir']);
+  const studentBytes = fs.readFileSync(path.join(studentDir, 'student-model.bin'));
+  const studentManifest = JSON.parse(
+    fs.readFileSync(path.join(studentDir, 'student-manifest.json'), 'utf8')
+  );
+  const evaluation = JSON.parse(
+    fs.readFileSync(path.join(studentDir, 'student-evaluation.json'), 'utf8')
+  );
+  const vectorBytes = fs.readFileSync(path.join(studentDir, 'docs-vectors.f32'));
+  const expectedVectorBytes = corpus.length * studentManifest.outputDim * 4;
+  if (vectorBytes.byteLength !== expectedVectorBytes) {
+    throw new Error(
+      `docs-vectors.f32 size mismatch: expected ${expectedVectorBytes}, received ${vectorBytes.byteLength}`
+    );
+  }
+  const vectorsView = new Float32Array(
+    vectorBytes.buffer,
+    vectorBytes.byteOffset,
+    vectorBytes.byteLength / 4
+  );
+  const vectors = new Array(corpus.length);
+  for (let row = 0; row < corpus.length; row++) {
+    const start = row * studentManifest.outputDim;
+    vectors[row] = vectorsView.subarray(start, start + studentManifest.outputDim);
+  }
+
   const index = await Pancake.create({
-    dim: DEMO_DIM,
+    dim: studentManifest.outputDim,
     maxElements: corpus.length + 16,
     metric: 'cosine',
     quantized: true,
@@ -184,15 +223,11 @@ async function main() {
     efConstruction: 150,
     efSearch: 120
   });
-
-  const vectors = corpus.map((chunk) =>
-    embedText(`${chunk.docTitle}\n${chunk.title}\n${chunk.title}\n${chunk.text}`, DEMO_DIM)
-  );
   index.addBatch(vectors);
 
   const manifest = {
     generatedAt: new Date().toISOString(),
-    dim: DEMO_DIM,
+    dim: studentManifest.outputDim,
     metric: 'cosine',
     quantized: true,
     maxElements: corpus.length + 16,
@@ -203,21 +238,38 @@ async function main() {
     docsCount: DOC_SOURCES.length,
     sampleQueries: SAMPLE_QUERIES,
     corpusKey: 'docs-corpus.json',
-    indexKey: 'docs-index.bin'
+    indexKey: 'docs-index.bin',
+    studentKey: 'docs-student.bin',
+    encoder: {
+      format: studentManifest.format,
+      architecture: studentManifest.architecture,
+      teacher: studentManifest.teacher,
+      teacherRevision: studentManifest.teacherRevision,
+      modelBytes: studentManifest.modelBytes,
+      modelSha256: studentManifest.modelSha256,
+      runtimeDependencies: 0,
+      outboundRequests: 0,
+      evaluation: studentManifest.evaluation,
+    },
   };
 
   const snapshot = index.export();
   fs.writeFileSync(path.join(outDir, 'docs-index.bin'), Buffer.from(snapshot));
-  fs.writeFileSync(path.join(outDir, 'docs-corpus.json'), JSON.stringify(corpus, null, 2));
   fs.writeFileSync(path.join(outDir, 'docs-manifest.json'), JSON.stringify(manifest, null, 2));
+  fs.copyFileSync(path.join(studentDir, 'student-model.bin'), path.join(outDir, 'docs-student.bin'));
+  fs.writeFileSync(
+    path.join(outDir, 'docs-student-evaluation.json'),
+    `${JSON.stringify(evaluation, null, 2)}\n`
+  );
 
   console.log(`[write] ${path.join(outDir, 'docs-index.bin')}`);
-  console.log(`[write] ${path.join(outDir, 'docs-corpus.json')}`);
   console.log(`[write] ${path.join(outDir, 'docs-manifest.json')}`);
+  console.log(`[write] ${path.join(outDir, 'docs-student.bin')}`);
 
   console.log('\n[preview]');
+  const student = loadStudentModel(studentBytes);
   for (const query of SAMPLE_QUERIES) {
-    const results = index.search(embedText(query, DEMO_DIM), 3);
+    const results = index.search(embedTextWithStudent(query, student), 3);
     console.log(`  ${query}`);
     for (const hit of results) {
       const chunk = corpus.find((entry) => entry.id === hit.id);
