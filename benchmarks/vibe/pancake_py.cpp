@@ -1,8 +1,9 @@
 // pancake_py.cpp — pybind11 wrapper around the header-only Pancake HNSW engine.
 //
 // This exposes the SAME C++ engine used by the WASM and N-API builds
-// (src/int8_float_hnsw.hpp / src/float_hnsw.hpp) to Python, so VIBE can
-// benchmark the native engine on neutral turf.
+// (src/int8_float_hnsw.hpp / src/float_hnsw.hpp) to Python, so neutral runners
+// such as ANN-Benchmarks and VIBE can benchmark the native engine without
+// passing through Node or WebAssembly.
 //
 // Build (out of the pancake repo root, with the headers on the include path):
 //   c++ -O3 -std=c++17 -shared -fPIC -DPANCAKE_ENABLE_AVX2_SIMD -mavx2 \
@@ -23,6 +24,8 @@
 #include <pybind11/stl.h>
 #include <vector>
 #include <cstdint>
+#include <stdexcept>
+#include <string>
 
 #include "int8_float_hnsw.hpp"
 #include "float_hnsw.hpp"
@@ -72,8 +75,18 @@ public:
         const float* data = static_cast<const float*>(buf.ptr);
         for (size_t i = 0; i < n; ++i) {
             const float* vec = data + i * dim_;
-            if (quantized_) i8_->insert(vec);
-            else            f32_->insert(vec);
+            uint32_t id = quantized_ ? i8_->insert(vec) : f32_->insert(vec);
+            if (id == UINT32_MAX) {
+                throw std::runtime_error(
+                    "Pancake rejected benchmark vector " + std::to_string(i)
+                );
+            }
+            if (id != i) {
+                throw std::runtime_error(
+                    "Pancake internal ID diverged from benchmark row ID at " +
+                    std::to_string(i)
+                );
+            }
         }
     }
 
