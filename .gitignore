@@ -17,13 +17,11 @@ Thumbs.db
 *.swo
 *~
 
-# Local benchmark output
-benchmark_results/
+# Local benchmark output — only benchmark_results/release/ is committed
 **/benchmark_results/
-!benchmark_results/
-benchmark_results/*
-!benchmark_results/release/
-!benchmark_results/release/**
+!/benchmark_results/
+/benchmark_results/*
+!/benchmark_results/release/
 
 # Pre-refactor backups
 .backup/
@@ -85,6 +83,20 @@ nytimes/sweep_*.png
 
 # Build artifact
 *.tgz
+*.tar.gz
+*.so
+
+# Local benchmark-suite checkouts and AWS run artifacts
+/ann-benchmarks/
+/vibe/
+/aws-lscpu.txt
+/benchmark_reports/
+
+# Local webanns experiment data
+/public/
+examples/browser-vite/public/
+examples/browser-vite/webanns_1k/
+examples/browser-vite/webanns_compare/
 examples/demo/test.js
 
 # Generated binaries — regenerate with emb.py or demo scripts

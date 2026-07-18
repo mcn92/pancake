@@ -213,8 +213,12 @@ export interface PancakeApi {
 export interface NodePancakeApi extends PancakeApi {
   /** Load vectors from a JSON/JSONL file and build an index. */
   loadJsonFile<Id = unknown>(filePath: string, opts?: JsonFileOptions): Promise<FromVectorsResult<Id>>;
-  /** Load a previously exported Pancake snapshot from disk. */
-  loadSnapshotFile(filePath: string, opts: SnapshotFileOptions): Promise<PancakeIndex>;
+  /**
+   * Load a previously exported Pancake snapshot from disk. Envelope snapshots
+   * carry their own config, so `opts` is only required for raw engine
+   * snapshots (which need the full create config).
+   */
+  loadSnapshotFile(filePath: string, opts?: SnapshotFileOptions): Promise<PancakeIndex>;
 }
 
 declare const Pancake: NodePancakeApi;

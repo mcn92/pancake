@@ -130,6 +130,7 @@
   "devDependencies": {
     "faiss-node": "^0.5.1",
     "hnswlib-node": "^3.0.0",
+    "miniflare": "^4.20260409.0",
     "playwright": "^1.60.0",
     "usearch": "^2.25.1",
     "vite": "^8.0.16",
