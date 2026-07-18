@@ -60,14 +60,22 @@ the latest snapshot header without restoring it.
 
 ```bash
 cd examples/worker
-npx wrangler dev --port 8787
+npx wrangler dev --port 8787 --var ALLOW_INSECURE_ADMIN:1
 ```
 
+`ALLOW_INSECURE_ADMIN=1` is a local-only opt-in; without it (or an `API_KEY`)
+the admin routes (`/init`, `/add`, `/import`, ...) fail closed with `403`.
+
 ## Deploying
+
+Build a snapshot outside the Worker first — see
+[`build_and_export_index.js`](build_and_export_index.js) — then:
 
 ```bash
 cd examples/worker
 wrangler r2 bucket create pancake-indexes
+# Uncomment the [[r2_buckets]] block in wrangler.toml so the Worker can
+# persist and restore snapshots from the bucket.
 wrangler deploy
 ```
 

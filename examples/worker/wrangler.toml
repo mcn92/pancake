@@ -12,7 +12,7 @@ compatibility_flags = ["nodejs_compat"]
 MAX_ELEMENTS_LIMIT = "5000000"
 # ---------------------------------------------------------------------------
 # R2 bucket — for persisting serialized indexes across deployments.
-# Commented out for the in-memory demo flow (technical_demo_worker.js): with an
+# Commented out for the in-memory demo flow (examples/demo/technical_demo_worker.js): with an
 # active R2 binding, `wrangler dev` recycles isolates and races the
 # persist/restore path, which can 503 mutation routes mid-demo. Uncomment to
 # enable snapshot persistence for a real deployment.

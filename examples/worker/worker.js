@@ -611,7 +611,7 @@ async function handleRequest(request, env, ctx) {
       'GET /readiness': 'Authenticated snapshot/readiness check',
       'GET /stats': 'Index stats',
       'POST /init': '{ dims, maxElements, M?, efConstruction?, efSearch?, vectors? }',
-      'POST /search': '{ query: float[], k?, ef?, allowedIds? }',
+      'POST /search': '{ query: float[], k?, efSearch?, allowedIds? }',
       'POST /add': '{ vector: float[] }',
       'POST /add_batch': '{ vectors: float[][] }',
       'POST /delete': '{ id: number }',

@@ -26,15 +26,17 @@ npm install pancake-wasm
 ```bash
 git clone https://github.com/mcn92/pancake.git
 cd pancake
-./build.sh
+npm run build:all
 ```
 
-The repo build produces the WASM engine artifacts used by the local entrypoints and Worker example:
+`npm run build:all` produces all of the WASM engine artifacts used by the local entrypoints and Worker example:
 
 - `dist/engine.js`
 - `dist/engine.wasm`
 - `dist/engine.scalar.js`
 - `dist/engine.scalar.wasm`
+
+(`./build.sh` builds only the SIMD pair, `dist/engine.{js,wasm}`; use `build:all` when you also need the scalar fallback.)
 
 ## Pick An Ingest Path
 
@@ -44,14 +46,14 @@ Use the path that matches what you already have:
 - Vectors saved as JSON / JSONL: `Pancake.loadJsonFile(...)` on the Node entrypoints
 - Existing Pancake snapshot on disk: `Pancake.loadSnapshotFile(...)` on the Node entrypoints
 
-If you are working from a repo checkout, replace `require('pancake-wasm')` with `require('./pancake.js')` or `import Pancake from './pancake.node.mjs'`.
+If you are working from a repo checkout, replace `import Pancake from 'pancake-wasm'` with `import Pancake from './pancake.node.mjs'` (or `require('./pancake.js')` from CommonJS code that awaits inside an async function).
 
 ## Local Node.js Workflow
 
 ### 1. Build An Index From In-Memory Vectors
 
 ```js
-const Pancake = require('pancake-wasm');
+import Pancake from 'pancake-wasm';
 
 const rows = [
   { id: 'doc-1', vector: [1, 0, 0, 0] },
@@ -76,7 +78,7 @@ Use this path when your embedder already returns arrays or `Float32Array`s in th
 On the Node.js entrypoints, Pancake can load vectors directly from disk:
 
 ```js
-const Pancake = require('pancake-wasm');
+import Pancake from 'pancake-wasm';
 
 const { index, ids, idMap } = await Pancake.loadJsonFile('vectors.jsonl', {
   metric: 'cosine',
@@ -110,8 +112,8 @@ If your embedding pipeline already writes JSONL, this is the simplest file-based
 If you want to reuse a built index later, export a snapshot:
 
 ```js
-const fs = require('fs');
-const Pancake = require('pancake-wasm');
+import fs from 'node:fs';
+import Pancake from 'pancake-wasm';
 
 const { index } = await Pancake.fromVectors([
   [1, 0, 0, 0],
@@ -170,8 +172,10 @@ When you run or deploy this example, it runs in your own Cloudflare environment:
 
 ```bash
 cd examples/worker
-npx wrangler dev --port 8787
+npx wrangler dev --port 8787 --var ALLOW_INSECURE_ADMIN:1
 ```
+
+`ALLOW_INSECURE_ADMIN=1` is a local-only opt-in: without it (or an `API_KEY`), admin routes such as `/init`, `/add`, and `/import` return 403, so the curl examples below would be rejected.
 
 ### Deploy The Worker To Your Own Cloudflare Account
 
@@ -235,7 +239,7 @@ node examples/demo/technical_demo_worker.js
 The demos exercise different paths:
 
 - `test_worker.js`: synthetic 1536D Worker/API integration test
-- `technical_demo_worker.js`: interactive REPL against the Worker using the repo's `dist/vectors.bin` asset
+- `technical_demo_worker.js`: interactive REPL against the Worker using the `dist/vectors.bin` asset (gitignored — generate it first with `npm run demo:data`)
 
 ## Sizing And Tuning
 

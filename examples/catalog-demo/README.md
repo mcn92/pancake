@@ -14,7 +14,7 @@ demo vectors, not model-generated embeddings.
 
 - `products.json` — authoritative catalog data with live price/inventory
 - `search_corpus.jsonl` — indexed search records and demo vectors
-- `build_snapshot.mjs` — builds both a package snapshot and a Worker import blob
+- `build_snapshot.mjs` — builds the Worker import snapshot (`catalog_index.pnck`)
 - `mock_catalog_server.mjs` — serves live catalog hydration over HTTP
 - `worker_import_snapshot.mjs` — imports the Worker snapshot blob into the reference Worker
 - `demo_client.mjs` — queries the Worker, hydrates catalog data, and prints ranked results

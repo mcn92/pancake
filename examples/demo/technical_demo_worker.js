@@ -11,7 +11,8 @@
  * export/import round-trip, latency, and sustained load.
  *
  * Usage:
- *   1. Start the worker:  npx wrangler dev --port 8787
+ *   1. Start the worker:  npx wrangler dev --port 8787 --var ALLOW_INSECURE_ADMIN:1
+ *      (admin routes like /init and /add are 403 without API_KEY or that flag)
  *   2. Run this demo:     node technical_demo_worker.js [command]
  */
 
@@ -42,10 +43,10 @@ const PROOFS = [
     { id: 'p99_latency', text: `P99 end-to-end search latency under ${P99_LATENCY_THRESHOLD_MS}ms over ${LATENCY_CHECK_QUERIES} HTTP queries` },
     { id: 'insert', text: 'Live vector insertion post-build' },
     { id: 'delete', text: 'Live vector deletion via API' },
-    { id: 'ghosts', text: 'Ghost node accumulation visible' },
+    { id: 'ghosts', text: 'Deletions reflected in live count immediately (worker compacts on persist)' },
     { id: 'compact', text: 'Compaction executed successfully' },
     { id: 'no_block', text: 'Search works immediately after compaction' },
-    { id: 'mem_shrink', text: 'Memory decreases after compaction' },
+    { id: 'mem_shrink', text: 'Memory decreases after deletions' },
     { id: 'deterministic', text: 'Search is deterministic (same query -> same results)' },
     { id: 'excl_deleted', text: 'Deleted vectors excluded from results' },
     { id: 'export', text: 'Index serialized to binary (export)' },
@@ -234,7 +235,7 @@ class TechnicalDemoWorker {
 
     async addVector(vec, throwOnFull = true) {
         const res = await apiPost('/add', { vector: vec });
-        if (res.status === 409 && !throwOnFull) return null;
+        if (!throwOnFull && res.status === 400 && res.data?.code === 'INDEX_FULL') return null;
         if (res.status !== 200) throw new Error(`/add failed: ${JSON.stringify(res.data)}`);
         this.markProof('insert');
         this.liveVectors.set(res.data.id, Float32Array.from(vec));
@@ -259,7 +260,13 @@ class TechnicalDemoWorker {
         this.latencyHistory.push(latency);
         if (this.latencyHistory.length > 1000) this.latencyHistory.shift();
         this.markProof('search');
-        return { ...res.data, client_latency: latency };
+        // The worker returns neighbors as { id, distance } objects; keep a
+        // flat id list alongside for the proofs that only compare ids.
+        return {
+            ...res.data,
+            neighborIds: res.data.neighbors.map((n) => n.id),
+            client_latency: latency
+        };
     }
 
     evaluateLatencyChecks(latencies) {
@@ -330,7 +337,7 @@ class TechnicalDemoWorker {
         const ghosts = stats.ghost_count;
         const live = count - ghosts;
         const ghostRatio = stats.ghost_ratio;
-        const mem = stats.memory_bytes;
+        const mem = stats.memory;
         const sorted = [...this.latencyHistory].sort((a, b) => a - b);
         const p50 = percentile(sorted, 0.5);
         const p99 = percentile(sorted, 0.99);
@@ -387,7 +394,9 @@ class TechnicalDemoWorker {
         await this.initIndex();
 
         const t0 = performance.now();
-        const batchSize = 500;
+        // Keep each /add_batch JSON body under the worker's default
+        // MAX_JSON_BYTES cap (1 MiB): 100 x 384D floats is ~800 KB.
+        const batchSize = 100;
 
         for (let i = 0; i < count; i += batchSize) {
             const end = Math.min(i + batchSize, count);
@@ -441,13 +450,17 @@ class TechnicalDemoWorker {
         const total = this.liveVectors.size;
         const n = Math.min(count, total);
         this.log(`Deleting ${n} vector${n === 1 ? '' : 's'}...`, 'info');
+        const countBefore = (await this.getStats()).count;
         for (let i = 0; i < n; i++) {
             const id = this.randomLiveId();
             if (id === null) break;
             await this.deleteVector(id);
         }
+        // The worker compacts inside its persist step after every mutation,
+        // so ghosts never accumulate across requests; deletions show up as an
+        // immediate drop in the live count instead.
         const after = await this.getStats();
-        if (after.ghost_count > 0) this.markProof('ghosts');
+        if (n > 0 && after.count === countBefore - n) this.markProof('ghosts');
         this.markProof('delete');
         this.log(`Deleted ${n} vectors`, 'success');
         await this.printFullStatus();
@@ -455,16 +468,18 @@ class TechnicalDemoWorker {
 
     async compact() {
         const statsBefore = await this.getStats();
-        const memBefore = statsBefore.memory_bytes;
+        const memBefore = statsBefore.memory;
         const ghostsBefore = statsBefore.ghost_count;
         this.log('Compacting...', 'info');
-        const res = await this.compactIndex();
+        const t0 = performance.now();
+        await this.compactIndex();
+        const elapsed = performance.now() - t0;
         const statsAfter = await this.getStats();
-        const memAfter = statsAfter.memory_bytes;
+        const memAfter = statsAfter.memory;
         const ghostsAfter = statsAfter.ghost_count;
         const saved = memBefore - memAfter;
         if (saved > 0) this.markProof('mem_shrink');
-        this.log(`Compaction done in ${res.elapsed_ms.toFixed(2)}ms — ghosts ${ghostsBefore}->${ghostsAfter}, saved ${formatBytes(Math.max(saved, 0))}`, 'success');
+        this.log(`Compaction done in ${elapsed.toFixed(2)}ms (incl. HTTP) — ghosts ${ghostsBefore}->${ghostsAfter}, saved ${formatBytes(Math.max(saved, 0))}`, 'success');
         await this.printFullStatus();
     }
 
@@ -491,7 +506,7 @@ class TechnicalDemoWorker {
         const results = [];
         for (let run = 0; run < 3; run++) {
             const res = await this.search(vec);
-            results.push(res.neighbors);
+            results.push(res.neighborIds);
             await sleep(50);
         }
         const allSame = results.every((ids) =>
@@ -509,11 +524,11 @@ class TechnicalDemoWorker {
         const id = addRes.id;
 
         const before = await this.search(vec);
-        const foundBefore = before.neighbors.includes(id);
+        const foundBefore = before.neighborIds.includes(id);
 
         await this.deleteVector(id);
         const after = await this.search(vec);
-        const foundAfter = after.neighbors.includes(id);
+        const foundAfter = after.neighborIds.includes(id);
 
         if (!foundBefore || foundAfter) {
             throw new Error(`deletion exclusion failed (before=${foundBefore}, after=${foundAfter})`);
@@ -534,12 +549,13 @@ class TechnicalDemoWorker {
     }
 
     async proveMemoryDecrease() {
-        this.log('Check: memory decreases after compaction', 'info');
-        const stats = await this.getStats();
-        if (stats.ghost_count < 50) await this.deleteVectors(200);
-        const before = (await this.getStats()).memory_bytes;
-        await this.compact();
-        const after = (await this.getStats()).memory_bytes;
+        this.log('Check: memory decreases after deletions', 'info');
+        // The worker compacts inside its persist step after every mutation,
+        // so the memory drop is visible right after the deletes — there is no
+        // separate ghost-carrying state to compact away from the client side.
+        const before = (await this.getStats()).memory;
+        await this.deleteVectors(200);
+        const after = (await this.getStats()).memory;
         if (!(after < before)) throw new Error(`memory did not decrease (${before} -> ${after})`);
         this.markProof('mem_shrink');
         this.log(`Memory decreased from ${formatBytes(before)} to ${formatBytes(after)}`, 'success');
@@ -616,7 +632,7 @@ class TechnicalDemoWorker {
             const vec = this.randomSyntheticVec();
             const addRes = await this.addVector(vec);
             const searchRes = await this.search(vec);
-            if (searchRes.neighbors.length > 0 && searchRes.neighbors[0] === addRes.id) {
+            if (searchRes.neighborIds.length > 0 && searchRes.neighborIds[0] === addRes.id) {
                 hits++;
             }
             if ((i + 1) % 10 === 0) await sleep(0);
@@ -667,7 +683,7 @@ class TechnicalDemoWorker {
             const trueTopK = new Set(scored.slice(0, topK).map((s) => s.id));
 
             const res = await this.search(Array.from(qVec), topK);
-            const hnswIds = new Set(res.neighbors);
+            const hnswIds = new Set(res.neighborIds);
 
             let hits = 0;
             for (const id of hnswIds) {

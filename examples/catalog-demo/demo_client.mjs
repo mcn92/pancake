@@ -66,20 +66,20 @@ async function main() {
     body: JSON.stringify({ query, k: 3, ef: 100 }),
   });
 
-  const workerIds = search.neighbors;
+  const workerIds = search.neighbors.map((neighbor) => neighbor.id);
   const productIds = workerIds.map((workerId) => workerIdToProductId.get(workerId)).filter(Boolean);
   const hydrated = await fetchJson(`${CATALOG_URL}/products?ids=${productIds.join(',')}`);
   const byId = new Map(hydrated.items.map((item) => [item.id, item]));
 
   console.log(`Query: ${queryText}`);
   console.log(`Demo vector: [${query.map((value) => value.toFixed(3)).join(', ')}]`);
-  console.log(`Worker latency: ${search.latency_ms.toFixed(2)} ms`);
+  console.log(`Worker latency: ${search.search_ms.toFixed(2)} ms`);
   console.log('');
 
   workerIds.forEach((workerId, index) => {
     const productId = workerIdToProductId.get(workerId);
     const item = productId ? byId.get(productId) : null;
-    const distance = search.distances[index];
+    const distance = search.neighbors[index].distance;
     if (!item) {
       console.log(`${index + 1}. workerId=${workerId} productId=${productId ?? 'unknown'} (catalog hydration missing)`);
       return;

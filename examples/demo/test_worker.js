@@ -2,13 +2,16 @@
 /**
  * Pancake Worker Integration Test
  *
- * Tests the worker HTTP API with synthetic 1536D unit-normalized vectors.
- * This exercises the dedicated 1536D worker backend over HTTP without
- * depending on external embedding files.
+ * Tests the worker HTTP API with synthetic 1536D unit-normalized vectors,
+ * without depending on external embedding files. The worker is dimension-
+ * agnostic; 1536 just exercises a larger-than-default payload.
  *
- * Works against local wrangler dev or a deployed worker.
+ * Works against local wrangler dev or a deployed worker. Admin routes
+ * (/init, /add, /import) return 403 unless the worker runs with API_KEY
+ * or ALLOW_INSECURE_ADMIN set.
  *
  * Usage:
+ *   npx wrangler dev --port 8787 --var ALLOW_INSECURE_ADMIN:1   # in examples/worker
  *   node test_worker.js                          # local (default)
  *   node test_worker.js http://localhost:8787    # local explicit
  *   node test_worker.js https://pancake-search.yourname.workers.dev
@@ -85,8 +88,8 @@ function fail(msg) { console.log(`  ✗ ${msg}`); process.exitCode = 1; }
 async function testHealth() {
     console.log('\n── Health check');
     const res = await request('GET', '/health');
-    if (res.status === 'ok') pass(`status=ok`);
-    else fail(`unexpected status: ${res.status}`);
+    if (res.ok === true) pass(`ok=true`);
+    else fail(`unexpected health response: ${JSON.stringify(res)}`);
     return res;
 }
 
@@ -98,15 +101,24 @@ async function testInit(vectors) {
         dims: DIMS,
         maxElements: BUILD_COUNT + 1000,
         M: 8,
-        efConstruction: 100,
-        vectors: subset
+        efConstruction: 100
     });
+
+    // Insert in chunks so each JSON body stays under the worker's default
+    // MAX_JSON_BYTES cap (1 MiB — ~30 vectors of 1536 floats as JSON).
+    const CHUNK = 20;
+    let inserted = 0;
+    for (let i = 0; i < subset.length; i += CHUNK) {
+        const batch = await request('POST', '/add_batch', { vectors: subset.slice(i, i + CHUNK) });
+        inserted += batch.inserted;
+    }
     const elapsed = Date.now() - t0;
 
-    if (res.inserted === BUILD_COUNT) pass(`inserted=${res.inserted}`);
-    else fail(`inserted=${res.inserted}, expected ${BUILD_COUNT}`);
+    if (inserted === BUILD_COUNT) pass(`inserted=${inserted}`);
+    else fail(`inserted=${inserted}, expected ${BUILD_COUNT}`);
 
-    if (res.memory_bytes > 0) pass(`memory=${(res.memory_bytes / 1024).toFixed(1)} KB`);
+    const stats = await request('GET', '/stats');
+    if (stats.memory > 0) pass(`memory=${(stats.memory / 1024).toFixed(1)} KB`);
     else fail(`memory=0`);
 
     pass(`build time=${elapsed}ms`);
@@ -137,7 +149,7 @@ async function testSearch(vectors) {
         const latency = performance.now() - t0;
         latencies.push(latency);
 
-        const hits = res.neighbors.filter(id => trueTopK.has(id)).length;
+        const hits = res.neighbors.filter(n => trueTopK.has(n.id)).length;
         totalRecall += hits / K;
     }
 
@@ -166,24 +178,20 @@ async function testExport() {
     const res = await fetch(`${BASE_URL}/export`);
     if (!res.ok) { fail(`export status=${res.status}`); return null; }
 
-    const dims = res.headers.get('X-Pancake-Dims');
-    const count = res.headers.get('X-Pancake-Count');
     const bytes = await res.arrayBuffer();
 
     if (bytes.byteLength > 0) pass(`exported ${bytes.byteLength} bytes`);
     else { fail('export produced 0 bytes'); return null; }
 
-    if (dims) pass(`X-Pancake-Dims=${dims}`);
-    if (count) pass(`X-Pancake-Count=${count}`);
-
-    return { bytes, dims: parseInt(dims) };
+    return { bytes };
 }
 
 async function testImport(exportData) {
     console.log('\n── Import round-trip');
     if (!exportData) { fail('skipped — export failed'); return; }
 
-    const res = await fetch(`${BASE_URL}/import?dims=${exportData.dims}`, {
+    // Exported snapshots are self-describing envelopes; no dims param needed.
+    const res = await fetch(`${BASE_URL}/import`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/octet-stream' },
         body: exportData.bytes
@@ -191,8 +199,8 @@ async function testImport(exportData) {
     const json = await res.json();
     if (!res.ok) { fail(`import status=${res.status}: ${JSON.stringify(json)}`); return; }
 
-    if (json.status === 'imported') pass(`imported successfully`);
-    else fail(`unexpected status: ${json.status}`);
+    if (json.ok === true) pass(`imported successfully (dims=${json.dims})`);
+    else fail(`unexpected import response: ${JSON.stringify(json)}`);
 
     if (json.count > 0) pass(`count after import=${json.count}`);
     else fail(`count after import=${json.count}`);
@@ -204,7 +212,7 @@ async function testSearchAfterImport(vectors) {
     const res = await request('POST', '/search', { query, k: 5 });
     if (res.neighbors.length > 0) pass(`got ${res.neighbors.length} results`);
     else fail('no results after import');
-    pass(`latency=${res.latency_ms.toFixed(2)}ms`);
+    pass(`search_ms=${res.search_ms.toFixed(2)}ms (worker-side)`);
 }
 
 // ---------------------------------------------------------------------------
