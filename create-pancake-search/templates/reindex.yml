@@ -1,0 +1,24 @@
+name: Reindex search
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  reindex:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/create-pancake-search/models
+          key: cps-model-${{ hashFiles('pancake.config.json') }}
+      - run: npm ci
+      - run: npm run reindex
+      - run: npm run deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

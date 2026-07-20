@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/mcn92/pancake/main/schemas/v1/pancake.config.schema.json",
+  "type": "object",
+  "required": ["version", "name", "source", "chunking", "embedding", "index", "validation"],
+  "properties": {
+    "version": { "const": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "source": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "path"],
+          "properties": {
+            "type": { "const": "folder" },
+            "path": { "type": "string" },
+            "include": { "type": "array", "items": { "type": "string" } },
+            "exclude": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "url"],
+          "properties": {
+            "type": { "const": "url" },
+            "url": { "type": "string" },
+            "maxPages": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "chunking": {
+      "type": "object",
+      "required": ["targetTokens", "overlapPercent"],
+      "properties": {
+        "targetTokens": { "type": "integer", "minimum": 32 },
+        "overlapPercent": { "type": "integer", "minimum": 0, "maximum": 50 }
+      },
+      "additionalProperties": false
+    },
+    "embedding": {
+      "type": "object",
+      "required": ["mode", "buildModel", "dims"],
+      "properties": {
+        "mode": { "const": "workers-ai" },
+        "buildModel": { "enum": ["bge-small-en-v1.5"] },
+        "dims": { "const": 384 },
+        "prefixPolicy": {
+          "type": "object",
+          "properties": {
+            "passage": { "type": "string" },
+            "query": { "type": "string" }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "index": {
+      "type": "object",
+      "required": ["metric", "quantized", "M", "efConstruction", "efSearch"],
+      "properties": {
+        "metric": { "enum": ["cosine"] },
+        "quantized": { "type": "boolean" },
+        "M": { "type": "integer", "minimum": 2, "maximum": 128 },
+        "efConstruction": { "type": "integer", "minimum": 1, "maximum": 4096 },
+        "efSearch": { "type": "integer", "minimum": 1, "maximum": 4096 }
+      },
+      "additionalProperties": false
+    },
+    "validation": {
+      "type": "object",
+      "required": ["minRecallAt10"],
+      "properties": {
+        "minRecallAt10": { "type": "number", "minimum": 0, "maximum": 1 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
