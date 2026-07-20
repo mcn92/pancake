@@ -1,6 +1,6 @@
 # Pancake
 
-HNSW vector search in about 49 KB of gzipped WebAssembly (137 KB uncompressed). Runs in Node.js, browser-bundled web apps, and Cloudflare Workers with no native dependencies in the default package path.
+HNSW vector search in about 50 KB of gzipped WebAssembly (141 KB uncompressed). Runs in Node.js, browser-bundled web apps, and Cloudflare Workers with no native dependencies in the default package path.
 
 Most ANN libraries ship as platform-specific native binaries, which means they do not work in browser tabs or JavaScript runtimes without native extensions. Pancake's primary package is a single portable WASM module built for JavaScript environments where native addons are not an option.
 
@@ -15,6 +15,9 @@ Install from npm:
 ```bash
 npm install pancake-wasm
 ```
+
+The API documented in this README is the Pancake 0.2 contract, which ships in
+`pancake-wasm@0.2.0` and later.
 
 Or work from a repository checkout:
 
@@ -572,7 +575,8 @@ Current core suite status on this tree: **1191 passed, 0 failed**.
 The npm package ships prebuilt WASM artifacts. Rebuild only if you're modifying the C++ engine:
 
 ```bash
-./build.sh
+./build.sh          # SIMD build: dist/engine.{js,wasm}
+npm run build:all   # SIMD + scalar fallback: dist/engine.scalar.{js,wasm} too
 ```
 
 Requires an Emscripten toolchain with WASM SIMD support. The default build is plain WASM SIMD for broader compatibility. To opt into relaxed SIMD on supporting runtimes:

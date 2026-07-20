@@ -21,6 +21,9 @@ Pancake is an ANN library. It does not embed raw documents for you, and it is no
 npm install pancake-wasm
 ```
 
+This guide documents the Pancake 0.2 contract; it requires `pancake-wasm@0.2.0`
+or later.
+
 ### Repository checkout
 
 ```bash
