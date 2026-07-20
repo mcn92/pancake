@@ -175,7 +175,7 @@ async function testAdd(vectors) {
 
 async function testExport() {
     console.log('\n── Export');
-    const res = await fetch(`${BASE_URL}/export`);
+    const res = await fetch(`${BASE_URL}/export`, { method: 'POST' });
     if (!res.ok) { fail(`export status=${res.status}`); return null; }
 
     const bytes = await res.arrayBuffer();

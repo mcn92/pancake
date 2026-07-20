@@ -302,7 +302,7 @@ class TechnicalDemoWorker {
     }
 
     async exportIndex() {
-        const res = await apiGet('/export');
+        const res = await request('POST', '/export');
         if (res.status !== 200) throw new Error(`/export failed: ${res.status}`);
         this.markProof('export');
         return res.raw;

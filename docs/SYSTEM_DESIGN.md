@@ -651,25 +651,23 @@ and a bucket is bound, the Worker lazily **restores from R2** before serving
 | Endpoint | Method | Body → Response | Admin? |
 |----------|--------|-----------------|--------|
 | `/health` | GET | — → status, dims, count, restore timings, read_only | no (public) |
-| `/readiness` | GET | — → loaded state + inspected latest snapshot header (no restore) | no (bearer once `API_KEY` set) |
-| `/search` | POST | `{query,k?,efSearch?,allowedIds?}` → `{neighbors,search_ms}` | no (bearer once `API_KEY` set) |
+| `/readiness` | GET | — → loaded state + latest snapshot metadata/range inspection (no restore) | no (bearer once `API_KEY` set) |
+| `/search` | POST | `{query,k?,efSearch?,allowedIds?}` → `{neighbors,search_ms}` | no (public) |
 | `/stats` | GET | — → live/deleted counts, capacity, and structured memory | no (bearer once `API_KEY` set) |
 | `/init` | POST | `{dims,maxElements,M?,efConstruction?,efSearch?,vectors?}` → init result | yes |
 | `/add` | POST | `{vector}` → `{id,count}` | yes |
 | `/add_batch` | POST | `{vectors}` → `{inserted,ids,count}` | yes |
 | `/delete` | POST | `{id}` → boolean deletion result + deleted count | yes |
 | `/compact` | POST | — → compaction result (awaits persist) | yes |
-| `/export` | GET | — → standard Pancake snapshot | yes |
+| `/export` | POST | — → compacted standard Pancake snapshot | yes |
 | `/import` | POST | Pancake snapshot → config-inferred restore | yes |
 | `/reset_cache` | POST | — → drops warm index, forces cold restore | yes |
 | `/search_debug` | POST | same body and response as `/search` (admin-gated legacy alias) | yes |
 
-Cross-cutting: `/health` always stays public, but admin routes now fail closed
-unless `API_KEY` is set or `ALLOW_INSECURE_ADMIN=1` is explicitly enabled for a
-local/demo deployment. Once `API_KEY` is set, every route except `/health`
-requires the bearer token — including `/search`, `/stats`, and `/readiness`;
-without `API_KEY`, those non-admin routes stay open while the admin routes
-return `403`. Also: optional per-IP sliding-window rate limiting
+Cross-cutting: `/health` and `/search` stay public, but admin routes now fail
+closed unless `API_KEY` is set or `ALLOW_INSECURE_ADMIN=1` is explicitly enabled
+for a local/demo deployment. Once `API_KEY` is set, `/stats`, `/readiness`, and
+admin routes require the bearer token. Also: optional per-IP sliding-window rate limiting
 (`RATE_LIMIT_RPM`, 60 s window, per-isolate so the effective global limit is
 `limit × isolates`); request-body caps for JSON (`MAX_JSON_BYTES`) and binary
 snapshot import (`MAX_SNAPSHOT_BYTES`); and opt-in CORS via `ALLOWED_ORIGIN`
@@ -679,14 +677,15 @@ snapshot import (`MAX_SNAPSHOT_BYTES`); and opt-in CORS via `ALLOWED_ORIGIN`
 
 Snapshots are written under **timestamped, append-only keys**
 (`pancake-index-<13-digit-ms>-<6-digit-seq>.pnck`); restore lists the prefix and
-picks the lexicographically greatest key (zero-padding makes string order match
-time order), with a fallback to a legacy fixed key. Mutating routes await
-persistence in this reference implementation. The persist step compacts whenever
-`ghostCount > 0` before exporting — after **every** mutation, not just
-`/export` — so ghosts never accumulate across Worker requests. Without an R2
-binding, the persist path still keeps the latest snapshot in isolate memory
-(`localSnapshot`), so `/reset_cache` → restore works bucket-less within an
-isolate. A production deployment should add an R2 lifecycle rule or delete
+picks the lexicographically greatest key across all R2 list pages (zero-padding
+makes string order match time order), with a fallback to a legacy fixed key.
+`/init`, `/import`, `/add`, and `/add_batch` persist snapshots when the index has
+no ghosts. `/delete` is intentionally cheap and leaves the soft-delete in warm
+memory; deletes become durable when an explicit `/compact` or `/export` compacts
+the index and writes a fresh snapshot. Without an R2 binding, the persist path
+still keeps the latest exported snapshot in isolate memory (`localSnapshot`), so
+`/reset_cache` → restore works bucket-less within an isolate after a persisted
+mutation. A production deployment should add an R2 lifecycle rule or delete
 superseded keys; retention is deliberately left to the application.
 
 The append-only scheme means a slow/late async write cannot clobber a newer
@@ -767,7 +766,7 @@ value reaches `pancake_init`. Normal JS callers already pass these explicitly.
 | `MAX_DIMS` | 4096 | | `ALLOWED_ORIGIN` | unset | opt-in CORS |
 | `MAX_EF` | 4096 | | `RATE_LIMIT_RPM` | 0 (off) | per-IP/min |
 | `MAX_M` | 128 | | `READ_ONLY` | off | reject admin routes |
-| `DEFAULT_MAX_ELEMENTS` | 5000 | | `MAX_ELEMENTS_LIMIT` | 5,000 (code fallback; example wrangler.toml sets 5,000,000) | capacity ceiling |
+| `DEFAULT_MAX_ELEMENTS` | 5000 | | `MAX_ELEMENTS_LIMIT` | 5,000 (code fallback; example wrangler.toml sets 200,000) | capacity ceiling |
 | `DEFAULT_MAX_JSON_BYTES` | 1 MiB | | `MAX_JSON_BYTES` | 1 MiB | JSON body cap |
 | `DEFAULT_MAX_SNAPSHOT_BYTES` | 64 MiB | | `MAX_SNAPSHOT_BYTES` | 64 MiB | snapshot import/restore cap |
 | `RATE_LIMIT_WINDOW_MS` | 60000 | | | | |

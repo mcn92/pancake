@@ -43,7 +43,7 @@ This runs the Worker as a snapshot-backed search endpoint at the edge.
 | `GET /health` | Health check (public, no auth required) |
 | `GET /readiness` | Readiness check with snapshot visibility (bearer auth once `API_KEY` is set) |
 | `GET /stats` | Live/deleted counts, capacity, and structured memory |
-| `GET /export` | Serialize index to binary blob |
+| `POST /export` | Compact, then serialize index to binary blob |
 | `POST /init` | Create an index (`{ dims, maxElements, M?, efConstruction?, efSearch?, vectors? }`) |
 | `POST /import` | Restore from a Pancake snapshot (`?dims=N` only needed for legacy raw snapshots) |
 | `POST /add` | Insert a vector (`{ vector: float[] }`) |
@@ -52,10 +52,12 @@ This runs the Worker as a snapshot-backed search endpoint at the edge.
 | `POST /compact` | Rebuild graph without deleted entries |
 | `POST /reset_cache` | Drop the warm in-memory index so the next query restores from R2 |
 
-`/health` stays cheap and public. It reports whether the current isolate has an
-index loaded, but it does not trigger a restore. `/readiness` is the
-authenticated route for checking whether the Worker is loaded now and inspecting
-the latest snapshot header without restoring it.
+`/health` and `/search` are public. `API_KEY`, when configured, gates
+`/readiness`, `/stats`, and the admin routes. `/health` stays cheap and public:
+it reports whether the current isolate has an index loaded, but it does not
+trigger a restore. `/readiness` checks whether the Worker is loaded now and
+uses R2 object metadata or a small range read to inspect snapshot availability
+without downloading the full snapshot.
 
 ## Running locally
 
@@ -86,6 +88,7 @@ See [`wrangler.toml`](wrangler.toml) for the full configuration. Key env vars:
 - `ALLOWED_ORIGIN` for browser CORS access
 - `RATE_LIMIT_RPM` for per-IP rate limiting
 - `MAX_JSON_BYTES` to cap JSON request bodies
+- `MAX_ELEMENTS_LIMIT` to cap declared index capacity
 - `READ_ONLY=1` to reject mutation/admin routes
 - `ALLOW_INSECURE_ADMIN=1` only for local/demo deployments where you explicitly want unauthenticated admin routes
 
@@ -108,7 +111,7 @@ instead of returning `*`.
 ~(dim + 8 + 7 * M) * num_vectors bytes
 ```
 
-At `M=16` this is `(dim + 120)` bytes per vector. Examples: `30k x 256D = 10 MB`, `200k x 384D = 100 MB`. The fp32 backend uses `(4*dim + 8 + 7*M)` bytes per vector, roughly 4x more.
+At `M=16` this is `(dim + 120)` bytes per vector. Examples: `30k x 256D = 10 MB`, `200k x 384D = 100 MB`. The fp32 backend uses `(4*dim + 8 + 7*M)` bytes per vector, roughly 4x more. Keep `MAX_ELEMENTS_LIMIT` aligned with this formula and your configured dimensions; the shipped `wrangler.toml` default is intentionally conservative for a 128 MB isolate.
 
 **CPU time.** Workers paid plan allows 50ms CPU per request (free tier: 10ms). Search comfortably fits within both tiers. Heavy operations such as `/import`, `/compact`, and large `/add_batch` requests can exceed free-tier limits on larger indexes.
 
@@ -126,7 +129,9 @@ snapshot retention to the application.
 
 Mutation routes exist for demos, local validation, and administrative flows,
 but they should not be treated as the primary production write path for a
-stateful vector database. If you need stronger mutation semantics, put an
+stateful vector database. Deletes are soft-deletes in the warm isolate and are
+not persisted until an explicit `/compact` or `/export` compacts the index and
+writes a fresh snapshot. If you need stronger mutation semantics, put an
 authoritative layer elsewhere and use the Worker as the search-serving
 frontend.
 

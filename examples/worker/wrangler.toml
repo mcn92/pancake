@@ -9,7 +9,7 @@ compatibility_flags = ["nodejs_compat"]
 # RATE_LIMIT_RPM = "120"                    # Requests per minute per IP (default: no limit)
 # MAX_JSON_BYTES = "1048576"                # Optional JSON body cap override (default: 1 MiB)
 # ALLOW_INSECURE_ADMIN = "1"                # Local/demo opt-in only; admin routes otherwise require API_KEY
-MAX_ELEMENTS_LIMIT = "5000000"
+MAX_ELEMENTS_LIMIT = "200000"               # Keep this aligned with Worker memory limits and vector dimensions
 # ---------------------------------------------------------------------------
 # R2 bucket — for persisting serialized indexes across deployments.
 # Commented out for the in-memory demo flow (examples/demo/technical_demo_worker.js): with an

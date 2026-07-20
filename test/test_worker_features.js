@@ -108,6 +108,13 @@ async function testAuthWithKey(env) {
   // /health skips auth
   const r4 = await fetchJSON('/health');
   assert(r4.status === 200, '/health returns 200 without token even when API_KEY set');
+
+  // /search is public; it may 503 before init, but auth should not block it.
+  const r5 = await fetchJSON('/search', {
+    method: 'POST',
+    body: { query: [1, 0, 0, 0], k: 1 }
+  });
+  assert(r5.status !== 401 && r5.status !== 403, '/search stays public when API_KEY is set');
 }
 
 async function testRateLimiting(env) {

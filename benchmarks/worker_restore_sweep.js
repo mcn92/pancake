@@ -148,7 +148,7 @@ async function buildIndex(count, queryVec) {
   }
 
   const exportHeaders = API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {};
-  const exportRes = await fetch(`${WORKER_URL}/export`, { headers: exportHeaders });
+  const exportRes = await fetch(`${WORKER_URL}/export`, { method: 'POST', headers: exportHeaders });
   if (!exportRes.ok) {
     throw new Error(`/export failed: ${exportRes.status}`);
   }
