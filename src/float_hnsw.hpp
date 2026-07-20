@@ -204,7 +204,6 @@ public:
             while (changed) {
                 changed = false;
                 for_each_edge(curr, l, [&](uint32_t neighbor) {
-                    if (deleted_[neighbor]) return;
                     float d = distance_to_query(neighbor);
                     if (d < curr_dist) {
                         curr = neighbor;
@@ -258,7 +257,6 @@ public:
             while (changed) {
                 changed = false;
                 for_each_edge(curr, l, [&](uint32_t neighbor) {
-                    if (deleted_[neighbor]) return;
                     float d = distance_to_query(neighbor);
                     if (d < curr_dist) {
                         curr = neighbor;
@@ -318,8 +316,6 @@ public:
                 if (is_visited(neighbor)) return;
                 mark_visited(neighbor);
 
-                if (deleted_[neighbor]) return;
-
                 float nd = distance_to_query(neighbor);
 
                 // Add to candidate queue if promising (for navigation)
@@ -329,7 +325,7 @@ public:
 
                     // Check filter — only matching nodes enter the result queue
                     size_t byte_idx = neighbor >> 3;
-                    if (byte_idx < bitset_len && (filter_bitset[byte_idx] & (1u << (neighbor & 7)))) {
+                    if (!deleted_[neighbor] && byte_idx < bitset_len && (filter_bitset[byte_idx] & (1u << (neighbor & 7)))) {
                         results.emplace(nd, neighbor);
                         filtered_count++;
 
@@ -1036,13 +1032,15 @@ private:
             candidates.pop();
             if (results.size() >= ef && curr_dist > results.top().first) break;
             for_each_edge(curr, level, [&](uint32_t neighbor) {
-                if (is_visited(neighbor) || deleted_[neighbor]) return;
+                if (is_visited(neighbor)) return;
                 mark_visited(neighbor);
                 float nd = distance_to_query(neighbor);
                 if (results.size() < ef || nd < results.top().first) {
                     candidates.emplace(nd, neighbor);
-                    results.emplace(nd, neighbor);
-                    if (results.size() > ef) results.pop();
+                    if (!deleted_[neighbor]) {
+                        results.emplace(nd, neighbor);
+                        if (results.size() > ef) results.pop();
+                    }
                 }
             });
         }

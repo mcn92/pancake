@@ -338,7 +338,6 @@ public:
             while (changed) {
                 changed = false;
                 for_each_edge(curr, l, [&](const Edge& edge) {
-                    if (deleted_[edge.neighbor]) return;
                     float d = distance_to_query(edge.neighbor);
                     if (d < curr_dist) {
                         curr = edge.neighbor;
@@ -382,7 +381,6 @@ public:
             while (changed) {
                 changed = false;
                 for_each_edge(curr, l, [&](const Edge& edge) {
-                    if (deleted_[edge.neighbor]) return;
                     float d = distance_to_query(edge.neighbor);
                     if (d < curr_dist) {
                         curr = edge.neighbor;
@@ -438,15 +436,13 @@ public:
                 if (is_visited(neighbor)) continue;
                 mark_visited(neighbor);
 
-                if (deleted_[neighbor]) continue;
-
                 float nd = distance_to_query(neighbor);
                 bool dominated = (results.size() >= current_ef && nd > lower_bound);
                 if (!dominated) {
                     candidates.emplace(nd, neighbor);
 
                     size_t byte_idx = neighbor >> 3;
-                    if (byte_idx < bitset_len && (filter_bitset[byte_idx] & (1u << (neighbor & 7)))) {
+                    if (!deleted_[neighbor] && byte_idx < bitset_len && (filter_bitset[byte_idx] & (1u << (neighbor & 7)))) {
                         results.emplace(nd, neighbor);
                         filtered_count++;
 
@@ -1679,7 +1675,6 @@ private:
             for_each_edge(curr, level, [&](const Edge& edge) {
                 uint32_t neighbor = edge.neighbor;
                 if (is_visited(neighbor)) return;
-                if (skip_deleted && deleted_[neighbor]) return;
                 mark_visited(neighbor);
                 PROFILE_COUNT(g_build_profile.visited_marks++);
                 float nd = dist_func(neighbor);
@@ -1687,8 +1682,10 @@ private:
                 if (results.size() < ef || nd < results.top().first) {
                     candidates.emplace(nd, neighbor);
                     PROFILE_COUNT(g_build_profile.candidate_pushes++);
-                    results.emplace(nd, neighbor);
-                    if (results.size() > ef) results.pop();
+                    if (!(skip_deleted && deleted_[neighbor])) {
+                        results.emplace(nd, neighbor);
+                        if (results.size() > ef) results.pop();
+                    }
                 }
             });
         }

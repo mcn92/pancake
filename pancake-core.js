@@ -170,8 +170,9 @@ class PancakeIndex {
             const inserted = this._e._pancake_bulk_insert(this._handle, dataPtr, vectors.length);
             const ids = this._recordInsertedRange(countBefore, inserted);
             if (inserted !== vectors.length) {
-                throw pancakeError(PANCAKE_ERROR_CODES.INDEX_FULL,
-                    'Insert failed (index full or not initialized)');
+                throw pancakeError(PANCAKE_ERROR_CODES.INTERNAL_INVARIANT,
+                    'bulk_insert inserted fewer vectors than the prevalidated batch',
+                    { requested: vectors.length, inserted, ids });
             }
             return ids;
         } finally {

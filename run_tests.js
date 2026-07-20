@@ -1627,6 +1627,30 @@ async function testAddBatchPartialFailure() {
         assert(Array.from(ids).every(id => existingIds.includes(id)), 'no new IDs leak after failed remaining-capacity batch');
         idx.dispose();
     }
+
+    // If the C bulk_insert ever reports a short insert after JS prevalidation,
+    // the wrapper must not present it as a normal capacity error.
+    {
+        const idx = await Pancake.create({ ...DEFAULT_CONFIG, maxElements: 5 });
+        const originalBulkInsert = idx._e._pancake_bulk_insert;
+        idx._e._pancake_bulk_insert = (handle, dataPtr, n) => originalBulkInsert(handle, dataPtr, n - 1);
+        try {
+            let err = null;
+            try {
+                idx.addBatch([normalizedVec(DIM), normalizedVec(DIM)]);
+            } catch (e) {
+                err = e;
+            }
+            assert(err instanceof Pancake.PancakeError, 'short bulk_insert throws PancakeError');
+            assert(err?.code === Pancake.PANCAKE_ERROR_CODES.INTERNAL_INVARIANT, 'short bulk_insert reports INTERNAL_INVARIANT');
+            assert(err?.details?.inserted === 1 && err?.details?.requested === 2, 'short bulk_insert reports partial insert details');
+            assert(idx.count === 1, 'short bulk_insert leaves the actual inserted row visible');
+            assert(idx.search(normalizedVec(DIM), 1).length === 1, 'index remains searchable after short bulk_insert invariant failure');
+        } finally {
+            idx._e._pancake_bulk_insert = originalBulkInsert;
+            idx.dispose();
+        }
+    }
 }
 
 
@@ -1955,6 +1979,59 @@ async function testGhostEntryPointSearch() {
 
         assert(fullK === N, `${label}: search returns full k=${K} results for every deleted vector (got ${fullK}/${N})`);
         assert(ghostLeaks === 0, `${label}: deleted vector never appears in results`);
+    }
+}
+
+async function testGhostsRemainNavigable() {
+    section('Ghost nodes remain navigable');
+
+    const dim = 8;
+    const N = 80;
+    const liveStride = 5;
+    const makeVec = (i) => {
+        const v = new Float32Array(dim);
+        v[0] = i / N;
+        v[1] = 1 - i / N;
+        for (let d = 2; d < dim; d++) v[d] = ((i * (d + 3)) % 17) / 17;
+        return v;
+    };
+
+    for (const quantized of [false, true]) {
+        const label = quantized ? 'int8' : 'float';
+        const idx = await Pancake.create({
+            dim,
+            maxElements: N,
+            metric: 'l2',
+            quantized,
+            M: 4,
+            efConstruction: 10,
+            efSearch: 50,
+        });
+        const vecs = Array.from({ length: N }, (_, i) => makeVec(i));
+        const ids = idx.addBatch(vecs);
+        const live = new Set();
+
+        for (let i = 0; i < N; i++) {
+            if (i % liveStride === 0) live.add(ids[i]);
+            else idx.delete(ids[i]);
+        }
+
+        let exactTop1 = 0;
+        let filteredExactTop1 = 0;
+        let ghostLeaks = 0;
+        for (let i = 0; i < N; i += liveStride) {
+            const results = idx.search(vecs[i], 10);
+            const filtered = idx.searchFiltered(vecs[i], 10, live);
+            if (results[0]?.id === ids[i]) exactTop1++;
+            if (filtered[0]?.id === ids[i]) filteredExactTop1++;
+            if (results.some(r => !live.has(r.id)) || filtered.some(r => !live.has(r.id))) ghostLeaks++;
+        }
+
+        assert(idx.ghostCount === N - live.size, `${label}: fixture has expected ghost count`);
+        assert(exactTop1 === live.size, `${label}: search navigates through ghosts to every live self-match`);
+        assert(filteredExactTop1 === live.size, `${label}: filtered search navigates through ghosts to every live self-match`);
+        assert(ghostLeaks === 0, `${label}: ghost nodes never appear in search results`);
+        idx.dispose();
     }
 }
 
@@ -3033,6 +3110,7 @@ async function main() {
         testRawEngineImportValidation,
         testDeleteChurnRegression,
         testGhostEntryPointSearch,
+        testGhostsRemainNavigable,
         testGoldenSnapshotCompatibility,
         testNonFiniteRejection,
         testCosineNormOverflowRegression,
