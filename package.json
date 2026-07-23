@@ -85,6 +85,7 @@
     "bench": "node benchmarks/run.js",
     "demo:data": "node scripts/make-demo-vectors.mjs",
     "demo": "npm run demo:data && node examples/demo/technical_demo_cli.js",
+    "build:pages-demo": "node examples/worker-semantic-search-pages/build.mjs",
     "test": "node run_tests.js && node test/model_c_loader.js",
     "test:browser": "node test/browser_smoke.js",
     "test:worker-web": "node test/test_worker_web_entry.js",

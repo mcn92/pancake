@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pancake Docs Search</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./config/runtime.js"></script>
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <main class="shell">
+    <section class="intro" aria-labelledby="title">
+      <p class="eyebrow">Pancake Worker Demo</p>
+      <h1 id="title">Docs search at the edge</h1>
+      <p class="lede">
+        A static Cloudflare Pages UI calling a Pancake-powered Worker for semantic search.
+      </p>
+    </section>
+
+    <section class="panel search-panel" aria-label="Search Pancake documentation">
+      <form id="search-form" class="search-form">
+        <label class="field field-query">
+          <span>Query</span>
+          <input id="query" name="query" type="search" autocomplete="off" value="can I filter search results by tenant">
+        </label>
+        <label class="field">
+          <span>Results</span>
+          <input id="k" name="k" type="number" min="1" max="8" step="1" value="5">
+        </label>
+        <label class="field">
+          <span>EF</span>
+          <input id="ef" name="ef" type="number" min="10" max="400" step="10" value="120">
+        </label>
+        <button type="submit">Search</button>
+      </form>
+
+      <div class="api-row">
+        <label class="field field-api">
+          <span>Worker API</span>
+          <input id="api-base" name="api-base" type="url" placeholder="https://your-worker.workers.dev">
+        </label>
+        <button id="save-api" type="button" class="secondary">Save</button>
+      </div>
+
+      <div class="samples" aria-label="Example searches">
+        <button type="button" data-query="how do I save and reload an index">Save and reload</button>
+        <button type="button" data-query="can I filter search results by tenant">Tenant filter</button>
+        <button type="button" data-query="what happens after deleting vectors">Deleted vectors</button>
+        <button type="button" data-query="best pizza restaurants in brooklyn">Off domain</button>
+      </div>
+    </section>
+
+    <section class="status-row" aria-live="polite">
+      <div id="status" class="status">Ready</div>
+      <div id="metrics" class="metrics"></div>
+    </section>
+
+    <section id="results" class="results" aria-label="Search results"></section>
+  </main>
+</body>
+</html>

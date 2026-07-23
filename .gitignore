@@ -68,6 +68,7 @@ pancake_gt_snapshot_*.tar.gz.sha256
 examples/worker/dist/
 examples/worker/.dev.vars
 examples/worker-semantic-search/.dev.vars
+examples/worker-semantic-search-pages/dist/
 
 # Local benchmark/analysis artifacts
 pareto/
