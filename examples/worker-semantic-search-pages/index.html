@@ -10,45 +10,56 @@
 </head>
 <body>
   <main class="shell">
-    <section class="intro" aria-labelledby="title">
-      <p class="eyebrow">Pancake Worker Demo</p>
-      <h1 id="title">Docs search at the edge</h1>
-      <p class="lede">
-        A static Cloudflare Pages UI calling a Pancake-powered Worker for semantic search.
-      </p>
-    </section>
+    <section class="console" aria-labelledby="title">
+      <header class="intro">
+        <div>
+          <p class="eyebrow">Pancake docs</p>
+          <h1 id="title">Search</h1>
+        </div>
+        <p class="lede">
+          Worker-hosted semantic search over the Pancake README, quickstart, and system design notes.
+        </p>
+      </header>
 
-    <section class="panel search-panel" aria-label="Search Pancake documentation">
-      <form id="search-form" class="search-form">
-        <label class="field field-query">
-          <span>Query</span>
-          <input id="query" name="query" type="search" autocomplete="off" value="can I filter search results by tenant">
-        </label>
-        <label class="field">
-          <span>Results</span>
-          <input id="k" name="k" type="number" min="1" max="8" step="1" value="5">
-        </label>
-        <label class="field">
-          <span>EF</span>
-          <input id="ef" name="ef" type="number" min="10" max="400" step="10" value="120">
-        </label>
-        <button type="submit">Search</button>
-      </form>
+      <section class="search-panel" aria-label="Search Pancake documentation">
+        <form id="search-form" class="search-form">
+          <label class="field field-query">
+            <span>Query</span>
+            <input id="query" name="query" type="search" autocomplete="off" value="can I filter search results by tenant">
+          </label>
+          <label class="field compact-field">
+            <span>Results</span>
+            <input id="k" name="k" type="number" min="1" max="8" step="1" value="5">
+          </label>
+          <label class="field compact-field">
+            <span>EF</span>
+            <input id="ef" name="ef" type="number" min="10" max="400" step="10" value="120">
+          </label>
+          <button type="submit">Search</button>
+        </form>
 
-      <div class="api-row">
-        <label class="field field-api">
-          <span>Worker API</span>
-          <input id="api-base" name="api-base" type="url" placeholder="https://your-worker.workers.dev">
-        </label>
-        <button id="save-api" type="button" class="secondary">Save</button>
-      </div>
+        <div class="samples" aria-label="Example searches">
+          <button type="button" data-query="how do I save and reload an index">save / reload</button>
+          <button type="button" data-query="can I filter search results by tenant">filtered search</button>
+          <button type="button" data-query="what happens after deleting vectors">deletes</button>
+          <button type="button" data-query="best pizza restaurants in brooklyn">off-domain check</button>
+        </div>
 
-      <div class="samples" aria-label="Example searches">
-        <button type="button" data-query="how do I save and reload an index">Save and reload</button>
-        <button type="button" data-query="can I filter search results by tenant">Tenant filter</button>
-        <button type="button" data-query="what happens after deleting vectors">Deleted vectors</button>
-        <button type="button" data-query="best pizza restaurants in brooklyn">Off domain</button>
-      </div>
+        <details class="connection">
+          <summary>Connection</summary>
+          <div class="api-row">
+            <label class="field field-api">
+              <span>Worker API</span>
+              <input id="api-base" name="api-base" type="url" placeholder="https://your-worker.workers.dev">
+            </label>
+            <label class="field field-key">
+              <span>Access key</span>
+              <input id="access-key" name="access-key" type="password" autocomplete="off" placeholder="private mode">
+            </label>
+            <button id="save-api" type="button" class="secondary">Save</button>
+          </div>
+        </details>
+      </section>
     </section>
 
     <section class="status-row" aria-live="polite">

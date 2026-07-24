@@ -4,13 +4,16 @@ const queryInput = document.getElementById('query');
 const kInput = document.getElementById('k');
 const efInput = document.getElementById('ef');
 const apiInput = document.getElementById('api-base');
+const accessKeyInput = document.getElementById('access-key');
 const saveApiButton = document.getElementById('save-api');
 const statusEl = document.getElementById('status');
 const metricsEl = document.getElementById('metrics');
 const resultsEl = document.getElementById('results');
 
 const storedApiBase = localStorage.getItem('pancakeWorkerApiBase');
+const storedAccessKey = localStorage.getItem('pancakeDemoAccessKey');
 apiInput.value = storedApiBase || config.apiBase || '';
+accessKeyInput.value = storedAccessKey || '';
 
 function getApiBase() {
   return apiInput.value.trim().replace(/\/+$/, '');
@@ -21,14 +24,18 @@ function setStatus(message, tone = '') {
   statusEl.dataset.tone = tone;
 }
 
-function renderMetrics(payload) {
-  metricsEl.textContent = [
-    `quality ${payload.match_quality}`,
-    `restore ${payload.restore_ms}ms`,
-    `embed ${payload.embedding_ms}ms`,
-    `search ${payload.search_ms}ms`,
-    `ef ${payload.ef_search}`
-  ].join(' / ');
+function renderMetrics(payload, roundTripMs = null) {
+  const parts = [
+    ['Quality', payload.match_quality],
+    Number.isFinite(roundTripMs) ? ['Round trip', `${roundTripMs.toFixed(1)}ms`] : null,
+    ['Restore', `${payload.restore_ms}ms`],
+    ['Embed', `${payload.embedding_ms}ms`],
+    ['Search', `${payload.search_ms}ms`],
+    ['EF', payload.ef_search]
+  ].filter(Boolean);
+  metricsEl.innerHTML = parts.map(([label, value]) => (
+    `<span><b>${escapeHtml(label)}</b>${escapeHtml(value)}</span>`
+  )).join('');
 }
 
 function renderResults(payload) {
@@ -80,14 +87,20 @@ async function runSearch() {
   setStatus('Searching...');
   metricsEl.textContent = '';
 
-  const response = await fetch(`${apiBase}/search?${params.toString()}`);
+  const headers = {};
+  const accessKey = accessKeyInput.value.trim();
+  if (accessKey) headers['X-Pancake-Demo-Key'] = accessKey;
+
+  const requestStart = performance.now();
+  const response = await fetch(`${apiBase}/search?${params.toString()}`, { headers });
+  const roundTripMs = performance.now() - requestStart;
   const payload = await response.json();
   if (!response.ok) {
     throw new Error(payload.error || `Search failed with HTTP ${response.status}`);
   }
 
   setStatus(`${payload.result_count} result${payload.result_count === 1 ? '' : 's'}`, payload.match_quality);
-  renderMetrics(payload);
+  renderMetrics(payload, roundTripMs);
   renderResults(payload);
 }
 
@@ -104,11 +117,17 @@ form.addEventListener('submit', async (event) => {
 
 saveApiButton.addEventListener('click', () => {
   const apiBase = getApiBase();
+  const accessKey = accessKeyInput.value.trim();
   if (apiBase) {
     localStorage.setItem('pancakeWorkerApiBase', apiBase);
     apiInput.value = apiBase;
-    setStatus('Worker API saved.');
   }
+  if (accessKey) {
+    localStorage.setItem('pancakeDemoAccessKey', accessKey);
+  } else {
+    localStorage.removeItem('pancakeDemoAccessKey');
+  }
+  setStatus('Connection settings saved.');
 });
 
 document.querySelectorAll('[data-query]').forEach((button) => {

@@ -37,6 +37,11 @@ function formatMs(value) {
   return Math.max(0.01, Math.round(value * 100) / 100);
 }
 
+function formatMicroseconds(valueMs) {
+  if (!Number.isFinite(valueMs) || valueMs <= 0) return 1;
+  return Math.max(1, Math.round(valueMs * 1000));
+}
+
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
@@ -1132,6 +1137,7 @@ function computePreSearchAbstention(embedded) {
 }
 
 async function handleSearch(request, env) {
+  const totalStart = performance.now();
   const url = new URL(request.url);
   let query = url.searchParams.get('q') || '';
   let k = parseInt(url.searchParams.get('k') || '5', 10);
@@ -1207,6 +1213,12 @@ async function handleSearch(request, env) {
     results: returnedHits.map(buildResult)
   };
   if (matchQuality.confidence !== undefined) responseBody.confidence = matchQuality.confidence;
+  responseBody.timings_us = {
+    total: formatMicroseconds(performance.now() - totalStart),
+    restore: formatMicroseconds(loadInfo.restoreMs),
+    embedding: formatMicroseconds(embeddingMs),
+    search: formatMicroseconds(searchMs)
+  };
   return jsonResponse(responseBody);
 }
 
