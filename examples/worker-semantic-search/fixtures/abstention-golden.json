@@ -1,0 +1,52 @@
+[
+  {
+    "text": "how does compaction work",
+    "expected": "strong",
+    "family": "golden:positive"
+  },
+  {
+    "text": "fitlered saerch",
+    "expected": "strong",
+    "family": "golden:positive"
+  },
+  {
+    "text": "why is search slow on my phone",
+    "expected": "strong",
+    "family": "golden:positive"
+  },
+  {
+    "text": "deleted stuff coming back after restart",
+    "expected": "strong",
+    "family": "golden:positive"
+  },
+  {
+    "text": "docker compose networking",
+    "expected": "weak",
+    "family": "golden:foreign"
+  },
+  {
+    "text": "banana pancake recipe",
+    "expected": "none",
+    "family": "golden:collision"
+  },
+  {
+    "text": "pancake syrup breakfast ideas",
+    "expected": "none",
+    "family": "golden:collision"
+  },
+  {
+    "text": "xkcd zqjv wvvv",
+    "expected": "none",
+    "family": "golden:nonsense"
+  },
+  {
+    "text": "qzxv blorpt nym",
+    "expected": "none",
+    "family": "golden:nonsense"
+  },
+  {
+    "text": "😀😀😀",
+    "expected": "none",
+    "family": "golden:nonsense"
+  }
+]

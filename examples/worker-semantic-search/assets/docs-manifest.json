@@ -1,13 +1,13 @@
 {
-  "generatedAt": "2026-07-12T16:36:32.628Z",
+  "generatedAt": "2026-07-23T10:47:58Z",
   "dim": 384,
   "metric": "cosine",
   "quantized": true,
-  "maxElements": 211,
+  "maxElements": 224,
   "M": 12,
   "efConstruction": 150,
   "efSearch": 120,
-  "chunkCount": 195,
+  "chunkCount": 208,
   "docsCount": 4,
   "sampleQueries": [
     "How do Cloudflare Workers restore snapshots from R2?",
@@ -24,19 +24,408 @@
     "teacher": "sentence-transformers/all-MiniLM-L6-v2",
     "teacherRevision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
     "modelBytes": 1133600,
-    "modelSha256": "2e0339aa79dacebdeee8709786ab27d9b562577daf432b2af73eebd15a7b435a",
+    "modelSha256": "af4161f70799159b1f0036d59ce7979c96be11295a3134f5a7bf3ac8c16a0ad8",
     "runtimeDependencies": 0,
     "outboundRequests": 0,
     "evaluation": {
-      "heldoutQueries": 218,
-      "validationQueries": 105,
-      "meanTeacherCosine": 0.8913005590438843,
-      "p10TeacherCosine": 0.8359848260879517,
-      "teacherTop1Agreement": 0.8486238532110092,
-      "teacherTop3Overlap": 0.7905198776758409,
-      "teacherTop5Overlap": 0.791743119266055,
-      "studentOriginRecallAt5": 0.5857142857142857,
-      "teacherOriginRecallAt5": 0.5523809523809524
+      "heldoutQueries": 226,
+      "validationQueries": 109,
+      "meanTeacherCosine": 0.9146991968154907,
+      "p10TeacherCosine": 0.8868802189826965,
+      "teacherTop1Agreement": 0.8185840707964602,
+      "teacherTop3Overlap": 0.8053097345132736,
+      "teacherTop5Overlap": 0.8283185840707968,
+      "studentOriginRecallAt5": 0.5871559633027523,
+      "teacherOriginRecallAt5": 0.5596330275229358,
+      "abstention": {
+        "auc": 0.9863305941845765,
+        "falseAbstainRate": 0.017699115044247787,
+        "catchRate": {
+          "collision": {
+            "queries": 19,
+            "catchRate": 1
+          },
+          "foreign": {
+            "queries": 6,
+            "catchRate": 0.8333333333333334
+          },
+          "general": {
+            "queries": 5,
+            "catchRate": 0.8
+          },
+          "nonsense": {
+            "queries": 4,
+            "catchRate": 1
+          },
+          "shuffled": {
+            "queries": 22,
+            "catchRate": 0.7272727272727273
+          }
+        },
+        "validationAuc": 0.9551337359792925,
+        "validationFalseAbstainRate": 0.017543859649122806,
+        "farTarget": 0.02,
+        "thresholds": {
+          "weak": 0.10896620203121314,
+          "hard": 0.05,
+          "preNormFloor": 0.4,
+          "minFeatures": 3
+        },
+        "calibratedAt": "2026-07-23T10:47:58Z",
+        "trainQueries": 2951,
+        "validationQueries": 175,
+        "testQueries": 282,
+        "golden": [
+          {
+            "text": "how does compaction work",
+            "expected": "strong",
+            "actual": "strong",
+            "score": 0.20002,
+            "signals": {
+              "d0": 0.4754630923271179,
+              "margin": 0.15271145105361938,
+              "pre_norm": 1.6857839822769165,
+              "known_word": 0.7142857142857143,
+              "known_char": 1,
+              "hidden_probe": 0.009699403761574528,
+              "n_feats": 58
+            }
+          },
+          {
+            "text": "fitlered saerch",
+            "expected": "strong",
+            "actual": "strong",
+            "score": 0.154499,
+            "signals": {
+              "d0": 0.3978167772293091,
+              "margin": 0.10749882459640503,
+              "pre_norm": 1.1109521389007568,
+              "known_word": 0.6666666666666666,
+              "known_char": 0.9166666666666666,
+              "hidden_probe": 0.3982012197573901,
+              "n_feats": 39
+            }
+          },
+          {
+            "text": "why is search slow on my phone",
+            "expected": "strong",
+            "actual": "strong",
+            "score": 0.687716,
+            "signals": {
+              "d0": 0.3820219039916992,
+              "margin": 0.03156846761703491,
+              "pre_norm": 1.2953717708587646,
+              "known_word": 0.8461538461538461,
+              "known_char": 0.8823529411764706,
+              "hidden_probe": 0.8970018289893887,
+              "n_feats": 64
+            }
+          },
+          {
+            "text": "deleted stuff coming back after restart",
+            "expected": "strong",
+            "actual": "strong",
+            "score": 0.690715,
+            "signals": {
+              "d0": 0.5253164172172546,
+              "margin": 0.05794119834899902,
+              "pre_norm": 1.1276825666427612,
+              "known_word": 0.6363636363636364,
+              "known_char": 0.9523809523809523,
+              "hidden_probe": 0.7703562899401456,
+              "n_feats": 95
+            }
+          },
+          {
+            "text": "docker compose networking",
+            "expected": "weak",
+            "actual": "weak",
+            "score": 0.09894,
+            "signals": {
+              "d0": 0.3314707279205322,
+              "margin": 0.035951852798461914,
+              "pre_norm": 0.9628134369850159,
+              "known_word": 0.8,
+              "known_char": 0.9166666666666666,
+              "hidden_probe": 0.27265179085370655,
+              "n_feats": 65
+            }
+          },
+          {
+            "text": "banana pancake recipe",
+            "expected": "none",
+            "actual": "none",
+            "score": 0.040583,
+            "signals": {
+              "d0": 0.26483023166656494,
+              "margin": 0.03865945339202881,
+              "pre_norm": 2.187037467956543,
+              "known_word": 0.6,
+              "known_char": 0.9583333333333334,
+              "hidden_probe": 0.13228247640373386,
+              "n_feats": 53
+            }
+          },
+          {
+            "text": "pancake syrup breakfast ideas",
+            "expected": "none",
+            "actual": "none",
+            "score": 0.00189,
+            "signals": {
+              "d0": 0.2404223084449768,
+              "margin": 0.02701115608215332,
+              "pre_norm": 1.7755974531173706,
+              "known_word": 0.8571428571428571,
+              "known_char": 0.7878787878787878,
+              "hidden_probe": 0.058070921436014784,
+              "n_feats": 73
+            }
+          },
+          {
+            "text": "xkcd zqjv wvvv",
+            "expected": "none",
+            "actual": "none",
+            "score": 0,
+            "signals": {
+              "d0": 0.4791606664657593,
+              "margin": 0.04546624422073364,
+              "pre_norm": 0.8498426675796509,
+              "known_word": 0.6,
+              "known_char": 0.4444444444444444,
+              "hidden_probe": 0.02780963007264404,
+              "n_feats": 32
+            }
+          },
+          {
+            "text": "qzxv blorpt nym",
+            "expected": "none",
+            "actual": "none",
+            "score": 0.010766,
+            "signals": {
+              "d0": 0.4476686716079712,
+              "margin": 0.06279683113098145,
+              "pre_norm": 1.1500334739685059,
+              "known_word": 0.4,
+              "known_char": 0.9,
+              "hidden_probe": 0.2789736568804175,
+              "n_feats": 35
+            }
+          },
+          {
+            "text": "😀😀😀",
+            "expected": "none",
+            "actual": "none",
+            "score": 0,
+            "signals": {
+              "d0": 1,
+              "margin": 0,
+              "pre_norm": 0,
+              "known_word": 0,
+              "known_char": 0,
+              "hidden_probe": 0.8009609985062055,
+              "n_feats": 0
+            }
+          }
+        ]
+      }
     }
+  },
+  "abstention": {
+    "assetKey": "docs-abstention.json",
+    "bytes": 75293,
+    "sha256": "60ae3c9abfc0273ffd3f1e1d5287560ed68a844dba3c61e508ff9ae1d41316fb",
+    "evaluation": {
+      "auc": 0.9863305941845765,
+      "falseAbstainRate": 0.017699115044247787,
+      "catchRate": {
+        "collision": {
+          "queries": 19,
+          "catchRate": 1
+        },
+        "foreign": {
+          "queries": 6,
+          "catchRate": 0.8333333333333334
+        },
+        "general": {
+          "queries": 5,
+          "catchRate": 0.8
+        },
+        "nonsense": {
+          "queries": 4,
+          "catchRate": 1
+        },
+        "shuffled": {
+          "queries": 22,
+          "catchRate": 0.7272727272727273
+        }
+      },
+      "validationAuc": 0.9551337359792925,
+      "validationFalseAbstainRate": 0.017543859649122806,
+      "farTarget": 0.02,
+      "thresholds": {
+        "weak": 0.10896620203121314,
+        "hard": 0.05,
+        "preNormFloor": 0.4,
+        "minFeatures": 3
+      },
+      "calibratedAt": "2026-07-23T10:47:58Z",
+      "trainQueries": 2951,
+      "validationQueries": 175,
+      "testQueries": 282,
+      "golden": [
+        {
+          "text": "how does compaction work",
+          "expected": "strong",
+          "actual": "strong",
+          "score": 0.20002,
+          "signals": {
+            "d0": 0.4754630923271179,
+            "margin": 0.15271145105361938,
+            "pre_norm": 1.6857839822769165,
+            "known_word": 0.7142857142857143,
+            "known_char": 1,
+            "hidden_probe": 0.009699403761574528,
+            "n_feats": 58
+          }
+        },
+        {
+          "text": "fitlered saerch",
+          "expected": "strong",
+          "actual": "strong",
+          "score": 0.154499,
+          "signals": {
+            "d0": 0.3978167772293091,
+            "margin": 0.10749882459640503,
+            "pre_norm": 1.1109521389007568,
+            "known_word": 0.6666666666666666,
+            "known_char": 0.9166666666666666,
+            "hidden_probe": 0.3982012197573901,
+            "n_feats": 39
+          }
+        },
+        {
+          "text": "why is search slow on my phone",
+          "expected": "strong",
+          "actual": "strong",
+          "score": 0.687716,
+          "signals": {
+            "d0": 0.3820219039916992,
+            "margin": 0.03156846761703491,
+            "pre_norm": 1.2953717708587646,
+            "known_word": 0.8461538461538461,
+            "known_char": 0.8823529411764706,
+            "hidden_probe": 0.8970018289893887,
+            "n_feats": 64
+          }
+        },
+        {
+          "text": "deleted stuff coming back after restart",
+          "expected": "strong",
+          "actual": "strong",
+          "score": 0.690715,
+          "signals": {
+            "d0": 0.5253164172172546,
+            "margin": 0.05794119834899902,
+            "pre_norm": 1.1276825666427612,
+            "known_word": 0.6363636363636364,
+            "known_char": 0.9523809523809523,
+            "hidden_probe": 0.7703562899401456,
+            "n_feats": 95
+          }
+        },
+        {
+          "text": "docker compose networking",
+          "expected": "weak",
+          "actual": "weak",
+          "score": 0.09894,
+          "signals": {
+            "d0": 0.3314707279205322,
+            "margin": 0.035951852798461914,
+            "pre_norm": 0.9628134369850159,
+            "known_word": 0.8,
+            "known_char": 0.9166666666666666,
+            "hidden_probe": 0.27265179085370655,
+            "n_feats": 65
+          }
+        },
+        {
+          "text": "banana pancake recipe",
+          "expected": "none",
+          "actual": "none",
+          "score": 0.040583,
+          "signals": {
+            "d0": 0.26483023166656494,
+            "margin": 0.03865945339202881,
+            "pre_norm": 2.187037467956543,
+            "known_word": 0.6,
+            "known_char": 0.9583333333333334,
+            "hidden_probe": 0.13228247640373386,
+            "n_feats": 53
+          }
+        },
+        {
+          "text": "pancake syrup breakfast ideas",
+          "expected": "none",
+          "actual": "none",
+          "score": 0.00189,
+          "signals": {
+            "d0": 0.2404223084449768,
+            "margin": 0.02701115608215332,
+            "pre_norm": 1.7755974531173706,
+            "known_word": 0.8571428571428571,
+            "known_char": 0.7878787878787878,
+            "hidden_probe": 0.058070921436014784,
+            "n_feats": 73
+          }
+        },
+        {
+          "text": "xkcd zqjv wvvv",
+          "expected": "none",
+          "actual": "none",
+          "score": 0,
+          "signals": {
+            "d0": 0.4791606664657593,
+            "margin": 0.04546624422073364,
+            "pre_norm": 0.8498426675796509,
+            "known_word": 0.6,
+            "known_char": 0.4444444444444444,
+            "hidden_probe": 0.02780963007264404,
+            "n_feats": 32
+          }
+        },
+        {
+          "text": "qzxv blorpt nym",
+          "expected": "none",
+          "actual": "none",
+          "score": 0.010766,
+          "signals": {
+            "d0": 0.4476686716079712,
+            "margin": 0.06279683113098145,
+            "pre_norm": 1.1500334739685059,
+            "known_word": 0.4,
+            "known_char": 0.9,
+            "hidden_probe": 0.2789736568804175,
+            "n_feats": 35
+          }
+        },
+        {
+          "text": "😀😀😀",
+          "expected": "none",
+          "actual": "none",
+          "score": 0,
+          "signals": {
+            "d0": 1,
+            "margin": 0,
+            "pre_norm": 0,
+            "known_word": 0,
+            "known_char": 0,
+            "hidden_probe": 0.8009609985062055,
+            "n_feats": 0
+          }
+        }
+      ]
+    },
+    "calibratedAt": "2026-07-23T10:47:58Z",
+    "farTarget": 0.02
   }
 }

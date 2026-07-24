@@ -1,13 +1,15 @@
 import Pancake from '../../pancake.workerd.mjs';
-import { embedTextWithStudent, loadStudentModel } from './student-embedder.mjs';
+import { embedTextWithStudent, loadStudentModel, scoreQuery } from './student-embedder.mjs';
 import SNAPSHOT_ASSET from './assets/docs-index.bin';
 import STUDENT_ASSET from './assets/docs-student.bin';
+import ABSTENTION_ASSET from './assets/docs-abstention.json';
 import CORPUS_ASSET from './assets/docs-corpus.json';
 import MANIFEST_ASSET from './assets/docs-manifest.json';
 
 const MAX_RESULTS = 8;
 const DEFAULT_MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 const DEFAULT_MAX_STUDENT_BYTES = 4 * 1024 * 1024;
+const DEFAULT_MAX_ABSTENTION_BYTES = 256 * 1024;
 const DEFAULT_MAX_JSON_BYTES = 256 * 1024;
 let index = null;
 let manifest = null;
@@ -15,11 +17,18 @@ let corpus = [];
 let corpusById = new Map();
 let sourceFilters = new Map();
 let studentModel = null;
+let abstentionModel = null;
 let loadPromise = null;
 let state = {
   restoreCount: 0,
   restoredAt: null,
   lastRestoreMs: null,
+  abstention: {
+    present: false,
+    error: null,
+    bytes: null,
+    sha256: null
+  },
 };
 const ADMIN_ROUTES = new Set(['/readiness', '/reset_cache']);
 
@@ -77,9 +86,51 @@ function getMaxStudentBytes(env) {
   return parsed;
 }
 
+function getMaxAbstentionBytes(env) {
+  const raw = env?.MAX_ABSTENTION_BYTES;
+  if (raw === undefined || raw === null || raw === '') return DEFAULT_MAX_ABSTENTION_BYTES;
+  const parsed = parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_MAX_ABSTENTION_BYTES;
+  return parsed;
+}
+
 async function sha256Hex(buffer) {
   const digest = await crypto.subtle.digest('SHA-256', buffer);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function validateAbstentionModel(candidate) {
+  if (!candidate || typeof candidate !== 'object') {
+    throw new Error('Abstention asset is not an object');
+  }
+  if (candidate.version !== 1) {
+    throw new Error(`Unsupported abstention version: ${candidate.version}`);
+  }
+  if (!Array.isArray(candidate.features) || candidate.features.length < 5) {
+    throw new Error('Abstention features must contain signal names');
+  }
+  if (!Array.isArray(candidate.weights) || candidate.weights.length !== candidate.features.length) {
+    throw new Error('Abstention weights must match features');
+  }
+  for (const value of [...candidate.weights, candidate.bias]) {
+    if (!Number.isFinite(value)) throw new Error('Abstention model contains non-finite weights');
+  }
+  const thresholds = candidate.thresholds || {};
+  for (const key of ['weak', 'hard', 'preNormFloor']) {
+    if (!Number.isFinite(thresholds[key])) throw new Error(`Abstention threshold ${key} is missing or non-finite`);
+  }
+  if (!Number.isInteger(thresholds.minFeatures) || thresholds.minFeatures < 0) {
+    throw new Error('Abstention minFeatures must be a non-negative integer');
+  }
+  if (!Array.isArray(candidate.wordBuckets) || !Array.isArray(candidate.charBuckets)) {
+    throw new Error('Abstention bucket tables are missing');
+  }
+  if (candidate.hiddenProbe) {
+    if (!Array.isArray(candidate.hiddenProbe.weights) || !Number.isFinite(candidate.hiddenProbe.bias)) {
+      throw new Error('Abstention hidden probe is malformed');
+    }
+  }
+  return candidate;
 }
 
 function getCorsOrigin() {
@@ -409,6 +460,28 @@ function renderPage() {
       display: grid;
       position: relative;
     }
+    .quality-banner {
+      margin: 16px 0 0;
+      padding: 14px 16px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.62);
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    .quality-banner.weak {
+      border-color: rgba(180, 87, 47, 0.28);
+      background: rgba(180, 87, 47, 0.08);
+      color: #6c4938;
+    }
+    .quality-banner.none {
+      border-color: rgba(29, 36, 33, 0.18);
+      background: rgba(29, 36, 33, 0.05);
+      color: var(--ink);
+    }
+    .results-list.weak .card {
+      opacity: 0.82;
+    }
     .stats-panel {
       display: grid;
       gap: 10px;
@@ -691,6 +764,9 @@ function renderPage() {
     }
 
     function renderResults(payload) {
+      const qualityText = payload.match_quality && payload.match_quality !== 'unscored'
+        ? ' • ' + payload.match_quality + ' match' + (payload.confidence !== undefined ? ' ' + payload.confidence.toFixed(3) : '')
+        : '';
       meta.textContent =
         'Embed ' + payload.embedding_ms.toFixed(2) + 'ms' +
         ' • Pancake ' + payload.search_ms.toFixed(2) + 'ms' +
@@ -699,14 +775,22 @@ function renderPage() {
           : ' • warm cache') +
         ' • ' + payload.result_count + ' results' +
         (payload.filter_label ? ' • filter ' + payload.filter_label : '') +
-        ' • ef ' + payload.ef_search;
+        ' • ef ' + payload.ef_search +
+        qualityText;
 
+      resultsList.classList.toggle('weak', payload.match_quality === 'weak');
+      let banner = '';
+      if (payload.match_quality === 'weak') {
+        banner = '<div class="quality-banner weak">No strong match — showing the closest sections for “' + escapeHtml(payload.query) + '”.</div>';
+      } else if (payload.match_quality === 'none') {
+        banner = '<div class="quality-banner none">No reliable match for “' + escapeHtml(payload.query) + '”. Try a query about Pancake APIs, Workers, snapshots, filtering, or compaction.</div>';
+      }
       if (!payload.results.length) {
-        resultsList.innerHTML = '<div class="empty">No results.</div>';
+        resultsList.innerHTML = banner || '<div class="empty">No results.</div>';
         return;
       }
 
-      resultsList.innerHTML = payload.results.map((item, i) => {
+      resultsList.innerHTML = banner + payload.results.map((item, i) => {
         const score = Math.max(0, 1 - item.distance).toFixed(3);
         return '<article class="card" style="animation-delay:' + (i * 45) + 'ms">' +
           '<div class="rank">' +
@@ -807,6 +891,58 @@ async function restoreBundledAssets(env) {
     }
   }
 
+  abstentionModel = null;
+  state.abstention = {
+    present: false,
+    error: null,
+    bytes: null,
+    sha256: null
+  };
+  const abstentionManifest = loadedManifest.abstention || loadedManifest.encoder?.abstention || null;
+  const abstentionAsset = ABSTENTION_ASSET || null;
+  if (abstentionManifest && abstentionAsset) {
+    try {
+      const serialized = JSON.stringify(abstentionAsset);
+      const abstentionBytes = new TextEncoder().encode(serialized);
+      const maxAbstentionBytes = getMaxAbstentionBytes(env);
+      if (abstentionBytes.byteLength > maxAbstentionBytes) {
+        throw new Error(`Abstention asset exceeds MAX_ABSTENTION_BYTES (${abstentionBytes.byteLength} > ${maxAbstentionBytes})`);
+      }
+      if (abstentionManifest?.bytes !== undefined && abstentionManifest.bytes !== abstentionBytes.byteLength) {
+        throw new Error('Abstention asset byte length does not match the manifest');
+      }
+      const actualHash = await sha256Hex(abstentionBytes);
+      if (abstentionManifest?.sha256 && actualHash !== abstentionManifest.sha256) {
+        throw new Error('Abstention asset SHA-256 does not match the manifest');
+      }
+      abstentionModel = validateAbstentionModel(abstentionAsset);
+      if (loadedManifest.generatedAt && abstentionModel.calibratedAt) {
+        const generatedAt = Date.parse(loadedManifest.generatedAt);
+        const calibratedAt = Date.parse(abstentionModel.calibratedAt);
+        if (Number.isFinite(generatedAt) && Number.isFinite(calibratedAt) && calibratedAt < generatedAt) {
+          throw new Error('Abstention calibration predates the corpus manifest');
+        }
+      }
+      state.abstention = {
+        present: true,
+        error: null,
+        bytes: abstentionBytes.byteLength,
+        sha256: actualHash
+      };
+    } catch (error) {
+      state.abstention = {
+        present: false,
+        error: error && error.message ? error.message : String(error),
+        bytes: null,
+        sha256: null
+      };
+      console.warn(`Abstention disabled: ${state.abstention.error}`);
+    }
+  } else if (abstentionManifest) {
+    state.abstention.error = `Manifest declares ${abstentionManifest.assetKey || 'docs-abstention.json'} but the asset was not bundled`;
+    console.warn(`Abstention disabled: ${state.abstention.error}`);
+  }
+
   const restored = await Pancake.restore(snapshotBytes, {
     maxElements: loadedManifest.maxElements,
     efSearch: loadedManifest.efSearch,
@@ -867,6 +1003,104 @@ function buildResult(hit) {
   };
 }
 
+function buildKnownBucketTables(model) {
+  const word = new Map();
+  let maxIdf = 0;
+  for (const row of model?.wordBuckets || []) {
+    if (!Array.isArray(row) || row.length < 2) continue;
+    const bucket = Number(row[0]);
+    const idf = Number(row[1]);
+    if (Number.isInteger(bucket) && bucket >= 0 && Number.isFinite(idf) && idf >= 0) {
+      word.set(bucket, idf);
+      maxIdf = Math.max(maxIdf, idf);
+    }
+  }
+  const char = new Set();
+  for (const value of model?.charBuckets || []) {
+    const bucket = Number(value);
+    if (Number.isInteger(bucket) && bucket >= 0) char.add(bucket);
+  }
+  return { word, char, maxIdf: maxIdf || 255 };
+}
+
+function computeKnownFractions(features, model) {
+  if (!model) return { known_word: 0, known_char: 0, n_feats: features.length };
+  const tables = model._knownBucketTables || (model._knownBucketTables = buildKnownBucketTables(model));
+  let wordKnown = 0;
+  let wordTotal = 0;
+  let charKnown = 0;
+  let charTotal = 0;
+
+  for (const feature of features) {
+    if (feature.family === 'word') {
+      wordTotal += 1;
+      if (tables.word.has(feature.bucket)) wordKnown += 1;
+    } else if (feature.family === 'char') {
+      charTotal += 1;
+      if (tables.char.has(feature.bucket)) charKnown += 1;
+    }
+  }
+
+  return {
+    known_word: wordTotal > 0 ? wordKnown / wordTotal : 0,
+    known_char: charTotal > 0 ? charKnown / charTotal : 0,
+    n_feats: features.length
+  };
+}
+
+function computeHiddenProbe(embedded, model) {
+  const probe = model?.hiddenProbe;
+  if (!probe || !Array.isArray(probe.weights) || !embedded.hidden) return 0;
+  let logit = Number(probe.bias) || 0;
+  const limit = Math.min(probe.weights.length, embedded.hidden.length);
+  for (let index = 0; index < limit; index++) {
+    logit += (Number(probe.weights[index]) || 0) * embedded.hidden[index];
+  }
+  if (logit >= 0) {
+    const z = Math.exp(-logit);
+    return 1 / (1 + z);
+  }
+  const z = Math.exp(logit);
+  return z / (1 + z);
+}
+
+function computeMatchQuality(hits, embedded) {
+  if (!abstentionModel) return { match_quality: 'unscored' };
+  const d0 = hits.length > 0 ? hits[0].distance : 1;
+  const marginIndex = Math.min(4, hits.length - 1);
+  const margin = marginIndex > 0 ? hits[marginIndex].distance - d0 : 0;
+  const known = computeKnownFractions(embedded.features, abstentionModel);
+  const signals = {
+    d0,
+    margin,
+    pre_norm: embedded.preNorm,
+    known_word: known.known_word,
+    known_char: known.known_char,
+    hidden_probe: computeHiddenProbe(embedded, abstentionModel),
+    n_feats: known.n_feats
+  };
+  return scoreQuery(signals, abstentionModel);
+}
+
+function computePreSearchAbstention(embedded) {
+  if (!abstentionModel) return null;
+  const thresholds = abstentionModel.thresholds || {};
+  const minFeatures = Number.isInteger(thresholds.minFeatures) ? thresholds.minFeatures : 3;
+  const preNormFloor = Number.isFinite(thresholds.preNormFloor) ? thresholds.preNormFloor : 0.4;
+  if (embedded.features.length >= minFeatures && embedded.preNorm >= preNormFloor) return null;
+
+  const known = computeKnownFractions(embedded.features, abstentionModel);
+  return scoreQuery({
+    d0: 1,
+    margin: 0,
+    pre_norm: embedded.preNorm,
+    known_word: known.known_word,
+    known_char: known.known_char,
+    hidden_probe: computeHiddenProbe(embedded, abstentionModel),
+    n_feats: known.n_feats
+  }, abstentionModel);
+}
+
 async function handleSearch(request, env) {
   const url = new URL(request.url);
   let query = url.searchParams.get('q') || '';
@@ -898,25 +1132,35 @@ async function handleSearch(request, env) {
 
   const loadInfo = await ensureLoaded(env);
   const embeddingStart = performance.now();
-  const queryVector = embedTextWithStudent(query, studentModel);
+  const embedded = embedTextWithStudent(query, studentModel);
+  const queryVector = embedded.vector;
   const embeddingMs = performance.now() - embeddingStart;
-  const searchStart = performance.now();
-  let hits;
+  const preSearchMatchQuality = computePreSearchAbstention(embedded);
+  let searchMs = 0;
+  let hits = [];
   let filterLabel = null;
   if (source) {
-    const allowedIds = sourceFilters.get(source);
     filterLabel = sourceLabelFromPath(source);
-    hits = allowedIds
-      ? index.searchFiltered(queryVector, k, allowedIds, { efSearch: ef })
-      : [];
-  } else {
-    hits = index.search(queryVector, k, { efSearch: ef });
   }
-  const searchMs = performance.now() - searchStart;
+  if (!preSearchMatchQuality) {
+    const searchStart = performance.now();
+    if (source) {
+      const allowedIds = sourceFilters.get(source);
+      hits = allowedIds
+        ? index.searchFiltered(queryVector, k, allowedIds, { efSearch: ef })
+        : [];
+    } else {
+      hits = index.search(queryVector, k, { efSearch: ef });
+    }
+    searchMs = performance.now() - searchStart;
+  }
+  const matchQuality = preSearchMatchQuality || computeMatchQuality(hits, embedded);
+  const returnedHits = matchQuality.match_quality === 'none' ? [] : hits;
 
-  return jsonResponse({
+  const responseBody = {
     query,
-    result_count: hits.length,
+    match_quality: matchQuality.match_quality,
+    result_count: returnedHits.length,
     loaded_from_bundle: loadInfo.loadedFromBundle,
     cache_state: loadInfo.loadedFromBundle ? 'cold-restored' : 'warm-cache',
     restore_ms: formatMs(loadInfo.restoreMs),
@@ -930,8 +1174,10 @@ async function handleSearch(request, env) {
     last_restore_ms: formatMs(state.lastRestoreMs || 0),
     filter_label: filterLabel,
     encoder: manifest?.encoder || null,
-    results: hits.map(buildResult)
-  });
+    results: returnedHits.map(buildResult)
+  };
+  if (matchQuality.confidence !== undefined) responseBody.confidence = matchQuality.confidence;
+  return jsonResponse(responseBody);
 }
 
 export default {
@@ -974,6 +1220,12 @@ export default {
         last_restore_ms: state.lastRestoreMs ? formatMs(state.lastRestoreMs) : null,
         read_only: isReadOnly(env),
         encoder: manifest?.encoder || null,
+        abstention: {
+          present: !!abstentionModel,
+          thresholds: abstentionModel?.thresholds || null,
+          calibratedAt: abstentionModel?.calibratedAt || null,
+          error: state.abstention.error
+        },
         sources: Array.from(sourceFilters.keys()).map((source) => ({
           value: source,
           label: sourceLabelFromPath(source),
@@ -991,6 +1243,9 @@ export default {
         missing_assets: snapshot.missing,
         snapshot_bytes: snapshot.snapshotBytes,
         student_bytes: snapshot.studentBytes,
+        abstention_bytes: state.abstention.bytes,
+        abstention_sha256: state.abstention.sha256,
+        abstention_error: state.abstention.error,
         bundled_corpus_chunks: snapshot.corpusChunks,
         restore_count: state.restoreCount,
         restored_at: state.restoredAt,
@@ -1008,10 +1263,17 @@ export default {
       }
       index = null;
       studentModel = null;
+      abstentionModel = null;
       manifest = null;
       corpus = [];
       corpusById = new Map();
       sourceFilters = new Map();
+      state.abstention = {
+        present: false,
+        error: null,
+        bytes: null,
+        sha256: null
+      };
       return jsonResponse({ cleared: true });
     }
 

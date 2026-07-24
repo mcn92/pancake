@@ -17,29 +17,36 @@ function hash32(text, seed) {
 }
 
 export function extractStudentFeatures(text, model) {
+  return extractStudentFeatureRecords(text, model).map((feature) => feature.bucket);
+}
+
+export function extractStudentFeatureRecords(text, model) {
   const tokens = String(text || '').toLowerCase().match(TOKEN_RE) || [];
   const features = [];
   const limit = model.maxFeatures;
 
-  const push = (feature) => {
+  const push = (feature, family) => {
     if (features.length < limit) {
-      features.push(hash32(feature, model.hashSeed) % model.bucketCount);
+      features.push({
+        bucket: hash32(feature, model.hashSeed) % model.bucketCount,
+        family
+      });
     }
   };
 
   for (let tokenIndex = 0; tokenIndex < tokens.length && features.length < limit; tokenIndex++) {
     const token = tokens[tokenIndex].slice(0, 48);
-    push(`w:${token}`);
+    push(`w:${token}`, 'word');
 
     const padded = `^${token}$`;
     for (let width = 3; width <= 5 && features.length < limit; width++) {
       for (let start = 0; start + width <= padded.length && features.length < limit; start++) {
-        push(`c${width}:${padded.slice(start, start + width)}`);
+        push(`c${width}:${padded.slice(start, start + width)}`, 'char');
       }
     }
 
     if (tokenIndex > 0) {
-      push(`b:${tokens[tokenIndex - 1].slice(0, 48)}:${token}`);
+      push(`b:${tokens[tokenIndex - 1].slice(0, 48)}:${token}`, 'word');
     }
   }
 
@@ -130,12 +137,14 @@ export function loadStudentModel(input) {
 }
 
 export function embedTextWithStudent(text, model) {
-  const features = extractStudentFeatures(text, model);
+  const features = extractStudentFeatureRecords(text, model);
   const hidden = new Float32Array(model.hiddenDim);
   const output = new Float32Array(model.outputDim);
-  if (features.length === 0) return output;
+  if (features.length === 0) {
+    return { vector: output, preNorm: 0, features, hidden };
+  }
 
-  for (const bucket of features) {
+  for (const { bucket } of features) {
     const scale = model.embeddingScales[bucket];
     const rowOffset = bucket * model.hiddenDim;
     for (let column = 0; column < model.hiddenDim; column++) {
@@ -147,6 +156,7 @@ export function embedTextWithStudent(text, model) {
   for (let column = 0; column < model.hiddenDim; column++) {
     hidden[column] = Math.tanh(hidden[column] * inverseCount);
   }
+  const hiddenOutput = new Float32Array(hidden);
 
   let normSquared = 0;
   for (let row = 0; row < model.outputDim; row++) {
@@ -161,8 +171,61 @@ export function embedTextWithStudent(text, model) {
   }
 
   const norm = Math.sqrt(normSquared);
-  if (!(norm > 0) || !Number.isFinite(norm)) return new Float32Array(model.outputDim);
+  if (!(norm > 0) || !Number.isFinite(norm)) {
+    return { vector: new Float32Array(model.outputDim), preNorm: 0, features, hidden: hiddenOutput };
+  }
   const inverseNorm = 1 / norm;
   for (let row = 0; row < model.outputDim; row++) output[row] *= inverseNorm;
-  return output;
+  return { vector: output, preNorm: norm, features, hidden: hiddenOutput };
+}
+
+function sigmoid(value) {
+  if (value >= 0) {
+    const z = Math.exp(-value);
+    return 1 / (1 + z);
+  }
+  const z = Math.exp(value);
+  return z / (1 + z);
+}
+
+export function scoreQuery(signals, abstention) {
+  if (!abstention) {
+    return { match_quality: 'unscored' };
+  }
+  const featureNames = abstention.features || ['d0', 'margin', 'pre_norm', 'known_word', 'known_char'];
+  const weights = abstention.weights || [];
+  let logit = Number(abstention.bias) || 0;
+  for (let i = 0; i < featureNames.length; i++) {
+    logit += (Number(weights[i]) || 0) * (Number(signals[featureNames[i]]) || 0);
+  }
+
+  const confidence = sigmoid(logit);
+  const thresholds = abstention.thresholds || {};
+  const hard = Number.isFinite(thresholds.hard) ? thresholds.hard : 0.05;
+  const weak = Number.isFinite(thresholds.weak) ? thresholds.weak : 0;
+  const preNormFloor = Number.isFinite(thresholds.preNormFloor) ? thresholds.preNormFloor : 0.4;
+  const minFeatures = Number.isInteger(thresholds.minFeatures) ? thresholds.minFeatures : 3;
+  const epsilon = 1e-6;
+  const floorTriggered = confidence < hard
+    || (Number(signals.n_feats) || 0) < minFeatures
+    || (Number(signals.pre_norm) || 0) < preNormFloor;
+  const match_quality = floorTriggered
+    ? 'none'
+    : confidence + epsilon >= weak
+      ? 'strong'
+      : 'weak';
+  return {
+    match_quality,
+    score: confidence,
+    confidence: Math.round(confidence * 1000) / 1000,
+    signals: {
+      d0: signals.d0,
+      margin: signals.margin,
+      pre_norm: signals.pre_norm,
+      known_word: signals.known_word,
+      known_char: signals.known_char,
+      hidden_probe: signals.hidden_probe,
+      n_feats: signals.n_feats
+    }
+  };
 }

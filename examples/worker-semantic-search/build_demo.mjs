@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -196,6 +197,10 @@ async function main() {
   const evaluation = JSON.parse(
     fs.readFileSync(path.join(studentDir, 'student-evaluation.json'), 'utf8')
   );
+  const abstentionPath = path.join(studentDir, 'student-abstention.json');
+  const abstention = fs.existsSync(abstentionPath)
+    ? JSON.parse(fs.readFileSync(abstentionPath, 'utf8'))
+    : null;
   const vectorBytes = fs.readFileSync(path.join(studentDir, 'docs-vectors.f32'));
   const expectedVectorBytes = corpus.length * studentManifest.outputDim * 4;
   if (vectorBytes.byteLength !== expectedVectorBytes) {
@@ -224,9 +229,13 @@ async function main() {
     efSearch: 120
   });
   index.addBatch(vectors);
+  const abstentionSerialized = abstention ? JSON.stringify(abstention) : null;
+  const abstentionSha256 = abstentionSerialized
+    ? crypto.createHash('sha256').update(abstentionSerialized).digest('hex')
+    : null;
 
   const manifest = {
-    generatedAt: new Date().toISOString(),
+    generatedAt: abstention?.calibratedAt || new Date().toISOString(),
     dim: studentManifest.outputDim,
     metric: 'cosine',
     quantized: true,
@@ -252,11 +261,24 @@ async function main() {
       evaluation: studentManifest.evaluation,
     },
   };
+  if (abstention) {
+    manifest.abstention = {
+      assetKey: 'docs-abstention.json',
+      bytes: new TextEncoder().encode(abstentionSerialized).byteLength,
+      sha256: abstentionSha256,
+      evaluation: evaluation.abstention || abstention.evaluation?.test || null,
+      calibratedAt: abstention.calibratedAt,
+      farTarget: abstention.farTarget,
+    };
+  }
 
   const snapshot = index.export();
   fs.writeFileSync(path.join(outDir, 'docs-index.bin'), Buffer.from(snapshot));
   fs.writeFileSync(path.join(outDir, 'docs-manifest.json'), JSON.stringify(manifest, null, 2));
   fs.copyFileSync(path.join(studentDir, 'student-model.bin'), path.join(outDir, 'docs-student.bin'));
+  if (abstention) {
+    fs.writeFileSync(path.join(outDir, 'docs-abstention.json'), abstentionSerialized);
+  }
   fs.writeFileSync(
     path.join(outDir, 'docs-student-evaluation.json'),
     `${JSON.stringify(evaluation, null, 2)}\n`
@@ -265,11 +287,12 @@ async function main() {
   console.log(`[write] ${path.join(outDir, 'docs-index.bin')}`);
   console.log(`[write] ${path.join(outDir, 'docs-manifest.json')}`);
   console.log(`[write] ${path.join(outDir, 'docs-student.bin')}`);
+  if (abstention) console.log(`[write] ${path.join(outDir, 'docs-abstention.json')}`);
 
   console.log('\n[preview]');
   const student = loadStudentModel(studentBytes);
   for (const query of SAMPLE_QUERIES) {
-    const results = index.search(embedTextWithStudent(query, student), 3);
+    const results = index.search(embedTextWithStudent(query, student).vector, 3);
     console.log(`  ${query}`);
     for (const hit of results) {
       const chunk = corpus.find((entry) => entry.id === hit.id);
