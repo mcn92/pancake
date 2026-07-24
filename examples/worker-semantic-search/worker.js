@@ -150,6 +150,36 @@ function allowInsecureAdmin(env) {
   return value === '1' || value === 'true' || value === 'yes' || value === 'on';
 }
 
+function searchDisabled(env) {
+  const value = String(env.DISABLE_SEARCH || '').trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
+function privateSearchEnabled(env) {
+  const expected = String(env.DEMO_SEARCH_KEY || '').trim();
+  if (!expected) return false;
+  const value = String(env.PRIVATE_SEARCH || '').trim().toLowerCase();
+  return value !== '0' && value !== 'false' && value !== 'no' && value !== 'off';
+}
+
+function getSearchAccessKey(request, url) {
+  const headerKey = request.headers.get('X-Pancake-Demo-Key') || '';
+  if (headerKey) return headerKey.trim();
+  const authHeader = request.headers.get('Authorization') || '';
+  if (authHeader.startsWith('Bearer ')) return authHeader.slice(7).trim();
+  return (url.searchParams.get('demo_key') || '').trim();
+}
+
+function requireSearchAccess(request, env, url) {
+  if (!privateSearchEnabled(env)) return null;
+  const expected = String(env.DEMO_SEARCH_KEY || '').trim();
+  const actual = getSearchAccessKey(request, url);
+  if (actual !== expected) {
+    return jsonResponse({ error: 'Search requires a demo access key' }, 401);
+  }
+  return null;
+}
+
 async function parseJsonBody(request, env) {
   const maxJsonBytes = getMaxJsonBytes(env);
   const contentLength = parseInt(request.headers.get('content-length') || '', 10);
@@ -1193,7 +1223,7 @@ export default {
         headers: {
           ...corsHeaders(),
           'access-control-allow-methods': 'GET, POST, OPTIONS',
-          'access-control-allow-headers': 'content-type'
+          'access-control-allow-headers': 'authorization, content-type, x-pancake-demo-key'
         }
       });
     }
@@ -1219,6 +1249,8 @@ export default {
         restored_at: state.restoredAt,
         last_restore_ms: state.lastRestoreMs ? formatMs(state.lastRestoreMs) : null,
         read_only: isReadOnly(env),
+        search_disabled: searchDisabled(env),
+        private_search: privateSearchEnabled(env),
         encoder: manifest?.encoder || null,
         abstention: {
           present: !!abstentionModel,
@@ -1278,6 +1310,11 @@ export default {
     }
 
     if (url.pathname === '/search' && (request.method === 'GET' || request.method === 'POST')) {
+      if (searchDisabled(env)) {
+        return jsonResponse({ error: 'Search is temporarily disabled' }, 503);
+      }
+      const searchAccessError = requireSearchAccess(request, env, url);
+      if (searchAccessError) return searchAccessError;
       try {
         return await handleSearch(request, env);
       } catch (err) {
