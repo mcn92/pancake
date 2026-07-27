@@ -185,6 +185,107 @@ function requireSearchAccess(request, env, url) {
   return null;
 }
 
+function getHeader(request, name) {
+  return request.headers.get(name) || null;
+}
+
+function getRedactedUrlParts(url) {
+  const redacted = new URL(url.toString());
+  if (redacted.searchParams.has('demo_key')) {
+    redacted.searchParams.set('demo_key', '[redacted]');
+  }
+  return {
+    url: redacted.toString(),
+    query_string: redacted.search
+  };
+}
+
+function getRequestLogContext(request, url) {
+  const cf = request.cf || {};
+  const redactedUrl = getRedactedUrlParts(url);
+  return {
+    request_id: getHeader(request, 'cf-ray'),
+    method: request.method,
+    url: redactedUrl.url,
+    pathname: url.pathname,
+    query_string: redactedUrl.query_string,
+    origin: getHeader(request, 'origin'),
+    referer: getHeader(request, 'referer'),
+    user_agent: getHeader(request, 'user-agent'),
+    accept_language: getHeader(request, 'accept-language'),
+    content_type: getHeader(request, 'content-type'),
+    content_length: getHeader(request, 'content-length'),
+    cf_connecting_ip: getHeader(request, 'cf-connecting-ip'),
+    x_forwarded_for: getHeader(request, 'x-forwarded-for'),
+    cf_ipcountry: getHeader(request, 'cf-ipcountry'),
+    cf: {
+      colo: cf.colo || null,
+      country: cf.country || null,
+      region: cf.region || null,
+      city: cf.city || null,
+      postalCode: cf.postalCode || null,
+      timezone: cf.timezone || null,
+      latitude: cf.latitude || null,
+      longitude: cf.longitude || null,
+      asn: cf.asn || null,
+      asOrganization: cf.asOrganization || null,
+      httpProtocol: cf.httpProtocol || null,
+      tlsVersion: cf.tlsVersion || null,
+      tlsCipher: cf.tlsCipher || null,
+      botManagement: cf.botManagement || null
+    }
+  };
+}
+
+function logSearchEvent(event, request, url, extra = {}) {
+  console.log(JSON.stringify({
+    event,
+    at: new Date().toISOString(),
+    ...getRequestLogContext(request, url),
+    ...extra
+  }));
+}
+
+async function enforceRateLimit(request, env, url) {
+  const checks = [
+    {
+      binding: env.GLOBAL_RATE_LIMITER,
+      name: 'global',
+      key: 'global'
+    },
+    {
+      binding: env.RATE_LIMITER,
+      name: 'ip',
+      key: getHeader(request, 'cf-connecting-ip') || 'unknown'
+    }
+  ];
+
+  for (const check of checks) {
+    if (!check.binding || typeof check.binding.limit !== 'function') continue;
+    const result = await check.binding.limit({ key: check.key });
+    if (result.success) continue;
+
+    console.log(JSON.stringify({
+      event: 'semantic-search.request.rate_limited',
+      at: new Date().toISOString(),
+      ...getRequestLogContext(request, url),
+      rate_limit_name: check.name,
+      rate_limit_key: check.key,
+      status: 429
+    }));
+
+    return new Response(JSON.stringify({ error: 'Too many requests' }, null, 2), {
+      status: 429,
+      headers: corsHeaders({
+        'content-type': 'application/json; charset=utf-8',
+        'retry-after': '60'
+      })
+    });
+  }
+
+  return null;
+}
+
 async function parseJsonBody(request, env) {
   const maxJsonBytes = getMaxJsonBytes(env);
   const contentLength = parseInt(request.headers.get('content-length') || '', 10);
@@ -1147,10 +1248,19 @@ async function handleSearch(request, env) {
   if (request.method === 'POST') {
     const parsed = await parseJsonBody(request, env);
     if (parsed.error) {
+      logSearchEvent('semantic-search.search.invalid_body', request, url, {
+        error: parsed.error,
+        status: parsed.status
+      });
       return jsonResponse({ error: parsed.error }, parsed.status);
     }
     const body = parsed.body;
     if (!body || typeof body.query !== 'string') {
+      logSearchEvent('semantic-search.search.invalid_body', request, url, {
+        error: 'POST /search requires JSON body { query: string, k?: number }',
+        status: 400,
+        body_keys: body && typeof body === 'object' ? Object.keys(body).slice(0, 20) : []
+      });
       return jsonResponse({ error: 'POST /search requires JSON body { query: string, k?: number }' }, 400);
     }
     query = body.query;
@@ -1160,7 +1270,13 @@ async function handleSearch(request, env) {
   }
 
   query = query.trim();
-  if (!query) return jsonResponse({ error: 'query is required' }, 400);
+  if (!query) {
+    logSearchEvent('semantic-search.search.invalid_query', request, url, {
+      error: 'query is required',
+      status: 400
+    });
+    return jsonResponse({ error: 'query is required' }, 400);
+  }
   if (!Number.isInteger(k) || k < 1) k = 5;
   if (!Number.isInteger(ef) || ef < 10) ef = manifest?.efSearch || 120;
   k = Math.min(k, MAX_RESULTS);
@@ -1219,6 +1335,25 @@ async function handleSearch(request, env) {
     embedding: formatMicroseconds(embeddingMs),
     search: formatMicroseconds(searchMs)
   };
+  logSearchEvent('semantic-search.search.completed', request, url, {
+    query,
+    k,
+    ef,
+    source: source || null,
+    filter_label: filterLabel,
+    match_quality: responseBody.match_quality,
+    confidence: responseBody.confidence ?? null,
+    result_count: responseBody.result_count,
+    top_result_ids: returnedHits.slice(0, 5).map((hit) => hit.id),
+    top_result_distances: returnedHits.slice(0, 5).map((hit) => hit.distance),
+    cache_state: responseBody.cache_state,
+    loaded_from_bundle: responseBody.loaded_from_bundle,
+    restore_count: responseBody.restore_count,
+    corpus_chunks: responseBody.corpus_chunks,
+    dim: responseBody.dim,
+    quantized: responseBody.quantized,
+    timings_us: responseBody.timings_us
+  });
   return jsonResponse(responseBody);
 }
 
@@ -1226,6 +1361,8 @@ export default {
   async fetch(request, env) {
     globalThis.__PANCAKE_ALLOWED_ORIGIN__ = String(env.ALLOWED_ORIGIN || '').trim();
     const url = new URL(request.url);
+    const rateLimitResponse = await enforceRateLimit(request, env, url);
+    if (rateLimitResponse) return rateLimitResponse;
 
     if (request.method === 'OPTIONS') {
       if (!getCorsOrigin()) {
@@ -1323,15 +1460,42 @@ export default {
 
     if (url.pathname === '/search' && (request.method === 'GET' || request.method === 'POST')) {
       if (searchDisabled(env)) {
+        logSearchEvent('semantic-search.search.disabled', request, url, {
+          query: url.searchParams.get('q') || null,
+          k: url.searchParams.get('k') || null,
+          ef: url.searchParams.get('ef') || null,
+          source: url.searchParams.get('source') || null,
+          status: 503
+        });
         return jsonResponse({ error: 'Search is temporarily disabled' }, 503);
       }
       const searchAccessError = requireSearchAccess(request, env, url);
-      if (searchAccessError) return searchAccessError;
+      if (searchAccessError) {
+        logSearchEvent('semantic-search.search.unauthorized', request, url, {
+          query: url.searchParams.get('q') || null,
+          k: url.searchParams.get('k') || null,
+          ef: url.searchParams.get('ef') || null,
+          source: url.searchParams.get('source') || null,
+          has_demo_key_header: !!getHeader(request, 'x-pancake-demo-key'),
+          has_authorization_header: !!getHeader(request, 'authorization'),
+          has_demo_key_query: url.searchParams.has('demo_key'),
+          status: 401
+        });
+        return searchAccessError;
+      }
       try {
         return await handleSearch(request, env);
       } catch (err) {
         const message = err && typeof err.message === 'string' ? err.message : String(err);
-        console.error(`semantic-search /search failed: ${message}`);
+        logSearchEvent('semantic-search.search.error', request, url, {
+          query: url.searchParams.get('q') || null,
+          k: url.searchParams.get('k') || null,
+          ef: url.searchParams.get('ef') || null,
+          source: url.searchParams.get('source') || null,
+          error: message,
+          stack: err?.stack || null,
+          status: 500
+        });
         return jsonResponse({ error: 'Internal server error' }, 500);
       }
     }

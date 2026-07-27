@@ -2,6 +2,8 @@ name = "pancake-docs-search"
 main = "worker.js"
 compatibility_date = "2025-04-09"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
 
 [vars]
 READ_ONLY = "1"
