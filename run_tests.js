@@ -1796,7 +1796,7 @@ async function testDeterminismIds() {
 
 
 async function testMetricCorrectnessQuantized() {
-    section('Metric correctness — quantized INT8');
+    section('Metric correctness — quantized uint8');
 
     const DIM2 = 32;
     const QCONFIG = {
@@ -1946,7 +1946,7 @@ async function testGhostEntryPointSearch() {
     const dim = 16;
 
     for (const quantized of [false, true]) {
-        const label = quantized ? 'int8' : 'float';
+        const label = quantized ? 'uint8' : 'float';
         const rng = mulberry32(1234);
         const vecs = Array.from({ length: N }, () => {
             const v = new Float32Array(dim);
@@ -1997,7 +1997,7 @@ async function testGhostsRemainNavigable() {
     };
 
     for (const quantized of [false, true]) {
-        const label = quantized ? 'int8' : 'float';
+        const label = quantized ? 'uint8' : 'float';
         const idx = await Pancake.create({
             dim,
             maxElements: N,
@@ -2040,7 +2040,7 @@ async function testDeleteChurnRegression() {
 
     const scenarios = [
         { label: 'float-cosine', quantized: false, metric: 'cosine' },
-        { label: 'int8-cosine', quantized: true, metric: 'cosine' },
+        { label: 'u8-cosine', quantized: true, metric: 'cosine' },
     ];
 
     for (const scenario of scenarios) {
@@ -2100,7 +2100,7 @@ async function testGoldenSnapshotCompatibility() {
     section('Golden snapshot compatibility');
 
     const scenarios = [
-        { label: 'int8', quantized: true, base64: goldenSnapshots.quantizedBase64 },
+        { label: 'uint8', quantized: true, base64: goldenSnapshots.quantizedBase64 },
         { label: 'float32', quantized: false, base64: goldenSnapshots.float32Base64 },
     ];
 
@@ -2170,7 +2170,7 @@ async function testNonFiniteRejection() {
 
     const dim = 16;
     for (const quantized of [false, true]) {
-        const label = quantized ? 'int8' : 'float32';
+        const label = quantized ? 'uint8' : 'float32';
         const idx = await Pancake.create({ dim, maxElements: 64, metric: 'cosine', quantized });
 
         idx.add(normalizedVec(dim));
@@ -2209,7 +2209,7 @@ async function testCosineNormOverflowRegression() {
     const zero = new Float32Array(dim);
 
     for (const quantized of [false, true]) {
-        const label = quantized ? 'int8' : 'float32';
+        const label = quantized ? 'uint8' : 'float32';
         const idx = await Pancake.create({ dim, maxElements: 8, metric: 'cosine', quantized });
 
         const id = idx.add(huge);
@@ -2236,7 +2236,7 @@ async function testCompactEntryPointRecovery() {
     // With M=4, P(level >= 1) = 1/4 = 25% per vector, so 3 vectors gives
     // ~42% chance all are level 0. We use a fixed seed via deterministic vectors.
     for (const quantized of [false, true]) {
-        const label = quantized ? 'int8' : 'float32';
+        const label = quantized ? 'uint8' : 'float32';
         const idx = await Pancake.create({
             dim: 4, maxElements: 32, metric: 'cosine', quantized,
             M: 16, efConstruction: 50, efSearch: 50,
@@ -2280,7 +2280,7 @@ async function testSearchFiltered() {
     section('Filtered search');
 
     for (const quantized of [false, true]) {
-        const label = quantized ? 'int8' : 'float32';
+        const label = quantized ? 'uint8' : 'float32';
         const dim = 32;
         const idx = await Pancake.create({
             dim, maxElements: 200, metric: 'cosine', quantized,
@@ -2357,7 +2357,7 @@ async function testHeldOutRecallOracle() {
     const oracle = searchOracles.clusteredCosine32;
     for (const scenario of [
         { label: 'float32', quantized: false },
-        { label: 'int8', quantized: true },
+        { label: 'uint8', quantized: true },
     ]) {
         const probe = await evaluateHeldOutOracle(scenario, oracle);
         const expected = oracle.recallBaseline[scenario.label].beforeCompact;
@@ -2376,7 +2376,7 @@ async function testHeldOutRecallAfterCompact() {
     const oracle = searchOracles.clusteredCosine32;
     for (const scenario of [
         { label: 'float32', quantized: false },
-        { label: 'int8', quantized: true },
+        { label: 'uint8', quantized: true },
     ]) {
         const probe = await evaluateHeldOutOracle(scenario, oracle);
         const expected = oracle.recallBaseline[scenario.label].afterCompact;
@@ -2395,7 +2395,7 @@ async function testFilteredHeldOutRecallOracle() {
     const oracle = searchOracles.clusteredCosine32;
     for (const scenario of [
         { label: 'float32', quantized: false },
-        { label: 'int8', quantized: true },
+        { label: 'uint8', quantized: true },
     ]) {
         const probe = await evaluateHeldOutOracle(scenario, oracle);
         for (const filterSpec of oracle.filteredSpecs) {
@@ -2416,7 +2416,7 @@ async function testSearchOutputGoldenOracle() {
     const oracle = searchOracles.clusteredCosine32;
     for (const scenario of [
         { label: 'float32', quantized: false },
-        { label: 'int8', quantized: true },
+        { label: 'uint8', quantized: true },
     ]) {
         const probe = await evaluateHeldOutOracle(scenario, oracle);
         assertSearchRowsEqualWithTolerance(
@@ -2434,7 +2434,7 @@ async function testSearchAndSerializationDeterminismOracle() {
     const oracle = searchOracles.clusteredCosine32;
     for (const scenario of [
         { label: 'float32', quantized: false },
-        { label: 'int8', quantized: true },
+        { label: 'uint8', quantized: true },
     ]) {
         const probe = await evaluateHeldOutOracle(scenario, oracle);
         assert(
@@ -2961,7 +2961,8 @@ async function testAdditiveIndexSurface() {
 
     const config = idx.config;
     assert(config.dim === 4 && config.maxElements === 5 && config.metric === 'l2' &&
-        config.quantized === false && config.M === 8 && config.efConstruction === 32 && config.efSearch === 40,
+        config.quantized === false && config.M === 8 && config.efConstruction === 32 &&
+        config.efSearch === 40 && config.seed === 108,
         'config exposes fully resolved values');
     idx.setEfSearch(80);
     assert(idx.config.efSearch === 80, 'config reflects the current default efSearch policy');
@@ -3032,7 +3033,8 @@ async function testSnapshotInspectionAndRestore() {
 
     const exact = await Pancake.restore(snapshot);
     assert(exact.config.dim === 4 && exact.config.metric === 'cosine' && exact.config.quantized === true &&
-        exact.config.M === 8 && exact.config.efConstruction === 64 && exact.config.efSearch === 100,
+        exact.config.M === 8 && exact.config.efConstruction === 64 &&
+        exact.config.efSearch === 100 && exact.config.seed === 108,
         'restore() infers snapshot config and resets runtime efSearch policy');
     assert(exact.capacity === 2 && exact.remainingCapacity === 0,
         'restore() defaults capacity to the restored count');

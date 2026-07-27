@@ -61,7 +61,7 @@ function randomVec(dim) {
 
     // --- Create ---
     emit('\n--- Create index ---');
-    const handle = engine._pancake_init(DIM, N + 100, 1, 1, 16, 200, 100);
+    const handle = engine._pancake_init(DIM, N + 100, 1, 1, 12, 75, 100, 108);
     assert(handle !== 0xFFFFFFFF, 'pancake_init failed');
     emit('Index created (int8, cosine, dim=' + DIM + ')', 'pass');
 
@@ -169,7 +169,7 @@ function randomVec(dim) {
     const exportBytes = engine.HEAPU8.slice(dataPtr, dataPtr + exportSize);
     emit('Exported ' + exportSize + ' bytes');
 
-    const handle2 = engine._pancake_init(DIM, N + 100, 1, 1, 16, 200, 100);
+    const handle2 = engine._pancake_init(DIM, N + 100, 1, 1, 12, 75, 100, 108);
     assert(handle2 !== 0xFFFFFFFF, 'second init failed');
     const importBuf = engine._emsc_malloc(exportBytes.length);
     assert(importBuf, 'malloc failed for import');

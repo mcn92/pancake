@@ -101,7 +101,7 @@
     "wasm",
     "webassembly",
     "simd",
-    "int8",
+    "uint8",
     "quantization",
     "embedding",
     "embeddings",

@@ -15,9 +15,14 @@ const V3_ENVELOPE_HEADER_SIZE = 32; // v2 + nextExtId(4) + mappingCount(4) + was
 const MAPPING_ENTRY_SIZE = 8; // intId(4) + extId(4)
 const FLOAT_HNSW_MAGIC_V0 = 0x464C4857; // "FLHW"
 const FLOAT_HNSW_MAGIC_V1 = 0x464C4831; // "FLH1"
-const INT8_HNSW_MAGIC_V0 = 0x49384857; // "I8HW"
-const INT8_HNSW_MAGIC_V1 = 0x49384831; // "I8H1"
+const UINT8_HNSW_MAGIC_V0 = 0x49384857; // "I8HW"
+const UINT8_HNSW_MAGIC_V1 = 0x49384831; // "I8H1"
 const MAX_EF = 4096;
+const DEFAULT_MAX_ELEMENTS = 100000;
+const DEFAULT_M = 12;
+const DEFAULT_EF_CONSTRUCTION = 75;
+const DEFAULT_EF_SEARCH = 100;
+const DEFAULT_SEED = 108;
 
 function validateEfSearch(value, label = 'efSearch') {
     if (!Number.isInteger(value) || value < 1 || value > MAX_EF) {
@@ -84,6 +89,7 @@ class PancakeIndex {
         this._M = opts.M;
         this._efConstruction = opts.efConstruction;
         this._efSearch = opts.efSearch;
+        this._seed = opts.seed;
         this._handle = handle;
         this._vecPtr = vecPtr;
         this._idPtr = idPtr;
@@ -591,6 +597,7 @@ class PancakeIndex {
             M: this._M,
             efConstruction: this._efConstruction,
             efSearch: this._efSearch,
+            seed: this._seed,
         });
     }
 
@@ -843,15 +850,21 @@ function createPancakeApi(loadEngineImpl) {
                 { argument: 'efConstruction', value: opts.efConstruction });
         }
         if (opts.efSearch !== undefined) validateEfSearch(opts.efSearch, 'opts.efSearch');
+        if (opts.seed !== undefined && (!Number.isInteger(opts.seed) || opts.seed <= 0 || opts.seed > 0x7fffffff)) {
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+                'opts.seed must be an integer between 1 and 2147483647',
+                { argument: 'seed', value: opts.seed });
+        }
 
         const dim = opts.dim;
         const metric = (opts.metric === 'l2') ? 0 : 1;
-        const maxElements = opts.maxElements ?? 100000;
+        const maxElements = opts.maxElements ?? DEFAULT_MAX_ELEMENTS;
         const isQuantized = opts.quantized !== undefined ? !!opts.quantized : true;
         const quantized = isQuantized ? 1 : 0;
-        const M = opts.M ?? 16;
-        const efConstruction = opts.efConstruction ?? 50;
-        const efSearch = opts.efSearch ?? 100;
+        const M = opts.M ?? DEFAULT_M;
+        const efConstruction = opts.efConstruction ?? DEFAULT_EF_CONSTRUCTION;
+        const efSearch = opts.efSearch ?? DEFAULT_EF_SEARCH;
+        const seed = opts.seed ?? DEFAULT_SEED;
 
         const resolvedOpts = {
             ...opts,
@@ -862,6 +875,7 @@ function createPancakeApi(loadEngineImpl) {
             M,
             efConstruction,
             efSearch,
+            seed,
         };
 
         const e = await loadEngineImpl();
@@ -878,7 +892,7 @@ function createPancakeApi(loadEngineImpl) {
             throw pancakeError(PANCAKE_ERROR_CODES.WASM_ALLOCATION_FAILED, 'WASM malloc failed');
         }
 
-        const handle = e._pancake_init(dim, maxElements, quantized, metric, M, efConstruction, efSearch);
+        const handle = e._pancake_init(dim, maxElements, quantized, metric, M, efConstruction, efSearch, seed);
 
         if (handle === 0xFFFFFFFF) {
             e._emsc_free(vecPtr);
@@ -1011,7 +1025,8 @@ function createPancakeApi(loadEngineImpl) {
             ...overrides,
             ...fixedConfig,
             maxElements: overrides.maxElements ?? Math.max(1, metadata.count),
-            efSearch: overrides.efSearch ?? 100,
+            efSearch: overrides.efSearch ?? DEFAULT_EF_SEARCH,
+            seed: overrides.seed ?? DEFAULT_SEED,
         };
         const index = await create(options);
         try {
@@ -1042,7 +1057,7 @@ function parseRawSnapshotMetadata(bytes) {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const magic = view.getUint32(0, true);
 
-    if (magic === FLOAT_HNSW_MAGIC_V1 || magic === INT8_HNSW_MAGIC_V1) {
+    if (magic === FLOAT_HNSW_MAGIC_V1 || magic === UINT8_HNSW_MAGIC_V1) {
         if (bytes.length < 40) return null;
         return {
             version: view.getUint32(8, true),
@@ -1052,11 +1067,11 @@ function parseRawSnapshotMetadata(bytes) {
             M0: view.getUint32(28, true),
             metric: view.getUint32(32, true),
             efConstruction: view.getUint32(36, true),
-            quantized: magic === INT8_HNSW_MAGIC_V1,
+            quantized: magic === UINT8_HNSW_MAGIC_V1,
         };
     }
 
-    if (magic === FLOAT_HNSW_MAGIC_V0 || magic === INT8_HNSW_MAGIC_V0) {
+    if (magic === FLOAT_HNSW_MAGIC_V0 || magic === UINT8_HNSW_MAGIC_V0) {
         if (bytes.length < 36) return null;
         return {
             version: 0,
@@ -1066,7 +1081,7 @@ function parseRawSnapshotMetadata(bytes) {
             M0: view.getUint32(24, true),
             metric: view.getUint32(28, true),
             efConstruction: 200,
-            quantized: magic === INT8_HNSW_MAGIC_V0,
+            quantized: magic === UINT8_HNSW_MAGIC_V0,
         };
     }
 

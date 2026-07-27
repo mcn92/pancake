@@ -58,7 +58,7 @@ function randBytes(len) {
 
 const PANCAKE_MAGIC = 0x504E434B;
 const FLOAT_MAGIC = 0x464C4831;
-const INT8_MAGIC = 0x49384831;
+const UINT8_MAGIC = 0x49384831;
 
 function normalizedVec(dim) {
     const v = new Float32Array(dim);
@@ -238,7 +238,7 @@ async function fuzzBitFlips(snapshot, label, rounds) {
 async function fuzzHeaderCorruption(snapshot, label) {
     console.log(`\n  Header corruption (${label})`);
     const raw = extractWasmPayload(snapshot.exported);
-    const wasmMagic = snapshot.quantized ? INT8_MAGIC : FLOAT_MAGIC;
+    const wasmMagic = snapshot.quantized ? UINT8_MAGIC : FLOAT_MAGIC;
 
     // Offsets within raw WASM payload (v1 format):
     // 0: magic, 4: dims, 8: version, 12: count, 16: entry_point, 20: max_level,
@@ -506,7 +506,7 @@ async function fuzzPostImportStability() {
     const dim = 16;
 
     for (const quantized of [true, false]) {
-        const label = quantized ? 'int8' : 'float32';
+        const label = quantized ? 'uint8' : 'float32';
         const snap = await buildValidSnapshot(quantized);
         const idx = await Pancake.create({
             dim, maxElements: 128, metric: 'cosine', quantized,
@@ -557,7 +557,7 @@ async function fuzzInputValidation() {
     const dim = 16;
 
     for (const quantized of [true, false]) {
-        const label = quantized ? 'int8' : 'float32';
+        const label = quantized ? 'uint8' : 'float32';
         const idx = await Pancake.create({
             dim, maxElements: 64, metric: 'cosine', quantized,
         });
@@ -611,7 +611,7 @@ async function fuzzQuantizedScaleCorruption(snapshot) {
     const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
     const count = view.getUint32(12, true);
 
-    // Scales start at offset 40 in the int8 WASM payload
+    // Scales start at offset 40 in the u8 WASM payload
     const scalesOffset = 40;
     const offsetsOffset = 40 + count * 4;
 
@@ -701,7 +701,7 @@ async function fuzzAddDeleteCompactStress(rounds) {
     const dim = 16;
 
     for (const quantized of [true, false]) {
-        const label = quantized ? 'int8' : 'float32';
+        const label = quantized ? 'uint8' : 'float32';
         const idx = await Pancake.create({
             dim, maxElements: 512, metric: 'cosine', quantized,
             M: 8, efConstruction: 50, efSearch: 50,
@@ -830,41 +830,41 @@ async function main() {
 
     // Build reference snapshots
     const floatSnap = await buildValidSnapshot(false);
-    const int8Snap = await buildValidSnapshot(true);
+    const uint8Snap = await buildValidSnapshot(true);
 
     // Run all fuzz strategies
     await fuzzPureRandom(rounds);
 
     await fuzzTruncation(floatSnap, 'float32');
-    await fuzzTruncation(int8Snap, 'int8');
+    await fuzzTruncation(uint8Snap, 'uint8');
 
     await fuzzBitFlips(floatSnap, 'float32', rounds);
-    await fuzzBitFlips(int8Snap, 'int8', rounds);
+    await fuzzBitFlips(uint8Snap, 'uint8', rounds);
 
     await fuzzHeaderCorruption(floatSnap, 'float32');
-    await fuzzHeaderCorruption(int8Snap, 'int8');
+    await fuzzHeaderCorruption(uint8Snap, 'uint8');
 
     await fuzzOverflowSizes(floatSnap, 'float32');
-    await fuzzOverflowSizes(int8Snap, 'int8');
+    await fuzzOverflowSizes(uint8Snap, 'uint8');
 
     await fuzzNeighborCorruption(floatSnap, 'float32');
-    await fuzzNeighborCorruption(int8Snap, 'int8');
+    await fuzzNeighborCorruption(uint8Snap, 'uint8');
 
     await fuzzNaNInfinity(floatSnap, 'float32');
-    await fuzzNaNInfinity(int8Snap, 'int8');
+    await fuzzNaNInfinity(uint8Snap, 'uint8');
 
     await fuzzMultiBitCorruption(floatSnap, 'float32', rounds);
-    await fuzzMultiBitCorruption(int8Snap, 'int8', rounds);
+    await fuzzMultiBitCorruption(uint8Snap, 'uint8', rounds);
 
     await fuzzEnvelopeCorruption();
     await fuzzEnvelopeBookkeeping(floatSnap, 'float32');
-    await fuzzEnvelopeBookkeeping(int8Snap, 'int8');
+    await fuzzEnvelopeBookkeeping(uint8Snap, 'uint8');
     await fuzzPostImportStability();
     await fuzzInputValidation();
-    await fuzzQuantizedScaleCorruption(int8Snap);
+    await fuzzQuantizedScaleCorruption(uint8Snap);
     await fuzzAddDeleteCompactStress(rounds);
     await fuzzPostImportMutation(floatSnap, 'float32');
-    await fuzzPostImportMutation(int8Snap, 'int8');
+    await fuzzPostImportMutation(uint8Snap, 'uint8');
 
     // Summary
     console.log('\n' + '─'.repeat(50));

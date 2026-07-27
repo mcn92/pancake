@@ -71,11 +71,11 @@ inline bool normalize_cosine_vector(const float* src, float* dst, size_t dims) {
 }
 
 struct FloatHNSWConfig {
-    size_t M = 16;               // Max neighbors per layer (higher = better recall, more memory)
-    size_t ef_construction = 50; // Construction beam width (higher = better quality, slower build)
+    size_t M = 12;               // Max neighbors per layer (higher = better recall, more memory)
+    size_t ef_construction = 75; // Construction beam width (higher = better quality, slower build)
     size_t ef_search = 100;      // Search beam width (higher = better recall, slower search)
     size_t max_elements = 100000;
-    uint32_t seed = 42;
+    uint32_t seed = 108;
     DistanceMetric metric = DistanceMetric::L2;
     bool use_heuristic = true;   // Diversity heuristic (rejects clustered neighbors).
                                   // WHY: Prevents "hub" nodes, improves graph connectivity.

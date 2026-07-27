@@ -6,7 +6,7 @@
  * the JS benchmark harness can swap between WASM and native transparently.
  *
  * Exposed JS API:
- *   pancake_init(dim, maxElem, quantized, metric, M, efC, efS) -> handle
+ *   pancake_init(dim, maxElem, quantized, metric, M, efC, efS, seed?) -> handle
  *   pancake_add(handle, Float32Array) -> internalId
  *   pancake_bulk_insert(handle, Float32Array, n) -> count
  *   pancake_query(handle, Float32Array, k) -> { ids: Uint32Array, distances: Float32Array, count }
@@ -28,7 +28,7 @@
 // Pull in the engine directly — it's header-only behind the wrappers.
 // We define away the Emscripten-specific bits.
 #include "float_hnsw.hpp"
-#include "int8_float_hnsw.hpp"
+#include "uint8_float_hnsw.hpp"
 
 #include <vector>
 #include <memory>
@@ -40,14 +40,20 @@ using namespace pancake::wasm;
 
 namespace {
 
+constexpr size_t DEFAULT_MAX_ELEMENTS = 100000;
+constexpr size_t DEFAULT_M = 12;
+constexpr size_t DEFAULT_EF_CONSTRUCTION = 75;
+constexpr size_t DEFAULT_EF_SEARCH = 100;
+constexpr uint32_t DEFAULT_SEED = 108;
+
 size_t serialized_index_count_hint(const uint8_t* data, size_t size, uint32_t versioned_magic) {
-    if (!data || size < 12) return 100000;
+    if (!data || size < 12) return DEFAULT_MAX_ELEMENTS;
 
     uint32_t magic = 0;
     std::memcpy(&magic, data, sizeof(magic));
 
     size_t count_offset = (magic == versioned_magic) ? 12 : 8;
-    if (size < count_offset + 4) return 100000;
+    if (size < count_offset + 4) return DEFAULT_MAX_ELEMENTS;
 
     uint32_t count = 0;
     std::memcpy(&count, data + count_offset, sizeof(count));
@@ -151,13 +157,13 @@ public:
     size_t dimension() const override { return dims_; }
 };
 
-class Int8FloatHNSWWrapper : public IndexWrapper {
-    std::unique_ptr<Int8FloatHNSW> impl_;
-    Int8FloatHNSWConfig cfg_;
+class Uint8FloatHNSWWrapper : public IndexWrapper {
+    std::unique_ptr<Uint8FloatHNSW> impl_;
+    Uint8FloatHNSWConfig cfg_;
     size_t dims_;
 public:
-    Int8FloatHNSWWrapper(size_t dims, const Int8FloatHNSWConfig& cfg)
-        : impl_(std::make_unique<Int8FloatHNSW>(dims, cfg)), cfg_(cfg), dims_(dims) {}
+    Uint8FloatHNSWWrapper(size_t dims, const Uint8FloatHNSWConfig& cfg)
+        : impl_(std::make_unique<Uint8FloatHNSW>(dims, cfg)), cfg_(cfg), dims_(dims) {}
     uint32_t insert(const float* vec) override { return impl_->insert(vec); }
     int bulk_insert(const float* vecs, int n) override { return impl_->bulk_insert(vecs, n); }
     std::vector<std::pair<uint32_t, float>> search(const float* query, size_t k) override { return impl_->search(query, k); }
@@ -171,19 +177,19 @@ public:
     size_t memory_bytes() const override { return impl_->memory_bytes(); }
     std::vector<uint8_t> serialize() const override { return impl_->serialize(); }
     bool snapshot_plausible(const uint8_t* data, size_t size) const override {
-        return snapshot_count_plausible(data, size, 0x49384831, dims_ * sizeof(int8_t));
+        return snapshot_count_plausible(data, size, 0x49384831, dims_ * sizeof(uint8_t));
     }
     bool deserialize(const uint8_t* data, size_t size) override {
         // The header count is untrusted and sizes max_elements below; a
         // crafted count would otherwise drive a multi-GB allocation here.
         if (!snapshot_plausible(data, size)) return false;
         size_t cnt = serialized_index_count_hint(data, size, 0x49384831);
-        Int8FloatHNSWConfig cfg = cfg_;
+        Uint8FloatHNSWConfig cfg = cfg_;
         cfg.max_elements = std::max(static_cast<size_t>(cnt * 1.2), static_cast<size_t>(100000));
         // Deserialize into a fresh index and swap only on success so a failed
         // import leaves the live index unchanged (same contract as the WASM
         // engine wrappers).
-        auto next = std::make_unique<Int8FloatHNSW>(dims_, cfg);
+        auto next = std::make_unique<Uint8FloatHNSW>(dims_, cfg);
         if (!next->deserialize(data, size)) return false;
         impl_ = std::move(next);
         return true;
@@ -224,6 +230,9 @@ Napi::Value Init(const Napi::CallbackInfo& info) {
     int M       = info[4].As<Napi::Number>().Int32Value();
     int efC     = info[5].As<Napi::Number>().Int32Value();
     int efS     = info[6].As<Napi::Number>().Int32Value();
+    int seed    = (info.Length() > 7 && info[7].IsNumber())
+        ? info[7].As<Napi::Number>().Int32Value()
+        : static_cast<int>(DEFAULT_SEED);
 
     if (dim <= 0 || maxElem <= 0)
         return Napi::Number::New(env, INVALID_HANDLE);
@@ -235,20 +244,22 @@ Napi::Value Init(const Napi::CallbackInfo& info) {
     bool use_cosine = (metric == 1);
 
     if (quant) {
-        Int8FloatHNSWConfig cfg;
+        Uint8FloatHNSWConfig cfg;
         cfg.max_elements = maxElem;
-        cfg.M = (M > 0) ? M : 32;
-        cfg.ef_construction = (efC > 0) ? efC : 200;
-        cfg.ef_search = (efS > 0) ? efS : 128;
+        cfg.M = (M > 0) ? static_cast<size_t>(M) : DEFAULT_M;
+        cfg.ef_construction = (efC > 0) ? static_cast<size_t>(efC) : DEFAULT_EF_CONSTRUCTION;
+        cfg.ef_search = (efS > 0) ? static_cast<size_t>(efS) : DEFAULT_EF_SEARCH;
+        cfg.seed = (seed > 0) ? static_cast<uint32_t>(seed) : DEFAULT_SEED;
         cfg.metric = use_cosine ? DistanceMetric::Cosine : DistanceMetric::L2;
         cfg.use_heuristic = true;
-        g_handles[h] = new Int8FloatHNSWWrapper(dim, cfg);
+        g_handles[h] = new Uint8FloatHNSWWrapper(dim, cfg);
     } else {
         FloatHNSWConfig cfg;
         cfg.max_elements = maxElem;
-        cfg.M = (M > 0) ? M : 32;
-        cfg.ef_construction = (efC > 0) ? efC : 200;
-        cfg.ef_search = (efS > 0) ? efS : 128;
+        cfg.M = (M > 0) ? static_cast<size_t>(M) : DEFAULT_M;
+        cfg.ef_construction = (efC > 0) ? static_cast<size_t>(efC) : DEFAULT_EF_CONSTRUCTION;
+        cfg.ef_search = (efS > 0) ? static_cast<size_t>(efS) : DEFAULT_EF_SEARCH;
+        cfg.seed = (seed > 0) ? static_cast<uint32_t>(seed) : DEFAULT_SEED;
         cfg.metric = use_cosine ? DistanceMetric::Cosine : DistanceMetric::L2;
         g_handles[h] = new FloatHNSWWrapper(dim, cfg);
     }

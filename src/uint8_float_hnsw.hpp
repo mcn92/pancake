@@ -1,10 +1,10 @@
 #pragma once
 /**
- * Int8FloatHNSW -- Runtime-dimension int8-quantized HNSW index.
+ * Uint8FloatHNSW -- Runtime-dimension uint8-quantized HNSW index.
  *
  * Stores vectors as row-wise affine uint8: per-vector scale + offset + uint8[dims].
  * Insert accepts float32, quantizes internally. Search uses asymmetric distance:
- * float32 query vs dequantized-on-the-fly int8 database vectors.
+ * float32 query vs dequantized-on-the-fly uint8 database vectors.
  *
  * WHY ASYMMETRIC: Quantizing query would require knowing its scale/offset before
  * distance computation, but we don't know those until we scan the query. Asymmetric
@@ -28,17 +28,17 @@
 
 #if defined(__wasm_simd128__)
     #include <wasm_simd128.h>
-    #define INT8_HNSW_WASM_SIMD 1
+    #define UINT8_HNSW_WASM_SIMD 1
 #elif defined(PANCAKE_ENABLE_AVX512_SIMD) && defined(__AVX512F__) && defined(__AVX512BW__)
     #include <immintrin.h>
-    #define INT8_HNSW_AVX512_SIMD 1
+    #define UINT8_HNSW_AVX512_SIMD 1
 #elif defined(PANCAKE_ENABLE_AVX2_SIMD) && defined(__AVX2__)
     #include <immintrin.h>
-    #define INT8_HNSW_AVX2_SIMD 1
+    #define UINT8_HNSW_AVX2_SIMD 1
 #elif defined(PANCAKE_ENABLE_SSE2_SIMD) && defined(__SSE2__)
     #include <xmmintrin.h>
     #include <emmintrin.h>
-    #define INT8_HNSW_SSE2_SIMD 1
+    #define UINT8_HNSW_SSE2_SIMD 1
 #endif
 
 #ifdef __EMSCRIPTEN__
@@ -55,7 +55,7 @@
 // Fused multiply-add helper: returns acc + a*b.
 // Uses WASM relaxed-SIMD FMA when available (compile with -mrelaxed-simd),
 // otherwise falls back to separate mul+add. Recall-neutral either way.
-#if defined(INT8_HNSW_WASM_SIMD)
+#if defined(UINT8_HNSW_WASM_SIMD)
   #if defined(__wasm_relaxed_simd__)
     #define WFMA(acc, a, b) wasm_f32x4_relaxed_madd((a), (b), (acc))
   #else
@@ -66,7 +66,7 @@
 namespace pancake {
 namespace wasm {
 
-#if defined(PANCAKE_INT8_HNSW_BUILD_PROFILE)
+#if defined(PANCAKE_UINT8_HNSW_BUILD_PROFILE)
 struct BuildProfile {
     uint64_t inserts = 0;
 
@@ -132,17 +132,17 @@ static BuildProfile g_build_profile;
 #define PROFILE_COUNT(code) do {} while (0)
 #endif
 
-struct Int8FloatHNSWConfig {
-    size_t M = 16;
-    size_t ef_construction = 50;
+struct Uint8FloatHNSWConfig {
+    size_t M = 12;
+    size_t ef_construction = 75;
     size_t ef_search = 100;
     size_t max_elements = 100000;
-    uint32_t seed = 42;
+    uint32_t seed = 108;
     DistanceMetric metric = DistanceMetric::L2;
     bool use_heuristic = true;
 };
 
-class Int8FloatHNSW {
+class Uint8FloatHNSW {
 public:
     struct Edge {
         uint32_t neighbor;
@@ -158,7 +158,7 @@ public:
     // caps attacker-controlled allocations during deserialize(). See float_hnsw.
     static constexpr uint32_t MAX_DESERIALIZE_LEVEL = 64;
 
-    Int8FloatHNSW(size_t dims, const Int8FloatHNSWConfig& config = {})
+    Uint8FloatHNSW(size_t dims, const Uint8FloatHNSWConfig& config = {})
         : dims_(dims)
         , metric_(config.metric)
         , M_(config.M)
@@ -551,14 +551,14 @@ public:
             std::vector<uint8_t>().swap(deleted_);
             std::vector<uint32_t>().swap(visited_list_);
 
-            Int8FloatHNSWConfig config;
+            Uint8FloatHNSWConfig config;
             config.M = M_;
             config.ef_construction = ef_construction_;
             config.ef_search = ef_search_;
             config.max_elements = max_elements_;
             config.metric = metric_;
             config.use_heuristic = use_heuristic_;
-            Int8FloatHNSW rebuilt(dims_, config);
+            Uint8FloatHNSW rebuilt(dims_, config);
 
             std::vector<float> restored(dims_);
             for (uint32_t new_id = 0; new_id < live_id; ++new_id) {
@@ -1138,7 +1138,7 @@ private:
                 g_build_profile.base_prune_calls++;
                 g_build_profile.base_prune_candidates += candidates.size();
             });
-#if defined(PANCAKE_INT8_HNSW_BUILD_PROFILE)
+#if defined(PANCAKE_UINT8_HNSW_BUILD_PROFILE)
             double sort_t0 = emscripten_get_now();
             std::sort(candidates.begin(), candidates.end());
             g_build_profile.prune_sort_ms += emscripten_get_now() - sort_t0;
@@ -1204,7 +1204,7 @@ private:
         float dot = 0.0f;
         size_t d = 0;
 
-#ifdef INT8_HNSW_WASM_SIMD
+#ifdef UINT8_HNSW_WASM_SIMD
         v128_t acc0 = wasm_f32x4_splat(0.0f);
         v128_t acc1 = wasm_f32x4_splat(0.0f);
         v128_t acc2 = wasm_f32x4_splat(0.0f);
@@ -1239,7 +1239,7 @@ private:
                                     wasm_f32x4_add(acc2, acc3));
         dot = wasm_f32x4_extract_lane(acc, 0) + wasm_f32x4_extract_lane(acc, 1) +
               wasm_f32x4_extract_lane(acc, 2) + wasm_f32x4_extract_lane(acc, 3);
-#elif defined(INT8_HNSW_AVX512_SIMD)
+#elif defined(UINT8_HNSW_AVX512_SIMD)
         __m512 acc0 = _mm512_setzero_ps();
         __m512 acc1 = _mm512_setzero_ps();
         __m512 acc2 = _mm512_setzero_ps();
@@ -1273,7 +1273,7 @@ private:
         alignas(64) float tmp[16];
         _mm512_store_ps(tmp, acc);
         for (int i = 0; i < 16; ++i) dot += tmp[i];
-#elif defined(INT8_HNSW_AVX2_SIMD)
+#elif defined(UINT8_HNSW_AVX2_SIMD)
         __m256 acc0 = _mm256_setzero_ps();
         __m256 acc1 = _mm256_setzero_ps();
         __m256 acc2 = _mm256_setzero_ps();
@@ -1313,7 +1313,7 @@ private:
         alignas(32) float tmp[8];
         _mm256_store_ps(tmp, acc);
         dot = tmp[0] + tmp[1] + tmp[2] + tmp[3] + tmp[4] + tmp[5] + tmp[6] + tmp[7];
-#elif defined(INT8_HNSW_SSE2_SIMD)
+#elif defined(UINT8_HNSW_SSE2_SIMD)
         __m128 acc0 = _mm_setzero_ps();
         __m128 acc1 = _mm_setzero_ps();
         __m128 acc2 = _mm_setzero_ps();
@@ -1359,7 +1359,7 @@ private:
         float sum = 0.0f;
         size_t d = 0;
 
-#ifdef INT8_HNSW_WASM_SIMD
+#ifdef UINT8_HNSW_WASM_SIMD
         v128_t acc0 = wasm_f32x4_splat(0.0f);
         v128_t acc1 = wasm_f32x4_splat(0.0f);
         v128_t acc2 = wasm_f32x4_splat(0.0f);
@@ -1397,7 +1397,7 @@ private:
                                     wasm_f32x4_add(acc2, acc3));
         sum = wasm_f32x4_extract_lane(acc, 0) + wasm_f32x4_extract_lane(acc, 1) +
               wasm_f32x4_extract_lane(acc, 2) + wasm_f32x4_extract_lane(acc, 3);
-#elif defined(INT8_HNSW_AVX512_SIMD)
+#elif defined(UINT8_HNSW_AVX512_SIMD)
         __m512 acc0 = _mm512_setzero_ps();
         __m512 acc1 = _mm512_setzero_ps();
         __m512 acc2 = _mm512_setzero_ps();
@@ -1435,7 +1435,7 @@ private:
         alignas(64) float tmp[16];
         _mm512_store_ps(tmp, acc);
         for (int i = 0; i < 16; ++i) sum += tmp[i];
-#elif defined(INT8_HNSW_AVX2_SIMD)
+#elif defined(UINT8_HNSW_AVX2_SIMD)
         __m256 acc0 = _mm256_setzero_ps();
         __m256 acc1 = _mm256_setzero_ps();
         __m256 acc2 = _mm256_setzero_ps();
@@ -1479,7 +1479,7 @@ private:
         alignas(32) float tmp[8];
         _mm256_store_ps(tmp, acc);
         sum = tmp[0] + tmp[1] + tmp[2] + tmp[3] + tmp[4] + tmp[5] + tmp[6] + tmp[7];
-#elif defined(INT8_HNSW_SSE2_SIMD)
+#elif defined(UINT8_HNSW_SSE2_SIMD)
         __m128 acc0 = _mm_setzero_ps();
         __m128 acc1 = _mm_setzero_ps();
         __m128 acc2 = _mm_setzero_ps();
@@ -1518,13 +1518,13 @@ private:
         return sum;
     }
 
-    uint32_t int8_dot(uint32_t a, uint32_t b) const {
+    uint32_t uint8_dot(uint32_t a, uint32_t b) const {
         const uint8_t* da = &qdata_[a * dims_];
         const uint8_t* db = &qdata_[b * dims_];
         uint32_t sum = 0;
         size_t d = 0;
 
-#ifdef INT8_HNSW_WASM_SIMD
+#ifdef UINT8_HNSW_WASM_SIMD
         v128_t acc = wasm_i32x4_splat(0);
         for (; d + 16 <= dims_; d += 16) {
             v128_t va = wasm_v128_load(da + d);
@@ -1543,7 +1543,7 @@ private:
         sum = static_cast<uint32_t>(
             wasm_i32x4_extract_lane(acc, 0) + wasm_i32x4_extract_lane(acc, 1) +
             wasm_i32x4_extract_lane(acc, 2) + wasm_i32x4_extract_lane(acc, 3));
-#elif defined(INT8_HNSW_AVX2_SIMD)
+#elif defined(UINT8_HNSW_AVX2_SIMD)
         __m256i acc = _mm256_setzero_si256();
         for (; d + 32 <= dims_; d += 32) {
             __m128i va0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(da + d));
@@ -1561,7 +1561,7 @@ private:
         alignas(32) uint32_t tmp[8];
         _mm256_store_si256(reinterpret_cast<__m256i*>(tmp), acc);
         sum = tmp[0] + tmp[1] + tmp[2] + tmp[3] + tmp[4] + tmp[5] + tmp[6] + tmp[7];
-#elif defined(INT8_HNSW_SSE2_SIMD)
+#elif defined(UINT8_HNSW_SSE2_SIMD)
         __m128i acc = _mm_setzero_si128();
         __m128i zero = _mm_setzero_si128();
         for (; d + 16 <= dims_; d += 16) {
@@ -1591,12 +1591,12 @@ private:
         return sum;
     }
 
-    float symmetric_l2_i8(uint32_t a, uint32_t b) const {
+    float symmetric_l2_u8(uint32_t a, uint32_t b) const {
         float sa = scales_[a], oa = offsets_[a];
         float sb = scales_[b], ob = offsets_[b];
         float D = static_cast<float>(dims_);
         float diff_o = oa - ob;
-        float dot_ab = static_cast<float>(int8_dot(a, b));
+        float dot_ab = static_cast<float>(uint8_dot(a, b));
 
         return D * diff_o * diff_o
              + 2.0f * diff_o * (sa * static_cast<float>(sum_q_[a]) - sb * static_cast<float>(sum_q_[b]))
@@ -1605,11 +1605,11 @@ private:
              - 2.0f * sa * sb * dot_ab;
     }
 
-    float symmetric_cosine_i8(uint32_t a, uint32_t b) const {
+    float symmetric_cosine_u8(uint32_t a, uint32_t b) const {
         float sa = scales_[a], oa = offsets_[a];
         float sb = scales_[b], ob = offsets_[b];
         float D = static_cast<float>(dims_);
-        float dot_ab = static_cast<float>(int8_dot(a, b));
+        float dot_ab = static_cast<float>(uint8_dot(a, b));
 
         float dot = D * oa * ob
                   + oa * sb * static_cast<float>(sum_q_[b])
@@ -1622,8 +1622,8 @@ private:
 
     float distance(uint32_t a, uint32_t b) const {
         return (metric_ == DistanceMetric::Cosine)
-            ? symmetric_cosine_i8(a, b)
-            : symmetric_l2_i8(a, b);
+            ? symmetric_cosine_u8(a, b)
+            : symmetric_l2_u8(a, b);
     }
 
     float distance_to_query(uint32_t id) const {
@@ -1775,7 +1775,7 @@ private:
         for (const Edge& edge : edges) {
             candidates.emplace_back(edge.dist, edge.neighbor);
         }
-#if defined(PANCAKE_INT8_HNSW_BUILD_PROFILE)
+#if defined(PANCAKE_UINT8_HNSW_BUILD_PROFILE)
         double sort_t0 = emscripten_get_now();
         std::sort(candidates.begin(), candidates.end());
         g_build_profile.prune_sort_ms += emscripten_get_now() - sort_t0;

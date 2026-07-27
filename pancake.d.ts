@@ -42,14 +42,16 @@ export interface CreateOptions {
   maxElements?: number;
   /** Distance metric (default: 'cosine'). */
   metric?: Metric;
-  /** Use int8 quantized storage (default: true). */
+  /** Use uint8 quantized storage (default: true). */
   quantized?: boolean;
-  /** HNSW graph connectivity (default: 16). Valid range: 2-128. */
+  /** HNSW graph connectivity (default: 12). Valid range: 2-128. */
   M?: number;
-  /** Build-time search breadth (default: 50). Valid range: 1-4096. */
+  /** Build-time search breadth (default: 75). Valid range: 1-4096. */
   efConstruction?: number;
   /** Query-time search breadth (default: 100). Valid range: 1-4096. */
   efSearch?: number;
+  /** RNG seed for deterministic HNSW level assignment (default: 108). */
+  seed?: number;
 }
 
 export interface SearchOptions {
@@ -124,6 +126,7 @@ export interface ResolvedConfig {
   readonly M: number;
   readonly efConstruction: number;
   readonly efSearch: number;
+  readonly seed: number;
 }
 
 export interface PancakeIndex {

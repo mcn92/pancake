@@ -1,7 +1,7 @@
 // pancake_py.cpp — pybind11 wrapper around the header-only Pancake HNSW engine.
 //
 // This exposes the SAME C++ engine used by the WASM and N-API builds
-// (src/int8_float_hnsw.hpp / src/float_hnsw.hpp) to Python, so neutral runners
+// (src/uint8_float_hnsw.hpp / src/float_hnsw.hpp) to Python, so neutral runners
 // such as ANN-Benchmarks and VIBE can benchmark the native engine without
 // passing through Node or WebAssembly.
 //
@@ -12,8 +12,8 @@
 //
 // Notes:
 //  * We accept float32 vectors and let the engine do its OWN asymmetric
-//    int8 quantization internally (quantized=true). This is the whole point
-//    of pancake — see the int8 header's "WHY ASYMMETRIC" comment — so we do
+//    uint8 quantization internally (quantized=true). This is the whole point
+//    of pancake — see the uint8 header's "WHY ASYMMETRIC" comment — so we do
 //    NOT consume VIBE's pre-quantized uint8 datasets. The Python wrapper only
 //    handles the float32 path; the VIBE config declares pancake under `float:`.
 //  * Single-threaded build/query to match VIBE's measurement convention
@@ -27,13 +27,13 @@
 #include <stdexcept>
 #include <string>
 
-#include "int8_float_hnsw.hpp"
+#include "uint8_float_hnsw.hpp"
 #include "float_hnsw.hpp"
 
 namespace py = pybind11;
 using pancake::wasm::DistanceMetric;
-using pancake::wasm::Int8FloatHNSW;
-using pancake::wasm::Int8FloatHNSWConfig;
+using pancake::wasm::Uint8FloatHNSW;
+using pancake::wasm::Uint8FloatHNSWConfig;
 using pancake::wasm::FloatHNSW;
 using pancake::wasm::FloatHNSWConfig;
 
@@ -46,14 +46,14 @@ public:
         DistanceMetric m = (metric == "cosine") ? DistanceMetric::Cosine
                                                  : DistanceMetric::L2;
         if (quantized_) {
-            Int8FloatHNSWConfig cfg;
+            Uint8FloatHNSWConfig cfg;
             cfg.max_elements = max_elements;
             cfg.M = M;
             cfg.ef_construction = ef_construction;
             cfg.ef_search = 100;
             cfg.metric = m;
             cfg.use_heuristic = true;
-            i8_ = new Int8FloatHNSW(dim, cfg);
+            i8_ = new Uint8FloatHNSW(dim, cfg);
         } else {
             FloatHNSWConfig cfg;
             cfg.max_elements = max_elements;
@@ -117,7 +117,7 @@ public:
 private:
     size_t dim_;
     bool quantized_;
-    Int8FloatHNSW* i8_ = nullptr;
+    Uint8FloatHNSW* i8_ = nullptr;
     FloatHNSW*     f32_ = nullptr;
 };
 

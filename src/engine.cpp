@@ -1,5 +1,5 @@
 #include "float_hnsw.hpp"
-#include "int8_float_hnsw.hpp"
+#include "uint8_float_hnsw.hpp"
 #include <unordered_map>
 #include <algorithm>
 #include <cstdlib>
@@ -15,14 +15,20 @@ using namespace pancake::wasm;
 
 namespace {
 
+constexpr size_t DEFAULT_MAX_ELEMENTS = 100000;
+constexpr size_t DEFAULT_M = 12;
+constexpr size_t DEFAULT_EF_CONSTRUCTION = 75;
+constexpr size_t DEFAULT_EF_SEARCH = 100;
+constexpr uint32_t DEFAULT_SEED = 108;
+
 size_t serialized_index_count_hint(const uint8_t* data, size_t size, uint32_t versioned_magic) {
-    if (!data || size < 12) return 100000;
+    if (!data || size < 12) return DEFAULT_MAX_ELEMENTS;
 
     uint32_t magic = 0;
     std::memcpy(&magic, data, sizeof(magic));
 
     size_t count_offset = (magic == versioned_magic) ? 12 : 8;
-    if (size < count_offset + 4) return 100000;
+    if (size < count_offset + 4) return DEFAULT_MAX_ELEMENTS;
 
     uint32_t count = 0;
     std::memcpy(&count, data + count_offset, sizeof(count));
@@ -99,13 +105,13 @@ public:
     size_t dimension() const override { return dims_; }
 };
 
-class Int8FloatHNSWWrapper : public IndexWrapper {
-    std::unique_ptr<Int8FloatHNSW> impl_;
-    Int8FloatHNSWConfig cfg_;
+class Uint8FloatHNSWWrapper : public IndexWrapper {
+    std::unique_ptr<Uint8FloatHNSW> impl_;
+    Uint8FloatHNSWConfig cfg_;
     size_t dims_;
 public:
-    Int8FloatHNSWWrapper(size_t dims, const Int8FloatHNSWConfig& cfg)
-        : impl_(std::make_unique<Int8FloatHNSW>(dims, cfg)), cfg_(cfg), dims_(dims) {}
+    Uint8FloatHNSWWrapper(size_t dims, const Uint8FloatHNSWConfig& cfg)
+        : impl_(std::make_unique<Uint8FloatHNSW>(dims, cfg)), cfg_(cfg), dims_(dims) {}
 
     uint32_t insert(const float* vec) override { return impl_->insert(vec); }
     int bulk_insert(const float* vecs, int n) override { return impl_->bulk_insert(vecs, n); }
@@ -125,10 +131,10 @@ public:
     std::vector<uint8_t> serialize() const override { return impl_->serialize(); }
     bool deserialize(const uint8_t* data, size_t size) override {
         size_t cnt = serialized_index_count_hint(data, size, 0x49384831);
-        Int8FloatHNSWConfig cfg = cfg_;
+        Uint8FloatHNSWConfig cfg = cfg_;
         if (cnt > cfg.max_elements) return false;
 
-        auto next = std::make_unique<Int8FloatHNSW>(dims_, cfg);
+        auto next = std::make_unique<Uint8FloatHNSW>(dims_, cfg);
         if (!next->deserialize(data, size)) return false;
         impl_ = std::move(next);
         return true;
@@ -176,7 +182,7 @@ extern "C" {
 // =============================================================================
 
 uint32_t pancake_init(int dim, int max_elem, int quantized, int metric,
-                      int M, int ef_c, int ef_s) {
+                      int M, int ef_c, int ef_s, int seed) {
     if (dim <= 0 || max_elem <= 0) return INVALID_HANDLE;
 
     uint32_t h = alloc_handle();
@@ -186,20 +192,22 @@ uint32_t pancake_init(int dim, int max_elem, int quantized, int metric,
     bool use_cosine = (metric == 1);
 
     if (quantized) {
-        Int8FloatHNSWConfig i8cfg;
-        i8cfg.max_elements = static_cast<size_t>(max_elem);
-        i8cfg.M = (M > 0) ? static_cast<size_t>(M) : 16;
-        i8cfg.ef_construction = (ef_c > 0) ? static_cast<size_t>(ef_c) : 50;
-        i8cfg.ef_search = (ef_s > 0) ? static_cast<size_t>(ef_s) : 100;
-        i8cfg.metric = use_cosine ? DistanceMetric::Cosine : DistanceMetric::L2;
-        i8cfg.use_heuristic = true;
-        g_handles[h].index = new Int8FloatHNSWWrapper(dim, i8cfg);
+        Uint8FloatHNSWConfig u8cfg;
+        u8cfg.max_elements = static_cast<size_t>(max_elem);
+        u8cfg.M = (M > 0) ? static_cast<size_t>(M) : DEFAULT_M;
+        u8cfg.ef_construction = (ef_c > 0) ? static_cast<size_t>(ef_c) : DEFAULT_EF_CONSTRUCTION;
+        u8cfg.ef_search = (ef_s > 0) ? static_cast<size_t>(ef_s) : DEFAULT_EF_SEARCH;
+        u8cfg.seed = (seed > 0) ? static_cast<uint32_t>(seed) : DEFAULT_SEED;
+        u8cfg.metric = use_cosine ? DistanceMetric::Cosine : DistanceMetric::L2;
+        u8cfg.use_heuristic = true;
+        g_handles[h].index = new Uint8FloatHNSWWrapper(dim, u8cfg);
     } else {
         FloatHNSWConfig cfg;
         cfg.max_elements = static_cast<size_t>(max_elem);
-        cfg.M = (M > 0) ? static_cast<size_t>(M) : 16;
-        cfg.ef_construction = (ef_c > 0) ? static_cast<size_t>(ef_c) : 50;
-        cfg.ef_search = (ef_s > 0) ? static_cast<size_t>(ef_s) : 100;
+        cfg.M = (M > 0) ? static_cast<size_t>(M) : DEFAULT_M;
+        cfg.ef_construction = (ef_c > 0) ? static_cast<size_t>(ef_c) : DEFAULT_EF_CONSTRUCTION;
+        cfg.ef_search = (ef_s > 0) ? static_cast<size_t>(ef_s) : DEFAULT_EF_SEARCH;
+        cfg.seed = (seed > 0) ? static_cast<uint32_t>(seed) : DEFAULT_SEED;
         cfg.metric = use_cosine ? DistanceMetric::Cosine : DistanceMetric::L2;
         g_handles[h].index = new FloatHNSWWrapper(dim, cfg);
     }
@@ -329,7 +337,7 @@ void* emsc_malloc(size_t size) { return malloc(size); }
 void emsc_free(void* ptr) { free(ptr); }
 
 void pancake_profile_print(uint32_t range_start, uint32_t range_end) {
-#if defined(PANCAKE_INT8_HNSW_BUILD_PROFILE)
+#if defined(PANCAKE_UINT8_HNSW_BUILD_PROFILE)
     pancake::wasm::g_build_profile.print(range_start, range_end);
 #else
     (void)range_start;
@@ -338,7 +346,7 @@ void pancake_profile_print(uint32_t range_start, uint32_t range_end) {
 }
 
 void pancake_profile_reset() {
-#if defined(PANCAKE_INT8_HNSW_BUILD_PROFILE)
+#if defined(PANCAKE_UINT8_HNSW_BUILD_PROFILE)
     pancake::wasm::g_build_profile.reset();
 #endif
 }

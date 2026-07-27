@@ -19,8 +19,8 @@ const SUPPORTED_SNAPSHOT_MAGICS = new Set([
   0x504E434B, // PNCK envelope
   0x464C4857, // FLHW raw float v0
   0x464C4831, // FLH1 raw float v1
-  0x49384857, // I8HW raw int8 v0
-  0x49384831, // I8H1 raw int8 v1
+  0x49384857, // I8HW raw uint8 v0
+  0x49384831, // I8H1 raw uint8 v1
 ]);
 
 function readWasmBinary(fileName) {

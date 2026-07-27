@@ -62,7 +62,7 @@ function ensureScalarBuild() {
         path.join(ROOT, 'build.sh'),
         path.join(ROOT, 'src', 'engine.cpp'),
         path.join(ROOT, 'src', 'float_hnsw.hpp'),
-        path.join(ROOT, 'src', 'int8_float_hnsw.hpp'),
+        path.join(ROOT, 'src', 'uint8_float_hnsw.hpp'),
     ];
     if (fs.existsSync(scalarJs) && fs.existsSync(scalarWasm)) {
         const scalarMtime = Math.min(fs.statSync(scalarJs).mtimeMs, fs.statSync(scalarWasm).mtimeMs);
@@ -113,8 +113,8 @@ async function main() {
     const annScenarios = [
         { label: 'float-cosine', dim: 64, metric: 'cosine', quantized: false, count: 120, k: 8 },
         { label: 'float-l2', dim: 48, metric: 'l2', quantized: false, count: 100, k: 6 },
-        { label: 'int8-cosine', dim: 96, metric: 'cosine', quantized: true, count: 140, k: 8 },
-        { label: 'int8-l2', dim: 72, metric: 'l2', quantized: true, count: 110, k: 6 },
+        { label: 'u8-cosine', dim: 96, metric: 'cosine', quantized: true, count: 140, k: 8 },
+        { label: 'u8-l2', dim: 72, metric: 'l2', quantized: true, count: 110, k: 6 },
     ];
 
     for (const scenario of annScenarios) {
