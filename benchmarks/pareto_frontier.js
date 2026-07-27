@@ -12,10 +12,10 @@
  *      of recall targets, log-linearly interpolated along each frontier.
  *
  * Configs (8):
- *   pancake-wasm   int8 / fp32   (Pancake.create, setEfSearch per ef)
- *   pancake-native int8 / fp32   (native.pancake_*, pancake_set_ef per ef)
- *   usearch        i8 / f16 / f32 (build-once-save-view per ef — JS binding
- *                                 only honors expansion_search at construction)
+ *   pancake-wasm   u8 / fp32   (Pancake.create, setEfSearch per ef)
+ *   pancake-native u8 / fp32   (native.pancake_*, pancake_set_ef per ef)
+ *   usearch        wasm i8 / native f16 / native f32 (build-once-save-view per
+ *                                 ef — expansion_search is fixed at construction)
  *   hnswlib        f32           (HierarchicalNSW.setEf per ef)
  *
  * All libraries use the same M and ef_construction, and every config is swept
@@ -26,12 +26,16 @@
  *   node benchmarks/pareto_frontier.js --dataset sift
  *   node benchmarks/pareto_frontier.js --dataset nytimes
  *   node benchmarks/pareto_frontier.js --dataset glove
+ *   node benchmarks/pareto_frontier.js --dataset mnist
  *   node benchmarks/pareto_frontier.js --dataset custom --base-file base.fvecs --query-file query.fvecs --metric l2
  *   node benchmarks/pareto_frontier.js --dataset custom --hdf5-file glove-100-angular.hdf5 --metric cosine
  *   node benchmarks/pareto_frontier.js --dataset dbpedia --data-dir ./dbpedia
  *   node benchmarks/pareto_frontier.js --count 50000
  *   node benchmarks/pareto_frontier.js --ef-search-values 10,50,100,200
  *   node benchmarks/pareto_frontier.js --regenerate-gt
+ *   node benchmarks/pareto_frontier.js --dataset nytimes --zero-vector-policy fail
+ *   node benchmarks/pareto_frontier.js --dataset nytimes --library pancake
+ *   node benchmarks/pareto_frontier.js --dataset nytimes --configs pancake-wasm-u8,pancake-wasm-fp32
  */
 
 const { spawnSync } = require('child_process');
@@ -49,6 +53,8 @@ catch (e) { console.warn('WARN: pancake native binding not built (cd native && n
 let usearch;
 try { usearch = require('usearch'); }
 catch (e) { console.warn('WARN: usearch not installed — skipping usearch configs.'); }
+
+const DEFAULT_USEARCH_WASM_PATH = path.join(__dirname, '..', 'external', 'usearch-wasm', 'USearch-v2.6.1', 'build_wasm', 'wasm', 'index.wasm');
 
 let HierarchicalNSW;
 try { HierarchicalNSW = require('hnswlib-node').HierarchicalNSW; }
@@ -71,7 +77,14 @@ function getBoolArg(name) {
 function hasArg(name) {
   return rawArgs.includes('--' + name);
 }
+function getCsvArg(name) {
+  const raw = getStrArg(name, '');
+  return raw.split(',').map(v => v.trim()).filter(Boolean);
+}
 const REGENERATE_GT = rawArgs.includes('--regenerate-gt');
+const USEARCH_WASM_PATH = path.resolve(getStrArg('usearch-wasm', DEFAULT_USEARCH_WASM_PATH));
+const HAVE_USEARCH_WASM = fs.existsSync(USEARCH_WASM_PATH);
+if (!HAVE_USEARCH_WASM) console.warn(`WARN: usearch WASM artifact not found at ${USEARCH_WASM_PATH} — skipping usearch-wasm configs.`);
 
 // --- Dataset selection ---------------------------------------------------
 // Built-in datasets use fvecs/ivecs files checked into the expected local
@@ -109,6 +122,12 @@ const DATASETS = {
     hdf5File: 'glove-100-angular.hdf5',
     defaultCount: null,
     metric: 'cosine',
+  },
+  mnist: {
+    dir: path.join(__dirname, '..'),
+    imageFile: 'train-images-idx3-ubyte',
+    defaultCount: 50_000,
+    metric: 'l2',
   },
 };
 if (!DATASETS[DATASET] && DATASET !== 'custom') {
@@ -158,13 +177,26 @@ const EF_SEARCH_VALUES = resolveSweepValues(parsedArgs, [10, 20, 40, 60, 80, 100
 const REPETITIONS = 3;
 const WARMUP_QUERIES = 200;
 const WRITE_PLOT = !getBoolArg('no-plot');
+const DEFAULT_ZERO_VECTOR_POLICY = METRIC === 'cosine' ? 'sentinel' : 'drop';
+const ZERO_VECTOR_POLICY = getStrArg('zero-vector-policy', DEFAULT_ZERO_VECTOR_POLICY).toLowerCase();
+if (!['drop', 'fail', 'sentinel'].includes(ZERO_VECTOR_POLICY)) {
+  console.error(`Unsupported --zero-vector-policy ${ZERO_VECTOR_POLICY}. Use drop, fail, or sentinel.`);
+  process.exit(1);
+}
+
+const CONFIG_FILTER_LABELS = new Set(getCsvArg('configs'));
+const CONFIG_FILTER_LIBRARIES = new Set(getCsvArg('library'));
+if (CONFIG_FILTER_LABELS.size > 0 && CONFIG_FILTER_LIBRARIES.size > 0) {
+  console.error('Use either --configs or --library, not both.');
+  process.exit(1);
+}
 
 // --- Config table. Every config is ef-swept (no single-point libraries). ---
-const CONFIGS = [];
-CONFIGS.push({ label: 'pancake-wasm-int8',   library: 'pancake', runtime: 'wasm',   dtype: 'i8',  sweep: true });
+let CONFIGS = [];
+CONFIGS.push({ label: 'pancake-wasm-u8',   library: 'pancake', runtime: 'wasm',   dtype: 'u8',  sweep: true });
 CONFIGS.push({ label: 'pancake-wasm-fp32',   library: 'pancake', runtime: 'wasm',   dtype: 'f32', sweep: true });
 if (native) {
-  CONFIGS.push({ label: 'pancake-native-int8', library: 'pancake', runtime: 'native', dtype: 'i8',  sweep: true });
+  CONFIGS.push({ label: 'pancake-native-u8', library: 'pancake', runtime: 'native', dtype: 'u8',  sweep: true });
   CONFIGS.push({ label: 'pancake-native-fp32', library: 'pancake', runtime: 'native', dtype: 'f32', sweep: true });
 }
 if (usearch) {
@@ -172,8 +204,36 @@ if (usearch) {
   CONFIGS.push({ label: 'usearch-f16',  library: 'usearch', dtype: 'f16', sweep: true });
   CONFIGS.push({ label: 'usearch-fp32', library: 'usearch', dtype: 'f32', sweep: true });
 }
+if (HAVE_USEARCH_WASM) {
+  CONFIGS.push({ label: 'usearch-wasm-int8', library: 'usearch-wasm', runtime: 'wasm', dtype: 'i8', sweep: true });
+  CONFIGS.push({ label: 'usearch-wasm-fp32', library: 'usearch-wasm', runtime: 'wasm', dtype: 'f32', sweep: true });
+}
 if (HierarchicalNSW) {
   CONFIGS.push({ label: 'hnswlib-fp32', library: 'hnswlib', dtype: 'f32', sweep: true });
+}
+const AVAILABLE_CONFIG_LABELS = new Set(CONFIGS.map(c => c.label));
+const AVAILABLE_CONFIG_LIBRARIES = new Set(CONFIGS.map(c => c.library));
+if (CONFIG_FILTER_LABELS.size > 0) {
+  const unknown = [...CONFIG_FILTER_LABELS].filter(label => !AVAILABLE_CONFIG_LABELS.has(label));
+  if (unknown.length > 0) {
+    console.error(`Unknown --configs value(s): ${unknown.join(', ')}`);
+    console.error(`Available configs: ${[...AVAILABLE_CONFIG_LABELS].join(', ')}`);
+    process.exit(1);
+  }
+  CONFIGS = CONFIGS.filter(c => CONFIG_FILTER_LABELS.has(c.label));
+}
+if (CONFIG_FILTER_LIBRARIES.size > 0) {
+  const unknown = [...CONFIG_FILTER_LIBRARIES].filter(library => !AVAILABLE_CONFIG_LIBRARIES.has(library));
+  if (unknown.length > 0) {
+    console.error(`Unknown --library value(s): ${unknown.join(', ')}`);
+    console.error(`Available libraries: ${[...AVAILABLE_CONFIG_LIBRARIES].join(', ')}`);
+    process.exit(1);
+  }
+  CONFIGS = CONFIGS.filter(c => CONFIG_FILTER_LIBRARIES.has(c.library));
+}
+if (CONFIGS.length === 0) {
+  console.error('No benchmark configs selected.');
+  process.exit(1);
 }
 
 // --- Output paths ---
@@ -228,6 +288,47 @@ function readIvecs(filePath, maxRows) {
     if (maxRows && rows.length >= maxRows) break;
   }
   return rows;
+}
+
+function readIdxImages(filePath, maxTrain, maxQueries) {
+  log(`  Loading ${filePath} (IDX images)...`);
+  const buf = fs.readFileSync(filePath);
+  if (buf.length < 16) throw new Error(`IDX image file is truncated: ${filePath}`);
+  const magic = buf.readUInt32BE(0);
+  const count = buf.readUInt32BE(4);
+  const rows = buf.readUInt32BE(8);
+  const cols = buf.readUInt32BE(12);
+  if (magic !== 2051) throw new Error(`Unsupported IDX image magic ${magic}; expected 2051`);
+  const dim = rows * cols;
+  const expectedBytes = 16 + count * dim;
+  if (buf.length < expectedBytes) {
+    throw new Error(`IDX image file is truncated: expected ${expectedBytes} bytes, got ${buf.length}`);
+  }
+
+  const trainCount = Math.min(maxTrain || count, count);
+  const queryStart = trainCount;
+  const queryCount = Math.min(maxQueries || 0, Math.max(0, count - queryStart));
+  if (trainCount === 0) throw new Error('IDX image dataset has no base vectors');
+  if (queryCount === 0) {
+    throw new Error(`IDX image dataset has no query vectors after selecting ${trainCount.toLocaleString()} base vectors`);
+  }
+
+  const readRows = (start, n) => {
+    const vectors = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const vec = new Float32Array(dim);
+      const rowOffset = 16 + (start + i) * dim;
+      for (let d = 0; d < dim; d++) vec[d] = buf[rowOffset + d] / 255;
+      vectors[i] = vec;
+    }
+    return vectors;
+  };
+
+  const train = readRows(0, trainCount);
+  const test = readRows(queryStart, queryCount);
+  log(`  IDX images: ${count.toLocaleString()} total, ${rows}x${cols} -> ${dim}D`);
+  log(`  IDX split:  ${train.length.toLocaleString()} base, ${test.length.toLocaleString()} queries`);
+  return { train, test, groundTruth: null, dim };
 }
 
 function readFloatMatrix(buf, offset, rows, dim) {
@@ -388,28 +489,55 @@ function distanceForMetric(a, b, dim) {
   return 1 - dot / ((Math.sqrt(an) || 1) * (Math.sqrt(bn) || 1));
 }
 
-function isIndexableVector(vec, dim) {
+function vectorStatus(vec, dim) {
   let normSq = 0;
   for (let d = 0; d < dim; d++) {
     const value = vec[d];
-    if (!Number.isFinite(value)) return false;
+    if (!Number.isFinite(value)) return { ok: false, reason: 'non-finite' };
     normSq += value * value;
   }
-  return METRIC !== 'cosine' || (normSq > 0 && Number.isFinite(normSq));
+  if (METRIC === 'cosine' && (!(normSq > 0) || !Number.isFinite(normSq))) {
+    return { ok: false, reason: 'zero-norm' };
+  }
+  return { ok: true, reason: null };
 }
 
-function filterIndexableVectors(vectors, dim, label) {
+function sentinelVector(dim) {
+  const v = new Float32Array(dim);
+  v[0] = 1;
+  return v;
+}
+
+function prepareIndexableVectors(vectors, dim, label) {
   const kept = [];
   const dropped = [];
+  const replaced = [];
   for (let i = 0; i < vectors.length; i++) {
-    if (isIndexableVector(vectors[i], dim)) kept.push(vectors[i]);
-    else dropped.push(i);
+    const status = vectorStatus(vectors[i], dim);
+    if (status.ok) {
+      kept.push(vectors[i]);
+    } else if (METRIC === 'cosine' && status.reason === 'zero-norm' && ZERO_VECTOR_POLICY === 'sentinel') {
+      kept.push(sentinelVector(dim));
+      replaced.push(i);
+    } else if (ZERO_VECTOR_POLICY === 'fail' || ZERO_VECTOR_POLICY === 'sentinel') {
+      log(`ERROR: ${label} vector ${i} is not indexable for ${METRIC} (${status.reason}).`);
+      if (ZERO_VECTOR_POLICY === 'sentinel' && status.reason !== 'zero-norm') {
+        log('  --zero-vector-policy sentinel only repairs zero-norm cosine vectors; non-finite vectors still fail.');
+      }
+      process.exit(1);
+    } else {
+      dropped.push(i);
+    }
   }
   if (dropped.length > 0) {
     log('  Dropped ' + dropped.length.toLocaleString() + ' non-indexable ' + label + ' vector(s) for ' + METRIC + '.');
     log('  First dropped ' + label + ' row(s): ' + dropped.slice(0, 8).join(', ') + (dropped.length > 8 ? ', ...' : ''));
   }
-  return { vectors: kept, dropped };
+  if (replaced.length > 0) {
+    log('  Replaced ' + replaced.length.toLocaleString() + ' zero-norm ' + label + ' vector(s) with a deterministic cosine sentinel.');
+    log('  First replaced ' + label + ' row(s): ' + replaced.slice(0, 8).join(', ') + (replaced.length > 8 ? ', ...' : ''));
+  }
+  return { vectors: kept, dropped, replaced };
 }
 
 function computeGroundTruth(train, queries, dim) {
@@ -462,6 +590,9 @@ function formatMB(bytes) {
   const mb = bytesToMB(bytes);
   return mb == null ? 'n/a' : mb.toFixed(1) + ' MB';
 }
+function pancakeWasmHeapBytes(index) {
+  return index.memoryUsage?.wasmHeapBytes ?? null;
+}
 function systemInfo() {
   const cpus = os.cpus() || [];
   return {
@@ -499,7 +630,7 @@ function plotTitle({ train, test, dim }) {
 
 // --- Pancake WASM ---
 async function buildPancakeWasm({ train, dim, dtype }) {
-  const quantized = dtype === 'i8';
+  const quantized = dtype === 'u8';
   log(`  [${dtype} wasm] build (M=${M}, ef_c=${EF_CONSTRUCTION}, metric=${METRIC})...`);
   const rssBefore = measureRssBytes();
   const index = await Pancake.create({
@@ -512,9 +643,10 @@ async function buildPancakeWasm({ train, dim, dtype }) {
     index.addBatch(train.slice(start, Math.min(start + batchSize, train.length)));
   }
   const buildMs = performance.now() - t0;
+  const heapBytes = pancakeWasmHeapBytes(index);
   const rssDelta = rssDeltaBytes(rssBefore, measureRssBytes());
-  log(`  [${dtype} wasm] build: ${(buildMs / 1000).toFixed(1)}s, memory: ${formatMB(index.memory)} (rss +${formatMB(rssDelta)})`);
-  return { index, buildMs, memBytes: index.memory, memorySource: 'reported', rssDeltaBytes: rssDelta };
+  log(`  [${dtype} wasm] build: ${(buildMs / 1000).toFixed(1)}s, logical index: ${formatMB(index.memory)} (wasm heap ${formatMB(heapBytes)}, rss +${formatMB(rssDelta)})`);
+  return { index, buildMs, memBytes: index.memory, memorySource: 'logical_index', wasmHeapBytes: heapBytes, rssDeltaBytes: rssDelta };
 }
 function queryPancakeWasm(built, test, gt, ef) {
   built.index.setEfSearch(ef);
@@ -532,10 +664,10 @@ function queryPancakeWasm(built, test, gt, ef) {
 
 // --- Pancake native ---
 function buildPancakeNative({ train, dim, dtype }) {
-  const quantized = dtype === 'i8' ? 1 : 0;
+  const quantized = dtype === 'u8' ? 1 : 0;
   log(`  [${dtype} native] build (M=${M}, ef_c=${EF_CONSTRUCTION}, metric=${METRIC})...`);
   const rssBefore = measureRssBytes();
-  const h = native.pancake_init(dim, train.length, quantized, nativeMetricValue(), M, EF_CONSTRUCTION, EF_SEARCH_VALUES[0]);
+  const h = native.pancake_init(dim, train.length, quantized, nativeMetricValue(), M, EF_CONSTRUCTION, EF_SEARCH_VALUES[0], 108);
   if (h === 0xFFFFFFFF) throw new Error('Failed to init native index');
   const t0 = performance.now();
   const flat = new Float32Array(train.length * dim);
@@ -548,8 +680,8 @@ function buildPancakeNative({ train, dim, dtype }) {
   const buildMs = performance.now() - t0;
   const memBytes = native.pancake_memory(h);
   const rssDelta = rssDeltaBytes(rssBefore, measureRssBytes());
-  log(`  [${dtype} native] build: ${(buildMs / 1000).toFixed(1)}s, memory: ${formatMB(memBytes)} (rss +${formatMB(rssDelta)})`);
-  return { handle: h, buildMs, memBytes, memorySource: 'reported', rssDeltaBytes: rssDelta };
+  log(`  [${dtype} native] build: ${(buildMs / 1000).toFixed(1)}s, logical index: ${formatMB(memBytes)} (rss +${formatMB(rssDelta)})`);
+  return { handle: h, buildMs, memBytes, memorySource: 'logical_index', rssDeltaBytes: rssDelta };
 }
 function queryPancakeNative(built, test, gt, ef) {
   native.pancake_set_ef(built.handle, ef);
@@ -584,8 +716,8 @@ function buildUsearch({ train, dim, dtype }) {
   const savePath = path.join(RESULTS_DIR, `_usearch_${dtype}_${timestamp}.bin`);
   index.save(savePath);
   const fileBytes = fs.statSync(savePath).size;
-  log(`  [usearch-${dtype}] build: ${(buildMs / 1000).toFixed(1)}s, index file: ${formatMB(fileBytes)} (rss +${formatMB(rssDelta)}, saved to ${savePath})`);
-  return { buildMs, memBytes: fileBytes, memorySource: 'file_size', rssDeltaBytes: rssDelta, savePath, quantization, dim, metric };
+  log(`  [usearch-${dtype}] build: ${(buildMs / 1000).toFixed(1)}s, serialized index: ${formatMB(fileBytes)} (rss +${formatMB(rssDelta)}, saved to ${savePath})`);
+  return { buildMs, memBytes: fileBytes, memorySource: 'serialized_index', rssDeltaBytes: rssDelta, savePath, quantization, dim, metric };
 }
 function queryUsearch(built, test, gt, ef) {
   const view = new usearch.Index({
@@ -605,6 +737,303 @@ function queryUsearch(built, test, gt, ef) {
   return { latencies, meanRecall: totalRecall / test.length };
 }
 
+// --- USearch WASM ---
+// Built from the official WASM target. The generated JS glue does not expose
+// heap accessors, so this adapter uses the exported C ABI directly.
+const USEARCH_WASM_METRIC = { cos: 1, l2sq: 3 };
+const USEARCH_WASM_SCALAR = { f32: 1, i8: 4 };
+const USEARCH_WASM_OPTIONS_SIZE = 32;
+
+let usearchWasmModulePromise = null;
+
+function makeUsearchWasmImports(memoryRef) {
+  const errnoNosys = -52;
+  const writeU32 = (ptr, value) => {
+    if (!memoryRef.memory || !ptr) return;
+    new DataView(memoryRef.memory.buffer).setUint32(ptr, value >>> 0, true);
+  };
+  const writeU64 = (ptr, value) => {
+    if (!memoryRef.memory || !ptr) return;
+    new DataView(memoryRef.memory.buffer).setBigUint64(ptr, BigInt(value), true);
+  };
+  const cxaThrow = () => { throw new Error('USearch WASM C++ exception'); };
+  const fcntl64 = () => 0;
+  const fstat64 = () => errnoNosys;
+  const ioctl = () => errnoNosys;
+  const newfstatat = () => errnoNosys;
+  const openat = () => errnoNosys;
+  const abortJs = () => { throw new Error('USearch WASM aborted'); };
+  const mmapJs = () => 0;
+  const munmapJs = () => 0;
+  const heapMax = () => memoryRef.memory ? memoryRef.memory.buffer.byteLength : 0x7fffffff;
+  const now = () => performance.now();
+  const resizeHeap = (requestedSize) => {
+    const memory = memoryRef.memory;
+    if (!memory) return 0;
+    const oldBytes = memory.buffer.byteLength;
+    if (requestedSize <= oldBytes) return 1;
+    const pageSize = 64 * 1024;
+    const pages = Math.ceil((requestedSize - oldBytes) / pageSize);
+    try {
+      memory.grow(pages);
+      return 1;
+    } catch (_) {
+      return 0;
+    }
+  };
+  const fdClose = () => 0;
+  const fdRead = (_fd, _iov, _iovcnt, pnum) => { writeU32(pnum, 0); return 0; };
+  const fdSeek = (_fd, _offset, _whence, newOffset) => { writeU64(newOffset, 0); return 0; };
+  const fdWrite = (_fd, iov, iovcnt, pnum) => {
+    const memory = memoryRef.memory;
+    if (!memory) { writeU32(pnum, 0); return 0; }
+    const data = new DataView(memory.buffer);
+    let written = 0;
+    for (let i = 0; i < iovcnt; i++) {
+      written += data.getUint32(iov + i * 8 + 4, true);
+    }
+    writeU32(pnum, written);
+    return 0;
+  };
+  return {
+    env: {
+      __assert_fail: () => { throw new Error('USearch WASM assertion failed'); },
+      __cxa_throw: cxaThrow,
+      __syscall_openat: openat,
+      __syscall_fcntl64: fcntl64,
+      __syscall_ioctl: ioctl,
+      __syscall_fstat64: fstat64,
+      __syscall_stat64: fstat64,
+      __syscall_newfstatat: newfstatat,
+      __syscall_lstat64: fstat64,
+      emscripten_get_now: now,
+      _munmap_js: munmapJs,
+      _mmap_js: mmapJs,
+      _abort_js: abortJs,
+      emscripten_resize_heap: resizeHeap,
+      emscripten_get_heap_max: heapMax,
+    },
+    wasi_snapshot_preview1: {
+      fd_close: fdClose,
+      fd_read: fdRead,
+      fd_seek: fdSeek,
+      fd_write: fdWrite,
+    },
+    // Optimized Emscripten builds may minify imports into a single module.
+    a: {
+      a: cxaThrow,
+      e: fcntl64,
+      i: fstat64,
+      k: ioctl,
+      h: newfstatat,
+      f: openat,
+      m: abortJs,
+      o: mmapJs,
+      p: munmapJs,
+      l: heapMax,
+      b: now,
+      n: resizeHeap,
+      c: fdClose,
+      j: fdRead,
+      g: fdSeek,
+      d: fdWrite,
+    },
+  };
+}
+
+async function loadUsearchWasmModule() {
+  if (!usearchWasmModulePromise) {
+    usearchWasmModulePromise = (async () => {
+      const memoryRef = { memory: null };
+      const bytes = fs.readFileSync(USEARCH_WASM_PATH);
+      const { instance } = await WebAssembly.instantiate(bytes, makeUsearchWasmImports(memoryRef));
+      memoryRef.memory = instance.exports.memory || instance.exports.q;
+      const stackInit = instance.exports.emscripten_stack_init;
+      if (stackInit) stackInit();
+      (instance.exports.__wasm_call_ctors || instance.exports.r)();
+      return { exports: instance.exports, memoryRef };
+    })();
+  }
+  return usearchWasmModulePromise;
+}
+
+class UsearchWasmRuntime {
+  constructor(module) {
+    this.exports = module.exports;
+    this.memoryRef = module.memoryRef;
+    this.minified = !this.exports.usearch_init;
+  }
+  fn(name, minifiedName) { return this.exports[name] || this.exports[minifiedName]; }
+  memory() { return this.memoryRef.memory; }
+  u8() { return new Uint8Array(this.memory().buffer); }
+  i32() { return new Int32Array(this.memory().buffer); }
+  u32() { return new Uint32Array(this.memory().buffer); }
+  f32() { return new Float32Array(this.memory().buffer); }
+  dataView() { return new DataView(this.memory().buffer); }
+  stackSave() { return this.exports.emscripten_stack_get_current ? this.exports.emscripten_stack_get_current() : 0; }
+  stackAlloc(bytes) {
+    return this.exports._emscripten_stack_alloc
+      ? this.exports._emscripten_stack_alloc(bytes)
+      : this.alloc(bytes);
+  }
+  stackRestore(ptr) {
+    if (ptr && this.exports._emscripten_stack_restore) this.exports._emscripten_stack_restore(ptr);
+  }
+  alloc(bytes, alignment = 16) {
+    const memalign = this.fn('emscripten_builtin_memalign', 'N');
+    const ptr = memalign(alignment, bytes);
+    if (!ptr) throw new Error(`USearch WASM allocation failed (${bytes} bytes)`);
+    return ptr;
+  }
+  readCString(ptr) {
+    if (!ptr) return '';
+    const heap = this.u8();
+    let end = ptr;
+    while (end < heap.length && heap[end] !== 0) end++;
+    return Buffer.from(heap.subarray(ptr, end)).toString('utf8');
+  }
+  resetError(errPtr) {
+    this.u32()[errPtr >> 2] = 0;
+  }
+  checkError(errPtr, context) {
+    const err = this.u32()[errPtr >> 2];
+    if (err) throw new Error(`${context}: ${this.readCString(err) || `error pointer ${err}`}`);
+  }
+  writeOptions(ptr, { dim, ef, quantization }) {
+    this.u8().fill(0, ptr, ptr + USEARCH_WASM_OPTIONS_SIZE);
+    const words = this.i32();
+    words[(ptr + 0) >> 2] = USEARCH_WASM_METRIC[usearchMetricValue()];
+    words[(ptr + 4) >> 2] = 0; // custom metric function pointer
+    words[(ptr + 8) >> 2] = quantization;
+    words[(ptr + 12) >> 2] = dim;
+    words[(ptr + 16) >> 2] = M;
+    words[(ptr + 20) >> 2] = EF_CONSTRUCTION;
+    words[(ptr + 24) >> 2] = ef;
+    words[(ptr + 28) >> 2] = 0; // multi
+  }
+  initIndex(dim, ef, quantization, errPtr) {
+    const sp = this.stackSave();
+    try {
+      const optsPtr = this.stackAlloc(USEARCH_WASM_OPTIONS_SIZE);
+      this.writeOptions(optsPtr, { dim, ef, quantization });
+      this.resetError(errPtr);
+      const handle = this.fn('usearch_init', 's')(optsPtr, errPtr);
+      this.checkError(errPtr, 'usearch_init');
+      if (!handle) throw new Error('usearch_init returned null');
+      return handle;
+    } finally {
+      this.stackRestore(sp);
+    }
+  }
+  freeIndex(handle, errPtr) {
+    if (!handle) return;
+    this.resetError(errPtr);
+    this.fn('usearch_free', 't')(handle, errPtr);
+    this.checkError(errPtr, 'usearch_free');
+  }
+}
+
+async function buildUsearchWasm({ train, dim, dtype }) {
+  if (!['i8', 'f32'].includes(dtype)) throw new Error(`Unsupported usearch-wasm dtype: ${dtype}`);
+  const metric = usearchMetricValue();
+  const quantization = dtype === 'i8' ? USEARCH_WASM_SCALAR.i8 : USEARCH_WASM_SCALAR.f32;
+  log(`  [usearch-wasm-${dtype}] build (connectivity=${M}, expansion_add=${EF_CONSTRUCTION}, metric=${metric}, quantization=${dtype}, wasm=${USEARCH_WASM_PATH})...`);
+  const runtime = new UsearchWasmRuntime(await loadUsearchWasmModule());
+  const rssBefore = measureRssBytes();
+  const sp = runtime.stackSave();
+  let handle = 0;
+  try {
+    const errPtr = runtime.stackAlloc(4);
+    const vecPtr = runtime.stackAlloc(dim * 4);
+    handle = runtime.initIndex(dim, EF_SEARCH_VALUES[0], quantization, errPtr);
+    runtime.resetError(errPtr);
+    runtime.fn('usearch_reserve', 'F')(handle, train.length, errPtr);
+    runtime.checkError(errPtr, 'usearch_reserve');
+
+    const t0 = performance.now();
+    for (let i = 0; i < train.length; i++) {
+      runtime.f32().set(train[i], vecPtr >> 2);
+      runtime.resetError(errPtr);
+      runtime.fn('usearch_add', 'G')(handle, BigInt(i), vecPtr, USEARCH_WASM_SCALAR.f32, errPtr);
+      runtime.checkError(errPtr, `usearch_add(${i})`);
+    }
+    const buildMs = performance.now() - t0;
+
+    runtime.resetError(errPtr);
+    const serializedBytes = runtime.fn('usearch_serialized_length', 'u')(handle, errPtr);
+    runtime.checkError(errPtr, 'usearch_serialized_length');
+    const snapshotPtr = runtime.alloc(Number(serializedBytes), 16);
+    runtime.resetError(errPtr);
+    runtime.fn('usearch_save_buffer', 'y')(handle, snapshotPtr, serializedBytes, errPtr);
+    runtime.checkError(errPtr, 'usearch_save_buffer');
+
+    const heapBytes = runtime.memory().buffer.byteLength;
+    const rssDelta = rssDeltaBytes(rssBefore, measureRssBytes());
+    log(`  [usearch-wasm-${dtype}] build: ${(buildMs / 1000).toFixed(1)}s, serialized index: ${formatMB(Number(serializedBytes))} (wasm heap ${formatMB(heapBytes)}, rss +${formatMB(rssDelta)})`);
+    return {
+      runtime, handle, snapshotPtr, snapshotBytes: Number(serializedBytes),
+      buildMs, memBytes: Number(serializedBytes), memorySource: 'serialized_index',
+      wasmHeapBytes: heapBytes, rssDeltaBytes: rssDelta, dim, metric, quantization,
+    };
+  } catch (e) {
+    if (handle) {
+      try {
+        const errPtr = runtime.stackAlloc(4);
+        runtime.freeIndex(handle, errPtr);
+      } catch (_) {}
+    }
+    throw e;
+  } finally {
+    runtime.stackRestore(sp);
+  }
+}
+
+function queryUsearchWasm(built, test, gt, ef) {
+  const runtime = built.runtime;
+  const sp = runtime.stackSave();
+  let viewHandle = 0;
+  try {
+    const errPtr = runtime.stackAlloc(4);
+    const queryPtr = runtime.stackAlloc(built.dim * 4);
+    const keysPtr = runtime.stackAlloc(K * 8);
+    const distancesPtr = runtime.stackAlloc(K * 4);
+    viewHandle = runtime.initIndex(built.dim, ef, built.quantization, errPtr);
+    runtime.resetError(errPtr);
+    runtime.fn('usearch_view_buffer', 'A')(viewHandle, built.snapshotPtr, built.snapshotBytes, errPtr);
+    runtime.checkError(errPtr, 'usearch_view_buffer');
+
+    const search = (queryVec) => {
+      runtime.f32().set(queryVec, queryPtr >> 2);
+      runtime.resetError(errPtr);
+      const count = runtime.fn('usearch_search', 'J')(viewHandle, queryPtr, USEARCH_WASM_SCALAR.f32, K, keysPtr, distancesPtr, errPtr);
+      runtime.checkError(errPtr, 'usearch_search');
+      const data = runtime.dataView();
+      const ids = new Array(Number(count));
+      for (let j = 0; j < ids.length; j++) ids[j] = Number(data.getBigUint64(keysPtr + j * 8, true));
+      return ids;
+    };
+
+    for (let i = 0; i < WARMUP_QUERIES && i < test.length; i++) search(test[i]);
+    const latencies = new Array(test.length);
+    let totalRecall = 0;
+    for (let i = 0; i < test.length; i++) {
+      const st = performance.now();
+      const ids = search(test[i]);
+      latencies[i] = performance.now() - st;
+      totalRecall += recall(ids, gt[i]);
+    }
+    return { latencies, meanRecall: totalRecall / test.length };
+  } finally {
+    if (viewHandle) {
+      try {
+        const errPtr = runtime.stackAlloc(4);
+        runtime.freeIndex(viewHandle, errPtr);
+      } catch (_) {}
+    }
+    runtime.stackRestore(sp);
+  }
+}
+
 // --- hnswlib-node ---
 function buildHnswlib({ train, dim }) {
   const metric = hnswlibMetricValue();
@@ -616,8 +1045,8 @@ function buildHnswlib({ train, dim }) {
   for (let i = 0; i < train.length; i++) index.addPoint(Array.from(train[i]), i);
   const buildMs = performance.now() - t0;
   const rssDelta = rssDeltaBytes(rssBefore, measureRssBytes());
-  log(`  [hnswlib-f32] build: ${(buildMs / 1000).toFixed(1)}s, estimated memory: ${formatMB(rssDelta)} RSS`);
-  return { index, buildMs, memBytes: rssDelta, memorySource: 'rss_delta', rssDeltaBytes: rssDelta };
+  log(`  [hnswlib-f32] build: ${(buildMs / 1000).toFixed(1)}s, rss delta: ${formatMB(rssDelta)} (no index-size API)`);
+  return { index, buildMs, memBytes: null, memorySource: null, rssDeltaBytes: rssDelta };
 }
 function queryHnswlib(built, test, gt, ef) {
   built.index.setEf(ef);
@@ -643,6 +1072,7 @@ async function build(config, dataset) {
         ? await buildPancakeWasm({ train, dim, dtype: config.dtype })
         : buildPancakeNative({ train, dim, dtype: config.dtype });
     case 'usearch': return buildUsearch({ train, dim, dtype: config.dtype });
+    case 'usearch-wasm': return await buildUsearchWasm({ train, dim, dtype: config.dtype });
     case 'hnswlib': return buildHnswlib({ train, dim });
   }
 }
@@ -654,11 +1084,21 @@ function query(config, built, dataset, ef) {
         ? queryPancakeWasm(built, test, groundTruth, ef)
         : queryPancakeNative(built, test, groundTruth, ef);
     case 'usearch': return queryUsearch(built, test, groundTruth, ef);
+    case 'usearch-wasm': return queryUsearchWasm(built, test, groundTruth, ef);
     case 'hnswlib': return queryHnswlib(built, test, groundTruth, ef);
   }
 }
 function cleanup(config, built) {
   if (config.library === 'pancake' && config.runtime === 'native') native.pancake_dispose(built.handle);
+  else if (config.library === 'usearch-wasm' && built.runtime) {
+    const sp = built.runtime.stackSave();
+    try {
+      const errPtr = built.runtime.stackAlloc(4);
+      built.runtime.freeIndex(built.handle, errPtr);
+    } finally {
+      built.runtime.stackRestore(sp);
+    }
+  }
   else if (built.index && typeof built.index.dispose === 'function') built.index.dispose();
   if (built.savePath && fs.existsSync(built.savePath)) fs.unlinkSync(built.savePath);
 }
@@ -708,6 +1148,7 @@ async function sweepOne(config, dataset) {
     buildMs: built.buildMs,
     memMB: bytesToMB(built.memBytes),
     memorySource: built.memorySource || (built.memBytes != null ? 'reported' : null),
+    wasmHeapMB: bytesToMB(built.wasmHeapBytes),
     rssDeltaMB: bytesToMB(built.rssDeltaBytes),
     params: { M, ef_construction: EF_CONSTRUCTION, K },
     points,
@@ -816,7 +1257,7 @@ function buildAnalysis(allResults) {
 function writeRawCsv(allResults, p) {
   const rows = [['label', 'library', 'runtime', 'dtype', 'tunable', 'ef_search',
                  'recall', 'recall_std', 'qps', 'qps_std', 'p50_ms', 'p95_ms', 'p99_ms',
-                 'build_s', 'memory_mb', 'memory_source', 'rss_delta_mb']];
+                 'build_s', 'memory_mb', 'memory_source', 'wasm_heap_mb', 'rss_delta_mb']];
   for (const r of allResults) for (const pt of r.points) {
     rows.push([
       r.label, r.library, r.runtime || '', r.dtype, r.tunable, pt.ef_search,
@@ -826,6 +1267,7 @@ function writeRawCsv(allResults, p) {
       (r.buildMs / 1000).toFixed(3),
       r.memMB == null ? '' : r.memMB.toFixed(2),
       r.memorySource || '',
+      r.wasmHeapMB == null ? '' : r.wasmHeapMB.toFixed(2),
       r.rssDeltaMB == null ? '' : r.rssDeltaMB.toFixed(2),
     ]);
   }
@@ -896,10 +1338,11 @@ function writePlot(title) {
 // =====================================================================
 async function main() {
   const hdf5Path = resolveDatasetPath(DS.hdf5File);
-  const basePath = hdf5Path ? null : resolveDatasetPath(DS.baseFile(N_BASE));
-  const queryPath = hdf5Path ? null : resolveDatasetPath(DS.queryFile);
-  const gtPath = hdf5Path ? null : resolveDatasetPath(DS.gtFile);
-  for (const f of [hdf5Path || basePath, ...(queryPath ? [queryPath] : []), ...(gtPath ? [gtPath] : [])]) {
+  const idxImagePath = hdf5Path ? null : resolveDatasetPath(DS.imageFile);
+  const basePath = hdf5Path || idxImagePath ? null : resolveDatasetPath(DS.baseFile(N_BASE));
+  const queryPath = hdf5Path || idxImagePath ? null : resolveDatasetPath(DS.queryFile);
+  const gtPath = hdf5Path || idxImagePath ? null : resolveDatasetPath(DS.gtFile);
+  for (const f of [hdf5Path || idxImagePath || basePath, ...(queryPath ? [queryPath] : []), ...(gtPath ? [gtPath] : [])]) {
     if (!fs.existsSync(f)) { log(`Missing file: ${f}`); process.exit(1); }
   }
 
@@ -913,18 +1356,23 @@ async function main() {
   log('\nLoading dataset...');
   const loaded = hdf5Path
     ? loadHdf5Dataset(hdf5Path, READ_LIMIT, N_QUERIES)
-    : (() => {
+    : idxImagePath
+      ? readIdxImages(idxImagePath, READ_LIMIT, N_QUERIES)
+      : (() => {
         const { vectors: train, dim } = readFvecs(basePath, READ_LIMIT);
         const { vectors: test } = readFvecs(queryPath, N_QUERIES);
         return { train, test, dim, groundTruth: null };
       })();
   let { train, test, dim } = loaded;
   let forceGroundTruthRecompute = false;
-  const filteredTrain = filterIndexableVectors(train, dim, 'base');
-  const filteredTest = filterIndexableVectors(test, dim, 'query');
-  if (filteredTrain.dropped.length || filteredTest.dropped.length) {
-    train = filteredTrain.vectors;
-    test = filteredTest.vectors;
+  const preparedTrain = prepareIndexableVectors(train, dim, 'base');
+  const preparedTest = prepareIndexableVectors(test, dim, 'query');
+  if (
+    preparedTrain.dropped.length || preparedTest.dropped.length ||
+    preparedTrain.replaced.length || preparedTest.replaced.length
+  ) {
+    train = preparedTrain.vectors;
+    test = preparedTest.vectors;
     forceGroundTruthRecompute = true;
     if (train.length < K) {
       log(`ERROR: only ${train.length} indexable base vectors remain, fewer than k=${K}.`);
@@ -934,7 +1382,7 @@ async function main() {
       log('ERROR: no indexable query vectors remain.');
       process.exit(1);
     }
-    log('  Recomputing ground truth because filtering changed the indexed/query set.');
+    log('  Recomputing ground truth because vector preparation changed the benchmark inputs.');
   }
   log(`  Base:    ${train.length.toLocaleString()} vectors, ${dim}D`);
   log(`  Queries: ${test.length.toLocaleString()}`);
@@ -983,17 +1431,27 @@ async function main() {
       queries: test.length,
       dim,
       metric: METRIC,
+      zeroVectorPolicy: ZERO_VECTOR_POLICY,
       source: hdf5Path || DATA_DIR,
       hdf5File: hdf5Path,
+      imageFile: idxImagePath,
       baseFile: basePath,
       queryFile: queryPath,
       groundTruthFile: gtPath,
     },
     memory: {
-      note: 'Pancake reports index memory directly. USearch memory uses saved index file size as a stable proxy. hnswlib memory uses process RSS delta during build; RSS is approximate and runtime-dependent.',
+      note: 'memory_mb is the stable index-size proxy: Pancake reports logical index bytes, while USearch uses serialized index bytes. hnswlib-node does not expose index size, so memory_mb is null for hnswlib. wasm_heap_mb reports the full WebAssembly heap buffer when available. rss_delta_mb is process RSS growth during build and is approximate/runtime-dependent.',
     },
     system: sysInfo,
-    params: { K, M, EF_CONSTRUCTION, EF_SEARCH_VALUES, REPETITIONS, WARMUP_QUERIES },
+    params: {
+      K,
+      M,
+      EF_CONSTRUCTION,
+      EF_SEARCH_VALUES,
+      REPETITIONS,
+      WARMUP_QUERIES,
+      CONFIGS: CONFIGS.map(c => c.label),
+    },
     results: allResults,
     frontiers: analysis.frontiers,
     equal_recall: analysis.equalRecall,

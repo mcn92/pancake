@@ -70,8 +70,10 @@ else:
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6), sharey=True)
 
-def plot_dtype_panel(ax, dtype_value, title):
-    subset = df[df['dtype'] == dtype_value]
+def plot_dtype_panel(ax, dtype_values, title):
+    if isinstance(dtype_values, str):
+        dtype_values = [dtype_values]
+    subset = df[df['dtype'].isin(dtype_values)]
     for label, g in subset.groupby('label'):
         g = g.sort_values('recall')
         st = style[label]
@@ -91,7 +93,7 @@ def plot_dtype_panel(ax, dtype_value, title):
     ax.legend(loc='lower left', framealpha=0.9, fontsize=8)
     ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
 
-plot_dtype_panel(ax1, 'i8', 'Pareto frontier: int8')
+plot_dtype_panel(ax1, ['u8', 'i8'], 'Pareto frontier: uint8 / int8')
 plot_dtype_panel(ax2, 'f32', 'Pareto frontier: fp32')
 ax1.set_ylabel('QPS (single-thread)', fontsize=12)
 if plot_title:

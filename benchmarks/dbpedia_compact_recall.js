@@ -2,14 +2,14 @@
 'use strict';
 
 /**
- * DBpedia int8 compaction recall benchmark.
+ * DBpedia uint8 compaction recall benchmark.
  *
  * Measures recall@K against brute-force L2 ground truth before and after:
  *   1. deleting a deterministic fraction of base vectors
  *   2. compacting the index
  *
  * This is meant to answer one specific question: does compaction materially
- * reduce int8 search quality on the real 1536D DBpedia workload?
+ * reduce uint8 search quality on the real 1536D DBpedia workload?
  *
  * Usage:
  *   node benchmarks/dbpedia_compact_recall.js
@@ -236,7 +236,7 @@ async function buildIndex(train, dim) {
     efSearch: EF_SEARCH,
   });
 
-  log(`Building Pancake int8 index (M=${M}, ef_c=${EF_CONSTRUCTION}, ef_s=${EF_SEARCH}, metric=l2)...`);
+  log(`Building Pancake u8 index (M=${M}, ef_c=${EF_CONSTRUCTION}, ef_s=${EF_SEARCH}, metric=l2)...`);
   const t0 = performance.now();
   const batchSize = 500;
   for (let start = 0; start < train.length; start += batchSize) {
@@ -281,7 +281,7 @@ async function main() {
   }
 
   log('='.repeat(72));
-  log('DBpedia int8 compaction recall benchmark');
+  log('DBpedia uint8 compaction recall benchmark');
   log('='.repeat(72));
   log(`Dataset: ${DBPEDIA_DIR}`);
   log(`Base vectors: ${N_BASE.toLocaleString()}  Queries: ${N_QUERIES.toLocaleString()}  k=${K}`);
@@ -338,7 +338,7 @@ async function main() {
   log(`\nRecall delta after delete+compact: ${(delta * 100).toFixed(2)} points`);
 
   const results = {
-    benchmark: 'dbpedia-compact-recall-l2-int8',
+    benchmark: 'dbpedia-compact-recall-l2-uint8',
     timestamp: new Date().toISOString(),
     dataset: {
       source: DBPEDIA_DIR,

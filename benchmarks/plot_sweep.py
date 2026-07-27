@@ -38,14 +38,14 @@ else:
     DATASET_NAME = 'Sweep'
 
 # Identify pancake and baseline labels from data. There can be several pancake
-# configs (i8/f32 x wasm/native); treat them all as the highlighted family
+# configs (u8/f32 x wasm/native); treat them all as the highlighted family
 # (warm, solid) and everything else as baselines (cool, dashed).
 labels = df['label'].unique().tolist()
 pancake_labels = [l for l in labels if 'pancake' in l.lower()]
 baseline_labels = [l for l in labels if l not in pancake_labels]
-# Primary pancake line used for ef annotations: prefer the shipped i8-wasm
+# Primary pancake line used for ef annotations: prefer the shipped u8-wasm
 # default, else the first pancake config present.
-pancake_label = next((l for l in pancake_labels if l == 'pancake-i8-wasm'),
+pancake_label = next((l for l in pancake_labels if l == 'pancake-u8-wasm'),
                      pancake_labels[0] if pancake_labels else None)
 
 # Marker pool (cycled) + per-family colormaps sized to the actual config counts,

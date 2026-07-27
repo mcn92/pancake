@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * Recall-QPS sweep on SIFT-1M: Pancake Int8 WASM vs hnswlib-node Float32 Native.
+ * Recall-QPS sweep on SIFT-1M: Pancake u8 WASM vs hnswlib-node Float32 Native.
  *
  * Uses the standard SIFT-1M dataset (1M vectors, 128D, L2).
  *
@@ -32,7 +32,7 @@ const REPETITIONS = 3;
 const WARMUP_QUERIES = 200;
 
 const CONFIGS = [
-  { label: 'pancake-int8-wasm',   library: 'pancake' },
+  { label: 'pancake-u8-wasm',   library: 'pancake' },
   { label: 'hnswlib-f32-native',  library: 'hnswlib' },
 ];
 
@@ -110,7 +110,7 @@ function stddev(arr) {
 
 // --- Pancake: build and query ---
 async function buildPancake({ train, dim }) {
-  log(`  [pancake-int8] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
+  log(`  [pancake-u8] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
   const index = await Pancake.create({
     dim,
     metric: 'l2',
@@ -142,7 +142,7 @@ async function buildPancake({ train, dim }) {
     }
   }
   const buildMs = performance.now() - t0;
-  log(`  [pancake-int8] build: ${(buildMs / 1000).toFixed(1)}s (${(train.length / (buildMs / 1000)).toFixed(0)} vec/s), memory: ${(index.memory / 1024 / 1024).toFixed(0)} MB`);
+  log(`  [pancake-u8] build: ${(buildMs / 1000).toFixed(1)}s (${(train.length / (buildMs / 1000)).toFixed(0)} vec/s), memory: ${(index.memory / 1024 / 1024).toFixed(0)} MB`);
   return { index, buildMs };
 }
 
@@ -279,7 +279,7 @@ async function sweepOne(config, dataset) {
   return {
     label: config.label,
     library: config.library,
-    dtype: config.library === 'pancake' ? 'i8' : 'f32',
+    dtype: config.library === 'pancake' ? 'u8' : 'f32',
     buildMs,
     params: { M, ef_construction: EF_CONSTRUCTION, K },
     points,

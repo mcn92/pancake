@@ -130,9 +130,9 @@ try {
 }
 
 const CONFIGS = [
-  { label: 'pancake-i8-wasm',     library: 'pancake',        dtype: 'i8' },
+  { label: 'pancake-u8-wasm',     library: 'pancake',        dtype: 'u8' },
   { label: 'pancake-f32-wasm',    library: 'pancake',        dtype: 'f32' },
-  { label: 'pancake-i8-native',   library: 'pancake-native', dtype: 'i8' },
+  { label: 'pancake-u8-native',   library: 'pancake-native', dtype: 'u8' },
   { label: 'pancake-f32-native',  library: 'pancake-native', dtype: 'f32' },
   { label: 'usearch-i8-native',   library: 'usearch',        dtype: 'i8' },
   { label: 'usearch-f32-native',  library: 'usearch',        dtype: 'f32' },
@@ -387,7 +387,7 @@ function queryUsearch(built, test, groundTruth, efSearch, dim) {
 
 // --- Pancake: build and query ---
 async function buildPancake({ train, dim, dtype }) {
-  const quantized = dtype === 'i8';
+  const quantized = dtype === 'u8';
   log(`  [pancake-${dtype}] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
   // create() defaults to cosine, which matches these angular datasets; no
   // explicit metric needed.
@@ -444,9 +444,9 @@ function queryPancake(index, test, groundTruth, efSearch) {
 // are angular datasets, so unlike the L2 pareto_frontier path this must NOT
 // pass L2.
 function buildPancakeNative({ train, dim, dtype }) {
-  const quantized = dtype === 'i8' ? 1 : 0;
+  const quantized = dtype === 'u8' ? 1 : 0;
   log(`  [pancake-${dtype}-native] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
-  const h = native.pancake_init(dim, train.length, quantized, 1 /* 1=cosine */, M, EF_CONSTRUCTION, EF_SEARCH_VALUES[0]);
+  const h = native.pancake_init(dim, train.length, quantized, 1 /* 1=cosine */, M, EF_CONSTRUCTION, EF_SEARCH_VALUES[0], 108);
   if (h === 0xFFFFFFFF) throw new Error('Failed to init native pancake index');
 
   const t0 = performance.now();

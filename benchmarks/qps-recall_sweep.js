@@ -48,7 +48,7 @@ const WARMUP_QUERIES = 200;   // Warmup per point (hot cache, V8 tier-up)
 
 // Which (library, dtype) combinations to run
 const CONFIGS = [
-  { label: 'pancake-int8-wasm',   library: 'pancake',  dtype: 'i8' },
+  { label: 'pancake-u8-wasm',   library: 'pancake',  dtype: 'u8' },
   { label: 'hnswlib-f32-native',  library: 'hnswlib',  dtype: 'f32' },
 ];
 
@@ -151,7 +151,7 @@ function stddev(arr) {
 
 // --- Pancake: build and query ---
 async function buildPancake({ train, dim, dtype }) {
-  const quantized = dtype === 'i8';
+  const quantized = dtype === 'u8';
   log(`  [pancake-${dtype}] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
   const index = await Pancake.create({
     dim,

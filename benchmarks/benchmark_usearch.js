@@ -5,7 +5,7 @@
  * Pancake vs USearch Benchmark (DBpedia 100K, L2, 1536D)
  *
  * Compares four configurations on the same recall-QPS sweep:
- *   1. Pancake Int8  (WASM, quantized)
+ *   1. Pancake u8  (WASM, quantized)
  *   2. Pancake FP32  (WASM, full precision)
  *   3. USearch Int8   (native, quantized)
  *   4. USearch FP32   (native, full precision)
@@ -61,9 +61,9 @@ const REPETITIONS = 3;
 const WARMUP_QUERIES = 200;
 
 const CONFIGS = [
-  { label: 'pancake-int8-wasm',   library: 'pancake',  dtype: 'i8'  },
+  { label: 'pancake-u8-wasm',   library: 'pancake',  dtype: 'u8'  },
   { label: 'pancake-f32-wasm',    library: 'pancake',  dtype: 'f32' },
-  { label: 'usearch-i8-native',   library: 'usearch',  dtype: 'i8'  },
+  { label: 'usearch-int8-native', library: 'usearch',  dtype: 'i8'  },
   { label: 'usearch-f32-native',  library: 'usearch',  dtype: 'f32' },
 ];
 if (HierarchicalNSW) {
@@ -198,7 +198,7 @@ function stddev(arr) {
 
 // --- Pancake: build + query ---
 async function buildPancake({ train, dim, dtype }) {
-  const quantized = dtype === 'i8';
+  const quantized = dtype === 'u8';
   log(`  [pancake-${dtype}] building index (M=${M}, ef_c=${EF_CONSTRUCTION}, metric=l2)...`);
   const index = await Pancake.create({
     dim,

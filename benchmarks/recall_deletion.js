@@ -83,7 +83,7 @@ function cosineDist(a, b) {
         efSearch: EF_SEARCH
     });
 
-    console.log(`Building index with ${N} vectors at 1536D (cosine, int8, M=${M}, ef_c=${EF_CONSTRUCTION}, ef_s=${EF_SEARCH})...`);
+    console.log(`Building index with ${N} vectors at 1536D (cosine, uint8, M=${M}, ef_c=${EF_CONSTRUCTION}, ef_s=${EF_SEARCH})...`);
     const t0 = Date.now();
     index.addBatch(all.slice(0, N));
     const buildSec = (Date.now() - t0) / 1000;

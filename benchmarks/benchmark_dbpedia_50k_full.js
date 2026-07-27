@@ -5,8 +5,8 @@
  * Full DBpedia 50K comparison benchmark (L2, 1536D)
  *
  * Compares:
- *   - Pancake Int8 WASM
- *   - Pancake Int8 Native
+ *   - Pancake u8 WASM
+ *   - Pancake u8 Native
  *   - Pancake FP32 WASM
  *   - Pancake FP32 Native
  *   - hnswlib-node FP32
@@ -204,8 +204,8 @@ function stddev(arr) {
 
 async function benchPancake(train, queries, groundTruth, dim, quantized, runtimeLabel) {
   if (runtimeLabel === 'native') {
-    const label = quantized ? 'pancake-int8-native' : 'pancake-f32-native';
-    const h = native.pancake_init(dim, train.length, quantized ? 1 : 0, 0, M, EF_CONSTRUCTION, EF_SEARCH);
+    const label = quantized ? 'pancake-u8-native' : 'pancake-f32-native';
+    const h = native.pancake_init(dim, train.length, quantized ? 1 : 0, 0, M, EF_CONSTRUCTION, EF_SEARCH, 108);
     if (h === 0xFFFFFFFF) throw new Error(`Failed to init ${label}`);
     const flat = new Float32Array(train.length * dim);
     for (let i = 0; i < train.length; i++) flat.set(train[i], i * dim);
@@ -244,7 +244,7 @@ async function benchPancake(train, queries, groundTruth, dim, quantized, runtime
     };
   }
 
-  const label = quantized ? 'pancake-int8-wasm' : 'pancake-f32-wasm';
+  const label = quantized ? 'pancake-u8-wasm' : 'pancake-f32-wasm';
   const index = await Pancake.create({
     dim,
     maxElements: train.length,
@@ -453,9 +453,9 @@ async function main() {
 
   const results = [];
 
-  log('--- Pancake Int8 WASM ---');
+  log('--- Pancake u8 WASM ---');
   results.push(await benchPancake(train, queries, groundTruth, dim, true, 'wasm'));
-  log('--- Pancake Int8 Native ---');
+  log('--- Pancake u8 Native ---');
   results.push(await benchPancake(train, queries, groundTruth, dim, true, 'native'));
   log('--- Pancake FP32 WASM ---');
   results.push(await benchPancake(train, queries, groundTruth, dim, false, 'wasm'));

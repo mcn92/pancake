@@ -2,12 +2,12 @@
 'use strict';
 
 /**
- * DBpedia 100K Benchmark: Pancake Int8 vs Pancake FP32 vs hnswlib-node
+ * DBpedia 100K Benchmark: Pancake u8 vs Pancake FP32 vs hnswlib-node
  *
  * Uses 100K vectors from the DBpedia-OpenAI-1536D dataset with
  * L2 distance. Sweeps ef_search to produce recall-QPS curves for three
  * configurations:
- *   1. Pancake Int8 (WASM, quantized)
+ *   1. Pancake u8 (WASM, quantized)
  *   2. Pancake FP32 (WASM, full precision)
  *   3. hnswlib-node Float32 (native addon)
  *
@@ -44,7 +44,7 @@ const REPETITIONS = 3;
 const WARMUP_QUERIES = 200;
 
 const CONFIGS = [
-  { label: 'pancake-int8-wasm',  library: 'pancake', dtype: 'i8'  },
+  { label: 'pancake-u8-wasm',  library: 'pancake', dtype: 'u8'  },
   { label: 'pancake-f32-wasm',   library: 'pancake', dtype: 'f32' },
   { label: 'hnswlib-f32-native', library: 'hnswlib', dtype: 'f32' },
 ];
@@ -194,7 +194,7 @@ function stddev(arr) {
 
 // --- Pancake: build + sweep ---
 async function buildPancake({ train, dim, dtype }) {
-  const quantized = dtype === 'i8';
+  const quantized = dtype === 'u8';
   log(`  [pancake-${dtype}] building index (M=${M}, ef_c=${EF_CONSTRUCTION}, metric=l2)...`);
   const index = await Pancake.create({
     dim,
@@ -422,7 +422,7 @@ async function main() {
   }
 
   log('='.repeat(70));
-  log('DBpedia 100K Benchmark: Pancake Int8 vs FP32 vs hnswlib (L2)');
+  log('DBpedia 100K Benchmark: Pancake u8 vs FP32 vs hnswlib (L2)');
   log('='.repeat(70));
 
   // Load dataset

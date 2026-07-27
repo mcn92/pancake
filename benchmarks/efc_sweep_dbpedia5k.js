@@ -88,7 +88,7 @@ async function main() {
 
   for (const efc of EFC_VALUES) {
     for (const quantized of [true, false]) {
-      const label = quantized ? 'int8' : 'fp32';
+      const label = quantized ? 'uint8' : 'fp32';
       const index = await Pancake.create({
         dim, maxElements: train.length, quantized,
         metric: 'l2', M, efConstruction: efc, efSearch: EF_SEARCH,

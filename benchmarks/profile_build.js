@@ -82,7 +82,7 @@ function generateSyntheticVec(dims) {
     }
 
     // quantized=1, metric=1 (cosine)
-    const handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, M, EF_C, EF_SEARCH);
+    const handle = engine._pancake_init(DIMS, MAX_ELEM, 1, 1, M, EF_C, EF_SEARCH, 108);
 
     const insertPtr = engine._emsc_malloc(DIMS * 4);
 

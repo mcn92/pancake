@@ -9,8 +9,8 @@
  * WASM overhead on both build and search.
  *
  * Configs:
- *   1. Pancake Int8  WASM    (WASM SIMD 128-bit)
- *   2. Pancake Int8  Native  (SSE2 128-bit)
+ *   1. Pancake u8  WASM    (WASM SIMD 128-bit)
+ *   2. Pancake u8  Native  (SSE2 128-bit)
  *   3. Pancake FP32  WASM    (WASM SIMD 128-bit)
  *   4. Pancake FP32  Native  (SSE2 128-bit)
  *
@@ -59,8 +59,8 @@ const REPETITIONS = 3;
 const WARMUP_QUERIES = 200;
 
 const CONFIGS = [
-  { label: 'pancake-int8-wasm',   runtime: 'wasm',   dtype: 'i8'  },
-  { label: 'pancake-int8-native', runtime: 'native', dtype: 'i8'  },
+  { label: 'pancake-u8-wasm',   runtime: 'wasm',   dtype: 'u8'  },
+  { label: 'pancake-u8-native', runtime: 'native', dtype: 'u8'  },
   { label: 'pancake-f32-wasm',    runtime: 'wasm',   dtype: 'f32' },
   { label: 'pancake-f32-native',  runtime: 'native', dtype: 'f32' },
 ];
@@ -188,7 +188,7 @@ function stddev(arr) {
 
 // --- Pancake WASM: build + query ---
 async function buildWasm({ train, dim, dtype }) {
-  const quantized = dtype === 'i8';
+  const quantized = dtype === 'u8';
   log(`  [wasm-${dtype}] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
   const index = await Pancake.create({
     dim, maxElements: train.length, quantized,
@@ -223,9 +223,9 @@ function queryWasm(index, test, groundTruth, efSearch) {
 
 // --- Pancake Native: build + query ---
 function buildNative({ train, dim, dtype }) {
-  const quantized = dtype === 'i8' ? 1 : 0;
+  const quantized = dtype === 'u8' ? 1 : 0;
   log(`  [native-${dtype}] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
-  const h = native.pancake_init(dim, train.length, quantized, 0 /* L2 */, M, EF_CONSTRUCTION, EF_SEARCH_VALUES[0]);
+  const h = native.pancake_init(dim, train.length, quantized, 0 /* L2 */, M, EF_CONSTRUCTION, EF_SEARCH_VALUES[0], 108);
   if (h === 0xFFFFFFFF) throw new Error('Failed to init native index');
 
   const t0 = performance.now();
@@ -358,7 +358,7 @@ function wasmOverheadSummary(results) {
   log('WASM Overhead Analysis');
   log('='.repeat(70));
 
-  for (const dtype of ['i8', 'f32']) {
+  for (const dtype of ['u8', 'f32']) {
     const wasm = results.find(r => r.runtime === 'wasm' && r.dtype === dtype);
     const nat  = results.find(r => r.runtime === 'native' && r.dtype === dtype);
     if (!wasm || !nat) continue;

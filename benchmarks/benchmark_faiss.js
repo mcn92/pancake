@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * Faiss Comparison Benchmark: Pancake Int8 vs Pancake FP32 vs Faiss HNSW vs Faiss Flat
+ * Faiss Comparison Benchmark: Pancake u8 vs Pancake FP32 vs Faiss HNSW vs Faiss Flat
  *
  * Uses the DBpedia-OpenAI-1536D dataset with L2 distance.
  * Faiss HNSW uses default efConstruction=40 and efSearch=16 (not tunable
@@ -114,7 +114,7 @@ function percentile(sorted, p) {
 
 // --- Benchmark runners ---
 async function benchPancake(train, queries, groundTruth, dim, quantized) {
-    const label = quantized ? 'pancake-int8' : 'pancake-f32';
+    const label = quantized ? 'pancake-u8' : 'pancake-f32';
     const index = await Pancake.create({
         dim, maxElements: train.length, quantized,
         metric: 'l2', M, efConstruction: EF_CONSTRUCTION, efSearch: EF_SEARCH,
@@ -317,7 +317,7 @@ async function main() {
     // Run all benchmarks
     const results = [];
 
-    console.log('--- Pancake Int8 ---');
+    console.log('--- Pancake u8 ---');
     results.push(await benchPancake(train, queries, groundTruth, dim, true));
 
     console.log('--- Pancake FP32 ---');

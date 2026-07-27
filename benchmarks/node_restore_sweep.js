@@ -129,7 +129,7 @@ async function buildSyntheticSnapshot(count) {
     index.addBatch(vectors);
 
     const snapshot = index.export();
-    const filePath = path.join(OUT_DIR, `node_restore_${count}_${DIM}d_${METRIC}_${QUANTIZED ? 'i8' : 'f32'}.pnck`);
+    const filePath = path.join(OUT_DIR, `node_restore_${count}_${DIM}d_${METRIC}_${QUANTIZED ? 'u8' : 'f32'}.pnck`);
     fs.writeFileSync(filePath, snapshot);
     return {
       filePath,

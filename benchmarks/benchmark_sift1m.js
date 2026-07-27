@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * SIFT-1M Benchmark: Pancake Int8 (WASM)
+ * SIFT-1M Benchmark: Pancake u8 (WASM)
  *
  * Uses the standard SIFT-1M dataset (1M vectors, 128D, L2).
  *
@@ -98,7 +98,7 @@ function percentile(sorted, p) {
 }
 
 async function benchPancake(train, test, groundTruth, dim) {
-  log('\n  Pancake Int8 (WASM)');
+  log('\n  Pancake u8 (WASM)');
   log('  Building index...');
 
   const index = await Pancake.create({
@@ -137,7 +137,7 @@ async function benchPancake(train, test, groundTruth, dim) {
   index.dispose();
 
   return {
-    name: 'Pancake Int8 (WASM)',
+    name: 'Pancake u8 (WASM)',
     buildSec: buildMs / 1000,
     memMB: memBytes / 1024 / 1024,
     recall: totalRecall / test.length,

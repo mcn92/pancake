@@ -85,7 +85,7 @@ async function run() {
     console.log('');
 
     for (const quantized of [true, false]) {
-        const label = quantized ? 'int8' : 'float32';
+        const label = quantized ? 'uint8' : 'float32';
         console.log(`--- ${label} ---`);
 
         const idx = await Pancake.create({
