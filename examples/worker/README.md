@@ -111,7 +111,7 @@ instead of returning `*`.
 ~(dim + 8 + 7 * M) * num_vectors bytes
 ```
 
-At `M=16` this is `(dim + 120)` bytes per vector. Examples: `30k x 256D = 10 MB`, `200k x 384D = 100 MB`. The fp32 backend uses `(4*dim + 8 + 7*M)` bytes per vector, roughly 4x more. Keep `MAX_ELEMENTS_LIMIT` aligned with this formula and your configured dimensions; the shipped `wrangler.toml` default is intentionally conservative for a 128 MB isolate.
+At the default `M=12` this is `(dim + 92)` bytes per vector. Examples: `30k x 256D = 10 MB`, `200k x 384D = 93 MB`. The fp32 backend uses `(4*dim + 8 + 7*M)` bytes per vector, roughly 4x more. Keep `MAX_ELEMENTS_LIMIT` aligned with this formula and your configured dimensions; the shipped `wrangler.toml` default is intentionally conservative for a 128 MB isolate.
 
 **CPU time.** Workers paid plan allows 50ms CPU per request (free tier: 10ms). Search comfortably fits within both tiers. Heavy operations such as `/import`, `/compact`, and large `/add_batch` requests can exceed free-tier limits on larger indexes.
 

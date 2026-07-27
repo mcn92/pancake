@@ -72,8 +72,8 @@ async function main() {
 
     const embeddingsPath = getArg('--embeddings', null);
     const outputPath = getArg('--output', 'index.pnck');
-    const M = parsePositiveInt(getArg('--m', '16'), '--m');
-    const efConstruction = parsePositiveInt(getArg('--ef-construction', '200'), '--ef-construction');
+    const M = parsePositiveInt(getArg('--m', '12'), '--m');
+    const efConstruction = parsePositiveInt(getArg('--ef-construction', '75'), '--ef-construction');
     const efSearch = parsePositiveInt(getArg('--ef-search', '100'), '--ef-search');
     const quantized = !hasFlag('--no-quantize');
 
@@ -83,10 +83,10 @@ async function main() {
         console.log('Options:');
         console.log('  --embeddings <path>    Input embeddings (required)');
         console.log('  --output <path>        Output Pancake snapshot (default: index.pnck)');
-        console.log('  --m <number>           HNSW M (default: 16)');
-        console.log('  --ef-construction <n>  Build quality (default: 200)');
+        console.log('  --m <number>           HNSW M (default: 12)');
+        console.log('  --ef-construction <n>  Build quality (default: 75)');
         console.log('  --ef-search <n>        Search quality for restored index (default: 100)');
-        console.log('  --no-quantize          Disable int8 quantization');
+        console.log('  --no-quantize          Disable uint8 quantization');
         process.exit(1);
     }
 
@@ -113,7 +113,7 @@ async function main() {
     });
 
     try {
-        console.log(`Building ${quantized ? 'int8' : 'float32'} index (M=${M}, efConstruction=${efConstruction})...`);
+        console.log(`Building ${quantized ? 'uint8' : 'float32'} index (M=${M}, efConstruction=${efConstruction})...`);
         const ids = index.addBatch(embeddings);
         const buildTime = (Date.now() - startTime) / 1000;
         console.log(`  Built ${ids.length} vectors in ${buildTime.toFixed(1)}s (${(ids.length / buildTime).toFixed(0)} vec/sec)`);

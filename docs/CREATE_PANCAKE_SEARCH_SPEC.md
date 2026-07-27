@@ -167,9 +167,10 @@ the worker template imports it under `workerd`.
     dim: manifest.dims,               // 384 for bge-small
     metric: 'cosine',
     quantized: true,
-    M: 16,
-    efConstruction: 200,
-    efSearch: 120,                    // default baked into the snapshot; worker may override
+    M: 12,
+    efConstruction: 75,
+    efSearch: 100,                    // default baked into the snapshot; worker may override
+    seed: 108,
     maxElements: Math.ceil(chunkCount * 1.25),
   });
   index.addBatch(vectors);
@@ -383,7 +384,7 @@ nav-heavy page, non-English).
 - **R5 — Corpus size vs Worker bundle limit:** the binding constraint is the **compressed
   script-size cap** (~3 MB free / ~10 MB paid), which the `[[rules]]` data modules count
   against — not the 128 MB isolate memory, which is never the first wall for bundled assets.
-  Rough budget at 384D quantized with ~256-token chunks: ~0.6 KB/chunk of snapshot (int8
+  Rough budget at 384D quantized with ~256-token chunks: ~0.6 KB/chunk of snapshot (uint8
   vectors, effectively incompressible) + ~0.5 KB/chunk of gzipped corpus JSON ⇒ a practical
   ceiling around **~2K chunks on the free plan, ~8K on paid**. The build computes the real gzip
   size and hard-fails past the limit with guidance (reduce scope / raise plan / wait for the

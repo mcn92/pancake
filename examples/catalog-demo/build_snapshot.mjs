@@ -23,9 +23,10 @@ async function main() {
     maxElements: rows.length,
     metric: 'cosine',
     quantized: true,
-    M: 16,
-    efConstruction: 50,
+    M: 12,
+    efConstruction: 75,
     efSearch: 100,
+    seed: 108,
   };
 
   const { index, ids, idMap } = await Pancake.fromVectors(rows, opts);

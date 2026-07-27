@@ -251,7 +251,7 @@ The demos exercise different paths:
 | `M` | 8–32 | Graph connectivity. Higher improves recall, increases memory and build time. |
 | `efConstruction` | 50–400 | Build beam width. Higher improves graph quality, slows build. |
 | `efSearch` / `ef` | 50–500 | Query beam width. Higher improves recall, slows search. |
-| `quantized` | `true` / `false` | Int8 quantization cuts memory significantly with some recall tradeoff. |
+| `quantized` | `true` / `false` | uint8 quantization cuts memory significantly with some recall tradeoff. |
 | `metric` | `'cosine'` / `'l2'` | Use cosine for normalized embeddings and L2 for unnormalized vectors. |
 
 For memory-constrained Worker deployments, the quantized path is usually the right default.

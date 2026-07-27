@@ -47,8 +47,8 @@ browsers, and Cloudflare Workers — no native dependency on the default path.
 The engine provides two interchangeable HNSW backends behind one API:
 
 - **`FloatHNSW`** — full-precision float32 storage and distances.
-- **`Int8FloatHNSW`** — row-wise int8 quantized storage with *asymmetric* search
-  (float32 query against int8 database), roughly 3.5× smaller than float32 at
+- **`Uint8FloatHNSW`** — row-wise uint8 quantized storage with *asymmetric* search
+  (float32 query against uint8 database), roughly 3.5× smaller than float32 at
   1536D with a modest recall-ceiling cost.
 
 A separate native Node N-API addon (`native/`) compiles the *same* two C++
@@ -81,8 +81,8 @@ the caller's responsibility.
 ├──────────────────────────────┬────────────────────────────────────┤
 │  Backend Layer (C++ templates-free, runtime dimension)            │
 │   ┌──────────────────┐   ┌────────────────────────────────────┐   │
-│   │ FloatHNSW        │   │ Int8FloatHNSW                      │   │
-│   │ float_hnsw.hpp   │   │ int8_float_hnsw.hpp               │   │
+│   │ FloatHNSW        │   │ Uint8FloatHNSW                      │   │
+│   │ float_hnsw.hpp   │   │ uint8_float_hnsw.hpp               │   │
 │   └──────────────────┘   └────────────────────────────────────┘   │
 │   Distance kernels: WASM SIMD128 / AVX-512 / AVX2 / SSE2 / scalar │
 └──────────────────────────────────────────────────────────────────┘
@@ -90,7 +90,7 @@ the caller's responsibility.
 
 The native addon (`native/pancake_napi.cpp`) replaces the *C ABI* layer with an
 N-API binding but reuses the identical backend layer — it `#include`s
-`float_hnsw.hpp` and `int8_float_hnsw.hpp` directly.
+`float_hnsw.hpp` and `uint8_float_hnsw.hpp` directly.
 
 The same `IndexWrapper` abstraction (`src/engine.cpp:38`) is used by both the
 WASM C ABI and the native addon (the native addon defines an equivalent wrapper
@@ -106,7 +106,7 @@ Both backends are runtime-dimension (no compile-time `DIMS` template
 specialization) and implement the same HNSW algorithm with backend-specific
 storage and distance kernels. The graph algorithm code (level assignment, greedy
 descent, layer beam search, neighbor selection, compaction) is **largely
-duplicated** between `float_hnsw.hpp` (~1190 lines) and `int8_float_hnsw.hpp`
+duplicated** between `float_hnsw.hpp` (~1190 lines) and `uint8_float_hnsw.hpp`
 (~1840 lines) rather than shared through a common base — a deliberate trade of
 DRY-ness for keeping each backend's hot path self-contained and independently
 tunable.
@@ -125,15 +125,15 @@ tunable.
 Identical in both backends: an exponential distribution
 `level = floor(-ln(U) * level_mult)` where `level_mult = 1 / ln(M)` and `U` is
 uniform (0,1) from a seeded `std::mt19937`. (`float_hnsw.hpp:115`,
-`int8_float_hnsw.hpp:244`.)
+`uint8_float_hnsw.hpp:244`.)
 
 ### 3.3 Insert
 
 1. Capacity check — returns `UINT32_MAX` if `count == max_elements` (no
-   resize). (`float_hnsw.hpp:120`, `int8_float_hnsw.hpp:194`.)
+   resize). (`float_hnsw.hpp:120`, `uint8_float_hnsw.hpp:194`.)
 2. Assign sequential internal id `count_++`.
 3. Store the vector (float32 stored raw, or normalized-then-quantized for the
-   int8 cosine path — see §4).
+   uint8 cosine path — see §4).
 4. Greedy descent from the entry point through the upper layers to the new
    node's top level (exhaustive per-layer neighbor scan, no beam).
 5. For each layer from the node's level down to 0: a beam search of width
@@ -149,8 +149,8 @@ diversity heuristic with **backfill** (the paper's "keep pruned connections"):
 a candidate is kept only if it is not closer to an already-selected neighbor than
 to the inserting node; if fewer than `M` survive, the closest rejected
 candidates are added back until `M` slots are filled. (`float_hnsw.hpp:1055`,
-`int8_float_hnsw.hpp:1716`.) The float backend caches pairwise candidate
-distances during selection to avoid recomputing them; the int8 backend leans on
+`uint8_float_hnsw.hpp:1716`.) The float backend caches pairwise candidate
+distances during selection to avoid recomputing them; the uint8 backend leans on
 its closed-form symmetric distance (§4.3) instead.
 
 **Per-node slot capacity is hard.** Layer-0 neighbor slots are pre-allocated at
@@ -159,27 +159,27 @@ a reciprocal edge to a node already holding `M0` neighbors must not append past
 `M0`. When a node is saturated, `append_neighbor` runs the diversity heuristic
 over the existing neighbors plus the new candidate and re-selects within `M0`
 rather than writing a transient `M0+1`th entry (which would corrupt the next
-node's slot, or overrun the buffer on the last node). The int8 backend's
+node's slot, or overrun the buffer on the last node). The uint8 backend's
 `append_edge_with_prune` follows the same rule. (`float_hnsw.hpp:853`,
-`int8_float_hnsw.hpp:1101`.)
+`uint8_float_hnsw.hpp:1101`.)
 
 ### 3.5 Delete and compaction
 
 - **Soft delete** sets a per-node flag in a `std::vector<uint8_t> deleted_`
   (one byte per node, not a packed bitset — a deliberate trade of memory for a
   branch-free check). The node stays in the graph and is skipped during
-  traversal. (`float_hnsw.hpp:376`, `int8_float_hnsw.hpp:478`.)
+  traversal. (`float_hnsw.hpp:376`, `uint8_float_hnsw.hpp:478`.)
 - **Compaction** has two topology strategies behind one stable-remap contract.
   Below 50% deletions it physically moves survivors into compacted positions,
   remaps every neighbor id, and backfills under-connected nodes through
   neighbors-of-neighbors. At 50% or more deletions, it rebuilds the HNSW graph
   from the live vectors in old-ID order; repairing a mostly hollow skeleton did
-  not recover recall reliably at scale. The int8 rebuild compacts its quantized
+  not recover recall reliably at scale. The uint8 rebuild compacts its quantized
   rows first and releases the old topology before reinsertion so the WASM
   allocator can reuse those blocks without increasing the retained heap.
   Deletion state is reset and the `old_id → new_id` map is returned through an
   `out_map` out-parameter. (`float_hnsw.hpp:390`,
-  `int8_float_hnsw.hpp:503`.)
+  `uint8_float_hnsw.hpp:503`.)
 
 The C ABI exposes both a void `compact()` and a `compact_remap()` that surfaces
 the `out_map`; the JS layer consumes `compact_remap()`'s out-map to rebuild its
@@ -195,7 +195,7 @@ but only matching nodes enter the result heap. The search starts with
 `ef = max(ef_search, k*2)` and **dynamically widens** ef (up to ~4× initial) when
 too few filtered results have been found, so that restrictive filters still
 return `k` results where the graph allows. (`float_hnsw.hpp:237`,
-`int8_float_hnsw.hpp:362`.) Effectiveness degrades below ~1% selectivity, where
+`uint8_float_hnsw.hpp:362`.) Effectiveness degrades below ~1% selectivity, where
 the graph may lack navigable paths to the target set.
 
 ### 3.7 The visited-set generation trick
@@ -206,16 +206,16 @@ Rather than clearing a visited bitmap before each search, both backends keep a
 `visited_list_[id] == visited_curr_`. Each search just increments the counter;
 the array is only zeroed on the rare `uint32_t` wraparound. This avoids an
 `O(max_elements)` clear per query. (`float_hnsw.hpp:116`,
-`int8_float_hnsw.hpp:189`.)
+`uint8_float_hnsw.hpp:189`.)
 
 ---
 
 ## 4. Quantization and Asymmetric Distance
 
-### 4.1 Row-wise affine quantization (int8 backend)
+### 4.1 Row-wise affine quantization (uint8 backend)
 
 Each vector is quantized independently to **uint8** using its own min/max
-(`int8_float_hnsw.hpp:213`):
+(`uint8_float_hnsw.hpp:213`):
 
 ```
 vmin = min(v),  vmax = max(v)
@@ -226,12 +226,12 @@ q[d]  = clamp(round((v[d] - vmin) / scale), 0, 255)   // round via +0.5
 // stored per vector: scale (f32), offset = vmin (f32), q[0..D-1] (uint8)
 ```
 
-Dequantization is `v[d] ≈ offset + scale * q[d]` (`int8_float_hnsw.hpp:1195`).
+Dequantization is `v[d] ≈ offset + scale * q[d]` (`uint8_float_hnsw.hpp:1195`).
 
 **Per-vector storage:** `D` bytes (quantized data) + 4 (scale) + 4 (offset) +
 4 (`sum_q`) + 4 (`sum_q2`) = **D + 16 bytes**, versus `4D` for float32. The two
 extra `uint32` sums are precomputed statistics used by the symmetric distance
-(§4.3). (Fields: `int8_float_hnsw.hpp:1815–1819`.)
+(§4.3). (Fields: `uint8_float_hnsw.hpp:1815–1819`.)
 
 ### 4.2 Asymmetric search distance
 
@@ -240,15 +240,15 @@ the fly during the distance computation. This avoids quantizing the query (which
 would compound error and require knowing the query's scale before the distance is
 computed) and preserves query-side precision. For cosine, both the stored vectors
 (at insert) and the query (at search) are L2-normalized first; distance is
-`1 − clamp(dot, −1, 1)`. (`int8_float_hnsw.hpp:199`, `:1204`.)
+`1 − clamp(dot, −1, 1)`. (`uint8_float_hnsw.hpp:199`, `:1204`.)
 
 ### 4.3 Closed-form symmetric distance
 
 Graph maintenance (neighbor selection, edge-distance recomputation) needs
-node-to-node distances between two *stored* int8 vectors. Instead of
-dequantizing both, the int8 backend computes the distance algebraically from the
+node-to-node distances between two *stored* uint8 vectors. Instead of
+dequantizing both, the uint8 backend computes the distance algebraically from the
 quantized bytes and the cached `sum_q` / `sum_q2` statistics plus an integer
-`int8_dot` (`int8_float_hnsw.hpp:1525`):
+`uint8_dot` (`uint8_float_hnsw.hpp:1525`):
 
 ```
 L2(a,b) = D·(oa−ob)² + 2(oa−ob)(sa·sum_q[a] − sb·sum_q[b])
@@ -256,7 +256,7 @@ L2(a,b) = D·(oa−ob)² + 2(oa−ob)(sa·sum_q[a] − sb·sum_q[b])
 ```
 
 This makes graph construction distance evaluations cheap and is the main reason
-the int8 build path stays competitive with float32.
+the uint8 build path stays competitive with float32.
 
 The float backend has no analog — it computes node-to-node distance directly on
 the stored float vectors.
@@ -276,7 +276,7 @@ Both backends select a kernel at compile time:
 #endif
 ```
 
-Priority is WASM SIMD128 → AVX-512 → AVX2 → SSE2 → scalar. The int8 backend's
+Priority is WASM SIMD128 → AVX-512 → AVX2 → SSE2 → scalar. The uint8 backend's
 AVX-512 gate additionally requires `__AVX512BW__` for its byte-wide widening.
 Each kernel processes the dimension in SIMD-width chunks with a scalar tail for
 the remainder.
@@ -284,14 +284,14 @@ the remainder.
 - **Float L2:** load 4/8/16 floats, subtract, square, accumulate
   (`float_hnsw.hpp:883`; `_mm512` variant at `:895`). **Float cosine:**
   dot-product accumulate, then `1 − clamp(dot)` (`float_hnsw.hpp:930`).
-- **Int8 asymmetric:** load 16 uint8, widen u8→u16→f32, dequantize in-register
+- **uint8 asymmetric:** load 16 uint8, widen u8→u16→f32, dequantize in-register
   (`offset + scale·q`) via FMA, subtract the float query, square/dot, accumulate.
   Multiple independent accumulators (`acc0..acc3`) hide FMA latency; the AVX-512
   path uses four independent 512-bit accumulators.
-  (`int8_float_hnsw.hpp:1204`, `:1359`.)
+  (`uint8_float_hnsw.hpp:1204`, `:1359`.)
 - **Relaxed SIMD:** an opt-in WASM build path uses `wasm_f32x4_relaxed_madd`
   (fused multiply-add) where available, falling back to separate mul+add
-  otherwise (`int8_float_hnsw.hpp:58`). Relaxed-SIMD reductions are
+  otherwise (`uint8_float_hnsw.hpp:58`). Relaxed-SIMD reductions are
   non-deterministic across runtimes; this is why it is opt-in (see §10).
 
 The native build compiles the widest kernel the host compiler exposes — AVX-512
@@ -333,14 +333,15 @@ the concrete wrapper from the `quantized` flag and the metric (`metric == 1` →
 cosine, else L2):
 
 ```cpp
-if (quantized) g_handles[h].index = new Int8FloatHNSWWrapper(dim, i8cfg);
+if (quantized) g_handles[h].index = new Uint8FloatHNSWWrapper(dim, u8cfg);
 else           g_handles[h].index = new FloatHNSWWrapper(dim, cfg);
 ```
 
-(`engine.cpp:178`, dispatch at `:188–205`.)
+(`src/engine.cpp` backend dispatch.)
 
-> **Defaults.** The library defaults are `M=16`, `efConstruction=50`,
-> `efSearch=100`, and the JavaScript wrapper passes them explicitly. The C ABI
+> **Defaults.** The library defaults are `M=12`, `efConstruction=75`,
+> `efSearch=100`, `maxElements=100000`, and `seed=108`. The JavaScript wrapper
+> passes them explicitly. The C ABI
 > only falls back to its internal defaults when a direct caller passes
 > non-positive values to `pancake_init`; normal JS callers use the canonical
 > library defaults.
@@ -369,7 +370,7 @@ snapshot that still slips an oversized allocation through the bounds checks
 
 Beyond the index API, the ABI exports `emsc_malloc`/`emsc_free` (heap for
 marshalling), `pancake_profile_print`/`pancake_profile_reset` (no-ops unless built with
-`PANCAKE_INT8_HNSW_BUILD_PROFILE`), and `pancake_shutdown_all` (frees all
+`PANCAKE_UINT8_HNSW_BUILD_PROFILE`), and `pancake_shutdown_all` (frees all
 handles). The WASM ABI no longer exposes the earlier experimental `emb_*`
 embedding-model or matrix-helper paths; the public surface is the index API plus
 allocation, profiling, and lifecycle helpers.
@@ -482,21 +483,21 @@ Byte layouts are in [Appendix B](#appendix-b-serialization-byte-layouts).
 - **FloatHNSW:** magic `0x464C4831` ("FLH1"), current version `1`; also reads a
   legacy magic. Stores raw (or normalized) float vectors + graph.
   (`float_hnsw.hpp:513`.)
-- **Int8FloatHNSW:** magic `0x49384831` ("I8H1"), current version `2`; reads a
+- **Uint8FloatHNSW:** magic `0x49384831` ("I8H1"), current version `2`; reads a
   legacy magic and older versions. Stores scales, offsets, quantized bytes, then
   graph. Version 2 stores edge distances inline; importing an older version
-  recomputes them. (`int8_float_hnsw.hpp:660`.)
+  recomputes them. (`uint8_float_hnsw.hpp:660`.)
 
 > **Deletion state does not survive a round-trip.** Neither backend serializes
 > the `deleted_` flags — ghosts are written as ordinary vectors and come back
 > *live* on import, and `num_deleted_` resets to 0. The contract is: **compact
 > before export** if deletes must persist. The JS `export()` enforces this by
 > throwing when `ghostCount > 0`; the Worker's persist path compacts first.
-> (`float_hnsw.hpp:513`, `int8_float_hnsw.hpp:660`.)
+> (`float_hnsw.hpp:513`, `uint8_float_hnsw.hpp:660`.)
 
-### 9.2 Statistics reconstruction (int8)
+### 9.2 Statistics reconstruction (uint8)
 
-The int8 deserializer recomputes `sum_q` / `sum_q2` from the loaded quantized
+The uint8 deserializer recomputes `sum_q` / `sum_q2` from the loaded quantized
 bytes rather than storing them, and (for pre-v2 blobs) recomputes all edge
 distances. So the on-disk format is slightly smaller than the in-memory
 footprint.
@@ -546,16 +547,16 @@ hardened to fail closed rather than corrupt memory or abort the instance:
   while the following `memcpy` ran out of bounds. Every block-size check is
   written as `offset > data_size || data_size - offset < len`, and the float
   backend adds an explicit `count_*dims_` multiply-overflow guard before sizing
-  the vector store. (`float_hnsw.hpp:638`, `int8_float_hnsw.hpp:791`.)
+  the vector store. (`float_hnsw.hpp:638`, `uint8_float_hnsw.hpp:791`.)
 - **The HNSW level count is capped** at `MAX_DESERIALIZE_LEVEL` (64). An
   unbounded `max_level` read from a snapshot would otherwise drive a
   multi-gigabyte per-node `upper_[i].resize()`, throwing `length_error` /
   `bad_alloc`. 64 levels covers any realistic element count.
-  (`int8_float_hnsw.hpp:158`.)
+  (`uint8_float_hnsw.hpp:158`.)
 - **Quantization scales are validated** `> 0` (and finite, and `≤ 1e20`). A
   zero/negative stored scale would collapse a vector to a constant and poison
   every distance to it; `insert()` never produces one, so a snapshot may not
-  carry one either. (`int8_float_hnsw.hpp:215` for the insert-side guard the
+  carry one either. (`uint8_float_hnsw.hpp:215` for the insert-side guard the
   importer mirrors.)
 - **Exceptions are contained** at the `pancake_import` boundary (§6.4): any
   remaining oversized allocation returns `-1` rather than unwinding out of the
@@ -609,7 +610,7 @@ from `../src`) with `-O3 -std=c++17 -ffast-math -ftree-vectorize -march=native
 -mavx2 -msse2 -fno-rtti` and `-DPANCAKE_ENABLE_AVX512_SIMD
 -DPANCAKE_ENABLE_AVX2_SIMD -DPANCAKE_ENABLE_SSE2_SIMD`. AVX-512 instructions
 come via `-march=native` and the kernels are compile-time gated on
-`__AVX512F__` (plus `__AVX512BW__` for int8), so non-AVX-512 hosts fall back to
+`__AVX512F__` (plus `__AVX512BW__` for uint8), so non-AVX-512 hosts fall back to
 AVX2 automatically. The macOS block defines the same macros; the Windows block
 does not define `PANCAKE_ENABLE_AVX512_SIMD` and stays on AVX2/SSE2. Output:
 `native/build/Release/pancake_native.node`.
@@ -746,17 +747,19 @@ rather than raw WASM exports.
 | `dim` | required | positive integer |
 | `maxElements` | `100000` | capacity, pre-allocated |
 | `metric` | `'cosine'` | `'cosine'` or `'l2'` |
-| `quantized` | `true` | int8 backend when true |
-| `M` | `16` | |
-| `efConstruction` | `50` | |
+| `quantized` | `true` | uint8 backend when true |
+| `M` | `12` | |
+| `efConstruction` | `75` | |
 | `efSearch` | `100` | valid range 1–4096; mutable via `setEfSearch()` or overridden per query |
+| `seed` | `108` | deterministic HNSW level-assignment seed |
 
 Removed options (`compressed`, `varianceSample`) throw if passed.
 
 ### 12.2 C ABI fallback defaults (direct-ABI callers only)
 
-`M=16`, `ef_construction=50`, `ef_search=100`, applied only when a non-positive
-value reaches `pancake_init`. Normal JS callers already pass these explicitly.
+`M=12`, `ef_construction=75`, `ef_search=100`, `max_elements=100000`, and
+`seed=108`, applied only when a non-positive value reaches `pancake_init`.
+Normal JS callers already pass these explicitly.
 
 ### 12.3 Worker limits and env
 
@@ -820,7 +823,7 @@ value reaches `pancake_init`. Normal JS callers already pass these explicitly.
 - **Worker isolates are independent.** No cross-isolate read-after-write
   consistency; R2 is the only durability boundary and uses last-write-wins by
   newest key.
-- **Backend code is duplicated, not shared.** float and int8 backends repeat the
+- **Backend code is duplicated, not shared.** float and uint8 backends repeat the
   graph algorithm; a change to HNSW logic must be made in both.
 - **Relaxed SIMD is non-deterministic** and therefore opt-in; the default build
   is the reproducible one.
@@ -883,7 +886,7 @@ rather than writing into caller buffers.
 
 Deletion state not serialized.
 
-### Int8FloatHNSW blob — magic `0x49384831` ("I8H1"), version 2
+### Uint8FloatHNSW blob — magic `0x49384831` ("I8H1"), version 2
 
 ```
 0   u32   magic 0x49384831
