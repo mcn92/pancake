@@ -11,11 +11,12 @@
  *   3. Interpolated equal-recall curves: QPS for every library at a common grid
  *      of recall targets, log-linearly interpolated along each frontier.
  *
- * Configs (8):
+ * Configs:
  *   pancake-wasm   u8 / fp32   (Pancake.create, setEfSearch per ef)
  *   pancake-native u8 / fp32   (native.pancake_*, pancake_set_ef per ef)
- *   usearch        wasm i8 / native f16 / native f32 (build-once-save-view per
- *                                 ef — expansion_search is fixed at construction)
+ *   usearch-native i8 / f16 / f32 (build-once-save-view per ef —
+ *                                  expansion_search is fixed at construction)
+ *   usearch-wasm   i8 / f16 / f32 (C ABI directly against the WASM artifact)
  *   hnswlib        f32           (HierarchicalNSW.setEf per ef)
  *
  * All libraries use the same M and ef_construction, and every config is swept
@@ -54,7 +55,11 @@ let usearch;
 try { usearch = require('usearch'); }
 catch (e) { console.warn('WARN: usearch not installed — skipping usearch configs.'); }
 
-const DEFAULT_USEARCH_WASM_PATH = path.join(__dirname, '..', 'external', 'usearch-wasm', 'USearch-v2.6.1', 'build_wasm', 'wasm', 'index.wasm');
+const DEFAULT_USEARCH_WASM_PATHS = {
+  i8: path.join(__dirname, '..', 'external', 'usearch-wasm', 'USearch-v2.6.1', 'build_wasm_o3_simd_1gb', 'wasm', 'index.wasm'),
+  f16: path.join(__dirname, '..', 'external', 'usearch-wasm', 'USearch-v2.6.1', 'build_wasm_o3_simd_1gb', 'wasm', 'index.wasm'),
+  f32: path.join(__dirname, '..', 'external', 'usearch-wasm', 'USearch-v2.6.1', 'build_wasm_o3_simd_2gb', 'wasm', 'index.wasm'),
+};
 
 let HierarchicalNSW;
 try { HierarchicalNSW = require('hnswlib-node').HierarchicalNSW; }
@@ -82,9 +87,10 @@ function getCsvArg(name) {
   return raw.split(',').map(v => v.trim()).filter(Boolean);
 }
 const REGENERATE_GT = rawArgs.includes('--regenerate-gt');
-const USEARCH_WASM_PATH = path.resolve(getStrArg('usearch-wasm', DEFAULT_USEARCH_WASM_PATH));
-const HAVE_USEARCH_WASM = fs.existsSync(USEARCH_WASM_PATH);
-if (!HAVE_USEARCH_WASM) console.warn(`WARN: usearch WASM artifact not found at ${USEARCH_WASM_PATH} — skipping usearch-wasm configs.`);
+const USEARCH_WASM_OVERRIDE_PATH = hasArg('usearch-wasm') ? path.resolve(getStrArg('usearch-wasm', '')) : null;
+function getUsearchWasmPath(dtype) {
+  return USEARCH_WASM_OVERRIDE_PATH || path.resolve(DEFAULT_USEARCH_WASM_PATHS[dtype]);
+}
 
 // --- Dataset selection ---------------------------------------------------
 // Built-in datasets use fvecs/ivecs files checked into the expected local
@@ -168,8 +174,8 @@ const K = 10;
 const METRIC = DS.metric;
 
 // Fixed graph parameters, per request.
-const M = resolveSingleValue(parsedArgs.m, 16);
-const EF_CONSTRUCTION = resolveSingleValue(parsedArgs.efConstruction, 50);
+const M = resolveSingleValue(parsedArgs.m, 12);
+const EF_CONSTRUCTION = resolveSingleValue(parsedArgs.efConstruction, 75);
 // ef_search sweep — includes 100 (the requested operating point) plus the
 // surrounding range needed to trace a QPS-recall frontier.
 const EF_SEARCH_VALUES = resolveSweepValues(parsedArgs, [10, 20, 40, 60, 80, 100, 150, 200, 300, 500, 800]);
@@ -200,18 +206,31 @@ if (native) {
   CONFIGS.push({ label: 'pancake-native-fp32', library: 'pancake', runtime: 'native', dtype: 'f32', sweep: true });
 }
 if (usearch) {
-  CONFIGS.push({ label: 'usearch-int8', library: 'usearch', dtype: 'i8',  sweep: true });
-  CONFIGS.push({ label: 'usearch-f16',  library: 'usearch', dtype: 'f16', sweep: true });
-  CONFIGS.push({ label: 'usearch-fp32', library: 'usearch', dtype: 'f32', sweep: true });
+  CONFIGS.push({ label: 'usearch-native-int8', library: 'usearch', runtime: 'native', dtype: 'i8',  sweep: true, aliases: ['usearch-int8'] });
+  CONFIGS.push({ label: 'usearch-native-f16',  library: 'usearch', runtime: 'native', dtype: 'f16', sweep: true, aliases: ['usearch-f16'] });
+  CONFIGS.push({ label: 'usearch-native-fp32', library: 'usearch', runtime: 'native', dtype: 'f32', sweep: true, aliases: ['usearch-fp32'] });
 }
-if (HAVE_USEARCH_WASM) {
-  CONFIGS.push({ label: 'usearch-wasm-int8', library: 'usearch-wasm', runtime: 'wasm', dtype: 'i8', sweep: true });
-  CONFIGS.push({ label: 'usearch-wasm-fp32', library: 'usearch-wasm', runtime: 'wasm', dtype: 'f32', sweep: true });
+for (const config of [
+  { label: 'usearch-wasm-int8', dtype: 'i8' },
+  { label: 'usearch-wasm-f16', dtype: 'f16' },
+  { label: 'usearch-wasm-fp32', dtype: 'f32' },
+]) {
+  const wasmPath = getUsearchWasmPath(config.dtype);
+  if (fs.existsSync(wasmPath)) {
+    CONFIGS.push({ label: config.label, library: 'usearch-wasm', runtime: 'wasm', dtype: config.dtype, wasmPath, sweep: true });
+  } else {
+    console.warn(`WARN: usearch WASM artifact not found at ${wasmPath} — skipping ${config.label}.`);
+  }
 }
 if (HierarchicalNSW) {
   CONFIGS.push({ label: 'hnswlib-fp32', library: 'hnswlib', dtype: 'f32', sweep: true });
 }
-const AVAILABLE_CONFIG_LABELS = new Set(CONFIGS.map(c => c.label));
+const CONFIG_ALIAS_TO_LABEL = new Map();
+for (const c of CONFIGS) {
+  CONFIG_ALIAS_TO_LABEL.set(c.label, c.label);
+  for (const alias of c.aliases || []) CONFIG_ALIAS_TO_LABEL.set(alias, c.label);
+}
+const AVAILABLE_CONFIG_LABELS = new Set(CONFIG_ALIAS_TO_LABEL.keys());
 const AVAILABLE_CONFIG_LIBRARIES = new Set(CONFIGS.map(c => c.library));
 if (CONFIG_FILTER_LABELS.size > 0) {
   const unknown = [...CONFIG_FILTER_LABELS].filter(label => !AVAILABLE_CONFIG_LABELS.has(label));
@@ -220,7 +239,8 @@ if (CONFIG_FILTER_LABELS.size > 0) {
     console.error(`Available configs: ${[...AVAILABLE_CONFIG_LABELS].join(', ')}`);
     process.exit(1);
   }
-  CONFIGS = CONFIGS.filter(c => CONFIG_FILTER_LABELS.has(c.label));
+  const selectedLabels = new Set([...CONFIG_FILTER_LABELS].map(label => CONFIG_ALIAS_TO_LABEL.get(label)));
+  CONFIGS = CONFIGS.filter(c => selectedLabels.has(c.label));
 }
 if (CONFIG_FILTER_LIBRARIES.size > 0) {
   const unknown = [...CONFIG_FILTER_LIBRARIES].filter(library => !AVAILABLE_CONFIG_LIBRARIES.has(library));
@@ -741,10 +761,8 @@ function queryUsearch(built, test, gt, ef) {
 // Built from the official WASM target. The generated JS glue does not expose
 // heap accessors, so this adapter uses the exported C ABI directly.
 const USEARCH_WASM_METRIC = { cos: 1, l2sq: 3 };
-const USEARCH_WASM_SCALAR = { f32: 1, i8: 4 };
+const USEARCH_WASM_SCALAR = { f32: 1, f16: 3, i8: 4 };
 const USEARCH_WASM_OPTIONS_SIZE = 32;
-
-let usearchWasmModulePromise = null;
 
 function makeUsearchWasmImports(memoryRef) {
   const errnoNosys = -52;
@@ -841,20 +859,15 @@ function makeUsearchWasmImports(memoryRef) {
   };
 }
 
-async function loadUsearchWasmModule() {
-  if (!usearchWasmModulePromise) {
-    usearchWasmModulePromise = (async () => {
-      const memoryRef = { memory: null };
-      const bytes = fs.readFileSync(USEARCH_WASM_PATH);
-      const { instance } = await WebAssembly.instantiate(bytes, makeUsearchWasmImports(memoryRef));
-      memoryRef.memory = instance.exports.memory || instance.exports.q;
-      const stackInit = instance.exports.emscripten_stack_init;
-      if (stackInit) stackInit();
-      (instance.exports.__wasm_call_ctors || instance.exports.r)();
-      return { exports: instance.exports, memoryRef };
-    })();
-  }
-  return usearchWasmModulePromise;
+async function loadUsearchWasmModule(wasmPath) {
+  const memoryRef = { memory: null };
+  const bytes = fs.readFileSync(wasmPath);
+  const { instance } = await WebAssembly.instantiate(bytes, makeUsearchWasmImports(memoryRef));
+  memoryRef.memory = instance.exports.memory || instance.exports.q;
+  const stackInit = instance.exports.emscripten_stack_init;
+  if (stackInit) stackInit();
+  (instance.exports.__wasm_call_ctors || instance.exports.r)();
+  return { exports: instance.exports, memoryRef };
 }
 
 class UsearchWasmRuntime {
@@ -933,12 +946,12 @@ class UsearchWasmRuntime {
   }
 }
 
-async function buildUsearchWasm({ train, dim, dtype }) {
-  if (!['i8', 'f32'].includes(dtype)) throw new Error(`Unsupported usearch-wasm dtype: ${dtype}`);
+async function buildUsearchWasm({ train, dim, dtype, wasmPath }) {
+  if (!['i8', 'f16', 'f32'].includes(dtype)) throw new Error(`Unsupported usearch-wasm dtype: ${dtype}`);
   const metric = usearchMetricValue();
-  const quantization = dtype === 'i8' ? USEARCH_WASM_SCALAR.i8 : USEARCH_WASM_SCALAR.f32;
-  log(`  [usearch-wasm-${dtype}] build (connectivity=${M}, expansion_add=${EF_CONSTRUCTION}, metric=${metric}, quantization=${dtype}, wasm=${USEARCH_WASM_PATH})...`);
-  const runtime = new UsearchWasmRuntime(await loadUsearchWasmModule());
+  const quantization = USEARCH_WASM_SCALAR[dtype];
+  log(`  [usearch-wasm-${dtype}] build (connectivity=${M}, expansion_add=${EF_CONSTRUCTION}, metric=${metric}, quantization=${dtype}, wasm=${wasmPath})...`);
+  const runtime = new UsearchWasmRuntime(await loadUsearchWasmModule(wasmPath));
   const rssBefore = measureRssBytes();
   const sp = runtime.stackSave();
   let handle = 0;
@@ -973,7 +986,7 @@ async function buildUsearchWasm({ train, dim, dtype }) {
     return {
       runtime, handle, snapshotPtr, snapshotBytes: Number(serializedBytes),
       buildMs, memBytes: Number(serializedBytes), memorySource: 'serialized_index',
-      wasmHeapBytes: heapBytes, rssDeltaBytes: rssDelta, dim, metric, quantization,
+      wasmHeapBytes: heapBytes, rssDeltaBytes: rssDelta, dim, metric, quantization, wasmPath,
     };
   } catch (e) {
     if (handle) {
@@ -1072,7 +1085,7 @@ async function build(config, dataset) {
         ? await buildPancakeWasm({ train, dim, dtype: config.dtype })
         : buildPancakeNative({ train, dim, dtype: config.dtype });
     case 'usearch': return buildUsearch({ train, dim, dtype: config.dtype });
-    case 'usearch-wasm': return await buildUsearchWasm({ train, dim, dtype: config.dtype });
+    case 'usearch-wasm': return await buildUsearchWasm({ train, dim, dtype: config.dtype, wasmPath: config.wasmPath });
     case 'hnswlib': return buildHnswlib({ train, dim });
   }
 }

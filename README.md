@@ -425,7 +425,7 @@ npm run bench -- --list
 npm run bench -- benchmark_native
 
 # Full comparison including hnswlib, USearch, and Faiss on the same data:
-npm run bench -- benchmark_dbpedia_50k_full --count 50000 --m 16 --ef-construction 50 --ef-search 100
+npm run bench -- benchmark_dbpedia_50k_full --count 50000 --m 12 --ef-construction 75 --ef-search 100
 
 # QPS-recall frontier (efSearch sweep) behind the plot above:
 npm run bench -- pareto_frontier
@@ -433,6 +433,11 @@ npm run bench -- pareto_frontier
 # Include a locally built USearch WASM bundle in the frontier:
 npm run bench -- pareto_frontier -- --usearch-wasm /path/to/usearch-wasm
 ```
+
+`pareto_frontier` does not vendor USearch WASM binaries. By default, it looks
+for local, untracked dtype-specific artifacts under `external/usearch-wasm/`:
+1 GB builds for int8/f16 and a 2 GB build for fp32. Use `--usearch-wasm` to
+point all USearch WASM configs at a custom artifact.
 
 The first run computes brute-force ground truth and caches it under
 `benchmark_results/cache/`; later runs reuse it. Results depend on dimension,
