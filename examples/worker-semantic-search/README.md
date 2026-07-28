@@ -237,23 +237,24 @@ npx wrangler pages deploy examples/worker-semantic-search-pages/dist \
   --project-name pancake-docs-search
 ```
 
-The Pages UI stores the Worker API URL and optional access key in browser
-`localStorage` after the user clicks Save. The deployed static config currently
-does not bake in the Worker URL or demo key.
+The Pages UI stores the Worker API URL in browser `localStorage` and keeps the
+optional access key in tab-scoped `sessionStorage` after the user clicks Save.
+The deployed static config currently does not bake in the Worker URL or demo key.
 
 ## Endpoints
 
 - `GET /` — Worker-local interactive webpage
-- `GET /health` — public cache, encoder, and restore status
+- `GET /health` — public liveness and coarse mode status
 - `GET /readiness` — authenticated bundled-asset metadata
-- `GET /search?q=...&k=5&ef=120` — search, private when `PRIVATE_SEARCH=1`
 - `POST /search` — `{ query, k?, ef?, source? }`
 - `POST /reset_cache` — authenticated and disabled in read-only deployments
 
-Search responses report `embedding_ms`, `search_ms`, `restore_ms`, cache state,
-encoder metadata, `match_quality`, optional `confidence`, `timings_us`, and the
-matching chunks. On deployed Workers, very small server-side phases may quantize
-to the timer floor; the Pages UI also reports browser-observed round-trip time.
+Search accepts only POST bodies so query text and demo keys are not placed in
+URLs. Default responses do not echo the query and report only user-facing results,
+coarse `embedding_ms`, `search_ms`, `restore_ms`, `match_quality`, optional
+`confidence`, and result metadata. Set `DEBUG_TELEMETRY=1` only for private
+diagnostic deployments if you need cache state, encoder metadata, or detailed
+timing fields.
 
 ## Security and deployment boundary
 

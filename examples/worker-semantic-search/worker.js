@@ -160,6 +160,11 @@ function searchDisabled(env) {
   return value === '1' || value === 'true' || value === 'yes' || value === 'on';
 }
 
+function debugTelemetryEnabled(env) {
+  const value = String(env.DEBUG_TELEMETRY || '').trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
 function privateSearchEnabled(env) {
   const expected = String(env.DEMO_SEARCH_KEY || '').trim();
   if (!expected) return false;
@@ -172,7 +177,7 @@ function getSearchAccessKey(request, url) {
   if (headerKey) return headerKey.trim();
   const authHeader = request.headers.get('Authorization') || '';
   if (authHeader.startsWith('Bearer ')) return authHeader.slice(7).trim();
-  return (url.searchParams.get('demo_key') || '').trim();
+  return '';
 }
 
 function requireSearchAccess(request, env, url) {
@@ -189,51 +194,11 @@ function getHeader(request, name) {
   return request.headers.get(name) || null;
 }
 
-function getRedactedUrlParts(url) {
-  const redacted = new URL(url.toString());
-  if (redacted.searchParams.has('demo_key')) {
-    redacted.searchParams.set('demo_key', '[redacted]');
-  }
-  return {
-    url: redacted.toString(),
-    query_string: redacted.search
-  };
-}
-
 function getRequestLogContext(request, url) {
-  const cf = request.cf || {};
-  const redactedUrl = getRedactedUrlParts(url);
   return {
     request_id: getHeader(request, 'cf-ray'),
     method: request.method,
-    url: redactedUrl.url,
-    pathname: url.pathname,
-    query_string: redactedUrl.query_string,
-    origin: getHeader(request, 'origin'),
-    referer: getHeader(request, 'referer'),
-    user_agent: getHeader(request, 'user-agent'),
-    accept_language: getHeader(request, 'accept-language'),
-    content_type: getHeader(request, 'content-type'),
-    content_length: getHeader(request, 'content-length'),
-    cf_connecting_ip: getHeader(request, 'cf-connecting-ip'),
-    x_forwarded_for: getHeader(request, 'x-forwarded-for'),
-    cf_ipcountry: getHeader(request, 'cf-ipcountry'),
-    cf: {
-      colo: cf.colo || null,
-      country: cf.country || null,
-      region: cf.region || null,
-      city: cf.city || null,
-      postalCode: cf.postalCode || null,
-      timezone: cf.timezone || null,
-      latitude: cf.latitude || null,
-      longitude: cf.longitude || null,
-      asn: cf.asn || null,
-      asOrganization: cf.asOrganization || null,
-      httpProtocol: cf.httpProtocol || null,
-      tlsVersion: cf.tlsVersion || null,
-      tlsCipher: cf.tlsCipher || null,
-      botManagement: cf.botManagement || null
-    }
+    pathname: url.pathname
   };
 }
 
@@ -270,7 +235,6 @@ async function enforceRateLimit(request, env, url) {
       at: new Date().toISOString(),
       ...getRequestLogContext(request, url),
       rate_limit_name: check.name,
-      rate_limit_key: check.key,
       status: 429
     }));
 
@@ -906,9 +870,7 @@ function renderPage() {
       meta.textContent =
         'Embed ' + payload.embedding_ms.toFixed(2) + 'ms' +
         ' • Pancake ' + payload.search_ms.toFixed(2) + 'ms' +
-        (payload.cache_state === 'cold-restored'
-          ? ' • cold restore ' + payload.restore_ms.toFixed(2) + 'ms'
-          : ' • warm cache') +
+        ' • restore ' + payload.restore_ms.toFixed(2) + 'ms' +
         ' • ' + payload.result_count + ' results' +
         (payload.filter_label ? ' • filter ' + payload.filter_label : '') +
         ' • ef ' + payload.ef_search +
@@ -917,9 +879,9 @@ function renderPage() {
       resultsList.classList.toggle('weak', payload.match_quality === 'weak');
       let banner = '';
       if (payload.match_quality === 'weak') {
-        banner = '<div class="quality-banner weak">No strong match — showing the closest sections for “' + escapeHtml(payload.query) + '”.</div>';
+        banner = '<div class="quality-banner weak">No strong match — showing the closest sections.</div>';
       } else if (payload.match_quality === 'none') {
-        banner = '<div class="quality-banner none">No reliable match for “' + escapeHtml(payload.query) + '”. Try a query about Pancake APIs, Workers, snapshots, filtering, or compaction.</div>';
+        banner = '<div class="quality-banner none">No reliable match. Try a query about Pancake APIs, Workers, snapshots, filtering, or compaction.</div>';
       }
       if (!payload.results.length) {
         resultsList.innerHTML = banner || '<div class="empty">No results.</div>';
@@ -947,13 +909,16 @@ function renderPage() {
 
     async function runSearch(query) {
       meta.textContent = 'Searching...';
-      const params = new URLSearchParams({
-        q: query,
-        k: kInput.value || '5',
-        ef: efInput.value || '120',
+      const res = await fetch('/search', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          query,
+          k: kInput.value || '5',
+          ef: efInput.value || '120',
+          source: sourceFilter.value || undefined
+        })
       });
-      if (sourceFilter.value) params.set('source', sourceFilter.value);
-      const res = await fetch('/search?' + params.toString());
       const payload = await res.json();
       if (!res.ok) {
         meta.textContent = payload.error || 'Search failed';
@@ -966,8 +931,8 @@ function renderPage() {
         dim: payload.dim,
         quantized: payload.quantized,
         encoder: payload.encoder,
-        restore_count: payload.restore_count,
-        last_restore_ms: payload.cache_state === 'cold-restored' ? payload.restore_ms : payload.last_restore_ms
+        restore_count: payload.restore_count ?? '-',
+        last_restore_ms: payload.last_restore_ms ?? payload.restore_ms
       });
     }
 
@@ -1258,8 +1223,7 @@ async function handleSearch(request, env) {
     if (!body || typeof body.query !== 'string') {
       logSearchEvent('semantic-search.search.invalid_body', request, url, {
         error: 'POST /search requires JSON body { query: string, k?: number }',
-        status: 400,
-        body_keys: body && typeof body === 'object' ? Object.keys(body).slice(0, 20) : []
+        status: 400
       });
       return jsonResponse({ error: 'POST /search requires JSON body { query: string, k?: number }' }, 400);
     }
@@ -1310,11 +1274,8 @@ async function handleSearch(request, env) {
   const returnedHits = matchQuality.match_quality === 'none' ? [] : hits;
 
   const responseBody = {
-    query,
     match_quality: matchQuality.match_quality,
     result_count: returnedHits.length,
-    loaded_from_bundle: loadInfo.loadedFromBundle,
-    cache_state: loadInfo.loadedFromBundle ? 'cold-restored' : 'warm-cache',
     restore_ms: formatMs(loadInfo.restoreMs),
     embedding_ms: formatMs(embeddingMs),
     search_ms: formatMs(searchMs),
@@ -1322,37 +1283,27 @@ async function handleSearch(request, env) {
     dim: manifest?.dim || null,
     quantized: manifest?.quantized ?? true,
     ef_search: ef,
-    restore_count: state.restoreCount,
-    last_restore_ms: formatMs(state.lastRestoreMs || 0),
     filter_label: filterLabel,
-    encoder: manifest?.encoder || null,
     results: returnedHits.map(buildResult)
   };
   if (matchQuality.confidence !== undefined) responseBody.confidence = matchQuality.confidence;
-  responseBody.timings_us = {
-    total: formatMicroseconds(performance.now() - totalStart),
-    restore: formatMicroseconds(loadInfo.restoreMs),
-    embedding: formatMicroseconds(embeddingMs),
-    search: formatMicroseconds(searchMs)
-  };
+  if (debugTelemetryEnabled(env)) {
+    responseBody.loaded_from_bundle = loadInfo.loadedFromBundle;
+    responseBody.cache_state = loadInfo.loadedFromBundle ? 'cold-restored' : 'warm-cache';
+    responseBody.restore_count = state.restoreCount;
+    responseBody.last_restore_ms = formatMs(state.lastRestoreMs || 0);
+    responseBody.encoder = manifest?.encoder || null;
+    responseBody.timings_us = {
+      total: formatMicroseconds(performance.now() - totalStart),
+      restore: formatMicroseconds(loadInfo.restoreMs),
+      embedding: formatMicroseconds(embeddingMs),
+      search: formatMicroseconds(searchMs)
+    };
+  }
   logSearchEvent('semantic-search.search.completed', request, url, {
-    query,
-    k,
-    ef,
-    source: source || null,
-    filter_label: filterLabel,
     match_quality: responseBody.match_quality,
-    confidence: responseBody.confidence ?? null,
     result_count: responseBody.result_count,
-    top_result_ids: returnedHits.slice(0, 5).map((hit) => hit.id),
-    top_result_distances: returnedHits.slice(0, 5).map((hit) => hit.distance),
-    cache_state: responseBody.cache_state,
-    loaded_from_bundle: responseBody.loaded_from_bundle,
-    restore_count: responseBody.restore_count,
-    corpus_chunks: responseBody.corpus_chunks,
-    dim: responseBody.dim,
-    quantized: responseBody.quantized,
-    timings_us: responseBody.timings_us
+    status: 200
   });
   return jsonResponse(responseBody);
 }
@@ -1387,32 +1338,34 @@ export default {
     }
 
     if (url.pathname === '/health') {
-      return jsonResponse({
+      const body = {
+        ok: true,
         loaded: !!index,
-        manifest_loaded: !!manifest,
-        corpus_chunks: corpus.length,
-        dim: manifest?.dim || null,
-        quantized: manifest?.quantized ?? true,
-        default_ef_search: manifest?.efSearch || 120,
-        restore_count: state.restoreCount,
-        restored_at: state.restoredAt,
-        last_restore_ms: state.lastRestoreMs ? formatMs(state.lastRestoreMs) : null,
         read_only: isReadOnly(env),
         search_disabled: searchDisabled(env),
-        private_search: privateSearchEnabled(env),
-        encoder: manifest?.encoder || null,
-        abstention: {
+        private_search: privateSearchEnabled(env)
+      };
+      if (debugTelemetryEnabled(env)) {
+        body.manifest_loaded = !!manifest;
+        body.corpus_chunks = corpus.length;
+        body.dim = manifest?.dim || null;
+        body.quantized = manifest?.quantized ?? true;
+        body.default_ef_search = manifest?.efSearch || 120;
+        body.restore_count = state.restoreCount;
+        body.restored_at = state.restoredAt;
+        body.last_restore_ms = state.lastRestoreMs ? formatMs(state.lastRestoreMs) : null;
+        body.encoder = manifest?.encoder || null;
+        body.abstention = {
           present: !!abstentionModel,
-          thresholds: abstentionModel?.thresholds || null,
-          calibratedAt: abstentionModel?.calibratedAt || null,
           error: state.abstention.error
-        },
-        sources: Array.from(sourceFilters.keys()).map((source) => ({
+        };
+        body.sources = Array.from(sourceFilters.keys()).map((source) => ({
           value: source,
           label: sourceLabelFromPath(source),
           count: sourceFilters.get(source)?.size || 0
-        }))
-      });
+        }));
+      }
+      return jsonResponse(body);
     }
 
     if (url.pathname === '/readiness') {
@@ -1458,13 +1411,13 @@ export default {
       return jsonResponse({ cleared: true });
     }
 
-    if (url.pathname === '/search' && (request.method === 'GET' || request.method === 'POST')) {
+    if (url.pathname === '/search' && request.method !== 'POST') {
+      return jsonResponse({ error: 'Use POST /search with a JSON body' }, 405);
+    }
+
+    if (url.pathname === '/search' && request.method === 'POST') {
       if (searchDisabled(env)) {
         logSearchEvent('semantic-search.search.disabled', request, url, {
-          query: url.searchParams.get('q') || null,
-          k: url.searchParams.get('k') || null,
-          ef: url.searchParams.get('ef') || null,
-          source: url.searchParams.get('source') || null,
           status: 503
         });
         return jsonResponse({ error: 'Search is temporarily disabled' }, 503);
@@ -1472,13 +1425,6 @@ export default {
       const searchAccessError = requireSearchAccess(request, env, url);
       if (searchAccessError) {
         logSearchEvent('semantic-search.search.unauthorized', request, url, {
-          query: url.searchParams.get('q') || null,
-          k: url.searchParams.get('k') || null,
-          ef: url.searchParams.get('ef') || null,
-          source: url.searchParams.get('source') || null,
-          has_demo_key_header: !!getHeader(request, 'x-pancake-demo-key'),
-          has_authorization_header: !!getHeader(request, 'authorization'),
-          has_demo_key_query: url.searchParams.has('demo_key'),
           status: 401
         });
         return searchAccessError;
@@ -1488,12 +1434,7 @@ export default {
       } catch (err) {
         const message = err && typeof err.message === 'string' ? err.message : String(err);
         logSearchEvent('semantic-search.search.error', request, url, {
-          query: url.searchParams.get('q') || null,
-          k: url.searchParams.get('k') || null,
-          ef: url.searchParams.get('ef') || null,
-          source: url.searchParams.get('source') || null,
           error: message,
-          stack: err?.stack || null,
           status: 500
         });
         return jsonResponse({ error: 'Internal server error' }, 500);
@@ -1504,10 +1445,9 @@ export default {
       name: 'Pancake Worker Semantic Search Demo',
       endpoints: {
         'GET /': 'Minimal docs-search UI',
-        'GET /health': 'Restore state and cache status',
+        'GET /health': 'Liveness and coarse mode status',
         'GET /readiness': 'Authenticated snapshot visibility and warm-load state',
-        'GET /search?q=...': 'Search repo docs using the prebuilt snapshot',
-        'POST /search': '{ query: string, k?: number }',
+        'POST /search': '{ query: string, k?: number, ef?: number, source?: string }',
         'POST /reset_cache': 'Authenticated admin cache reset'
       }
     }, 404);

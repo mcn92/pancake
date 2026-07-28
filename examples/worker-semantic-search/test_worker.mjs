@@ -18,6 +18,14 @@ function assertScoredSearch(body, label) {
   assert(typeof body.confidence === 'number', `${label} should report confidence`);
 }
 
+function searchRequest(body) {
+  return {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  };
+}
+
 const bundleDir = path.resolve(argument('bundle-dir', '.tmp-test-work/student-worker-distilled'));
 const goldenFixtures = JSON.parse(
   readFileSync(new URL('./fixtures/abstention-golden.json', import.meta.url), 'utf8')
@@ -41,30 +49,39 @@ try {
   assert(html.includes('Zero runtime dependencies'), 'page should expose the zero-dependency claim');
   assert(html.includes('Distilled docs search'), 'page should identify the distilled demo');
 
-  const cold = await miniflare.dispatchFetch(
-    'http://demo.test/search?q=How%20do%20Workers%20restore%20snapshots%20from%20R2%3F&k=3&ef=120'
-  );
+  const cold = await miniflare.dispatchFetch('http://demo.test/search', searchRequest({
+    query: 'How do Workers restore snapshots from R2?',
+    k: 3,
+    ef: 120,
+  }));
   const coldBody = await cold.json();
   assert(cold.status === 200, `cold search should succeed: ${JSON.stringify(coldBody)}`);
-  assert(coldBody.cache_state === 'cold-restored', 'first search should report cold restoration');
   assert(coldBody.results.length === 3, 'cold search should return the requested top three');
   assertScoredSearch(coldBody, 'cold search');
   assert(coldBody.embedding_ms > 0, 'response should report local embedding time');
   assert(coldBody.search_ms > 0, 'response should report Pancake search time');
-  assert(coldBody.encoder?.runtimeDependencies === 0, 'encoder should report zero runtime dependencies');
-  assert(coldBody.encoder?.outboundRequests === 0, 'encoder should report zero outbound requests');
+  assert(coldBody.query === undefined, 'search response should not echo the raw query');
+  assert(coldBody.encoder === undefined, 'search response should not expose encoder metadata by default');
+  assert(coldBody.timings_us === undefined, 'search response should not expose detailed timings by default');
 
-  const warm = await miniflare.dispatchFetch(
-    'http://demo.test/search?q=How%20does%20filtered%20search%20work%3F&k=3&source=README.md'
-  );
+  const warm = await miniflare.dispatchFetch('http://demo.test/search', searchRequest({
+    query: 'How does filtered search work?',
+    k: 3,
+    source: 'README.md',
+  }));
   const warmBody = await warm.json();
   assert(warm.status === 200, `warm search should succeed: ${JSON.stringify(warmBody)}`);
-  assert(warmBody.cache_state === 'warm-cache', 'second search should report warm cache');
   assertScoredSearch(warmBody, 'warm search');
   assert(warmBody.filter_label === 'README', 'source filter should be applied inside Pancake');
   assert(warmBody.results.every((row) => row.source_path === 'README.md'), 'filtered results should stay in README');
 
-  const noise = await miniflare.dispatchFetch('http://demo.test/search?q=%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80&k=3');
+  const getSearch = await miniflare.dispatchFetch('http://demo.test/search?q=private');
+  assert(getSearch.status === 405, 'GET search should be disabled to keep queries out of URLs');
+
+  const noise = await miniflare.dispatchFetch('http://demo.test/search', searchRequest({
+    query: '😀😀😀',
+    k: 3,
+  }));
   const noiseBody = await noise.json();
   assert(noise.status === 200, `noise search should abstain cleanly: ${JSON.stringify(noiseBody)}`);
   assert(noiseBody.match_quality === 'none', 'noise query should report no reliable match');
@@ -73,9 +90,10 @@ try {
   assert(typeof noiseBody.confidence === 'number', 'noise query should still expose confidence');
 
   for (const fixture of goldenFixtures) {
-    const response = await miniflare.dispatchFetch(
-      `http://demo.test/search?q=${encodeURIComponent(fixture.text)}&k=3`
-    );
+    const response = await miniflare.dispatchFetch('http://demo.test/search', searchRequest({
+      query: fixture.text,
+      k: 3,
+    }));
     const body = await response.json();
     assert(response.status === 200, `golden query should succeed: ${fixture.text}`);
     assert(
@@ -92,13 +110,15 @@ try {
   const health = await miniflare.dispatchFetch('http://demo.test/health');
   const healthBody = await health.json();
   assert(health.status === 200, `health should succeed: ${JSON.stringify(healthBody)}`);
-  assert(healthBody.abstention?.present === true, 'health should report the abstention asset as present');
+  assert(healthBody.ok === true, 'health should report basic liveness');
+  assert(healthBody.abstention === undefined, 'public health should not expose abstention internals');
+  assert(healthBody.encoder === undefined, 'public health should not expose encoder metadata');
 
   const readiness = await miniflare.dispatchFetch('http://demo.test/readiness');
   assert(readiness.status === 403, 'admin readiness should reject unauthenticated public requests');
 
   console.log('Distilled Worker demo checks passed.');
-  console.log(`Cold restore ${coldBody.restore_ms.toFixed(2)} ms; embed ${coldBody.embedding_ms.toFixed(2)} ms; search ${coldBody.search_ms.toFixed(2)} ms.`);
+  console.log(`Restore ${coldBody.restore_ms.toFixed(2)} ms; embed ${coldBody.embedding_ms.toFixed(2)} ms; search ${coldBody.search_ms.toFixed(2)} ms.`);
 } finally {
   await miniflare.dispose();
 }

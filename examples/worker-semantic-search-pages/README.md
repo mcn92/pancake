@@ -15,7 +15,8 @@ https://pancake-docs-search.mcn9284.workers.dev
 ```
 
 The UI does not bake in the Worker URL or demo access key. Enter them in the
-Connection section and click Save; they are stored in browser `localStorage`.
+Connection section and click Save; the Worker URL is stored in browser
+`localStorage`, and the access key is stored only in tab-scoped `sessionStorage`.
 
 ## Deploy
 

@@ -11,7 +11,7 @@ const metricsEl = document.getElementById('metrics');
 const resultsEl = document.getElementById('results');
 
 const storedApiBase = localStorage.getItem('pancakeWorkerApiBase');
-const storedAccessKey = localStorage.getItem('pancakeDemoAccessKey');
+const storedAccessKey = sessionStorage.getItem('pancakeDemoAccessKey');
 apiInput.value = storedApiBase || config.apiBase || '';
 accessKeyInput.value = storedAccessKey || '';
 
@@ -78,21 +78,23 @@ async function runSearch() {
     return;
   }
 
-  const params = new URLSearchParams({
-    q: queryInput.value.trim(),
-    k: kInput.value,
-    ef: efInput.value
-  });
-
   setStatus('Searching...');
   metricsEl.textContent = '';
 
-  const headers = {};
+  const headers = { 'content-type': 'application/json' };
   const accessKey = accessKeyInput.value.trim();
   if (accessKey) headers['X-Pancake-Demo-Key'] = accessKey;
 
   const requestStart = performance.now();
-  const response = await fetch(`${apiBase}/search?${params.toString()}`, { headers });
+  const response = await fetch(`${apiBase}/search`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      query: queryInput.value.trim(),
+      k: kInput.value,
+      ef: efInput.value
+    })
+  });
   const roundTripMs = performance.now() - requestStart;
   const payload = await response.json();
   if (!response.ok) {
@@ -123,9 +125,9 @@ saveApiButton.addEventListener('click', () => {
     apiInput.value = apiBase;
   }
   if (accessKey) {
-    localStorage.setItem('pancakeDemoAccessKey', accessKey);
+    sessionStorage.setItem('pancakeDemoAccessKey', accessKey);
   } else {
-    localStorage.removeItem('pancakeDemoAccessKey');
+    sessionStorage.removeItem('pancakeDemoAccessKey');
   }
   setStatus('Connection settings saved.');
 });
