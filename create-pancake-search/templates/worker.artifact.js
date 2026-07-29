@@ -1,5 +1,5 @@
 import Pancake, { PancakeError, PANCAKE_ERROR_CODES } from 'pancake-wasm';
-import SNAPSHOT_ASSET from './assets/snapshot.pnck';
+import ARTIFACT_ASSET from './assets/index.pancake-range';
 import CORPUS_ASSET from './assets/corpus.json';
 import MANIFEST_ASSET from './assets/manifest.json';
 import UI_HTML from './ui.html';
@@ -17,16 +17,16 @@ const CLIENT_ERROR_CODES = new Set([
   PANCAKE_ERROR_CODES.SNAPSHOT_CAPACITY_EXCEEDED,
 ]);
 
-let index = null;
+let artifact = null;
 let corpus = [];
 let corpusById = new Map();
 let manifest = null;
 let loadPromise = null;
 const rateLimitMap = new Map();
 const state = {
-  restoreCount: 0,
-  restoredAt: null,
-  lastRestoreMs: null,
+  loadCount: 0,
+  loadedAt: null,
+  lastLoadMs: null,
 };
 
 function jsonResponse(data, status = 200, extraHeaders = {}) {
@@ -149,6 +149,22 @@ function assetBytes(asset, label) {
   throw new Error(`${label} was not bundled as binary data`);
 }
 
+function createBundledRangeSource(asset, label) {
+  const bytes = assetBytes(asset, label);
+  return {
+    async read(offset, length) {
+      if (!Number.isInteger(offset) || !Number.isInteger(length) || offset < 0 || length < 0) {
+        throw new Error(`Invalid range request for ${label}`);
+      }
+      const end = offset + length;
+      if (end > bytes.byteLength) {
+        throw new Error(`Range request exceeds ${label} size (${end} > ${bytes.byteLength})`);
+      }
+      return bytes.slice(offset, end);
+    },
+  };
+}
+
 function assertManifestMatches(loaded) {
   if (loaded.workersAiModel !== '@cf/baai/bge-small-en-v1.5') {
     throw Object.assign(new Error('Manifest Workers AI model mismatch'), { code: 'MANIFEST_MISMATCH' });
@@ -164,34 +180,37 @@ function assertManifestMatches(loaded) {
   }
 }
 
-async function restoreAssets() {
+async function loadAssets() {
   const t0 = performance.now();
   const loadedManifest = MANIFEST_ASSET;
   assertManifestMatches(loadedManifest);
-  const snapshotBytes = assetBytes(SNAPSHOT_ASSET, 'Snapshot');
-  const restored = await Pancake.restore(snapshotBytes, {
-    maxElements: loadedManifest.maxElements,
-    efSearch: loadedManifest.efSearch,
-  });
+  const source = createBundledRangeSource(ARTIFACT_ASSET, 'Search artifact');
+  const loadedArtifact = await Pancake.RangeArtifact.open(source);
+  if (loadedArtifact.dim !== loadedManifest.dims) {
+    throw Object.assign(new Error(`Search Artifact dimension mismatch (${loadedArtifact.dim} !== ${loadedManifest.dims})`), { code: 'MANIFEST_MISMATCH' });
+  }
+  if (loadedArtifact.count !== CORPUS_ASSET.length) {
+    throw Object.assign(new Error(`Search Artifact corpus count mismatch (${loadedArtifact.count} !== ${CORPUS_ASSET.length})`), { code: 'MANIFEST_MISMATCH' });
+  }
   corpus = CORPUS_ASSET;
   corpusById = new Map(corpus.map((entry) => [entry.id, entry]));
   manifest = loadedManifest;
-  index = restored;
-  state.restoreCount += 1;
-  state.restoredAt = new Date().toISOString();
-  state.lastRestoreMs = performance.now() - t0;
+  artifact = loadedArtifact;
+  state.loadCount += 1;
+  state.loadedAt = new Date().toISOString();
+  state.lastLoadMs = performance.now() - t0;
 }
 
 async function ensureLoaded() {
-  if (index && manifest) return { cold: false, restoreMs: 0 };
+  if (artifact && manifest) return { cold: false, loadMs: 0 };
   const cold = !loadPromise;
   if (!loadPromise) {
-    loadPromise = restoreAssets().finally(() => {
+    loadPromise = loadAssets().finally(() => {
       loadPromise = null;
     });
   }
   await loadPromise;
-  return { cold, restoreMs: cold ? state.lastRestoreMs : 0 };
+  return { cold, loadMs: cold ? state.lastLoadMs : 0 };
 }
 
 function parseSearchParams(request) {
@@ -286,19 +305,33 @@ async function handleSearch(request, env) {
   const queryVector = await embedQuery(query, env);
   const embeddingMs = performance.now() - embedStart;
   const searchStart = performance.now();
-  const hits = index.search(queryVector, k, { efSearch });
+  const beforeArtifactStats = artifact.stats();
+  const artifactResult = await artifact.search(queryVector, k, { efSearch });
+  const hits = artifactResult.results;
   const searchMs = performance.now() - searchStart;
+  const artifactStats = artifact.stats();
   return jsonResponse({
     query,
     result_count: hits.length,
-    cache_state: load.cold ? 'cold-restored' : 'warm-cache',
-    restore_ms: load.restoreMs,
+    cache_state: load.cold ? 'cold-loaded-artifact' : 'warm-artifact',
+    load_ms: load.loadMs,
     embedding_ms: embeddingMs,
     search_ms: searchMs,
     corpus_chunks: corpus.length,
     dim: manifest.dims,
     ef_search: efSearch,
-    restore_count: state.restoreCount,
+    load_count: state.loadCount,
+    artifact: {
+      router_resident_records: artifactStats.routerResident.records,
+      router_resident_bytes: artifactStats.routerResident.bytes,
+      query_range_requests: artifactStats.rangeRequests - beforeArtifactStats.rangeRequests,
+      query_range_bytes: artifactStats.rangeBytes - beforeArtifactStats.rangeBytes,
+      query_cached_nodes_added: artifactStats.cachedNodes - beforeArtifactStats.cachedNodes,
+      total_range_requests: artifactStats.rangeRequests,
+      total_range_bytes: artifactStats.rangeBytes,
+      cached_nodes: artifactStats.cachedNodes,
+      rounds: artifactResult.rounds.length,
+    },
     results: hits.map(buildResult),
   });
 }
@@ -306,14 +339,15 @@ async function handleSearch(request, env) {
 function healthBody(env) {
   return {
     ok: true,
-    loaded: !!index,
+    loaded: !!artifact,
     corpus_chunks: corpus.length,
     dim: manifest?.dims || null,
     read_only: isReadOnly(env),
-    restore_count: state.restoreCount,
+    load_count: state.loadCount,
     local_stub_ai: isLocalStubAi(env),
-    restored_at: state.restoredAt,
-    last_restore_ms: state.lastRestoreMs,
+    loaded_at: state.loadedAt,
+    last_load_ms: state.lastLoadMs,
+    runtime_mode: 'artifact',
     model: manifest?.workersAiModel || null,
   };
 }
@@ -340,14 +374,14 @@ export default {
       if (url.pathname === '/readiness') {
         const auth = requireAdminAuth(request, env);
         if (auth) return withCors(auth, env);
-        return withCors(jsonResponse({ ready: true, loaded: !!index, manifest: MANIFEST_ASSET, read_only: isReadOnly(env) }), env);
+        return withCors(jsonResponse({ ready: true, loaded: !!artifact, manifest: MANIFEST_ASSET, read_only: isReadOnly(env), runtime_mode: 'artifact' }), env);
       }
       if (url.pathname === '/reset_cache' && request.method === 'POST') {
         const auth = requireAdminAuth(request, env);
         if (auth) return withCors(auth, env);
         if (isReadOnly(env)) return withCors(jsonResponse({ error: 'Read-only mode' }, 403), env);
-        if (index) index.dispose();
-        index = null;
+        await artifact?.close?.();
+        artifact = null;
         manifest = null;
         corpus = [];
         corpusById = new Map();

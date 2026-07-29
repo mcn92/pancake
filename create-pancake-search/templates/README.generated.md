@@ -10,6 +10,75 @@ npm run deploy
 npm run reindex
 ```
 
-The Worker is snapshot-first: rebuild the bundled assets when source content changes, then deploy again.
+The Worker is snapshot-first by default: rebuild the bundled assets when source content changes, then deploy again.
+
+## Local search without Workers AI
+
+Workers AI is used for production query embeddings. For local mechanics testing,
+set `LOCAL_STUB_AI=1` in `wrangler.toml` or pass it to Wrangler:
+
+```bash
+npm run dev -- --var LOCAL_STUB_AI:1
+```
+
+This uses deterministic local hash embeddings for queries. Use it only to test
+the generated Worker/API path; relevance will not match Workers AI.
+
+For Search Artifact mode, compare the first and second searches:
+
+```bash
+curl 'http://127.0.0.1:8787/search?q=pancake%20artifact&k=3'
+curl 'http://127.0.0.1:8787/search?q=worker%20semantic%20search&k=3'
+```
+
+The first response should report `cache_state: "cold-loaded-artifact"`. The
+second should report `cache_state: "warm-artifact"` and `load_ms: 0`.
+
+Artifact stats include both per-query and cumulative range-read counters:
+
+```json
+{
+  "artifact": {
+    "query_range_requests": 26,
+    "query_range_bytes": 16038,
+    "query_cached_nodes_added": 27,
+    "total_range_requests": 331,
+    "total_range_bytes": 239382
+  }
+}
+```
+
+## Search Artifact mode
+
+Experimental bundled Search Artifact mode is available when `pancake.config.json`
+contains:
+
+```json
+{
+  "runtime": {
+    "mode": "artifact",
+    "storage": "bundled",
+    "artifactPath": "./index.pancake-range"
+  }
+}
+```
+
+Then rebuild:
+
+```bash
+npm run reindex -- --runtime artifact
+```
+
+To use an artifact built elsewhere:
+
+```bash
+npm run reindex -- --runtime artifact --artifact ./index.pancake-range
+```
+
+An externally supplied artifact must be built from the exact generated corpus:
+
+- artifact dimension must match `embedding.dims`
+- artifact record count must match `assets/corpus.json`
+- artifact IDs must correspond to corpus chunk IDs
 
 Public search uses Workers AI for query embeddings, so configure Cloudflare billing and account access before deploying. `READ_ONLY=1` and `RATE_LIMIT_RPM=120` are enabled by default in `wrangler.toml`.

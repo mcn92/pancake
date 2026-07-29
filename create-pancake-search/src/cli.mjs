@@ -25,8 +25,10 @@ const DEFAULT_CONFIG = Object.freeze({
     normalize: true,
   },
   index: { metric: 'cosine', quantized: true, M: 16, efConstruction: 200, efSearch: 120 },
+  runtime: { mode: 'snapshot', storage: 'bundled' },
   validation: { minRecallAt10: 0.98 },
 });
+const RANGE_ARTIFACT_MAGIC = 0x31415250;
 const MODEL_MAP = Object.freeze({
   'bge-small-en-v1.5': {
     dims: 384,
@@ -72,6 +74,8 @@ Flags:
   --max-pages <n>       URL crawl cap
   --include <glob>      Folder include glob, repeatable
   --exclude <glob>      Folder exclude glob, repeatable
+  --runtime snapshot|artifact
+  --artifact <file>     Optional prebuilt .pancake-range artifact for --runtime artifact
   --deploy / --no-deploy
   --yes
   --force               Replace an existing target directory
@@ -152,6 +156,8 @@ async function resolveCreateOptions(flags) {
       source,
       deploy,
       model: flags.model || 'bge-small-en-v1.5',
+      runtime: flags.runtime || (flags.artifact ? 'artifact' : 'snapshot'),
+      artifact: flags.artifact || null,
       maxPages: parsePositiveInt(flags['max-pages'] || '500', '--max-pages'),
       include: flags.include || ['**/*.{md,mdx,html,txt}'],
       exclude: flags.exclude || ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**'],
@@ -164,7 +170,14 @@ async function resolveCreateOptions(flags) {
 function makeConfig(options) {
   const model = MODEL_MAP[options.model];
   if (!model) throw new CliError(`Unsupported --model ${options.model}. Supported: ${Object.keys(MODEL_MAP).join(', ')}`);
+  if (!['snapshot', 'artifact'].includes(options.runtime)) {
+    throw new CliError(`--runtime must be snapshot or artifact, got ${options.runtime}`);
+  }
   const isUrl = /^https?:\/\//i.test(options.source);
+  const targetDir = path.resolve(process.cwd(), options.name);
+  const artifactPath = options.artifact
+    ? path.relative(targetDir, path.resolve(process.cwd(), options.artifact)) || '.'
+    : null;
   return {
     $schema: 'https://raw.githubusercontent.com/mcn92/pancake/main/schemas/v1/pancake.config.schema.json',
     version: 1,
@@ -175,6 +188,9 @@ function makeConfig(options) {
     chunking: { ...DEFAULT_CONFIG.chunking },
     embedding: { ...DEFAULT_CONFIG.embedding, buildModel: options.model, dims: model.dims },
     index: { ...DEFAULT_CONFIG.index },
+    runtime: options.runtime === 'artifact'
+      ? { mode: 'artifact', storage: 'bundled', ...(artifactPath ? { artifactPath } : {}) }
+      : { ...DEFAULT_CONFIG.runtime },
     validation: { ...DEFAULT_CONFIG.validation },
   };
 }
@@ -182,16 +198,36 @@ function makeConfig(options) {
 async function rebuildProject(projectDir, flags = {}) {
   const configPath = path.join(projectDir, 'pancake.config.json');
   const config = JSON.parse(await fs.readFile(configPath, 'utf8'));
+  applyRuntimeOverrides(config, projectDir, flags);
   validateConfig(config);
+  await copyTemplate(config.runtime?.mode === 'artifact' ? 'worker.artifact.js' : 'worker.js', path.join(projectDir, 'worker.js'));
+  await fs.writeFile(path.join(projectDir, 'wrangler.toml'), wranglerToml(config));
   await buildAssets(projectDir, config, { verbose: !!flags.verbose });
+  await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
   console.log('Rebuilt Pancake search assets.');
+}
+
+function applyRuntimeOverrides(config, projectDir, flags) {
+  if (!flags.runtime && !flags.artifact) return;
+  const runtime = flags.runtime || (flags.artifact ? 'artifact' : config.runtime?.mode || 'snapshot');
+  if (!['snapshot', 'artifact'].includes(runtime)) {
+    throw new CliError(`--runtime must be snapshot or artifact, got ${runtime}`);
+  }
+  if (runtime === 'artifact') {
+    const artifactPath = flags.artifact
+      ? path.relative(projectDir, path.resolve(process.cwd(), flags.artifact)) || '.'
+      : config.runtime?.artifactPath;
+    config.runtime = { mode: 'artifact', storage: 'bundled', ...(artifactPath ? { artifactPath } : {}) };
+  } else {
+    config.runtime = { ...DEFAULT_CONFIG.runtime };
+  }
 }
 
 async function writeProject(projectDir, config) {
   await fs.mkdir(path.join(projectDir, 'assets'), { recursive: true });
   await fs.mkdir(path.join(projectDir, '.github', 'workflows'), { recursive: true });
   await fs.writeFile(path.join(projectDir, 'pancake.config.json'), `${JSON.stringify(config, null, 2)}\n`);
-  await copyTemplate('worker.js', path.join(projectDir, 'worker.js'));
+  await copyTemplate(config.runtime?.mode === 'artifact' ? 'worker.artifact.js' : 'worker.js', path.join(projectDir, 'worker.js'));
   await copyTemplate('ui.html', path.join(projectDir, 'ui.html'));
   await copyTemplate('README.generated.md', path.join(projectDir, 'README.md'));
   await copyTemplate('reindex.yml', path.join(projectDir, '.github', 'workflows', 'reindex.yml'));
@@ -218,10 +254,11 @@ READ_ONLY = "1"
 RATE_LIMIT_RPM = "120"
 MAX_JSON_BYTES = "262144"
 MAX_QUERY_CHARS = "4096"
+LOCAL_STUB_AI = "0"
 
 [[rules]]
 type = "Data"
-globs = ["**/*.pnck"]
+globs = ["**/*.pnck", "**/*.pancake-range"]
 fallthrough = true
 
 [[rules]]
@@ -289,14 +326,65 @@ async function buildAssets(projectDir, config) {
 
   const assetsDir = path.join(projectDir, 'assets');
   await fs.mkdir(assetsDir, { recursive: true });
-  const manifest = makeManifest(config, chunks, snapshot, vectors);
-  await fs.writeFile(path.join(assetsDir, 'snapshot.pnck'), snapshot);
+  const artifactPath = config.runtime?.mode === 'artifact' && config.runtime.artifactPath
+    ? path.resolve(projectDir, config.runtime.artifactPath)
+    : null;
+  let artifact = null;
+  let artifactInfo = null;
+  if (config.runtime?.mode === 'artifact') {
+    if (artifactPath && !fssync.existsSync(artifactPath)) {
+      throw new CliError(`Configured Search Artifact not found: ${artifactPath}\nNext: update runtime.artifactPath in pancake.config.json or rebuild with --artifact <file>.`, 2);
+    }
+    if (artifactPath) {
+      artifact = await fs.readFile(artifactPath);
+      artifactInfo = inspectRangeArtifactHeader(artifact, artifactPath);
+      if (artifactInfo.dim !== config.embedding.dims) {
+        throw new CliError(`Search Artifact dimension mismatch (${artifactInfo.dim} !== ${config.embedding.dims}). Next: supply an artifact built from the same embedding model.`, 2);
+      }
+      if (artifactInfo.count !== chunks.length) {
+        throw new CliError(`Search Artifact count mismatch (${artifactInfo.count} !== ${chunks.length}). Next: rebuild the artifact from this generated corpus.`, 2);
+      }
+    }
+  }
+  const manifest = makeManifest(config, chunks, snapshot, vectors, artifact, artifactInfo);
+  if (config.runtime?.mode === 'artifact') {
+    const outPath = path.join(assetsDir, 'index.pancake-range');
+    if (artifact) {
+      await fs.writeFile(outPath, artifact);
+    } else {
+      const buildManifest = Pancake.buildRangeArtifact(snapshot, outPath, { layout: 'rcm' });
+      artifactInfo = {
+        version: buildManifest.formatVersion,
+        kind: 1,
+        dim: buildManifest.graph.dim,
+        count: buildManifest.graph.count,
+        entryPoint: buildManifest.graph.entryPoint,
+        maxLevel: buildManifest.graph.maxLevel,
+        M: buildManifest.graph.M,
+        M0: buildManifest.graph.M0,
+        metric: config.index.metric === 'l2' ? 0 : 1,
+        recordBytes: buildManifest.addressing.recordBytes,
+        parts: 0,
+        routerCount: buildManifest.addressing.routerCount,
+        baseCount: buildManifest.addressing.baseCount,
+      };
+      artifact = await fs.readFile(outPath);
+    }
+    manifest.artifactSha256 = crypto.createHash('sha256').update(artifact).digest('hex');
+    manifest.artifact = artifactInfo;
+  } else {
+    await fs.writeFile(path.join(assetsDir, 'snapshot.pnck'), snapshot);
+  }
   await fs.writeFile(path.join(assetsDir, 'corpus.json'), `${JSON.stringify(chunks.map(publicChunk), null, 2)}\n`);
   await fs.writeFile(path.join(assetsDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   await fs.mkdir(path.join(projectDir, '.pancake'), { recursive: true });
   await fs.writeFile(path.join(projectDir, '.pancake', 'last-build.log'), `${logLines.join('\n')}\n`);
   const gzipBytes = await projectedGzipBytes(projectDir);
-  log(`Built index: ${(snapshot.byteLength / 1024 / 1024).toFixed(2)} MB snapshot`);
+  if (config.runtime?.mode === 'artifact') {
+    log(`Built corpus assets with ${(artifact.byteLength / 1024 / 1024).toFixed(2)} MB Search Artifact`);
+  } else {
+    log(`Built index: ${(snapshot.byteLength / 1024 / 1024).toFixed(2)} MB snapshot`);
+  }
   log(`Projected bundled gzip size: ${(gzipBytes / 1024 / 1024).toFixed(2)} MB`);
   if (gzipBytes > 3 * 1024 * 1024) {
     throw new CliError('Projected Worker bundle exceeds the free-plan 3 MB compressed limit. Next: reduce source scope or wait for the R2-backed tier.', 2);
@@ -311,6 +399,9 @@ function validateConfig(config) {
   const model = MODEL_MAP[config.embedding?.buildModel];
   if (!model) throw new CliError(`Unsupported embedding.buildModel ${config.embedding?.buildModel}`, 1);
   if (config.embedding.dims !== model.dims) throw new CliError(`embedding.dims must be ${model.dims}`, 1);
+  const runtimeMode = config.runtime?.mode || 'snapshot';
+  if (!['snapshot', 'artifact'].includes(runtimeMode)) throw new CliError('runtime.mode must be snapshot or artifact', 1);
+  if (runtimeMode === 'artifact' && config.runtime?.storage !== 'bundled') throw new CliError('runtime.storage must be bundled for artifact mode in this release', 1);
 }
 
 async function ingestFolder(root, source, log) {
@@ -565,7 +656,31 @@ function publicChunk(chunk) {
   };
 }
 
-function makeManifest(config, chunks, snapshot, vectors) {
+function inspectRangeArtifactHeader(bytes, label = 'Search Artifact') {
+  if (!bytes || bytes.byteLength < 56) {
+    throw new CliError(`${label} is too small to be a Pancake Search Artifact`, 2);
+  }
+  const magic = bytes.readUInt32LE(0);
+  if (magic !== RANGE_ARTIFACT_MAGIC) {
+    throw new CliError(`${label} is not a Pancake Search Artifact`, 2);
+  }
+  const version = bytes.readUInt32LE(4);
+  const kind = bytes.readUInt32LE(8);
+  const dim = bytes.readUInt32LE(12);
+  const count = bytes.readUInt32LE(16);
+  const entryPoint = bytes.readUInt32LE(20);
+  const maxLevel = bytes.readUInt32LE(24);
+  const M = bytes.readUInt32LE(28);
+  const M0 = bytes.readUInt32LE(32);
+  const metric = bytes.readUInt32LE(36);
+  const recordBytes = bytes.readUInt32LE(40);
+  const parts = bytes.readUInt32LE(52);
+  const routerCount = version >= 2 && bytes.byteLength >= 64 ? bytes.readUInt32LE(56) : 0;
+  const baseCount = version >= 2 && bytes.byteLength >= 68 ? bytes.readUInt32LE(60) : count;
+  return { version, kind, dim, count, entryPoint, maxLevel, M, M0, metric, recordBytes, parts, routerCount, baseCount };
+}
+
+function makeManifest(config, chunks, snapshot, vectors, artifact = null, artifactInfo = null) {
   const model = MODEL_MAP[config.embedding.buildModel];
   const firstVectorHash = vectors[0]
     ? crypto.createHash('sha256').update(Buffer.from(vectors[0].buffer, vectors[0].byteOffset, vectors[0].byteLength)).digest('hex')
@@ -591,8 +706,11 @@ function makeManifest(config, chunks, snapshot, vectors) {
     normalize: config.embedding.normalize !== false,
     maxInputTokens: model.maxInputTokens,
     maxQueryChars: 4096,
+    runtime: config.runtime || DEFAULT_CONFIG.runtime,
     firstVectorSha256: firstVectorHash,
     snapshotSha256: crypto.createHash('sha256').update(snapshot).digest('hex'),
+    artifactSha256: artifact ? crypto.createHash('sha256').update(artifact).digest('hex') : null,
+    artifact: artifactInfo,
     configHash: crypto.createHash('sha256').update(JSON.stringify(config)).digest('hex'),
   };
 }
@@ -601,10 +719,11 @@ async function projectedGzipBytes(projectDir) {
   const files = [
     'worker.js',
     'ui.html',
-    'assets/snapshot.pnck',
     'assets/corpus.json',
     'assets/manifest.json',
   ];
+  const artifactPath = path.join(projectDir, 'assets', 'index.pancake-range');
+  files.push(fssync.existsSync(artifactPath) ? 'assets/index.pancake-range' : 'assets/snapshot.pnck');
   const buffers = [];
   for (const file of files) buffers.push(await fs.readFile(path.join(projectDir, file)));
   return zlib.gzipSync(Buffer.concat(buffers)).byteLength;

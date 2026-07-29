@@ -69,6 +69,16 @@
       },
       "additionalProperties": false
     },
+    "runtime": {
+      "type": "object",
+      "required": ["mode", "storage"],
+      "properties": {
+        "mode": { "enum": ["snapshot", "artifact"] },
+        "storage": { "enum": ["bundled"] },
+        "artifactPath": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
     "validation": {
       "type": "object",
       "required": ["minRecallAt10"],
