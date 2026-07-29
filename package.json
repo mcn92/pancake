@@ -90,6 +90,7 @@
     "bench": "node benchmarks/run.js",
     "demo:data": "node scripts/make-demo-vectors.mjs",
     "demo": "npm run demo:data && node examples/demo/technical_demo_cli.js",
+    "demo:artifact": "node examples/search-artifact-demo/demo.js --compact",
     "build:pages-demo": "node examples/worker-semantic-search-pages/build.mjs",
     "test": "node run_tests.js && node test/model_c_loader.js",
     "test:browser": "node test/browser_smoke.js",
