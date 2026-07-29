@@ -56,9 +56,9 @@ try { usearch = require('usearch'); }
 catch (e) { console.warn('WARN: usearch not installed — skipping usearch configs.'); }
 
 const DEFAULT_USEARCH_WASM_PATHS = {
-  i8: path.join(__dirname, '..', 'external', 'usearch-wasm', 'USearch-v2.6.1', 'build_wasm_o3_simd_1gb', 'wasm', 'index.wasm'),
-  f16: path.join(__dirname, '..', 'external', 'usearch-wasm', 'USearch-v2.6.1', 'build_wasm_o3_simd_1gb', 'wasm', 'index.wasm'),
-  f32: path.join(__dirname, '..', 'external', 'usearch-wasm', 'USearch-v2.6.1', 'build_wasm_o3_simd_2gb', 'wasm', 'index.wasm'),
+  i8: path.join(__dirname, '..', 'external', 'usearch-wasm', 'USearch', 'build_wasm_pancake_1gb_growth', 'usearch_wasm.wasm'),
+  f16: path.join(__dirname, '..', 'external', 'usearch-wasm', 'USearch', 'build_wasm_pancake_1gb_growth', 'usearch_wasm.wasm'),
+  f32: path.join(__dirname, '..', 'external', 'usearch-wasm', 'USearch', 'build_wasm_pancake_2gb_growth', 'usearch_wasm.wasm'),
 };
 
 let HierarchicalNSW;
@@ -763,6 +763,28 @@ function queryUsearch(built, test, gt, ef) {
 const USEARCH_WASM_METRIC = { cos: 1, l2sq: 3 };
 const USEARCH_WASM_SCALAR = { f32: 1, f16: 3, i8: 4 };
 const USEARCH_WASM_OPTIONS_SIZE = 32;
+const USEARCH_WASM_MINIFIED_EXPORTS_V26 = {
+  usearch_init: 's',
+  usearch_free: 't',
+  usearch_serialized_length: 'u',
+  usearch_save_buffer: 'y',
+  usearch_view_buffer: 'A',
+  usearch_reserve: 'F',
+  usearch_add: 'G',
+  usearch_search: 'J',
+  emscripten_builtin_memalign: 'N',
+};
+const USEARCH_WASM_MINIFIED_EXPORTS_V226 = {
+  usearch_init: 'v',
+  usearch_free: 'w',
+  usearch_serialized_length: 'x',
+  usearch_save_buffer: 'C',
+  usearch_view_buffer: 'E',
+  usearch_reserve: 'U',
+  usearch_add: 'V',
+  usearch_search: 'Y',
+  emscripten_builtin_memalign: 'ea',
+};
 
 function makeUsearchWasmImports(memoryRef) {
   const errnoNosys = -52;
@@ -875,8 +897,16 @@ class UsearchWasmRuntime {
     this.exports = module.exports;
     this.memoryRef = module.memoryRef;
     this.minified = !this.exports.usearch_init;
+    this.minifiedExports = this.exports.ea ? USEARCH_WASM_MINIFIED_EXPORTS_V226 : USEARCH_WASM_MINIFIED_EXPORTS_V26;
+    this.useBigIntKeys = null;
   }
-  fn(name, minifiedName) { return this.exports[name] || this.exports[minifiedName]; }
+  fn(name, minifiedName) {
+    const candidates = [name, this.minifiedExports[name], minifiedName].filter(Boolean);
+    for (const candidate of candidates) {
+      if (this.exports[candidate]) return this.exports[candidate];
+    }
+    throw new Error(`USearch WASM export not found: ${name}`);
+  }
   memory() { return this.memoryRef.memory; }
   u8() { return new Uint8Array(this.memory().buffer); }
   i32() { return new Int32Array(this.memory().buffer); }
@@ -944,6 +974,21 @@ class UsearchWasmRuntime {
     this.fn('usearch_free', 't')(handle, errPtr);
     this.checkError(errPtr, 'usearch_free');
   }
+  add(handle, key, vecPtr, vectorKind, errPtr) {
+    const addFn = this.fn('usearch_add', 'G');
+    if (this.useBigIntKeys === true) return addFn(handle, BigInt(key), vecPtr, vectorKind, errPtr);
+    if (this.useBigIntKeys === false) return addFn(handle, key, vecPtr, vectorKind, errPtr);
+    try {
+      const result = addFn(handle, key, vecPtr, vectorKind, errPtr);
+      this.useBigIntKeys = false;
+      return result;
+    } catch (e) {
+      if (!(e instanceof TypeError) || !/BigInt/i.test(String(e.message))) throw e;
+      const result = addFn(handle, BigInt(key), vecPtr, vectorKind, errPtr);
+      this.useBigIntKeys = true;
+      return result;
+    }
+  }
 }
 
 async function buildUsearchWasm({ train, dim, dtype, wasmPath }) {
@@ -967,7 +1012,7 @@ async function buildUsearchWasm({ train, dim, dtype, wasmPath }) {
     for (let i = 0; i < train.length; i++) {
       runtime.f32().set(train[i], vecPtr >> 2);
       runtime.resetError(errPtr);
-      runtime.fn('usearch_add', 'G')(handle, BigInt(i), vecPtr, USEARCH_WASM_SCALAR.f32, errPtr);
+      runtime.add(handle, i, vecPtr, USEARCH_WASM_SCALAR.f32, errPtr);
       runtime.checkError(errPtr, `usearch_add(${i})`);
     }
     const buildMs = performance.now() - t0;
