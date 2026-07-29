@@ -59,10 +59,15 @@
         "default": "./pancake.js"
       }
     },
+    "./artifact": {
+      "types": "./pancake.d.ts",
+      "default": "./pancake-artifact.js"
+    },
     "./engine.wasm": "./dist/engine.wasm"
   },
   "files": [
     "pancake.js",
+    "pancake-artifact.js",
     "pancake.node.mjs",
     "pancake.web.mjs",
     "pancake.workerd.mjs",

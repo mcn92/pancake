@@ -109,6 +109,97 @@ export interface SearchResult {
   distance: number;
 }
 
+export interface RangeReadSource {
+  /** Return exactly length bytes starting at offset. */
+  read(offset: number, length: number): Uint8Array | ArrayBuffer | Promise<Uint8Array | ArrayBuffer>;
+  /** Optional close hook for file-backed sources. */
+  close?(): void | Promise<void>;
+}
+
+export interface RangeArtifactSearchOptions {
+  /** Query-time search breadth. Default: 100. */
+  efSearch?: number;
+  /** Merge adjacent v1 record runs separated by this many skipped records. Default: 0. */
+  gap?: number;
+}
+
+export interface RangeArtifactStats {
+  readonly rangeRequests: number;
+  readonly rangeBytes: number;
+  readonly rangeNodesDecoded: number;
+  readonly cachedNodes: number;
+  readonly routerResident: {
+    readonly records: number;
+    readonly bytes: number;
+  };
+}
+
+export interface RangeArtifactRound {
+  readonly ids: number;
+  readonly requests: number;
+  readonly bytes: number;
+  readonly rangeBytes: readonly number[];
+}
+
+export interface RangeArtifactSearchResult {
+  readonly results: SearchResult[];
+  readonly rounds: RangeArtifactRound[];
+  readonly stats: RangeArtifactStats;
+}
+
+export interface RangeArtifactOpenOptions {
+  /** Eagerly load the v2 router segment. Default: true. */
+  loadRouter?: boolean;
+}
+
+export interface RangeArtifactBuildOptions {
+  /** Deterministic base-layer layout. Default: 'rcm'. */
+  layout?: 'rcm' | 'identity';
+}
+
+export interface RangeArtifactBuildManifest {
+  readonly format: 'pancake-range-artifact';
+  readonly formatVersion: number;
+  readonly file: string;
+  readonly sizeBytes: number;
+  readonly kind: string;
+  readonly metric: Metric;
+  readonly layout: Readonly<Record<string, unknown>>;
+  readonly graph: Readonly<Record<string, number>>;
+  readonly addressing: Readonly<Record<string, number>>;
+}
+
+export class NodeFileRangeSource implements RangeReadSource {
+  readonly filePath: string;
+  readonly size: number;
+  constructor(filePath: string);
+  read(offset: number, length: number): Promise<Uint8Array>;
+  close(): Promise<void>;
+}
+
+export class PancakeRangeArtifact {
+  readonly version: number;
+  readonly kind: number;
+  readonly dim: number;
+  readonly count: number;
+  readonly entryPoint: number;
+  readonly maxLevel: number;
+  readonly M: number;
+  readonly M0: number;
+  readonly metric: number;
+  readonly recordBytes: number;
+  readonly routerCount: number;
+  readonly baseCount: number;
+  readonly routerResident: { readonly records: number; readonly bytes: number };
+  static open(source: RangeReadSource, options?: RangeArtifactOpenOptions): Promise<PancakeRangeArtifact>;
+  static openFile(filePath: string, options?: RangeArtifactOpenOptions): Promise<PancakeRangeArtifact>;
+  search(query: VectorInput, k: number, options?: RangeArtifactSearchOptions): Promise<RangeArtifactSearchResult>;
+  stats(): RangeArtifactStats;
+  resetStats(): void;
+  clearCache(options?: { reloadRouter?: boolean }): Promise<{ records: number; bytes: number }>;
+  close(): Promise<void>;
+}
+
 export interface MemoryUsage {
   /** Backend-owned graph and vector storage estimate. */
   readonly logicalIndexBytes: number;
@@ -193,6 +284,7 @@ export interface PancakeIndex {
 export interface PancakeApi {
   readonly PancakeError: typeof PancakeError;
   readonly PANCAKE_ERROR_CODES: typeof PANCAKE_ERROR_CODES;
+  readonly RangeArtifact: typeof PancakeRangeArtifact;
   /** Create a new Pancake index using the runtime-specific packaged entrypoint. */
   create(opts: CreateOptions): Promise<PancakeIndex>;
   /** Restore an envelope snapshot, inferring its construction config. */
@@ -214,6 +306,14 @@ export interface PancakeApi {
  * the narrower {@link PancakeApi}.
  */
 export interface NodePancakeApi extends PancakeApi {
+  readonly RangeArtifact: typeof PancakeRangeArtifact;
+  readonly NodeFileRangeSource: typeof NodeFileRangeSource;
+  /** Build a range-readable Search Artifact from a uint8 Pancake snapshot. */
+  buildRangeArtifact(snapshot: Uint8Array | ArrayBufferLike, outPath: string, opts?: RangeArtifactBuildOptions): RangeArtifactBuildManifest;
+  /** Build a range-readable Search Artifact from a uint8 Pancake snapshot file. */
+  buildRangeArtifactFile(snapshotPath: string, outPath: string, opts?: RangeArtifactBuildOptions): RangeArtifactBuildManifest;
+  /** Open a range-readable Search Artifact from a local file. */
+  openRangeArtifactFile(filePath: string, opts?: RangeArtifactOpenOptions): Promise<PancakeRangeArtifact>;
   /** Load vectors from a JSON/JSONL file and build an index. */
   loadJsonFile<Id = unknown>(filePath: string, opts?: JsonFileOptions): Promise<FromVectorsResult<Id>>;
   /**

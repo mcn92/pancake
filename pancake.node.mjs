@@ -6,8 +6,10 @@ import loadScalarEngine from './dist/engine.scalar.js';
 import createPancakeApi from './pancake-core.js';
 import errorContract from './pancake-errors.js';
 import loaderContract from './pancake-loader.js';
+import artifactContract from './pancake-artifact.js';
 const { PancakeError, PANCAKE_ERROR_CODES, pancakeError } = errorContract;
 const { createCachedModuleLoader } = loaderContract;
+const { PancakeRangeArtifact, NodeFileRangeSource, buildRangeArtifact, buildRangeArtifactFile } = artifactContract;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -193,6 +195,16 @@ async function loadNodeEngine() {
 
 const Pancake = createPancakeApi(loadNodeEngine);
 export { PancakeError, PANCAKE_ERROR_CODES };
+
+Pancake.RangeArtifact = PancakeRangeArtifact;
+Pancake.NodeFileRangeSource = NodeFileRangeSource;
+Pancake.buildRangeArtifact = buildRangeArtifact;
+Pancake.buildRangeArtifactFile = buildRangeArtifactFile;
+
+Pancake.openRangeArtifactFile = async function openRangeArtifactFile(filePath, opts) {
+  validateFilePath(filePath, 'openRangeArtifactFile');
+  return PancakeRangeArtifact.openFile(filePath, opts);
+};
 
 Pancake.loadSnapshotFile = async function loadSnapshotFile(filePath, opts) {
   const {

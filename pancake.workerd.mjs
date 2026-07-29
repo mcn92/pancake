@@ -5,8 +5,10 @@ import scalarWasmAsset from './dist/engine.scalar.wasm';
 import createPancakeApi from './pancake-core.js';
 import errorContract from './pancake-errors.js';
 import loaderContract from './pancake-loader.js';
+import artifactContract from './pancake-artifact.js';
 const { PancakeError, PANCAKE_ERROR_CODES, pancakeError } = errorContract;
 const { createCachedModuleLoader } = loaderContract;
+const { PancakeRangeArtifact } = artifactContract;
 
 let engineVariantPromise = null;
 
@@ -53,6 +55,8 @@ async function loadWorkerdEngine() {
 
 const Pancake = createPancakeApi(loadWorkerdEngine);
 export { PancakeError, PANCAKE_ERROR_CODES };
+
+Pancake.RangeArtifact = PancakeRangeArtifact;
 
 function unsupportedNodeFileHelper(name) {
   return async function unsupported() {
