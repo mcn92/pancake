@@ -17,7 +17,7 @@ function prepareFixtureDependency() {
   const npmCacheDir = path.join(os.tmpdir(), '.npm-pack-cache');
   const packJson = execFileSync(
     'npm',
-    ['pack', '--json', '--ignore-scripts', '--cache', npmCacheDir],
+    ['pack', '--json', '--ignore-scripts', '--dry-run=false', '--cache', npmCacheDir],
     { cwd: ROOT_DIR, encoding: 'utf8' }
   );
 
