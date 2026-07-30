@@ -14,6 +14,8 @@ const __dirname = path.dirname(__filename);
 const PACKAGE_ROOT = path.resolve(__dirname, '..');
 const REPO_ROOT = path.resolve(PACKAGE_ROOT, '..');
 const DEFAULT_PREFIX = 'Represent this sentence for searching relevant passages: ';
+const CONFIG_SCHEMA_URL = 'https://raw.githubusercontent.com/mcn92/pancake/main/create-pancake-search/schemas/v1/pancake.config.schema.json';
+const MAX_CRAWL_BODY_BYTES = 2 * 1024 * 1024;
 const DEFAULT_CONFIG = Object.freeze({
   chunking: { targetTokens: 256, overlapPercent: 15 },
   embedding: {
@@ -128,7 +130,7 @@ async function createProject(flags) {
   try {
     const config = makeConfig(answers);
     await writeProject(tmpDir, config);
-    await buildAssets(tmpDir, config);
+    await buildAssets(tmpDir, config, { sourceBaseDir: targetDir });
     await fs.rename(tmpDir, targetDir);
     console.log(`Scaffolded ${targetDir}`);
     console.log(`Rebuild: cd ${answers.name} && npm run reindex`);
@@ -179,7 +181,7 @@ function makeConfig(options) {
     ? path.relative(targetDir, path.resolve(process.cwd(), options.artifact)) || '.'
     : null;
   return {
-    $schema: 'https://raw.githubusercontent.com/mcn92/pancake/main/schemas/v1/pancake.config.schema.json',
+    $schema: CONFIG_SCHEMA_URL,
     version: 1,
     name: path.basename(options.name),
     source: isUrl
@@ -293,7 +295,7 @@ function tomlString(value) {
   return String(value).replace(/[^a-zA-Z0-9_-]/g, '-').replace(/^-+|-+$/g, '') || 'pancake-search';
 }
 
-async function buildAssets(projectDir, config) {
+async function buildAssets(projectDir, config, options = {}) {
   validateConfig(config);
   const logLines = [];
   const log = (msg) => {
@@ -301,12 +303,17 @@ async function buildAssets(projectDir, config) {
     console.log(msg);
   };
   const sourceRoot = config.source.type === 'folder'
-    ? path.resolve(projectDir, config.source.path)
+    ? path.resolve(options.sourceBaseDir || projectDir, config.source.path)
     : config.source.url;
   const docs = config.source.type === 'folder'
     ? await ingestFolder(sourceRoot, config.source, log)
     : await ingestUrl(config.source, log);
-  if (docs.length === 0) throw new CliError('Ingest produced 0 documents. Next: check --source/include/exclude.', 1);
+  if (docs.length === 0) {
+    const detail = config.source.type === 'folder'
+      ? `resolved path ${sourceRoot}; include ${JSON.stringify(config.source.include || ['**/*.{md,mdx,html,txt}'])}; exclude ${JSON.stringify(config.source.exclude || [])}`
+      : `seed URL ${sourceRoot}; maxPages ${config.source.maxPages || 500}`;
+    throw new CliError(`Ingest produced 0 documents from ${detail}. Next: check --source/include/exclude and ensure files contain enough text.`, 1);
+  }
   const chunks = dedupeChunks(chunkDocs(docs, config.chunking));
   if (chunks.length === 0) throw new CliError('Chunking produced 0 chunks. Next: use longer content or adjust source filters.', 1);
   log(`Ingested ${docs.length} docs -> ${chunks.length} chunks`);
@@ -406,6 +413,9 @@ function validateConfig(config) {
 
 async function ingestFolder(root, source, log) {
   const docs = [];
+  if (!fssync.existsSync(root)) {
+    throw new CliError(`Source folder not found: ${root}\nNext: check --source or source.path in pancake.config.json.`, 1);
+  }
   const files = await walk(root);
   for (const file of files) {
     const rel = path.relative(root, file).split(path.sep).join('/');
@@ -423,7 +433,12 @@ async function ingestFolder(root, source, log) {
 
 async function walk(root) {
   const out = [];
-  const entries = await fs.readdir(root, { withFileTypes: true });
+  let entries;
+  try {
+    entries = await fs.readdir(root, { withFileTypes: true });
+  } catch (error) {
+    throw new CliError(`Unable to read source folder ${root}: ${error.message}`, 1);
+  }
   for (const entry of entries) {
     const full = path.join(root, entry.name);
     if (entry.isDirectory()) out.push(...await walk(full));
@@ -457,14 +472,28 @@ async function ingestUrl(source, log) {
     seen.add(href);
     let response;
     try {
-      response = await fetch(href, { headers: { 'User-Agent': 'create-pancake-search/0.1.0' }, signal: AbortSignal.timeout(15000) });
+      response = await fetch(href, {
+        headers: { 'User-Agent': 'create-pancake-search/0.1.0' },
+        redirect: 'manual',
+        signal: AbortSignal.timeout(15000),
+      });
     } catch (error) {
       log(`warn: skipped ${href}: ${error.message}`);
       continue;
     }
+    if (response.status >= 300 && response.status < 400) {
+      log(`warn: skipped redirect from ${href}`);
+      continue;
+    }
     const type = response.headers.get('content-type') || '';
     if (!response.ok || !type.includes('text/html')) continue;
-    const html = await response.text();
+    let html;
+    try {
+      html = await readLimitedText(response, MAX_CRAWL_BODY_BYTES);
+    } catch (error) {
+      log(`warn: skipped ${href}: ${error.message}`);
+      continue;
+    }
     const extracted = extractHtml(html);
     docs.push({ id: docs.length, url: href, title: extracted.title || href, text: extracted.text });
     for (const link of extractLinks(html, href, seed.origin)) {
@@ -472,6 +501,34 @@ async function ingestUrl(source, log) {
     }
   }
   return docs;
+}
+
+async function readLimitedText(response, maxBytes) {
+  const declaredLength = Number(response.headers.get('content-length') || '0');
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new Error(`response body exceeds ${maxBytes} bytes`);
+  }
+
+  const reader = response.body?.getReader?.();
+  if (!reader) {
+    const text = await response.text();
+    if (Buffer.byteLength(text, 'utf8') > maxBytes) throw new Error(`response body exceeds ${maxBytes} bytes`);
+    return text;
+  }
+
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      throw new Error(`response body exceeds ${maxBytes} bytes`);
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString('utf8');
 }
 
 function extractByExtension(text, file) {

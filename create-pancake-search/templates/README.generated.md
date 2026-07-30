@@ -12,6 +12,29 @@ npm run reindex
 
 The Worker is snapshot-first by default: rebuild the bundled assets when source content changes, then deploy again.
 
+## Index compatibility
+
+The generated assets are built with this index and embedding shape:
+
+```json
+{
+  "embedding": {
+    "buildModel": "bge-small-en-v1.5",
+    "dims": 384
+  },
+  "index": {
+    "metric": "cosine",
+    "quantized": true,
+    "M": 16,
+    "efConstruction": 200,
+    "efSearch": 120
+  }
+}
+```
+
+Snapshots and Search Artifacts should be reopened with matching metric,
+quantization, graph, and embedding dimensions.
+
 ## Local search without Workers AI
 
 Workers AI is used for production query embeddings. For local mechanics testing,
@@ -23,6 +46,16 @@ npm run dev -- --var LOCAL_STUB_AI:1
 
 This uses deterministic local hash embeddings for queries. Use it only to test
 the generated Worker/API path; relevance will not match Workers AI.
+
+If the project was built with `PANCAKE_SEARCH_STUB_EMBEDDINGS=1`, rebuild it
+with real Workers AI embeddings before deploying:
+
+```bash
+npm run reindex
+```
+
+Stub-built indexes contain hash embeddings, so result ordering can look
+plausible while carrying no real semantic relevance.
 
 For Search Artifact mode, compare the first and second searches:
 

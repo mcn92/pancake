@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/mcn92/pancake/main/schemas/v1/pancake.config.schema.json",
+  "$id": "https://raw.githubusercontent.com/mcn92/pancake/main/create-pancake-search/schemas/v1/pancake.config.schema.json",
   "type": "object",
   "required": ["version", "name", "source", "chunking", "embedding", "index", "validation"],
   "properties": {

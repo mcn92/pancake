@@ -130,6 +130,15 @@
         .replace(/'/g, '&#39;');
     }
 
+    function safeHref(value) {
+      try {
+        const url = new URL(String(value || ''), window.location.href);
+        return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : '#';
+      } catch {
+        return '#';
+      }
+    }
+
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       meta.textContent = 'Searching...';
@@ -145,7 +154,7 @@
       results.innerHTML = body.results.map((row) => `
         <article>
           <div class="path">${escapeHtml(row.source_path || row.url || '')}</div>
-          <h2><a href="${escapeHtml(row.url || '#')}" target="_blank" rel="noreferrer">${escapeHtml(row.title)}</a></h2>
+          <h2><a href="${escapeHtml(safeHref(row.url))}" target="_blank" rel="noreferrer">${escapeHtml(row.title)}</a></h2>
           <p>${escapeHtml(row.preview)}</p>
         </article>
       `).join('');
