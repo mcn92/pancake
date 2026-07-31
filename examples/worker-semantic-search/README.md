@@ -5,14 +5,18 @@ Worker restores a bundled quantized Pancake snapshot, embeds each query locally,
 and searches the in-memory index. The public UI is served separately from
 Cloudflare Pages under `../worker-semantic-search-pages/`.
 
-Current hosted endpoints:
-
-- Pages UI: `https://pancake-docs-search.pages.dev`
-- Worker API: `https://pancake-docs-search.mcn9284.workers.dev`
+Hosting status: the Worker is deployed in private mode. `wrangler.toml` sets
+`workers_dev = false`, so there is no public `workers.dev` endpoint — requests
+to one return Cloudflare error 1042. The Pages UI at
+`https://pancake-docs-search.pages.dev` remains live and expects the operator
+to supply a Worker API base URL (it stores the value locally in the browser).
+To host your own public endpoint, deploy with `workers_dev = true` (or a
+custom route) and either set the `DEMO_SEARCH_KEY` secret or deploy
+`PRIVATE_SEARCH=0` to open `/search`.
 
 The Worker has no service bindings and makes no outbound requests. In the
-current deployed configuration, search is private: `/search` requires the
-`DEMO_SEARCH_KEY` secret unless `PRIVATE_SEARCH=0` is deployed.
+private-mode configuration, `/search` requires the `DEMO_SEARCH_KEY` secret
+unless `PRIVATE_SEARCH=0` is deployed.
 
 There is no embedding API and no runtime ML framework. The complete query path is:
 

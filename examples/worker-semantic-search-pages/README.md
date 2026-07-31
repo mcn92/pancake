@@ -8,11 +8,10 @@ Hosted UI:
 https://pancake-docs-search.pages.dev
 ```
 
-Worker API:
-
-```text
-https://pancake-docs-search.mcn9284.workers.dev
-```
+Worker API: none public at the moment. The companion Worker is deployed in
+private mode (`workers_dev = false` in
+`../worker-semantic-search/wrangler.toml`), so its `workers.dev` endpoint is
+disabled. Point the UI at your own deployment of the Worker.
 
 The UI does not bake in the Worker URL or demo access key. Enter them in the
 Connection section and click Save; the Worker URL is stored in browser
