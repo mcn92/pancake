@@ -265,21 +265,27 @@ class PancakeRangeArtifact {
         if (addresses.length === 0) return 0;
         addresses.sort((a, b) => a - b);
         const gap = Math.max(0, options.gap || 0);
-        const gapBytes = this.version >= 2 ? 0 : gap * this.recordBytes;
-        let requests = 0;
+        const gapBytes = this.version >= 2 ? gap : gap * this.recordBytes;
+        const rangeParallelism = Math.max(1, Math.trunc(options.parallelism || 1));
+        const ranges = [];
         let runStart = addresses[0];
         let runEnd = addresses[0] + this.recordBytes;
-        const flush = async () => {
-            const bytes = runEnd - runStart;
-            const buffer = asUint8Array(await this.source.read(runStart, bytes));
+        const flush = () => {
+            ranges.push([runStart, runEnd]);
+        };
+        const readRange = async ([start, end]) => {
+            const bytes = end - start;
+            const buffer = asUint8Array(await this.source.read(start, bytes));
             if (buffer.byteLength !== bytes) {
-                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Range artifact record read returned a truncated range', { offset: runStart, bytes, actual: buffer.byteLength });
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Range artifact record read returned a truncated range', { offset: start, bytes, actual: buffer.byteLength });
             }
+            return { start, end, bytes, buffer };
+        };
+        const decodeRange = ({ start, end, bytes, buffer }) => {
             this.rangeRequests++;
             this.rangeBytes += bytes;
-            this.currentRanges.push([runStart, runEnd]);
-            requests++;
-            for (let off = 0; off < bytes; off += this.recordBytes) {
+            this.currentRanges.push([start, end]);
+            for (let off = 0; off + this.recordBytes <= bytes; off += this.recordBytes) {
                 const record = buffer.subarray(off, off + this.recordBytes);
                 const originalId = new DataView(record.buffer, record.byteOffset, record.byteLength).getUint32(0, true);
                 if (!this.cache.has(originalId)) {
@@ -293,13 +299,18 @@ class PancakeRangeArtifact {
             if (address <= runEnd + gapBytes) {
                 runEnd = address + this.recordBytes;
             } else {
-                await flush();
+                flush();
                 runStart = address;
                 runEnd = address + this.recordBytes;
             }
         }
-        await flush();
-        return requests;
+        flush();
+        for (let i = 0; i < ranges.length; i += rangeParallelism) {
+            const batch = ranges.slice(i, i + rangeParallelism);
+            const results = await Promise.all(batch.map(readRange));
+            for (const result of results) decodeRange(result);
+        }
+        return ranges.length;
     }
 
     async loadRouterSegment() {
@@ -372,13 +383,14 @@ class PancakeRangeArtifact {
             throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'search() k must be a positive integer', { k });
         }
         const efSearch = Math.max(options.efSearch || 100, k);
+        const expansionBatch = Math.max(1, Math.trunc(options.expansionBatch || 1));
         const rounds = [];
         const prefetchRound = async (ids) => {
             if (!ids.length) return;
             const beforeRequests = this.rangeRequests;
             const beforeBytes = this.rangeBytes;
             const beforeRanges = this.markRanges();
-            await this.prefetch(ids, { gap: options.gap || 0 });
+            await this.prefetch(ids, { gap: options.gap || 0, parallelism: options.rangeParallelism || options.parallelism || 1 });
             const ranges = this.rangesSince(beforeRanges);
             rounds.push({
                 ids: ids.length,
@@ -422,15 +434,23 @@ class PancakeRangeArtifact {
         visited[current] = 1;
 
         while (candidates.size > 0) {
-            const candidate = candidates.pop();
-            const worst = results.peek();
-            if (results.size >= efSearch && worst && candidate.distance > worst.distance) break;
-            const node = await this.readNode(candidate.id);
+            const batch = [];
+            while (batch.length < expansionBatch && candidates.size > 0) {
+                const candidate = candidates.peek();
+                const worst = results.peek();
+                if (results.size >= efSearch && worst && candidate && candidate.distance > worst.distance) break;
+                batch.push(candidates.pop());
+            }
+            if (!batch.length) break;
+
             const toVisit = [];
-            for (const neighbor of node.base) {
-                if (visited[neighbor]) continue;
-                visited[neighbor] = 1;
-                toVisit.push(neighbor);
+            for (const candidate of batch) {
+                const node = await this.readNode(candidate.id);
+                for (const neighbor of node.base) {
+                    if (visited[neighbor]) continue;
+                    visited[neighbor] = 1;
+                    toVisit.push(neighbor);
+                }
             }
             await prefetchRound(toVisit);
             for (const neighbor of toVisit) {
