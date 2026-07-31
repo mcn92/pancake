@@ -134,6 +134,31 @@ button:disabled {
   gap: 10px;
 }
 
+.matchBanner {
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #d9e0e4;
+  font-size: 14px;
+}
+
+.match-strong {
+  background: #eefaf2;
+  border-color: #b9e6c9;
+  color: #14532d;
+}
+
+.match-weak {
+  background: #fff8e6;
+  border-color: #f0dfae;
+  color: #713f12;
+}
+
+.match-none {
+  background: #fdf2f2;
+  border-color: #f1c8c8;
+  color: #7f1d1d;
+}
+
 .metrics div,
 .resultsPanel,
 .roundsPanel {

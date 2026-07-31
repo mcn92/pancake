@@ -1,16 +1,18 @@
 import Pancake from 'pancake-wasm/web';
 import { loadStudentModel, embedTextWithStudent } from '../../../worker-semantic-search/student-embedder.mjs';
+import { createAbstentionScorer } from './abstention.js';
 import './style.css';
 
 const ARTIFACT_URL = '/artifacts/pancake-docs.pancake-range';
 const MODEL_URL = '/models/docs-student.bin';
 const CORPUS_URL = '/corpus/docs-corpus.json';
+const ABSTENTION_URL = '/abstention/docs-abstention.json';
 
 const SAMPLE_QUERIES = [
   'how does compaction work',
   'How do Cloudflare Workers restore snapshots from R2?',
   'What are the memory tradeoffs for quantized indexes?',
-  'how does filtered search work',
+  'banana pancake recipe',
 ];
 
 const els = {
@@ -29,11 +31,13 @@ const els = {
   cacheMetric: document.querySelector('#cacheMetric'),
   resultsList: document.querySelector('#resultsList'),
   roundsList: document.querySelector('#roundsList'),
+  matchBanner: document.querySelector('#matchBanner'),
 };
 
 let artifact;
 let model;
 let corpusById;
+let abstention;
 
 function createHttpRangeSource(url) {
   let fullBuffer = null;
@@ -133,6 +137,26 @@ function renderRounds(rounds) {
   }));
 }
 
+function renderMatchBanner(quality) {
+  const banner = els.matchBanner;
+  banner.className = 'matchBanner';
+  if (!quality || quality.match_quality === 'unscored') {
+    banner.hidden = true;
+    return;
+  }
+  banner.hidden = false;
+  const label = quality.match_quality;
+  banner.classList.add(`match-${label}`);
+  const confidence = quality.confidence !== undefined ? ` (confidence ${quality.confidence.toFixed(3)})` : '';
+  if (label === 'strong') {
+    banner.textContent = `Strong match${confidence}`;
+  } else if (label === 'weak') {
+    banner.textContent = `No strong match — showing the closest results${confidence}`;
+  } else {
+    banner.textContent = `No match in this corpus — the artifact abstains rather than guessing${confidence}`;
+  }
+}
+
 async function runSearch() {
   if (!artifact || !model) return;
   const text = els.queryInput.value.trim();
@@ -144,9 +168,9 @@ async function runSearch() {
     const gap = Number(els.gapInput.value);
     const before = artifact.stats();
     const t0 = performance.now();
-    const { vector } = embedTextWithStudent(text, model);
+    const embedded = embedTextWithStudent(text, model);
     const embedMs = performance.now() - t0;
-    const result = await artifact.search(vector, k, {
+    const result = await artifact.search(embedded.vector, k, {
       efSearch,
       gap,
       expansionBatch: 8,
@@ -158,13 +182,18 @@ async function runSearch() {
     const bytes = after.rangeBytes - before.rangeBytes;
     const missRounds = result.rounds.filter((round) => round.requests > 0).length;
 
+    const quality = abstention
+      ? (abstention.scorePreSearch(embedded) || abstention.score(result.results, embedded))
+      : { match_quality: 'unscored' };
+
     els.wallMetric.textContent = formatMs(wallMs);
     els.embedMetric.textContent = formatMs(embedMs);
     els.requestsMetric.textContent = requests.toLocaleString();
     els.bytesMetric.textContent = formatBytes(bytes);
     els.missMetric.textContent = missRounds.toLocaleString();
     els.cacheMetric.textContent = after.cachedNodes.toLocaleString();
-    renderResults(result.results);
+    renderMatchBanner(quality);
+    renderResults(quality.match_quality === 'none' ? [] : result.results);
     renderRounds(result.rounds);
   } catch (error) {
     els.resultsList.replaceChildren();
@@ -188,7 +217,7 @@ async function boot() {
   });
 
   setBusy(true);
-  const [modelBytes, corpus] = await Promise.all([
+  const [modelBytes, corpus, abstentionAsset] = await Promise.all([
     fetch(MODEL_URL).then((r) => {
       if (!r.ok) throw new Error(`Model fetch failed: ${r.status}`);
       return r.arrayBuffer();
@@ -197,9 +226,11 @@ async function boot() {
       if (!r.ok) throw new Error(`Corpus fetch failed: ${r.status}`);
       return r.json();
     }),
+    fetch(ABSTENTION_URL).then((r) => (r.ok ? r.json() : null)).catch(() => null),
   ]);
   model = loadStudentModel(new Uint8Array(modelBytes));
   corpusById = new Map(corpus.map((chunk) => [chunk.id, chunk]));
+  abstention = createAbstentionScorer(abstentionAsset);
 
   const source = createHttpRangeSource(ARTIFACT_URL);
   artifact = await Pancake.RangeArtifact.open(source);
