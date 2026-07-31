@@ -97,6 +97,13 @@ function positiveEnvInt(env, name, fallback) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function nonNegativeEnvInt(env, name, fallback) {
+  const raw = env?.[name];
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 function isRateLimited(request, env) {
   const maxRpm = positiveEnvInt(env, 'RATE_LIMIT_RPM', 0);
   if (!maxRpm) return false;
@@ -219,6 +226,8 @@ function parseSearchParams(request) {
     query: url.searchParams.get('q') || '',
     k: Number.parseInt(url.searchParams.get('k') || '5', 10),
     efSearch: Number.parseInt(url.searchParams.get('efSearch') || url.searchParams.get('ef') || '120', 10),
+    rangeGap: Number.parseInt(url.searchParams.get('rangeGap') || url.searchParams.get('gap') || '', 10),
+    expansionBatch: Number.parseInt(url.searchParams.get('expansionBatch') || url.searchParams.get('batch') || '', 10),
   };
 }
 
@@ -286,6 +295,8 @@ async function handleSearch(request, env) {
       query: parsed.body.query ?? parsed.body.q ?? params.query,
       k: parsed.body.k ?? params.k,
       efSearch: parsed.body.efSearch ?? parsed.body.ef ?? params.efSearch,
+      rangeGap: parsed.body.rangeGap ?? parsed.body.gap ?? params.rangeGap,
+      expansionBatch: parsed.body.expansionBatch ?? parsed.body.batch ?? params.expansionBatch,
     };
   }
 
@@ -297,6 +308,8 @@ async function handleSearch(request, env) {
   }
   let k = Number.isInteger(params.k) && params.k > 0 ? params.k : 5;
   let efSearch = Number.isInteger(params.efSearch) && params.efSearch > 0 ? params.efSearch : manifest?.efSearch || 120;
+  const rangeGap = Number.isInteger(params.rangeGap) && params.rangeGap >= 0 ? params.rangeGap : nonNegativeEnvInt(env, 'RANGE_GAP_BYTES', 0);
+  const expansionBatch = Number.isInteger(params.expansionBatch) && params.expansionBatch > 0 ? params.expansionBatch : positiveEnvInt(env, 'EXPANSION_BATCH', 1);
   k = Math.min(k, MAX_RESULTS);
   efSearch = Math.min(efSearch, MAX_EF_SEARCH);
 
@@ -306,7 +319,7 @@ async function handleSearch(request, env) {
   const embeddingMs = performance.now() - embedStart;
   const searchStart = performance.now();
   const beforeArtifactStats = artifact.stats();
-  const artifactResult = await artifact.search(queryVector, k, { efSearch });
+  const artifactResult = await artifact.search(queryVector, k, { efSearch, gap: rangeGap, expansionBatch });
   const hits = artifactResult.results;
   const searchMs = performance.now() - searchStart;
   const artifactStats = artifact.stats();
@@ -320,6 +333,8 @@ async function handleSearch(request, env) {
     corpus_chunks: corpus.length,
     dim: manifest.dims,
     ef_search: efSearch,
+    range_gap_bytes: rangeGap,
+    expansion_batch: expansionBatch,
     load_count: state.loadCount,
     artifact: {
       router_resident_records: artifactStats.routerResident.records,
