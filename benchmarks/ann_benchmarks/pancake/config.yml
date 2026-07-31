@@ -1,0 +1,40 @@
+float:
+  any:
+    - base_args: ['@metric', true]
+      constructor: Pancake
+      disabled: false
+      docker_tag: ann-benchmarks-pancake
+      module: ann_benchmarks.algorithms.pancake
+      name: pancake-u8
+      run_groups:
+        M-8:
+          arg_groups: [{M: 8, efConstruction: 500}]
+          args: {}
+          query_args: [[10, 20, 40, 80, 120, 200, 400, 600, 800]]
+        M-16:
+          arg_groups: [{M: 16, efConstruction: 500}]
+          args: {}
+          query_args: [[10, 20, 40, 80, 120, 200, 400, 600, 800]]
+        M-32:
+          arg_groups: [{M: 32, efConstruction: 500}]
+          args: {}
+          query_args: [[10, 20, 40, 80, 120, 200, 400, 600, 800]]
+    - base_args: ['@metric', false]
+      constructor: Pancake
+      disabled: false
+      docker_tag: ann-benchmarks-pancake
+      module: ann_benchmarks.algorithms.pancake
+      name: pancake-fp32
+      run_groups:
+        M-8:
+          arg_groups: [{M: 8, efConstruction: 500}]
+          args: {}
+          query_args: [[10, 20, 40, 80, 120, 200, 400, 600, 800]]
+        M-16:
+          arg_groups: [{M: 16, efConstruction: 500}]
+          args: {}
+          query_args: [[10, 20, 40, 80, 120, 200, 400, 600, 800]]
+        M-32:
+          arg_groups: [{M: 32, efConstruction: 500}]
+          args: {}
+          query_args: [[10, 20, 40, 80, 120, 200, 400, 600, 800]]
