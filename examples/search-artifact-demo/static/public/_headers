@@ -1,0 +1,12 @@
+# Hashed build assets: safe to cache forever.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Unhashed artifact/model/corpus: long cache with revalidation; these change
+# only when the demo is rebuilt and redeployed as a set.
+/artifacts/*
+  Cache-Control: public, max-age=86400
+/models/*
+  Cache-Control: public, max-age=86400
+/corpus/*
+  Cache-Control: public, max-age=86400

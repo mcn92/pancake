@@ -85,8 +85,26 @@ The build writes static files to:
 examples/search-artifact-demo/static/dist
 ```
 
-For deployment, upload the contents of `dist` to any static host that
-preserves `Range` requests for `.pancake-range` files.
+For deployment, upload the contents of `dist` to any static host. Hosts that
+preserve `Range` requests get true lazy reads; hosts that ignore the `Range`
+header are detected at the first read and handled by a one-time full download
+served as local slices (the header line reports
+`host ignores Range: full artifact fetched once`).
+
+## Static host findings (2026-07-31)
+
+Live deployment: https://pancake-artifact-demo.pages.dev
+
+| Host | Range behavior | Notes |
+| --- | --- | --- |
+| Cloudflare Pages | **Ignored** — returns `200` with the full file | `_headers` cache policy is honored (immutable assets, 86400 artifact). Demo works through the full-download fallback: boot 860 ms, cold query 14.4 ms, warm 1.1 ms, no errors. At 135 KiB the fallback costs the same bytes as a cold page-in. |
+| jsDelivr (`cdn.jsdelivr.net/gh/...`) | **Honored** — `206` with correct bytes at any offset | Full download is byte-identical to the git object. Caveat: the `content-range` total field can report a bogus size (their compressed storage size); harmless because the reader derives all offsets from the artifact header. |
+| GitHub Pages | untested | |
+| S3/CloudFront | untested | |
+
+For large artifacts where lazy reads actually matter, pick a Range-honoring
+host; Cloudflare R2 with a public bucket also serves real ranges (the Pages
+asset pipeline is the limitation, not Cloudflare storage).
 
 To point the page at a different artifact, change `ARTIFACT_URL` in
 `src/main.js` (and supply a matching encoder/corpus if it is not the docs set).

@@ -36,8 +36,13 @@ let model;
 let corpusById;
 
 function createHttpRangeSource(url) {
+  let fullBuffer = null;
   return {
+    get fallbackActive() {
+      return fullBuffer !== null;
+    },
     async read(offset, length) {
+      if (fullBuffer) return fullBuffer.subarray(offset, offset + length);
       const response = await fetch(url, {
         headers: { Range: `bytes=${offset}-${offset + length - 1}` },
       });
@@ -45,6 +50,13 @@ function createHttpRangeSource(url) {
         throw new Error(`Range read failed: ${response.status} ${response.statusText}`.trim());
       }
       const bytes = new Uint8Array(await response.arrayBuffer());
+      if (response.status === 200 && bytes.byteLength > length) {
+        // Host ignored the Range header and returned the whole file (for
+        // example Cloudflare Pages). Keep the buffer and serve every future
+        // read as a local slice: one full download instead of a hard failure.
+        fullBuffer = bytes;
+        return fullBuffer.subarray(offset, offset + length);
+      }
       if (bytes.byteLength !== length) {
         throw new Error(`Range read returned ${bytes.byteLength} bytes; expected ${length}`);
       }
@@ -191,13 +203,17 @@ async function boot() {
 
   const source = createHttpRangeSource(ARTIFACT_URL);
   artifact = await Pancake.RangeArtifact.open(source);
-  els.artifactLabel.textContent = [
+  const labelParts = [
     `${artifact.count.toLocaleString()} doc chunks`,
     `${artifact.dim}D`,
     `router ${artifact.routerResident.records.toLocaleString()} records`,
     `${formatBytes(artifact.routerResident.bytes)} resident`,
     `encoder ${formatBytes(modelBytes.byteLength)} local`,
-  ].join(' / ');
+  ];
+  if (source.fallbackActive) {
+    labelParts.push('host ignores Range: full artifact fetched once');
+  }
+  els.artifactLabel.textContent = labelParts.join(' / ');
   setBusy(false);
   els.queryInput.focus();
 }
