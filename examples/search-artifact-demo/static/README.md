@@ -1,43 +1,92 @@
 # Browser Search Artifact Demo
 
-This is a static browser demo for Pancake range-readable artifacts. It opens a
-`.pancake-range` file through HTTP range requests, keeps the v2 router resident,
-and lazily materializes base-layer nodes as the search runs.
+This is a static browser demo for Pancake range-readable artifacts. It is a
+fully client-side semantic search over the Pancake documentation: a
+`.pancake-range` index opened through HTTP range requests, a 1.08 MiB distilled
+student encoder that embeds queries locally, and the docs corpus for result
+display. No backend, no outbound API calls — a static host only distributes
+bytes, and the browser accumulates cache state as it searches.
+
+On open, the v2 router segment (15 records, ~9.5 KiB) becomes resident and
+base-layer records are lazily materialized through coalesced range reads. The
+metrics panel shows per-query wall time, embed time, range requests/bytes,
+sequential miss rounds, and cached node count, so cold-versus-warm behavior is
+directly visible.
 
 From the repository root:
 
 ```bash
-npx vite build examples/search-artifact-demo/static
-npx vite preview examples/search-artifact-demo/static --host 127.0.0.1
+npm run demo:artifact:browser:build
+npm run demo:artifact:browser
 ```
 
-Then open the printed local URL.
+Then open the printed local URL. Use the raw Vite commands
+(`npx vite build|preview examples/search-artifact-demo/static`) if you prefer;
+the build/preview flow is required — raw `vite dev` serves repo CommonJS files
+too literally.
 
-The demo includes a tiny SIFT-shaped v2 artifact:
+Bundled assets under `public/`:
 
 ```text
-examples/search-artifact-demo/static/public/artifacts/pancake-smoke-split.pancake-range
+artifacts/pancake-docs.pancake-range   docs index (208 chunks, 384D, 135 KiB)
+artifacts/pancake-smoke-split.pancake-range   tiny SIFT-shaped smoke artifact
+models/docs-student.bin                distilled query encoder (1.08 MiB)
+corpus/docs-corpus.json                doc chunks for result display
 ```
 
-That artifact is intentionally small so the page can run immediately. Replace
-it with a larger artifact using the same filename, or change `ARTIFACT_URL` in
-`src/main.js`.
+The docs artifact is built from the worker-semantic-search snapshot:
 
-The first command writes static files to:
+```bash
+node -e "require('./pancake.js').buildRangeArtifactFile(
+  'examples/worker-semantic-search/assets/docs-index.bin',
+  'examples/search-artifact-demo/static/public/artifacts/pancake-docs.pancake-range',
+  { layout: 'rcm' })"
+```
+
+Corpus chunk ids map one-to-one onto artifact node ids (the snapshot was built
+in insertion order with no deletions), so results hydrate by direct lookup. If
+you rebuild the index, rebuild the artifact and re-copy
+`docs-corpus.json` and `docs-student.bin` from
+`examples/worker-semantic-search/assets/` together — the encoder, index, and
+corpus are one matched set.
+
+## Measured warm-cache behavior
+
+Measured 2026-07-31 with headless Chromium against an instrumented local Range
+server, driving 100 held-out doc queries (server-side request counts, so the
+numbers are what actually crossed the network):
+
+| Phase | Artifact requests | Artifact bytes |
+| --- | ---: | ---: |
+| Page load (open, router resident) | 3 | 10.4 KiB |
+| Query 1 (cold) | 8 | 121.8 KiB |
+| Queries 2–10 | 2 | 1.3 KiB |
+| Queries 11–100 | 0 | 0 B |
+
+Cold first-query wall time was ~132 ms; warm queries ran at p50 0.4 ms /
+p95 0.9 ms with zero network. Total artifact transfer across 100 queries was
+136.6 KiB — essentially the artifact size, with no redundant refetching.
+
+On a page reload, HTTP cache headers decide the re-warm cost:
+
+| Reload cost | No cache headers | `max-age=31536000, immutable` |
+| --- | ---: | ---: |
+| Page assets (JS/WASM/model/corpus) | 1.37 MiB refetched | 2.4 KiB (index.html only) |
+| Artifact ranges (open + first query) | ~24.9 KiB | ~10.4 KiB |
+| First-query wall after reload | 114.7 ms | 84.1 ms |
+
+Chromium partially reuses cached 206 range responses either way, but the
+1.37 MiB of static assets only stays local when the host sends long-lived
+cache headers — configure them on whatever host serves this demo.
+
+The build writes static files to:
 
 ```text
 examples/search-artifact-demo/static/dist
 ```
 
-The second command serves that built directory locally.
+For deployment, upload the contents of `dist` to any static host that
+preserves `Range` requests for `.pancake-range` files.
 
-For deployment, upload the contents of `dist` to any static host that preserves
-range requests for `.pancake-range` files.
-
-To use a larger artifact:
-
-```bash
-cp path/to/index.pancake-range \
-  examples/search-artifact-demo/static/public/artifacts/pancake-smoke-split.pancake-range
-npx vite build examples/search-artifact-demo/static
-```
+To point the page at a different artifact, change `ARTIFACT_URL` in
+`src/main.js` (and supply a matching encoder/corpus if it is not the docs set).

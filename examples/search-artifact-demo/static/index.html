@@ -10,13 +10,13 @@
     <main class="shell">
       <section class="toolbar" aria-label="Search controls">
         <div>
-          <h1>Search Artifact</h1>
+          <h1>Docs Search Artifact</h1>
           <p id="artifactLabel">Loading artifact metadata...</p>
         </div>
         <div class="controls">
-          <label>
+          <label class="queryLabel">
             Query
-            <select id="querySelect"></select>
+            <input id="queryInput" type="search" placeholder="Search the Pancake docs" autocomplete="off">
           </label>
           <label>
             k
@@ -34,14 +34,18 @@
         </div>
       </section>
 
+      <section class="samples" aria-label="Sample queries">
+        <div id="sampleQueries"></div>
+      </section>
+
       <section class="metrics" aria-label="Artifact metrics">
         <div>
           <span>Wall</span>
           <strong id="wallMetric">-</strong>
         </div>
         <div>
-          <span>Search</span>
-          <strong id="searchMetric">-</strong>
+          <span>Embed</span>
+          <strong id="embedMetric">-</strong>
         </div>
         <div>
           <span>Range Requests</span>
@@ -63,7 +67,7 @@
 
       <section class="content">
         <div class="resultsPanel">
-          <h2>Nearest Nodes</h2>
+          <h2>Results</h2>
           <ol id="resultsList"></ol>
         </div>
         <div class="roundsPanel">

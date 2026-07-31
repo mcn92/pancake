@@ -88,6 +88,33 @@ input {
   width: 96px;
 }
 
+.queryLabel {
+  flex: 1;
+  min-width: 220px;
+}
+
+#queryInput {
+  width: 100%;
+  min-width: 220px;
+}
+
+.samples #sampleQueries {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.chip {
+  min-height: 30px;
+  min-width: 0;
+  padding: 0 12px;
+  font-size: 13px;
+  border: 1px solid #bdc9cf;
+  border-radius: 15px;
+  background: #fff;
+  color: #172026;
+}
+
 button {
   min-width: 96px;
   border-color: #172026;
@@ -154,13 +181,30 @@ li {
   border-bottom: 1px solid #edf1f3;
 }
 
-li strong {
-  display: inline-block;
-  min-width: 90px;
-}
-
 li span {
   color: #59666f;
+}
+
+.result {
+  display: grid;
+  gap: 4px;
+}
+
+.resultHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.resultSource {
+  color: #66737c;
+  font-size: 12px;
+}
+
+.resultPreview {
+  color: #45525a;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 #roundsList {

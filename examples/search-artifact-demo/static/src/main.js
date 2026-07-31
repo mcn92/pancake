@@ -1,26 +1,28 @@
 import Pancake from 'pancake-wasm/web';
+import { loadStudentModel, embedTextWithStudent } from '../../../worker-semantic-search/student-embedder.mjs';
 import './style.css';
 
-const ARTIFACT_URL = '/artifacts/pancake-smoke-split.pancake-range';
-const QUERY_DIM = 128;
+const ARTIFACT_URL = '/artifacts/pancake-docs.pancake-range';
+const MODEL_URL = '/models/docs-student.bin';
+const CORPUS_URL = '/corpus/docs-corpus.json';
 
-const queries = [
-  makeQuery(11),
-  makeQuery(29),
-  makeQuery(47),
-  makeQuery(83),
-  makeQuery(131),
+const SAMPLE_QUERIES = [
+  'how does compaction work',
+  'How do Cloudflare Workers restore snapshots from R2?',
+  'What are the memory tradeoffs for quantized indexes?',
+  'how does filtered search work',
 ];
 
 const els = {
   artifactLabel: document.querySelector('#artifactLabel'),
-  querySelect: document.querySelector('#querySelect'),
+  queryInput: document.querySelector('#queryInput'),
+  sampleQueries: document.querySelector('#sampleQueries'),
   kInput: document.querySelector('#kInput'),
   efInput: document.querySelector('#efInput'),
   gapInput: document.querySelector('#gapInput'),
   searchButton: document.querySelector('#searchButton'),
   wallMetric: document.querySelector('#wallMetric'),
-  searchMetric: document.querySelector('#searchMetric'),
+  embedMetric: document.querySelector('#embedMetric'),
   requestsMetric: document.querySelector('#requestsMetric'),
   bytesMetric: document.querySelector('#bytesMetric'),
   missMetric: document.querySelector('#missMetric'),
@@ -30,16 +32,8 @@ const els = {
 };
 
 let artifact;
-
-function makeQuery(seed) {
-  let state = seed >>> 0;
-  const vector = new Float32Array(QUERY_DIM);
-  for (let i = 0; i < vector.length; i++) {
-    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-    vector[i] = (state / 0xffffffff) * 255;
-  }
-  return vector;
-}
+let model;
+let corpusById;
 
 function createHttpRangeSource(url) {
   return {
@@ -76,18 +70,45 @@ function setBusy(busy) {
 
 function renderResults(rows) {
   els.resultsList.replaceChildren(...rows.map((row) => {
+    const chunk = corpusById.get(row.id);
     const li = document.createElement('li');
-    const id = document.createElement('strong');
-    id.textContent = `#${row.id}`;
+    li.className = 'result';
+
+    const header = document.createElement('div');
+    header.className = 'resultHeader';
+    const title = document.createElement('strong');
+    title.textContent = chunk?.title || `Chunk ${row.id}`;
     const dist = document.createElement('span');
     dist.textContent = row.distance.toFixed(4);
-    li.append(id, dist);
+    header.append(title, dist);
+
+    const source = document.createElement('div');
+    source.className = 'resultSource';
+    source.textContent = chunk?.anchor
+      ? `${chunk.sourcePath} #${chunk.anchor}`
+      : chunk?.sourcePath || '';
+
+    const preview = document.createElement('p');
+    preview.className = 'resultPreview';
+    const text = chunk?.preview || chunk?.text || '';
+    preview.textContent = text.length > 240 ? `${text.slice(0, 240)}…` : text;
+
+    li.append(header, source, preview);
     return li;
   }));
 }
 
 function renderRounds(rounds) {
   const visible = rounds.filter((round) => round.requests > 0);
+  if (!visible.length) {
+    const div = document.createElement('div');
+    div.className = 'round';
+    const label = document.createElement('span');
+    label.textContent = 'All records served from the local cache';
+    div.append(label);
+    els.roundsList.replaceChildren(div);
+    return;
+  }
   els.roundsList.replaceChildren(...visible.map((round, index) => {
     const div = document.createElement('div');
     div.className = 'round';
@@ -101,16 +122,19 @@ function renderRounds(rounds) {
 }
 
 async function runSearch() {
-  if (!artifact) return;
+  if (!artifact || !model) return;
+  const text = els.queryInput.value.trim();
+  if (!text) return;
   setBusy(true);
   try {
-    const query = queries[Number(els.querySelect.value)];
     const k = Number(els.kInput.value);
     const efSearch = Number(els.efInput.value);
     const gap = Number(els.gapInput.value);
     const before = artifact.stats();
     const t0 = performance.now();
-    const result = await artifact.search(query, k, {
+    const { vector } = embedTextWithStudent(text, model);
+    const embedMs = performance.now() - t0;
+    const result = await artifact.search(vector, k, {
       efSearch,
       gap,
       expansionBatch: 8,
@@ -123,7 +147,7 @@ async function runSearch() {
     const missRounds = result.rounds.filter((round) => round.requests > 0).length;
 
     els.wallMetric.textContent = formatMs(wallMs);
-    els.searchMetric.textContent = formatMs(result.searchMs ?? wallMs);
+    els.embedMetric.textContent = formatMs(embedMs);
     els.requestsMetric.textContent = requests.toLocaleString();
     els.bytesMetric.textContent = formatBytes(bytes);
     els.missMetric.textContent = missRounds.toLocaleString();
@@ -139,27 +163,49 @@ async function runSearch() {
 }
 
 async function boot() {
-  queries.forEach((_, index) => {
-    const option = document.createElement('option');
-    option.value = String(index);
-    option.textContent = `Synthetic ${index + 1}`;
-    els.querySelect.append(option);
+  SAMPLE_QUERIES.forEach((sample) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'chip';
+    chip.textContent = sample;
+    chip.addEventListener('click', () => {
+      els.queryInput.value = sample;
+      runSearch();
+    });
+    els.sampleQueries.append(chip);
   });
 
   setBusy(true);
+  const [modelBytes, corpus] = await Promise.all([
+    fetch(MODEL_URL).then((r) => {
+      if (!r.ok) throw new Error(`Model fetch failed: ${r.status}`);
+      return r.arrayBuffer();
+    }),
+    fetch(CORPUS_URL).then((r) => {
+      if (!r.ok) throw new Error(`Corpus fetch failed: ${r.status}`);
+      return r.json();
+    }),
+  ]);
+  model = loadStudentModel(new Uint8Array(modelBytes));
+  corpusById = new Map(corpus.map((chunk) => [chunk.id, chunk]));
+
   const source = createHttpRangeSource(ARTIFACT_URL);
   artifact = await Pancake.RangeArtifact.open(source);
   els.artifactLabel.textContent = [
-    `${artifact.count.toLocaleString()} vectors`,
+    `${artifact.count.toLocaleString()} doc chunks`,
     `${artifact.dim}D`,
     `router ${artifact.routerResident.records.toLocaleString()} records`,
     `${formatBytes(artifact.routerResident.bytes)} resident`,
+    `encoder ${formatBytes(modelBytes.byteLength)} local`,
   ].join(' / ');
-  await runSearch();
+  setBusy(false);
+  els.queryInput.focus();
 }
 
 els.searchButton.addEventListener('click', runSearch);
-els.querySelect.addEventListener('change', runSearch);
+els.queryInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') runSearch();
+});
 
 boot().catch((error) => {
   setBusy(false);
