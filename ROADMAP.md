@@ -28,10 +28,16 @@ not bytes.
 
 Near term:
 
-1. Replace the tiny smoke artifact in `examples/search-artifact-demo/static/`
-   with a docs-scale semantic artifact that returns meaningful results and
-   warms well in a browser. This is the primary demo.
-2. Measure browser warm-cache behavior across 1 / 10 / 100 queries.
+1. DONE 2026-07-31: docs-scale semantic artifact live at
+   pancake-artifact-demo.pages.dev — 208-chunk docs index, local distilled
+   encoder, corpus hydration, and calibrated abstention, all client-side.
+   Rank-parity verified against the snapshot reader; abstention golden
+   probes pass in-browser.
+2. DONE 2026-07-31: warm-cache measured across 1/10/100 queries with
+   server-side ground truth — cold query pages in the base segment
+   (~122 KiB), queries 11–100 generate zero requests; reload re-warm costs
+   ~13 KiB with immutable cache headers vs 1.37 MiB without. Numbers in the
+   static demo README.
 3. Confirm static hosts preserve Range requests and cache behavior. Status
    2026-07-31: Cloudflare Pages ignores Range in its static pipeline
    (full-download fallback added); a bundled Pages Function now restores real
@@ -83,6 +89,11 @@ Closed lines (do not reopen without new evidence):
 4. Resolve the remaining open decisions in contract §10 — chunk-size policy
    and per-metric distance-error bounds first, since they gate the byte
    layout and the conformance kit.
+
+Curation status (2026-07-31): examples/ has a guided README naming the
+canonical trio; broken/legacy demos and local copies archived; private-mode
+hosting documented; tracked-tree secret scan clean. All demos swept and
+verified working (see examples/README.md ordering).
 
 ## Track C: Demos and product surface
 
