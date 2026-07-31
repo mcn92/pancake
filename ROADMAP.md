@@ -33,10 +33,11 @@ Near term:
    warms well in a browser. This is the primary demo.
 2. Measure browser warm-cache behavior across 1 / 10 / 100 queries.
 3. Confirm static hosts preserve Range requests and cache behavior. Status
-   2026-07-31: Cloudflare Pages ignores Range (full-download fallback added,
-   live at pancake-artifact-demo.pages.dev, cache headers honored); jsDelivr
-   serves correct ranges (content-range total field unreliable but unused).
-   Remaining: GitHub Pages, S3/CloudFront.
+   2026-07-31: Cloudflare Pages ignores Range in its static pipeline
+   (full-download fallback added); a bundled Pages Function now restores real
+   206 slicing, verified live at pancake-artifact-demo.pages.dev with cache
+   headers honored. jsDelivr serves correct ranges (content-range total field
+   unreliable but unused). Remaining: GitHub Pages, S3/CloudFront.
 
 Structural work (the real fix for miss-round depth):
 

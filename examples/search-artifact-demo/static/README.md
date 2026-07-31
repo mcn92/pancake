@@ -97,7 +97,8 @@ Live deployment: https://pancake-artifact-demo.pages.dev
 
 | Host | Range behavior | Notes |
 | --- | --- | --- |
-| Cloudflare Pages | **Ignored** — returns `200` with the full file | `_headers` cache policy is honored (immutable assets, 86400 artifact). Demo works through the full-download fallback: boot 860 ms, cold query 14.4 ms, warm 1.1 ms, no errors. At 135 KiB the fallback costs the same bytes as a cold page-in. |
+| Cloudflare Pages (static pipeline) | **Ignored** — returns `200` with the full file | `_headers` cache policy is honored (immutable assets, 86400 artifact). Without the Function below, the demo works through the full-download fallback. |
+| Cloudflare Pages + bundled Function | **Honored** — `206` via `functions/artifacts/[[path]].js` | The Function slices the edge asset per ranged request. Verified live: mid-file slices byte-identical, cold query 3 requests / 121.1 KiB at 224 ms real CDN latency, warm 1.3 ms / 0 requests. The Function reads the full asset internally per request, so this is for demo-scale artifacts; large artifacts belong on natively range-capable storage. |
 | jsDelivr (`cdn.jsdelivr.net/gh/...`) | **Honored** — `206` with correct bytes at any offset | Full download is byte-identical to the git object. Caveat: the `content-range` total field can report a bogus size (their compressed storage size); harmless because the reader derives all offsets from the artifact header. |
 | GitHub Pages | untested | |
 | S3/CloudFront | untested | |
