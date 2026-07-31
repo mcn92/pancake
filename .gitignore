@@ -130,3 +130,4 @@ examples/cli/search_index.js
 examples/demo/demo_hybrid_search.js
 examples/demo/demo_recipe_search.js
 examples/demo/demo_recipe_search_enhanced.js
+examples/search-artifact-demo/static/dist/

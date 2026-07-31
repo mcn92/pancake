@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Pancake Search Artifact</title>
+    <script type="module" src="/src/main.js"></script>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="toolbar" aria-label="Search controls">
+        <div>
+          <h1>Search Artifact</h1>
+          <p id="artifactLabel">Loading artifact metadata...</p>
+        </div>
+        <div class="controls">
+          <label>
+            Query
+            <select id="querySelect"></select>
+          </label>
+          <label>
+            k
+            <input id="kInput" type="number" min="1" max="25" value="10">
+          </label>
+          <label>
+            ef
+            <input id="efInput" type="number" min="1" max="400" value="80">
+          </label>
+          <label>
+            gap
+            <input id="gapInput" type="number" min="0" step="1024" value="65536">
+          </label>
+          <button id="searchButton" type="button">Search</button>
+        </div>
+      </section>
+
+      <section class="metrics" aria-label="Artifact metrics">
+        <div>
+          <span>Wall</span>
+          <strong id="wallMetric">-</strong>
+        </div>
+        <div>
+          <span>Search</span>
+          <strong id="searchMetric">-</strong>
+        </div>
+        <div>
+          <span>Range Requests</span>
+          <strong id="requestsMetric">-</strong>
+        </div>
+        <div>
+          <span>Range Bytes</span>
+          <strong id="bytesMetric">-</strong>
+        </div>
+        <div>
+          <span>Miss Rounds</span>
+          <strong id="missMetric">-</strong>
+        </div>
+        <div>
+          <span>Cached Nodes</span>
+          <strong id="cacheMetric">-</strong>
+        </div>
+      </section>
+
+      <section class="content">
+        <div class="resultsPanel">
+          <h2>Nearest Nodes</h2>
+          <ol id="resultsList"></ol>
+        </div>
+        <div class="roundsPanel">
+          <h2>Range Rounds</h2>
+          <div id="roundsList"></div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
