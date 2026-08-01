@@ -9,7 +9,7 @@ project's working notes. Update this file when a track changes direction.
 
 Turn Pancake from a vector-search library into an artifact compiler and
 reader. The target is the Complete Search Artifact profile
-(`spec/SEARCH_ARTIFACT_CONTRACT.md` §9.3): one immutable, content-addressed
+(`spec/SEARCH_ARTIFACT_CONTRACT.md` §9.4): one immutable, content-addressed
 package carrying corpus, index, encoder, evaluation, and calibration, that a
 bounded-memory reader can execute over range reads.
 
@@ -88,8 +88,10 @@ Structural work (the real fix for miss-round depth):
    7741 ms — 5.0x, with traversal reproducing the July Worker/R2 failure
    numbers almost exactly. Sketch wall time is RTT-bound (~6 request waves);
    a client near an edge PoP at 20-50 ms RTT lands at roughly 150-400 ms.
-   Remaining: a real sketch profile in the artifact format (activates the
-   Track B byte-layout spec work).
+   Progress: the sketch profile byte layout and execution semantics are
+   specified (`spec/SKETCH_PROFILE.md`, contract §9.3). Remaining: builder
+   and reference reader in `pancake-artifact.js`, then conformance
+   fixtures.
    Closed geometry lines (measured, do not reopen without new evidence):
    - cluster-page routing with centroid selection: needs P=128 pages /
      11.8 MiB for 96% — selection, not partition quality, is the bottleneck

@@ -406,7 +406,19 @@ round depth — are new profiles under this same contract, not amendments to
 this one. The contract layers are what carry over; the traversal and layout
 semantics are what each profile defines.
 
-### 9.3 Complete Search Artifact Profile
+### 9.3 Sketch Artifact Profile (`.pancake-sketch`)
+
+The sketch artifact profile carries a two-tier index: a resident compressed
+sketch of every vector and a lazily range-read tier of full quantized rows.
+Its execution model is a resident scan followed by a single parallel fetch
+round for exact rerank — sequential fetch depth 1 by construction.
+
+Byte layout and execution semantics are specified in `SKETCH_PROFILE.md`.
+Like the other current profiles it is transitional on identity (whole-segment
+hashes, no per-chunk commitments) and carries corpus, encoder, evaluation,
+and calibration as adjacent assets.
+
+### 9.4 Complete Search Artifact Profile
 
 The complete profile is the target contract: corpus, index, encoder,
 evaluation, and calibration are all carried by or content-addressed from one
