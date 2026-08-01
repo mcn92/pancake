@@ -95,8 +95,17 @@ Structural work (the real fix for miss-round depth):
    checks in `test/sketch_profile.js` wired into npm test. SIFT1M validated
    through the product reader: 160 MiB artifact (vs 494 MiB range), 38.1 MiB
    verified resident prefix, 96.00% recall@10 at the header's recommended
-   rerank, 42.5 KiB/query fetched. Remaining: browser/e2e exercise of the
-   new reader and committed golden fixtures.
+   rerank, 42.5 KiB/query fetched.
+   Reader exercised in all three environments 2026-08-01: Node over local
+   HTTP @10 ms delay (283 ms mean with the WASM scanner via the reader's
+   scanner hook); real R2 through the range proxy (opens the 38.1 MiB
+   resident prefix in 2.26 s in one request, hash-verified, queries
+   RTT-bound as before); and a real browser via pancake-wasm/web
+   (Playwright: opens in 0.9 s, resident verified through crypto.subtle,
+   91.5% recall over 20 queries, zero page errors — query wall ~3 s because
+   the browser runs the pure-JS 4-bit scan). Remaining: expose an
+   engine-backed scanner on the web entry (the JS scan is the browser
+   bottleneck; the hook already exists) and committed golden fixtures.
    Closed geometry lines (measured, do not reopen without new evidence):
    - cluster-page routing with centroid selection: needs P=128 pages /
      11.8 MiB for 96% — selection, not partition quality, is the bottleneck
