@@ -159,10 +159,20 @@ verified working (see examples/README.md ordering).
 The core is stable (1191 tests passing) and positioned honestly. Work here is
 maintenance, not features:
 
-- Consolidate the near-duplicate HNSW backends (`src/float_hnsw.hpp`,
-  `src/uint8_float_hnsw.hpp`) behind a storage-policy template, and the
-  duplicated wrapper layer in `src/engine.cpp` / `native/pancake_napi.cpp`.
-  Every graph fix currently lands in two to four places.
+- Keep the two HNSW backends separate (decision 2026-07-31, reversing the
+  earlier consolidation item). The code-level review found they differ in
+  representation, not just storage type — cached edge distances, three
+  distance contexts, sum caches, and distinct serialization — so a
+  storage-policy template would parameterize more than it deduplicates, on
+  the hot path, for zero WASM binary savings. History supports it: 9 of the
+  uint8 backend's commits changed its internal representation in ways the
+  float backend must not inherit, and the float backend doubles as the
+  control when debugging quantization regressions. Dual-maintenance risk is
+  mitigated by the recall oracles, golden outputs, and SIMD parity tests.
+  Rule of three: abstract when a third backend appears, not before. The
+  duplicated wrapper adapter in `src/engine.cpp` / `native/pancake_napi.cpp`
+  is the one defensible extraction (pure adapter code, no representational
+  divergence), low priority.
 - Remove or relocate `src/embedding_model.hpp` (unused by the engine build).
 - Performance work on the u8 backend must gate on recall across datasets
   before shipping — nytimes-angular caught the B-heal and querydot
