@@ -48,7 +48,7 @@ function renderResults(payload) {
     <article class="result">
       <div class="rank">${index + 1}</div>
       <div>
-        <h2><a href="${item.source_url}" target="_blank" rel="noreferrer">${escapeHtml(item.title)}</a></h2>
+        <h2><a href="${escapeHtml(safeHref(item.source_url))}" target="_blank" rel="noreferrer">${escapeHtml(item.title)}</a></h2>
         <p>${escapeHtml(item.preview)}</p>
         <div class="meta">
           <span>${escapeHtml(item.source_path)}</span>
@@ -57,6 +57,15 @@ function renderResults(payload) {
       </div>
     </article>
   `).join('');
+}
+
+function safeHref(value) {
+  try {
+    const url = new URL(String(value || ''), window.location.href);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : '#';
+  } catch {
+    return '#';
+  }
 }
 
 function escapeHtml(value) {

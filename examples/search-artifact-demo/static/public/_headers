@@ -1,3 +1,12 @@
+# Security headers for every response. The CSP allows only same-origin
+# resources; 'wasm-unsafe-eval' is required for WebAssembly instantiation.
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  X-Frame-Options: DENY
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+
 # Hashed build assets: safe to cache forever.
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
