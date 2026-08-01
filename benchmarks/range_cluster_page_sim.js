@@ -251,19 +251,27 @@ async function main() {
     // full records for exact rerank, in one parallel round. Pooling preserves
     // the per-row affine params: mean(o + s*q_d) = o + s*mean(q_d).
     const sketchDims = Number(arg('sketch-dims', 32));
+    const sketchBits = Number(arg('sketch-bits', 8));
     const rerankList = listArg('rerank', [50, 100, 200, 400]);
     if (dim % sketchDims !== 0) throw new Error('sketch-dims must divide dim');
+    if (![4, 8].includes(sketchBits)) throw new Error('sketch-bits must be 4 or 8');
     const pool = dim / sketchDims;
     const sketches = new Uint8Array(count * sketchDims);
     for (let i = 0; i < count; i++) {
       for (let sd = 0; sd < sketchDims; sd++) {
         let acc = 0;
         for (let j = 0; j < pool; j++) acc += qdata[i * dim + sd * pool + j];
-        sketches[i * sketchDims + sd] = Math.round(acc / pool);
+        let value = Math.round(acc / pool);
+        if (sketchBits === 4) {
+          // 16 levels; reconstruct at the level midpoint (value stays u8 in
+          // the sim, but only 16 distinct values — resident cost is 4 bits).
+          value = Math.min(15, Math.round(value / 17)) * 17;
+        }
+        sketches[i * sketchDims + sd] = value;
       }
     }
-    const residentMiB = (count * sketchDims + count * 8) / 1048576;
-    console.log(`sketch mode: ${sketchDims}D pooled u8, resident ${residentMiB.toFixed(1)} MiB (sketches + per-row scale/offset)`);
+    const residentMiB = (count * sketchDims * (sketchBits / 8) + count * 8) / 1048576;
+    console.log(`sketch mode: ${sketchDims}D pooled u${sketchBits}, resident ${residentMiB.toFixed(1)} MiB (sketches + per-row scale/offset)`);
 
     const maxC = Math.max(...rerankList);
     const perC = rerankList.map(() => ({ recalls: [] }));
