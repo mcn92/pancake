@@ -316,8 +316,9 @@ async function main() {
         let runEnd = addrs[0] + recordBytes;
         for (let a = 1; a < addrs.length; a++) {
           if (addrs[a] <= runEnd + gapBytes) {
-            bytes += (addrs[a] + recordBytes) - Math.max(runEnd, addrs[a]);
-            runEnd = Math.max(runEnd, addrs[a] + recordBytes);
+            // Coalescing fetches the filler between merged records too.
+            bytes += (addrs[a] + recordBytes) - runEnd;
+            runEnd = addrs[a] + recordBytes;
           } else {
             requests++;
             bytes += recordBytes;

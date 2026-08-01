@@ -47,18 +47,29 @@ Near term:
 
 Structural work (the real fix for miss-round depth):
 
-4. Geometry results 2026-08-01 (`benchmarks/range_cluster_page_sim.js`,
-   SIFT1M, 1000 queries): the winning geometry is **resident sketch +
+4. Geometry results 2026-08-01: the winning geometry is **resident sketch +
    fetch-to-rerank** — a 2:1 pooled u8 sketch of every vector stays resident
    (68.7 MiB at 64D; pooling preserves each row's affine scale/offset), the
    query scans sketches locally, and only the top-C full records are fetched
-   in one parallel round for exact rerank. At C=300: 96.11% recall@10
-   (baseline 95.58%), 144 KiB/query (baseline 535 KiB), 87 mean coalesced
-   requests, round depth 1 (baseline ~12 sequential). Modeled p95 @10ms/read:
-   241 ms vs 615 ms at p=6, and ~51 ms at browser-real parallelism (p=32),
-   which sequential traversal cannot exploit. Next: 4-bit sketches to cut
-   resident bytes to router parity (~40 MiB), then a real reader
-   implementation as a new artifact profile.
+   in one parallel round for exact rerank. Measured end to end through the
+   real RangeArtifact reader over HTTP with 10 ms injected per-request delay
+   (`benchmarks/sketch_rerank_e2e.js`, SIFT1M, C=300, ~95.4% recall@10 vs
+   traversal's 95.8%):
+   - p=6:  sketch 355 ms mean / 528 ms p95 vs traversal 1206 / 2035 ms
+   - p=32: sketch 293 ms mean / 347 ms p95 vs traversal 967 / 1293 ms,
+     with 244 KiB/query vs 775 KiB (gap=4096 for both)
+   Cold-fetch request geometry at C=300 sweeps from 285 requests / 144 KiB
+   (gap=0) to 128 requests / 2.5 MiB (gap=65536): rerank fetches want small
+   gaps, traversal wants large ones. Remaining sketch wall time is dominated
+   by the ~120 ms pure-JS sketch scan — the natural WASM SIMD target.
+   Known accounting caveat, found by the e2e test: simulated byte counts
+   that ignore coalescing gap filler understate real transfer (the sim's
+   pre-fix numbers claimed 144 KiB at gap=65536; reality is 2.5 MiB), and
+   `benchmarks/range_artifact.js` byte reporting should be audited for the
+   same filler-blind pattern — it likely explains the historical gap between
+   its 0.535 MiB/query model and the 4.7 MiB measured in the Worker/R2
+   tests. Next: 4-bit sketches toward router-parity residency (~40 MiB),
+   WASM-side sketch scan, then a real sketch profile in the artifact format.
    Closed geometry lines (measured, do not reopen without new evidence):
    - cluster-page routing with centroid selection: needs P=128 pages /
      11.8 MiB for 96% — selection, not partition quality, is the bottleneck
