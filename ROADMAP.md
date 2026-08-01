@@ -20,11 +20,16 @@ The pieces already exist separately: the range-readable index
 
 ## Track A: Range artifact proof path (active)
 
-Settled comparison point (do not change until something clearly beats it):
-SIFT1M u8, `efSearch=80`, `expansionBatch=8`, `gap=65536`, parallelism 6 —
-95.58% recall@10, ~106 requests and ~0.54 MiB per query. The structural
-bottleneck is sequential base-layer miss-round depth (~12 mean, 15–16 tail),
-not bytes.
+Settled comparison point: SIFT1M u8, `efSearch=80`, `expansionBatch=8`,
+`gap=65536`, parallelism 6, 95.58% recall@10 — in two regimes that must not
+be conflated (audit of 2026-08-01):
+- warm-amortized (cache accumulating over 1000 queries, the historical
+  numbers): 106 requests / 0.535 MiB mean, ~12 miss rounds;
+- cold per-query (`--clear-cache-per-query`, the number that matches
+  first-visit behavior and the Worker/R2 measurements): 665 requests /
+  6.39 MiB mean (p95 9.22 MiB), 23.7 miss rounds, modeled p95 1894 ms at
+  10 ms/read.
+The structural bottleneck is sequential miss-round depth in both regimes.
 
 Near term:
 
@@ -64,12 +69,16 @@ Structural work (the real fix for miss-round depth):
    by the ~120 ms pure-JS sketch scan — the natural WASM SIMD target.
    Known accounting caveat, found by the e2e test: simulated byte counts
    that ignore coalescing gap filler understate real transfer (the sim's
-   pre-fix numbers claimed 144 KiB at gap=65536; reality is 2.5 MiB), and
-   `benchmarks/range_artifact.js` byte reporting should be audited for the
-   same filler-blind pattern — it likely explains the historical gap between
-   its 0.535 MiB/query model and the 4.7 MiB measured in the Worker/R2
-   tests. Next: 4-bit sketches toward router-parity residency (~40 MiB),
-   WASM-side sketch scan, then a real sketch profile in the artifact format.
+   pre-fix numbers claimed 144 KiB at gap=65536; reality is 2.5 MiB).
+   Audit result 2026-08-01: `range_artifact.js`'s own byte arithmetic is
+   correct — the historical 0.535 MiB baseline was warm-amortized (shared
+   cache across 1000 queries), not per-query cost. Cold per-query reality is
+   665 requests / 6.39 MiB / 23.7 miss rounds, which fully explains the
+   Worker/R2 measurements; see the settled-comparison-point note above.
+   Cold-vs-cold, sketch C=300 at gap=0 fetches 144 KiB in 1 round versus
+   traversal's 6.39 MiB over ~24 rounds.
+   Next: 4-bit sketches toward router-parity residency (~40 MiB), WASM-side
+   sketch scan, then a real sketch profile in the artifact format.
    Closed geometry lines (measured, do not reopen without new evidence):
    - cluster-page routing with centroid selection: needs P=128 pages /
      11.8 MiB for 96% — selection, not partition quality, is the bottleneck
