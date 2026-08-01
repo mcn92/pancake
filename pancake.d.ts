@@ -200,6 +200,70 @@ export class PancakeRangeArtifact {
   close(): Promise<void>;
 }
 
+export interface SketchArtifactOpenOptions {
+  /** Verify the resident prefix hash when a crypto backend exists. Default: true. */
+  verify?: boolean;
+}
+
+export interface SketchArtifactSearchOptions {
+  /** Rerank depth (top-C sketch candidates fetched for exact scoring). */
+  rerank?: number;
+  /** Byte gap for coalescing row fetches. Default: 2048. */
+  gap?: number;
+  /** Concurrent range reads per fetch round. Default: 8. */
+  parallelism?: number;
+  /** External top-C scanner (e.g. the engine's SIMD kernel). */
+  scanner?: { scan(pooledQuery: Float32Array, c: number): number[] };
+}
+
+export interface SketchArtifactStats {
+  readonly rangeRequests: number;
+  readonly rangeBytes: number;
+  readonly cachedRows: number;
+  readonly residentBytes: number;
+  readonly residentVerified: boolean;
+}
+
+export interface SketchArtifactBuildOptions {
+  /** Pooled sketch dimensionality; must divide dim. Default: dim / 2. */
+  sketchDims?: number;
+  /** Bits per sketch dimension. Default: 4. */
+  sketchBits?: 4 | 8;
+  /** Producer-recommended rerank depth recorded in the header. */
+  recommendedRerank?: number;
+}
+
+export interface SketchArtifactBuildManifest {
+  readonly format: 'pancake-sketch-artifact';
+  readonly formatVersion: number;
+  readonly file: string;
+  readonly sizeBytes: number;
+  readonly metric: Metric;
+  readonly graph: Readonly<Record<string, number>>;
+  readonly sketch: Readonly<Record<string, number>>;
+  readonly addressing: Readonly<Record<string, number>>;
+  readonly recommendedRerank: number;
+}
+
+export class PancakeSketchArtifact {
+  readonly metric: number;
+  readonly dim: number;
+  readonly count: number;
+  readonly sketchDims: number;
+  readonly sketchBits: number;
+  readonly recommendedRerank: number;
+  readonly residentBytes: number;
+  readonly residentVerified: boolean;
+  static open(source: RangeReadSource, options?: SketchArtifactOpenOptions): Promise<PancakeSketchArtifact>;
+  static openFile(filePath: string, options?: SketchArtifactOpenOptions): Promise<PancakeSketchArtifact>;
+  search(query: VectorInput, k: number, options?: SketchArtifactSearchOptions): Promise<{
+    results: Array<{ id: number; distance: number }>;
+    rerank: number;
+  }>;
+  stats(): SketchArtifactStats;
+  close(): Promise<void>;
+}
+
 export interface MemoryUsage {
   /** Backend-owned graph and vector storage estimate. */
   readonly logicalIndexBytes: number;
@@ -285,6 +349,7 @@ export interface PancakeApi {
   readonly PancakeError: typeof PancakeError;
   readonly PANCAKE_ERROR_CODES: typeof PANCAKE_ERROR_CODES;
   readonly RangeArtifact: typeof PancakeRangeArtifact;
+  readonly SketchArtifact: typeof PancakeSketchArtifact;
   /** Create a new Pancake index using the runtime-specific packaged entrypoint. */
   create(opts: CreateOptions): Promise<PancakeIndex>;
   /** Restore an envelope snapshot, inferring its construction config. */
@@ -314,6 +379,12 @@ export interface NodePancakeApi extends PancakeApi {
   buildRangeArtifactFile(snapshotPath: string, outPath: string, opts?: RangeArtifactBuildOptions): RangeArtifactBuildManifest;
   /** Open a range-readable Search Artifact from a local file. */
   openRangeArtifactFile(filePath: string, opts?: RangeArtifactOpenOptions): Promise<PancakeRangeArtifact>;
+  /** Build a sketch Search Artifact from a uint8 Pancake snapshot. */
+  buildSketchArtifact(snapshot: Uint8Array | ArrayBufferLike, outPath: string, opts?: SketchArtifactBuildOptions): SketchArtifactBuildManifest;
+  /** Build a sketch Search Artifact from a uint8 Pancake snapshot file. */
+  buildSketchArtifactFile(snapshotPath: string, outPath: string, opts?: SketchArtifactBuildOptions): SketchArtifactBuildManifest;
+  /** Open a sketch Search Artifact from a local file. */
+  openSketchArtifactFile(filePath: string, opts?: SketchArtifactOpenOptions): Promise<PancakeSketchArtifact>;
   /** Load vectors from a JSON/JSONL file and build an index. */
   loadJsonFile<Id = unknown>(filePath: string, opts?: JsonFileOptions): Promise<FromVectorsResult<Id>>;
   /**

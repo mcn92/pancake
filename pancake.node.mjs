@@ -9,7 +9,7 @@ import loaderContract from './pancake-loader.js';
 import artifactContract from './pancake-artifact.js';
 const { PancakeError, PANCAKE_ERROR_CODES, pancakeError } = errorContract;
 const { createCachedModuleLoader } = loaderContract;
-const { PancakeRangeArtifact, NodeFileRangeSource, buildRangeArtifact, buildRangeArtifactFile } = artifactContract;
+const { PancakeRangeArtifact, PancakeSketchArtifact, NodeFileRangeSource, buildRangeArtifact, buildRangeArtifactFile, buildSketchArtifact, buildSketchArtifactFile } = artifactContract;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -204,6 +204,15 @@ Pancake.buildRangeArtifactFile = buildRangeArtifactFile;
 Pancake.openRangeArtifactFile = async function openRangeArtifactFile(filePath, opts) {
   validateFilePath(filePath, 'openRangeArtifactFile');
   return PancakeRangeArtifact.openFile(filePath, opts);
+};
+
+Pancake.SketchArtifact = PancakeSketchArtifact;
+Pancake.buildSketchArtifact = buildSketchArtifact;
+Pancake.buildSketchArtifactFile = buildSketchArtifactFile;
+
+Pancake.openSketchArtifactFile = async function openSketchArtifactFile(filePath, opts) {
+  validateFilePath(filePath, 'openSketchArtifactFile');
+  return PancakeSketchArtifact.openFile(filePath, opts);
 };
 
 Pancake.loadSnapshotFile = async function loadSnapshotFile(filePath, opts) {

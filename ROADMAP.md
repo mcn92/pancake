@@ -88,10 +88,15 @@ Structural work (the real fix for miss-round depth):
    7741 ms — 5.0x, with traversal reproducing the July Worker/R2 failure
    numbers almost exactly. Sketch wall time is RTT-bound (~6 request waves);
    a client near an edge PoP at 20-50 ms RTT lands at roughly 150-400 ms.
-   Progress: the sketch profile byte layout and execution semantics are
-   specified (`spec/SKETCH_PROFILE.md`, contract §9.3). Remaining: builder
-   and reference reader in `pancake-artifact.js`, then conformance
-   fixtures.
+   Progress: the sketch profile is specified (`spec/SKETCH_PROFILE.md`,
+   contract §9.3) and implemented — builder and reference reader ship in
+   `pancake-artifact.js` on all entrypoints (`Pancake.SketchArtifact`,
+   `buildSketchArtifact[File]`, `openSketchArtifactFile`), with conformance
+   checks in `test/sketch_profile.js` wired into npm test. SIFT1M validated
+   through the product reader: 160 MiB artifact (vs 494 MiB range), 38.1 MiB
+   verified resident prefix, 96.00% recall@10 at the header's recommended
+   rerank, 42.5 KiB/query fetched. Remaining: browser/e2e exercise of the
+   new reader and committed golden fixtures.
    Closed geometry lines (measured, do not reopen without new evidence):
    - cluster-page routing with centroid selection: needs P=128 pages /
      11.8 MiB for 96% — selection, not partition quality, is the bottleneck

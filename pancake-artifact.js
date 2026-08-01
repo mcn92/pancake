@@ -802,10 +802,402 @@ function buildRangeArtifactFile(snapshotPath, outPath, options = {}) {
     return buildRangeArtifact(snapshot, outPath, options);
 }
 
+// ============================================================================
+// Sketch artifact profile (.pancake-sketch) — spec/SKETCH_PROFILE.md
+// ============================================================================
+//
+// Layout: 256-byte header | scales f32[count] | offsets f32[count] |
+// packed pooled sketches | zero padding to 16-byte alignment | raw u8 rows.
+// Everything before vectorsOffset is the resident prefix; row addresses are
+// computed (vectorsOffset + id*dim), never looked up.
+
+const SKETCH_MAGIC = 0x31415350; // PSA1
+const SKETCH_HEADER_BYTES = 256;
+const SKETCH_KIND_U8 = 1;
+
+function sha256Bytes(bytes) {
+    const crypto = require('crypto');
+    return crypto.createHash('sha256').update(bytes).digest();
+}
+
+async function sha256BytesAsync(bytes) {
+    if (globalThis.crypto && globalThis.crypto.subtle) {
+        const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+        return new Uint8Array(digest);
+    }
+    try {
+        return new Uint8Array(sha256Bytes(bytes));
+    } catch {
+        return null; // no crypto available in this environment
+    }
+}
+
+function buildSketchArtifact(snapshotBytes, outPath, options = {}) {
+    if (typeof outPath !== 'string' || outPath.length === 0) {
+        throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'buildSketchArtifact() requires an output path');
+    }
+    return exportSketchArtifact(parseUint8Snapshot(snapshotBytes), outPath, options);
+}
+
+// Accepts any index-like source of quantized rows ({ dim, count, metric,
+// qdata, scales, offsets }) — the profile is derivable from a snapshot, a
+// range artifact, or any producer that emits row-affine u8 vectors.
+function exportSketchArtifact(index, outPath, options = {}) {
+    const dim = index.dim;
+    const count = index.count;
+    const sketchDims = options.sketchDims || (dim % 2 === 0 ? dim / 2 : dim);
+    const sketchBits = options.sketchBits || 4;
+    const recommendedRerank = options.recommendedRerank || 0;
+    if (![4, 8].includes(sketchBits)) {
+        throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'sketchBits must be 4 or 8', { sketchBits });
+    }
+    if (!Number.isInteger(sketchDims) || sketchDims < 1 || dim % sketchDims !== 0) {
+        throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'sketchDims must divide dim', { sketchDims, dim });
+    }
+    if (sketchBits === 4 && sketchDims % 2 !== 0) {
+        throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'sketchDims must be even for 4-bit sketches', { sketchDims });
+    }
+    const pool = dim / sketchDims;
+    const sketchRowBytes = (sketchDims * sketchBits) / 8;
+
+    const scalesOffset = SKETCH_HEADER_BYTES;
+    const offsetsOffset = scalesOffset + count * 4;
+    const sketchesOffset = offsetsOffset + count * 4;
+    const sketchesEnd = sketchesOffset + count * sketchRowBytes;
+    const vectorsOffset = Math.ceil(sketchesEnd / 16) * 16;
+    const fileBytes = vectorsOffset + count * dim;
+
+    const out = Buffer.alloc(fileBytes);
+    out.writeUInt32LE(SKETCH_MAGIC, 0);
+    out.writeUInt32LE(1, 4);
+    out.writeUInt32LE(SKETCH_KIND_U8, 8);
+    out.writeUInt32LE(index.metric, 12);
+    out.writeUInt32LE(dim, 16);
+    out.writeUInt32LE(count, 20);
+    out.writeUInt32LE(sketchDims, 24);
+    out.writeUInt32LE(sketchBits, 28);
+    out.writeUInt32LE(scalesOffset, 32);
+    out.writeUInt32LE(offsetsOffset, 36);
+    out.writeUInt32LE(sketchesOffset, 40);
+    out.writeUInt32LE(vectorsOffset, 44);
+    out.writeBigUInt64LE(BigInt(fileBytes), 48);
+    out.writeUInt32LE(recommendedRerank, 120);
+
+    for (let i = 0; i < count; i++) out.writeFloatLE(index.scales[i], scalesOffset + i * 4);
+    for (let i = 0; i < count; i++) out.writeFloatLE(index.offsets[i], offsetsOffset + i * 4);
+
+    for (let i = 0; i < count; i++) {
+        const rowBase = i * dim;
+        for (let sd = 0; sd < sketchDims; sd++) {
+            let acc = 0;
+            for (let j = 0; j < pool; j++) acc += index.qdata[rowBase + sd * pool + j];
+            const pooled = Math.round(acc / pool);
+            if (sketchBits === 8) {
+                out[sketchesOffset + i * sketchRowBytes + sd] = pooled;
+            } else {
+                const q = Math.min(15, Math.round(pooled / 17));
+                const byteIndex = sketchesOffset + i * sketchRowBytes + (sd >> 1);
+                // Low nibble first: even sketch dims in bits 0-3.
+                if (sd % 2 === 0) out[byteIndex] |= q;
+                else out[byteIndex] |= q << 4;
+            }
+        }
+    }
+
+    Buffer.from(index.qdata.buffer, index.qdata.byteOffset, count * dim).copy(out, vectorsOffset);
+
+    sha256Bytes(out.subarray(SKETCH_HEADER_BYTES, vectorsOffset)).copy(out, 56);
+    sha256Bytes(out.subarray(vectorsOffset)).copy(out, 88);
+
+    const fs = require('fs');
+    fs.writeFileSync(outPath, out);
+    return {
+        format: 'pancake-sketch-artifact',
+        formatVersion: 1,
+        file: outPath,
+        sizeBytes: fileBytes,
+        metric: index.metric === 1 ? 'cosine' : 'l2',
+        graph: { count, dim },
+        sketch: { sketchDims, sketchBits, pool, residentBytes: vectorsOffset },
+        addressing: { scalesOffset, offsetsOffset, sketchesOffset, vectorsOffset },
+        recommendedRerank,
+    };
+}
+
+function buildSketchArtifactFile(snapshotPath, outPath, options = {}) {
+    const fs = require('fs');
+    return buildSketchArtifact(fs.readFileSync(snapshotPath), outPath, options);
+}
+
+class PancakeSketchArtifact {
+    constructor(source) {
+        this.source = source;
+        this.cache = new Map();
+        this.rangeRequests = 0;
+        this.rangeBytes = 0;
+        this.residentVerified = false;
+    }
+
+    static async open(source, options = {}) {
+        if (!source || typeof source.read !== 'function') {
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'SketchArtifact.open() requires a range source with read(offset, length)');
+        }
+        const artifact = new PancakeSketchArtifact(source);
+        const header = asUint8Array(await source.read(0, SKETCH_HEADER_BYTES));
+        if (header.byteLength !== SKETCH_HEADER_BYTES) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact header is truncated');
+        }
+        const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
+        if (view.getUint32(0, true) !== SKETCH_MAGIC) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Not a Pancake sketch artifact (bad magic)');
+        }
+        const version = view.getUint32(4, true);
+        if (version !== 1) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Unsupported sketch artifact version', { version });
+        }
+        if (view.getUint32(8, true) !== SKETCH_KIND_U8) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Unsupported sketch artifact kind');
+        }
+        artifact.metric = view.getUint32(12, true);
+        artifact.dim = view.getUint32(16, true);
+        artifact.count = view.getUint32(20, true);
+        artifact.sketchDims = view.getUint32(24, true);
+        artifact.sketchBits = view.getUint32(28, true);
+        const scalesOffset = view.getUint32(32, true);
+        const offsetsOffset = view.getUint32(36, true);
+        const sketchesOffset = view.getUint32(40, true);
+        artifact.vectorsOffset = view.getUint32(44, true);
+        const fileBytes = Number(view.getBigUint64(48, true));
+        artifact.recommendedRerank = view.getUint32(120, true);
+
+        const { metric, dim, count, sketchDims, sketchBits, vectorsOffset } = artifact;
+        if (metric !== 0 && metric !== 1) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Unsupported sketch artifact metric', { metric });
+        }
+        if (dim < 1 || count < 1 || sketchDims < 1 || dim % sketchDims !== 0) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Invalid sketch artifact geometry', { dim, count, sketchDims });
+        }
+        if (![4, 8].includes(sketchBits) || (sketchBits === 4 && sketchDims % 2 !== 0)) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Invalid sketch encoding', { sketchBits, sketchDims });
+        }
+        const sketchRowBytes = (sketchDims * sketchBits) / 8;
+        const expectVectors = count * dim;
+        if (!Number.isSafeInteger(fileBytes) || !Number.isSafeInteger(expectVectors)
+            || scalesOffset !== SKETCH_HEADER_BYTES
+            || offsetsOffset !== scalesOffset + count * 4
+            || sketchesOffset !== offsetsOffset + count * 4
+            || vectorsOffset < sketchesOffset + count * sketchRowBytes
+            || vectorsOffset % 16 !== 0
+            || fileBytes !== vectorsOffset + expectVectors) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact layout is inconsistent');
+        }
+
+        const resident = asUint8Array(await source.read(SKETCH_HEADER_BYTES, vectorsOffset - SKETCH_HEADER_BYTES));
+        if (resident.byteLength !== vectorsOffset - SKETCH_HEADER_BYTES) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact resident prefix is truncated');
+        }
+        // Copy into an aligned buffer so the typed-array views are valid
+        // regardless of the source's byteOffset.
+        const residentCopy = new Uint8Array(resident.byteLength);
+        residentCopy.set(resident);
+        artifact.scales = new Float32Array(residentCopy.buffer, 0, count);
+        artifact.offsets = new Float32Array(residentCopy.buffer, count * 4, count);
+        artifact.sketches = new Uint8Array(residentCopy.buffer, count * 8, count * sketchRowBytes);
+        artifact.residentBytes = vectorsOffset;
+
+        const verify = options.verify !== false;
+        if (verify) {
+            const digest = await sha256BytesAsync(residentCopy);
+            if (digest) {
+                const expected = header.subarray(56, 88);
+                for (let i = 0; i < 32; i++) {
+                    if (digest[i] !== expected[i]) {
+                        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact resident prefix failed hash verification');
+                    }
+                }
+                artifact.residentVerified = true;
+            }
+        }
+        return artifact;
+    }
+
+    static async openFile(filePath, options = {}) {
+        return PancakeSketchArtifact.open(new NodeFileRangeSource(filePath), options);
+    }
+
+    stats() {
+        return {
+            rangeRequests: this.rangeRequests,
+            rangeBytes: this.rangeBytes,
+            cachedRows: this.cache.size,
+            residentBytes: this.residentBytes,
+            residentVerified: this.residentVerified,
+        };
+    }
+
+    sketchValue(id, sd) {
+        if (this.sketchBits === 8) return this.sketches[id * this.sketchDims + sd];
+        const byte = this.sketches[id * (this.sketchDims >> 1) + (sd >> 1)];
+        const nibble = sd % 2 === 0 ? (byte & 0x0f) : (byte >> 4);
+        return nibble * 17;
+    }
+
+    async fetchRows(ids, options = {}) {
+        const gap = Math.max(0, options.gap === undefined ? 2048 : options.gap);
+        const parallelism = Math.max(1, Math.trunc(options.parallelism || 8));
+        const missing = [];
+        const seen = new Set();
+        for (const id of ids) {
+            if (this.cache.has(id) || seen.has(id)) continue;
+            if (!Number.isInteger(id) || id < 0 || id >= this.count) {
+                throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'row id out of range', { id });
+            }
+            seen.add(id);
+            missing.push(id);
+        }
+        if (!missing.length) return;
+        missing.sort((a, b) => a - b);
+        const dim = this.dim;
+        const ranges = [];
+        let runStartId = missing[0];
+        let runEndId = missing[0] + 1;
+        for (let i = 1; i < missing.length; i++) {
+            const id = missing[i];
+            if (id * dim <= runEndId * dim + gap) {
+                runEndId = id + 1;
+            } else {
+                ranges.push([runStartId, runEndId]);
+                runStartId = id;
+                runEndId = id + 1;
+            }
+        }
+        ranges.push([runStartId, runEndId]);
+        for (let i = 0; i < ranges.length; i += parallelism) {
+            const batch = ranges.slice(i, i + parallelism);
+            const buffers = await Promise.all(batch.map(async ([startId, endId]) => {
+                const offset = this.vectorsOffset + startId * dim;
+                const length = (endId - startId) * dim;
+                const bytes = asUint8Array(await this.source.read(offset, length));
+                if (bytes.byteLength !== length) {
+                    throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact row read returned a truncated range', { offset, length });
+                }
+                this.rangeRequests++;
+                this.rangeBytes += length;
+                return { startId, endId, bytes };
+            }));
+            for (const { startId, endId, bytes } of buffers) {
+                for (let id = startId; id < endId; id++) {
+                    if (!this.cache.has(id)) {
+                        this.cache.set(id, bytes.subarray((id - startId) * dim, (id - startId + 1) * dim));
+                    }
+                }
+            }
+        }
+    }
+
+    async search(query, k, options = {}) {
+        if (!query || query.length !== this.dim) {
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'search() query must match artifact dim', { dim: this.dim });
+        }
+        if (!Number.isInteger(k) || k < 1) {
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'search() k must be a positive integer', { k });
+        }
+        const C = Math.max(k, Math.trunc(options.rerank || this.recommendedRerank || Math.max(100, k * 10)));
+        const { dim, sketchDims, count } = this;
+        const pool = dim / sketchDims;
+
+        let q = query;
+        if (this.metric === 1) {
+            let norm = 0;
+            for (let d = 0; d < dim; d++) norm += query[d] * query[d];
+            norm = Math.sqrt(norm);
+            if (!(norm > 0) || !Number.isFinite(norm)) {
+                throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'cosine query must have a nonzero finite norm');
+            }
+            q = new Float32Array(dim);
+            for (let d = 0; d < dim; d++) q[d] = query[d] / norm;
+        }
+        const qPool = new Float32Array(sketchDims);
+        for (let sd = 0; sd < sketchDims; sd++) {
+            let acc = 0;
+            for (let j = 0; j < pool; j++) acc += q[sd * pool + j];
+            qPool[sd] = acc / pool;
+        }
+
+        let ids;
+        if (options.scanner) {
+            ids = options.scanner.scan(qPool, C);
+        } else {
+            const candDist = new Float64Array(C).fill(Infinity);
+            const candId = new Int32Array(C).fill(-1);
+            let candMax = Infinity;
+            for (let i = 0; i < count; i++) {
+                const s = this.scales[i];
+                const o = this.offsets[i];
+                let metricAcc = 0;
+                if (this.metric === 1) {
+                    for (let sd = 0; sd < sketchDims; sd++) {
+                        metricAcc += qPool[sd] * (o + s * this.sketchValue(i, sd));
+                    }
+                    metricAcc = 1 - Math.max(-1, Math.min(1, metricAcc * pool));
+                } else {
+                    for (let sd = 0; sd < sketchDims; sd++) {
+                        const diff = qPool[sd] - (o + s * this.sketchValue(i, sd));
+                        metricAcc += diff * diff;
+                    }
+                }
+                if (metricAcc < candMax) {
+                    let worst = 0;
+                    for (let j = 1; j < C; j++) if (candDist[j] > candDist[worst]) worst = j;
+                    candDist[worst] = metricAcc;
+                    candId[worst] = i;
+                    candMax = 0;
+                    for (let j = 0; j < C; j++) if (candDist[j] > candMax) candMax = candDist[j];
+                }
+            }
+            ids = [];
+            for (let j = 0; j < C; j++) if (candId[j] >= 0) ids.push(candId[j]);
+        }
+
+        await this.fetchRows(ids, options);
+
+        const exact = [];
+        for (const id of ids) {
+            const row = this.cache.get(id);
+            const s = this.scales[id];
+            const o = this.offsets[id];
+            let acc = 0;
+            if (this.metric === 1) {
+                for (let d = 0; d < dim; d++) acc += q[d] * (o + s * row[d]);
+                acc = 1 - Math.max(-1, Math.min(1, acc));
+            } else {
+                for (let d = 0; d < dim; d++) {
+                    const diff = q[d] - (o + s * row[d]);
+                    acc += diff * diff;
+                }
+            }
+            exact.push([acc, id]);
+        }
+        exact.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+        return {
+            results: exact.slice(0, k).map(([distance, id]) => ({ id, distance })),
+            rerank: ids.length,
+        };
+    }
+
+    async close() {
+        if (this.source && typeof this.source.close === 'function') await this.source.close();
+    }
+}
+
 module.exports = {
     PancakeRangeArtifact,
+    PancakeSketchArtifact,
     NodeFileRangeSource,
     buildRangeArtifact,
     buildRangeArtifactFile,
+    buildSketchArtifact,
+    buildSketchArtifactFile,
+    exportSketchArtifact,
     parseUint8Snapshot,
 };
