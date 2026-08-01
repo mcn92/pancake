@@ -77,8 +77,12 @@ Structural work (the real fix for miss-round depth):
    Worker/R2 measurements; see the settled-comparison-point note above.
    Cold-vs-cold, sketch C=300 at gap=0 fetches 144 KiB in 1 round versus
    traversal's 6.39 MiB over ~24 rounds.
-   Next: 4-bit sketches toward router-parity residency (~40 MiB), WASM-side
-   sketch scan, then a real sketch profile in the artifact format.
+   Progress 2026-08-01: 4-bit sketches reach router-parity residency
+   (38.1 MiB, recall 96.00% vs 96.11% at 8-bit); the engine now exports a
+   SIMD pancake_sketch_scan kernel (scan 84.9 ms JS -> 16.7 ms WASM; e2e
+   over HTTP @10 ms, p=32: sketch 224 ms mean / 288 ms p95 vs traversal
+   981 / 1300 ms at equal recall). Remaining: a real sketch profile in the
+   artifact format (activates the Track B byte-layout spec work).
    Closed geometry lines (measured, do not reopen without new evidence):
    - cluster-page routing with centroid selection: needs P=128 pages /
      11.8 MiB for 96% — selection, not partition quality, is the bottleneck

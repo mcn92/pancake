@@ -191,7 +191,7 @@ const emccArgs = [
   'PANCAKE_WASM_BUILD=1',
   '-fno-merge-all-constants',
   '-s',
-  'EXPORTED_FUNCTIONS=["_pancake_init","_pancake_add","_pancake_bulk_insert","_pancake_query","_pancake_query_filtered","_pancake_delete","_pancake_compact","_pancake_compact_remap","_pancake_count","_pancake_memory","_pancake_ghost_count","_pancake_ghost_ratio","_pancake_export","_pancake_import","_pancake_dispose","_pancake_dimension","_pancake_shutdown_all","_shutdown_all","_emsc_malloc","_emsc_free","_pancake_profile_print","_pancake_profile_reset"]',
+  'EXPORTED_FUNCTIONS=["_pancake_init","_pancake_add","_pancake_bulk_insert","_pancake_query","_pancake_query_filtered","_pancake_delete","_pancake_compact","_pancake_compact_remap","_pancake_count","_pancake_memory","_pancake_ghost_count","_pancake_ghost_ratio","_pancake_export","_pancake_import","_pancake_dispose","_pancake_dimension","_pancake_sketch_scan","_pancake_shutdown_all","_shutdown_all","_emsc_malloc","_emsc_free","_pancake_profile_print","_pancake_profile_reset"]',
   '-s',
   'EXPORTED_RUNTIME_METHODS=["ccall","cwrap","HEAPF32","HEAPU8","HEAPU32","HEAP32"]',
   '-s',

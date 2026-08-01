@@ -120,41 +120,77 @@ function loadSketchSidecar(sidecarPath) {
   return { count, sketchDims, pool, scales, offsets, sketches, bytes: buf.length };
 }
 
+// WASM-backed scanner: sketches/scales/offsets live in the engine heap; each
+// query calls the SIMD pancake_sketch_scan kernel.
+async function createWasmScanner(sidecar, maxC) {
+  const factory = require('../dist/engine.js');
+  const Module = await factory({
+    wasmBinary: fs.readFileSync(path.join(__dirname, '..', 'dist', 'engine.wasm')),
+  });
+  const { count, sketchDims } = sidecar;
+  const sketchesPtr = Module._emsc_malloc(count * sketchDims);
+  const scalesPtr = Module._emsc_malloc(count * 4);
+  const offsetsPtr = Module._emsc_malloc(count * 4);
+  const queryPtr = Module._emsc_malloc(sketchDims * 4);
+  const outIdsPtr = Module._emsc_malloc(maxC * 4);
+  const outDistsPtr = Module._emsc_malloc(maxC * 4);
+  // Re-acquire heap views after allocation: growth invalidates them.
+  Module.HEAPU8.set(sidecar.sketches, sketchesPtr);
+  Module.HEAPF32.set(sidecar.scales, scalesPtr >> 2);
+  Module.HEAPF32.set(sidecar.offsets, offsetsPtr >> 2);
+  return {
+    scan(qSketch, C) {
+      Module.HEAPF32.set(qSketch, queryPtr >> 2);
+      const n = Module._pancake_sketch_scan(
+        sketchesPtr, scalesPtr, offsetsPtr, count, sketchDims, queryPtr, C, outIdsPtr, outDistsPtr
+      );
+      return Array.from(Module.HEAPU32.subarray(outIdsPtr >> 2, (outIdsPtr >> 2) + n));
+    },
+  };
+}
+
 // Sketch search through the real artifact reader: resident scan, then one
 // coalesced parallel prefetch of the top-C records, then exact rerank from
 // the reader's decoded cache.
 async function sketchSearch(artifact, sidecar, query, k, opts) {
   const { sketchDims, pool, scales, offsets, sketches, count } = sidecar;
   const C = opts.rerank;
-  const qSketch = new Float64Array(sketchDims);
+  const qSketch = new Float32Array(sketchDims);
   for (let sd = 0; sd < sketchDims; sd++) {
     let acc = 0;
     for (let j = 0; j < pool; j++) acc += query[sd * pool + j];
     qSketch[sd] = acc / pool;
   }
-  const candDist = new Float64Array(C).fill(Infinity);
-  const candId = new Int32Array(C).fill(-1);
-  let candMax = Infinity;
-  for (let i = 0; i < count; i++) {
-    const s = scales[i];
-    const o = offsets[i];
-    let acc = 0;
-    const rowBase = i * sketchDims;
-    for (let sd = 0; sd < sketchDims; sd++) {
-      const diff = qSketch[sd] - (o + s * sketches[rowBase + sd]);
-      acc += diff * diff;
+  const scanStart = performance.now();
+  let ids;
+  if (opts.scanner) {
+    ids = opts.scanner.scan(qSketch, C);
+  } else {
+    const candDist = new Float64Array(C).fill(Infinity);
+    const candId = new Int32Array(C).fill(-1);
+    let candMax = Infinity;
+    for (let i = 0; i < count; i++) {
+      const s = scales[i];
+      const o = offsets[i];
+      let acc = 0;
+      const rowBase = i * sketchDims;
+      for (let sd = 0; sd < sketchDims; sd++) {
+        const diff = qSketch[sd] - (o + s * sketches[rowBase + sd]);
+        acc += diff * diff;
+      }
+      if (acc < candMax) {
+        let worst = 0;
+        for (let j = 1; j < C; j++) if (candDist[j] > candDist[worst]) worst = j;
+        candDist[worst] = acc;
+        candId[worst] = i;
+        candMax = 0;
+        for (let j = 0; j < C; j++) if (candDist[j] > candMax) candMax = candDist[j];
+      }
     }
-    if (acc < candMax) {
-      let worst = 0;
-      for (let j = 1; j < C; j++) if (candDist[j] > candDist[worst]) worst = j;
-      candDist[worst] = acc;
-      candId[worst] = i;
-      candMax = 0;
-      for (let j = 0; j < C; j++) if (candDist[j] > candMax) candMax = candDist[j];
-    }
+    ids = [];
+    for (let j = 0; j < C; j++) if (candId[j] >= 0) ids.push(candId[j]);
   }
-  const ids = [];
-  for (let j = 0; j < C; j++) if (candId[j] >= 0) ids.push(candId[j]);
+  if (opts.scanTimes) opts.scanTimes.push(performance.now() - scanStart);
 
   await artifact.prefetch(ids, { gap: opts.gap, parallelism: opts.parallelism });
 
@@ -285,21 +321,26 @@ async function main() {
   };
 
   {
+    const scanMode = String(arg('scan', 'js'));
+    const scanner = scanMode === 'wasm' ? await createWasmScanner(sidecar, C) : null;
     const walls = [];
     const recalls = [];
+    const scanTimes = [];
     const before = sketchArtifact.stats();
     for (let q = 0; q < Q; q++) {
       const qv = queries.vectors.subarray(q * dim, (q + 1) * dim);
       const t0 = performance.now();
-      const results = await sketchSearch(sketchArtifact, sidecar, qv, K, { rerank: C, gap, parallelism });
+      const results = await sketchSearch(sketchArtifact, sidecar, qv, K, { rerank: C, gap, parallelism, scanner, scanTimes });
       walls.push(performance.now() - t0);
       recalls.push(recallOf(results, q));
     }
     const after = sketchArtifact.stats();
-    summarize(`sketch C=${C} (${mode}${mode === 'http' ? ` @${delayMs}ms` : ''})`, walls, recalls, {
+    summarize(`sketch C=${C} scan=${scanMode} (${mode}${mode === 'http' ? ` @${delayMs}ms` : ''})`, walls, recalls, {
       rangeRequests: after.rangeRequests - before.rangeRequests,
       rangeBytes: after.rangeBytes - before.rangeBytes,
     }, Q);
+    const scanSorted = [...scanTimes].sort((a, b) => a - b);
+    console.log(`  scan: mean ${(scanTimes.reduce((a, b) => a + b, 0) / scanTimes.length).toFixed(2)} ms, p95 ${percentile(scanSorted, 95).toFixed(2)} ms`);
   }
 
   if (compare) {

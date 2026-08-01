@@ -352,6 +352,135 @@ void pancake_profile_reset() {
 }
 
 // =============================================================================
+// Sketch scan
+// =============================================================================
+//
+// Brute-force top-C scan over a resident tier of row-quantized sketches:
+// per-row affine u8 values (dequantized as offset + scale * byte) against a
+// float32 query, L2. Stateless — operates on caller-provided heap buffers,
+// no index handle involved. Used by the range-artifact sketch-rerank
+// geometry, where this scan selects the records to fetch remotely.
+//
+// Returns the number of results written to out_ids/out_dists (ascending by
+// distance). dims must be a multiple of 16 for the SIMD path; any dims works
+// on the scalar tail.
+
+int pancake_sketch_scan(const uint8_t* sketches,
+                        const float* scales,
+                        const float* offsets,
+                        uint32_t count,
+                        uint32_t dims,
+                        const float* query,
+                        uint32_t top_c,
+                        uint32_t* out_ids,
+                        float* out_dists) {
+    if (!sketches || !scales || !offsets || !query || !out_ids || !out_dists) return 0;
+    if (count == 0 || dims == 0 || top_c == 0) return 0;
+
+    // Max-heap over the current top-C (root = worst kept distance).
+    uint32_t heap_size = 0;
+    auto sift_down = [&](uint32_t i) {
+        for (;;) {
+            uint32_t left = 2 * i + 1;
+            uint32_t right = 2 * i + 2;
+            uint32_t largest = i;
+            if (left < heap_size && out_dists[left] > out_dists[largest]) largest = left;
+            if (right < heap_size && out_dists[right] > out_dists[largest]) largest = right;
+            if (largest == i) return;
+            std::swap(out_dists[i], out_dists[largest]);
+            std::swap(out_ids[i], out_ids[largest]);
+            i = largest;
+        }
+    };
+    auto sift_up = [&](uint32_t i) {
+        while (i > 0) {
+            uint32_t parent = (i - 1) / 2;
+            if (out_dists[parent] >= out_dists[i]) return;
+            std::swap(out_dists[i], out_dists[parent]);
+            std::swap(out_ids[i], out_ids[parent]);
+            i = parent;
+        }
+    };
+
+    for (uint32_t row = 0; row < count; row++) {
+        const uint8_t* data = sketches + static_cast<size_t>(row) * dims;
+        const float s = scales[row];
+        const float o = offsets[row];
+        float sum = 0.0f;
+        uint32_t d = 0;
+
+#ifdef UINT8_HNSW_WASM_SIMD
+        v128_t acc0 = wasm_f32x4_splat(0.0f);
+        v128_t acc1 = wasm_f32x4_splat(0.0f);
+        v128_t acc2 = wasm_f32x4_splat(0.0f);
+        v128_t acc3 = wasm_f32x4_splat(0.0f);
+        v128_t v_scale = wasm_f32x4_splat(s);
+        v128_t v_offset = wasm_f32x4_splat(o);
+
+        for (; d + 16 <= dims; d += 16) {
+            v128_t bytes = wasm_v128_load(data + d);
+            v128_t u16_lo = wasm_u16x8_extend_low_u8x16(bytes);
+            v128_t u16_hi = wasm_u16x8_extend_high_u8x16(bytes);
+
+            v128_t f0 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_low_u16x8(u16_lo));
+            v128_t val0 = WFMA(v_offset, f0, v_scale);
+            v128_t diff0 = wasm_f32x4_sub(wasm_v128_load(query + d), val0);
+            acc0 = WFMA(acc0, diff0, diff0);
+
+            v128_t f1 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_high_u16x8(u16_lo));
+            v128_t val1 = WFMA(v_offset, f1, v_scale);
+            v128_t diff1 = wasm_f32x4_sub(wasm_v128_load(query + d + 4), val1);
+            acc1 = WFMA(acc1, diff1, diff1);
+
+            v128_t f2 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_low_u16x8(u16_hi));
+            v128_t val2 = WFMA(v_offset, f2, v_scale);
+            v128_t diff2 = wasm_f32x4_sub(wasm_v128_load(query + d + 8), val2);
+            acc2 = WFMA(acc2, diff2, diff2);
+
+            v128_t f3 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_high_u16x8(u16_hi));
+            v128_t val3 = WFMA(v_offset, f3, v_scale);
+            v128_t diff3 = wasm_f32x4_sub(wasm_v128_load(query + d + 12), val3);
+            acc3 = WFMA(acc3, diff3, diff3);
+        }
+
+        v128_t acc = wasm_f32x4_add(wasm_f32x4_add(acc0, acc1),
+                                    wasm_f32x4_add(acc2, acc3));
+        sum = wasm_f32x4_extract_lane(acc, 0) + wasm_f32x4_extract_lane(acc, 1) +
+              wasm_f32x4_extract_lane(acc, 2) + wasm_f32x4_extract_lane(acc, 3);
+#endif
+
+        for (; d < dims; d++) {
+            const float diff = query[d] - (o + s * static_cast<float>(data[d]));
+            sum += diff * diff;
+        }
+
+        if (heap_size < top_c) {
+            out_dists[heap_size] = sum;
+            out_ids[heap_size] = row;
+            heap_size++;
+            sift_up(heap_size - 1);
+        } else if (sum < out_dists[0]) {
+            out_dists[0] = sum;
+            out_ids[0] = row;
+            sift_down(0);
+        }
+    }
+
+    // Heap-sort in place so results come back ascending by distance.
+    uint32_t n = heap_size;
+    while (n > 1) {
+        n--;
+        std::swap(out_dists[0], out_dists[n]);
+        std::swap(out_ids[0], out_ids[n]);
+        uint32_t saved = heap_size;
+        heap_size = n;
+        sift_down(0);
+        heap_size = saved;
+    }
+    return static_cast<int>(heap_size);
+}
+
+// =============================================================================
 // Global cleanup
 // =============================================================================
 
