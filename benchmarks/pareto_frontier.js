@@ -107,6 +107,19 @@ const DATASETS = {
     defaultCount: 50_000,
     metric: 'l2',
   },
+  // Same DBpedia OpenAI embedding files as `dbpedia`, evaluated under cosine.
+  // The upstream dataset is angular (dbpedia-openai-1000k-angular); the
+  // `dbpedia` entry keeps the historical L2 evaluation, this entry scores and
+  // builds ground truth with cosine. Caches are keyed per dataset name and
+  // metric, so the two never share ground-truth entries.
+  'dbpedia-cosine': {
+    dir: path.join(__dirname, '..', 'dbpedia'),
+    baseFile: (n) => (n <= 5000 ? 'dbpedia_base_5k.fvecs' : 'dbpedia_base_100k.fvecs'),
+    queryFile: 'dbpedia_query.fvecs',
+    gtFile: null,
+    defaultCount: 50_000,
+    metric: 'cosine',
+  },
   sift: {
     dir: path.join(__dirname, '..', 'sift'),
     baseFile: () => 'sift_base.fvecs',
