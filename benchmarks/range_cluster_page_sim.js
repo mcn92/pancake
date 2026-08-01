@@ -245,6 +245,175 @@ async function main() {
   const perPage = pageCounts.map(() => ({ recalls: [], bytes: [], candidates: [] }));
   const gtPartSpread = [];
 
+  if (arg('mode', null) === 'hybrid') {
+    // Two-round hybrid: round 1 fetches the sketch scan's top-C1 records
+    // (range-artifact records, which carry edges); round 2 fetches the
+    // unvisited graph neighbors of the best exact-scored candidates. Depth
+    // is 2 by construction; the graph supplies the recall the sketch misses.
+    const sketchDims = Number(arg('sketch-dims', 64));
+    const sketchBits = Number(arg('sketch-bits', 4));
+    const C1 = Number(arg('round1', 300));
+    const expandFrom = Number(arg('expand-from', 32));
+    const gapBytes = Number(arg('gap', 2048));
+    if (dim % sketchDims !== 0) throw new Error('sketch-dims must divide dim');
+    const pool = dim / sketchDims;
+    const sketches = new Uint8Array(count * sketchDims);
+    for (let i = 0; i < count; i++) {
+      for (let sd = 0; sd < sketchDims; sd++) {
+        let acc = 0;
+        for (let j = 0; j < pool; j++) acc += qdata[i * dim + sd * pool + j];
+        let value = Math.round(acc / pool);
+        if (sketchBits === 4) value = Math.min(15, Math.round(value / 17)) * 17;
+        sketches[i * sketchDims + sd] = value;
+      }
+    }
+    console.log(`hybrid: sketch ${sketchDims}D u${sketchBits}, round1 C1=${C1}, expand from top ${expandFrom}, gap ${gapBytes}`);
+
+    const coalesce = (ids) => {
+      const addrs = ids.map((id) => byteAddress[id]).sort((a, b) => a - b);
+      if (!addrs.length) return { requests: 0, bytes: 0 };
+      let requests = 1;
+      let bytes = recordBytes;
+      let runEnd = addrs[0] + recordBytes;
+      for (let a = 1; a < addrs.length; a++) {
+        if (addrs[a] <= runEnd + gapBytes) {
+          bytes += (addrs[a] + recordBytes) - runEnd;
+          runEnd = addrs[a] + recordBytes;
+        } else {
+          requests++;
+          bytes += recordBytes;
+          runEnd = addrs[a] + recordBytes;
+        }
+      }
+      return { requests, bytes };
+    };
+
+    const exactDist = (qv, id) => {
+      const s = scales[id];
+      const o = offsets[id];
+      let acc = 0;
+      const rowBase = id * dim;
+      for (let d = 0; d < dim; d++) {
+        const diff = qv[d] - (o + s * qdata[rowBase + d]);
+        acc += diff * diff;
+      }
+      return acc;
+    };
+
+    const recalls1 = [];
+    const recalls2 = [];
+    const req1s = [];
+    const req2s = [];
+    const bytes1s = [];
+    const bytes2s = [];
+    const expandCounts = [];
+    let recoveredTotal = 0;
+    let missedTotal = 0;
+
+    const candDist = new Float64Array(C1);
+    const candId = new Int32Array(C1);
+    const qSketch = new Float64Array(sketchDims);
+
+    for (let q = 0; q < Q; q++) {
+      const qv = queries.vectors.subarray(q * dim, (q + 1) * dim);
+      for (let sd = 0; sd < sketchDims; sd++) {
+        let acc = 0;
+        for (let j = 0; j < pool; j++) acc += qv[sd * pool + j];
+        qSketch[sd] = acc / pool;
+      }
+      candDist.fill(Infinity);
+      candId.fill(-1);
+      let candMax = Infinity;
+      for (let i = 0; i < count; i++) {
+        const s = scales[i];
+        const o = offsets[i];
+        let acc = 0;
+        const rowBase = i * sketchDims;
+        for (let sd = 0; sd < sketchDims; sd++) {
+          const diff = qSketch[sd] - (o + s * sketches[rowBase + sd]);
+          acc += diff * diff;
+        }
+        if (acc < candMax) {
+          let worst = 0;
+          for (let j = 1; j < C1; j++) if (candDist[j] > candDist[worst]) worst = j;
+          candDist[worst] = acc;
+          candId[worst] = i;
+          candMax = 0;
+          for (let j = 0; j < C1; j++) if (candDist[j] > candMax) candMax = candDist[j];
+        }
+      }
+      const round1Ids = [];
+      for (let j = 0; j < C1; j++) if (candId[j] >= 0) round1Ids.push(candId[j]);
+      const acc1 = coalesce(round1Ids);
+      req1s.push(acc1.requests);
+      bytes1s.push(acc1.bytes);
+
+      const fetched = new Set(round1Ids);
+      const scored = round1Ids.map((id) => [exactDist(qv, id), id]).sort((a, b) => a[0] - b[0]);
+
+      // Round-1 recall for comparison.
+      let hits1 = 0;
+      const top1 = new Set(scored.slice(0, K).map((e) => e[1]));
+      for (let j = 0; j < K; j++) if (top1.has(gt.rows[q * gt.k + j])) hits1++;
+      recalls1.push(hits1 / K);
+
+      // Expand one hop from the best exact candidates.
+      const expandIds = new Set();
+      for (let e = 0; e < Math.min(expandFrom, scored.length); e++) {
+        const id = scored[e][1];
+        for (let m = 0; m < M0; m++) {
+          const target = baseEdges[id * M0 + m];
+          if (target >= 0 && !fetched.has(target) && !expandIds.has(target)) expandIds.add(target);
+        }
+      }
+      const round2Ids = [...expandIds];
+      expandCounts.push(round2Ids.length);
+      const acc2 = coalesce(round2Ids);
+      req2s.push(acc2.requests);
+      bytes2s.push(acc2.bytes);
+
+      for (const id of round2Ids) scored.push([exactDist(qv, id), id]);
+      scored.sort((a, b) => a[0] - b[0]);
+      const top2 = new Set(scored.slice(0, K).map((e) => e[1]));
+      let hits2 = 0;
+      let recovered = 0;
+      for (let j = 0; j < K; j++) {
+        const trueId = gt.rows[q * gt.k + j];
+        if (top2.has(trueId)) {
+          hits2++;
+          if (!top1.has(trueId) && expandIds.has(trueId)) recovered++;
+        } else {
+          missedTotal++;
+        }
+      }
+      recoveredTotal += recovered;
+      recalls2.push(hits2 / K);
+    }
+
+    const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
+    const p95v = (xs) => percentile([...xs].sort((a, b) => a - b), 95);
+    console.log(`\nround1 recall@${K}: ${(mean(recalls1) * 100).toFixed(2)}%  ->  hybrid recall@${K}: ${(mean(recalls2) * 100).toFixed(2)}%`);
+    console.log(`recovered by expansion: ${recoveredTotal} GT hits across ${Q} queries; still missed: ${missedTotal}`);
+    console.log(`round1: ${mean(req1s).toFixed(1)} req / ${(mean(bytes1s) / 1024).toFixed(1)} KiB   round2: ${mean(req2s).toFixed(1)} req / ${(mean(bytes2s) / 1024).toFixed(1)} KiB (expanding ${mean(expandCounts).toFixed(0)} new rows)`);
+    console.log(`total: ${(mean(req1s) + mean(req2s)).toFixed(1)} req / ${((mean(bytes1s) + mean(bytes2s)) / 1024).toFixed(1)} KiB / 2 rounds`);
+    for (const ms of fixedMs) {
+      const waves = Math.ceil(p95v(req1s) / parallelism) + Math.ceil(p95v(req2s) / parallelism);
+      const transferMs = ((p95v(bytes1s) + p95v(bytes2s)) / (bandwidthMibps * 1048576)) * 1000;
+      console.log(`  modeled p95 @ ${ms}ms, p=${parallelism}: ${(waves * ms + transferMs).toFixed(1)} ms`);
+    }
+    if (summaryOut) {
+      fs.writeFileSync(summaryOut, JSON.stringify({
+        mode: 'hybrid', sketchDims, sketchBits, C1, expandFrom, gapBytes, queries: Q, k: K,
+        round1Recall: mean(recalls1), hybridRecall: mean(recalls2),
+        round1Requests: mean(req1s), round2Requests: mean(req2s),
+        round1Bytes: mean(bytes1s), round2Bytes: mean(bytes2s),
+        expandedRows: mean(expandCounts),
+      }, null, 2));
+    }
+    await artifact.close?.();
+    return;
+  }
+
   if (arg('mode', null) === 'sketch') {
     // Resident-sketch geometry: a pooled u8 sketch of every vector stays
     // resident; the query scans sketches locally and fetches only the top-C

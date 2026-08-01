@@ -114,7 +114,16 @@ Structural work (the real fix for miss-round depth):
      selectors: all worse than plain centroids in 128D;
    - two-round edge-guided page refinement: +1–3 points over same-budget
      single round — METIS edge-cut minimization keeps candidates' edges
-     inside already-fetched pages, defeating graph-guided selection.
+     inside already-fetched pages, defeating graph-guided selection;
+   - sketch + one-hop graph expansion hybrid (2026-08-01, `--mode hybrid`):
+     mechanically works (96.05% -> 98.30% at C1=300) but is dominated at
+     every budget by deepening the single-round sketch — C=600 reaches
+     98.50% with fewer requests and one round; at the ~98.9% saturation
+     point the two are request-identical but the hybrid pays an extra
+     round-trip, and expansion's marginal recoveries collapse (47 -> 9 hits)
+     as C grows. Both methods flatline near the u8 quantization ceiling
+     (~99%), so the misses are the format's floor, not the geometry's. The
+     edge-free sketch profile stands.
 5. Traversal-level tweaks (speculative neighbor-of-neighbor fetch, adaptive
    expansion on miss) are moot if the sketch geometry ships: round depth 1
    beats any traversal tuning.
