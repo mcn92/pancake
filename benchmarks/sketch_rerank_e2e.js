@@ -254,6 +254,45 @@ function createHttpRangeSource(url) {
   };
 }
 
+// Range source over an artifact stored as N fixed-size part objects
+// (`<prefix>0000` ... zero-padded), presenting one virtual contiguous byte
+// space. Ranges crossing a part boundary split into per-part reads.
+function createHttpPartRangeSource(prefixUrl, partSize, partCount) {
+  return {
+    async read(offset, length) {
+      const out = new Uint8Array(length);
+      let written = 0;
+      const pieces = [];
+      while (written < length) {
+        const absolute = offset + written;
+        const partIndex = Math.floor(absolute / partSize);
+        if (partIndex >= partCount) throw new Error(`range beyond artifact parts at offset ${absolute}`);
+        const partOffset = absolute - partIndex * partSize;
+        const pieceLen = Math.min(length - written, partSize - partOffset);
+        const key = `${prefixUrl}${String(partIndex).padStart(4, '0')}`;
+        const dest = written;
+        const fetchPiece = async (attempt) => {
+          try {
+            const response = await fetch(key, { headers: { Range: `bytes=${partOffset}-${partOffset + pieceLen - 1}` } });
+            if (response.status !== 206 && response.status !== 200) throw new Error(`part range read failed: ${response.status}`);
+            const bytes = new Uint8Array(await response.arrayBuffer());
+            if (bytes.byteLength !== pieceLen) throw new Error(`short part read: ${bytes.byteLength} != ${pieceLen}`);
+            out.set(bytes, dest);
+          } catch (err) {
+            if (attempt >= 2) throw err;
+            await new Promise((res) => setTimeout(res, 250 * (attempt + 1)));
+            return fetchPiece(attempt + 1);
+          }
+        };
+        pieces.push(fetchPiece(0));
+        written += pieceLen;
+      }
+      await Promise.all(pieces);
+      return out;
+    },
+  };
+}
+
 function percentile(sorted, p) {
   if (!sorted.length) return 0;
   return sorted[Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1)];
@@ -297,7 +336,18 @@ async function main() {
   let sketchSource;
   let traversalSource;
   let server = null;
-  if (mode === 'http') {
+  if (mode === 'remote') {
+    // Real-world mode: artifact served as part objects from a remote host
+    // (e.g. an R2 public bucket). --parts-prefix is the URL prefix up to and
+    // including "part-".
+    const prefixUrl = String(arg('parts-prefix'));
+    const partSize = Number(arg('part-size', 67108864));
+    const partCount = Number(arg('part-count', 8));
+    if (!prefixUrl || prefixUrl === 'null') throw new Error('--mode remote requires --parts-prefix');
+    sketchSource = createHttpPartRangeSource(prefixUrl, partSize, partCount);
+    traversalSource = createHttpPartRangeSource(prefixUrl, partSize, partCount);
+    console.log(`remote mode: ${partCount} parts at ${prefixUrl}*, parallelism ${parallelism}`);
+  } else if (mode === 'http') {
     const started = await startDelayedServer(artifactPath, delayMs);
     server = started.server;
     const url = `http://127.0.0.1:${started.port}/artifact`;

@@ -81,8 +81,15 @@ Structural work (the real fix for miss-round depth):
    (38.1 MiB, recall 96.00% vs 96.11% at 8-bit); the engine now exports a
    SIMD pancake_sketch_scan kernel (scan 84.9 ms JS -> 16.7 ms WASM; e2e
    over HTTP @10 ms, p=32: sketch 224 ms mean / 288 ms p95 vs traversal
-   981 / 1300 ms at equal recall). Remaining: a real sketch profile in the
-   artifact format (activates the Track B byte-layout spec work).
+   981 / 1300 ms at equal recall).
+   Real-world validation 2026-08-01: against the July R2 bucket (8-part
+   SIFT1M artifact) through a range-proxy Worker over the public internet
+   (~200 ms RTT): sketch 1256 ms mean / 1752 ms p95 vs traversal 6317 /
+   7741 ms — 5.0x, with traversal reproducing the July Worker/R2 failure
+   numbers almost exactly. Sketch wall time is RTT-bound (~6 request waves);
+   a client near an edge PoP at 20-50 ms RTT lands at roughly 150-400 ms.
+   Remaining: a real sketch profile in the artifact format (activates the
+   Track B byte-layout spec work).
    Closed geometry lines (measured, do not reopen without new evidence):
    - cluster-page routing with centroid selection: needs P=128 pages /
      11.8 MiB for 96% — selection, not partition quality, is the bottleneck
