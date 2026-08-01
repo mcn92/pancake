@@ -47,19 +47,30 @@ Near term:
 
 Structural work (the real fix for miss-round depth):
 
-4. Prototype base-layer geometries that change the round-depth asymptotics
-   rather than tuning HNSW traversal. Each is a new profile under the
-   contract, not an amendment:
-   - inline-neighbor records: store compressed neighbor vectors inside each
-     node record so candidates can be scored without fetching them (spend
-     bytes/query headroom to buy round depth);
-   - cluster-page routing: resident router resolves to a handful of large
-     METIS/cluster pages fetched in one parallel round, brute-force within
-     them (O(1–2) rounds by construction; reuses the existing METIS
-     partitions in `benchmark_results/layout/`).
+4. Geometry results 2026-08-01 (`benchmarks/range_cluster_page_sim.js`,
+   SIFT1M, 1000 queries): the winning geometry is **resident sketch +
+   fetch-to-rerank** — a 2:1 pooled u8 sketch of every vector stays resident
+   (68.7 MiB at 64D; pooling preserves each row's affine scale/offset), the
+   query scans sketches locally, and only the top-C full records are fetched
+   in one parallel round for exact rerank. At C=300: 96.11% recall@10
+   (baseline 95.58%), 144 KiB/query (baseline 535 KiB), 87 mean coalesced
+   requests, round depth 1 (baseline ~12 sequential). Modeled p95 @10ms/read:
+   241 ms vs 615 ms at p=6, and ~51 ms at browser-real parallelism (p=32),
+   which sequential traversal cannot exploit. Next: 4-bit sketches to cut
+   resident bytes to router parity (~40 MiB), then a real reader
+   implementation as a new artifact profile.
+   Closed geometry lines (measured, do not reopen without new evidence):
+   - cluster-page routing with centroid selection: needs P=128 pages /
+     11.8 MiB for 96% — selection, not partition quality, is the bottleneck
+     (oracle selection hits 98.1% at P=8);
+   - sampled-representative, router-hit, and centroid-minus-radius page
+     selectors: all worse than plain centroids in 128D;
+   - two-round edge-guided page refinement: +1–3 points over same-budget
+     single round — METIS edge-cut minimization keeps candidates' edges
+     inside already-fetched pages, defeating graph-guided selection.
 5. Traversal-level tweaks (speculative neighbor-of-neighbor fetch, adaptive
-   expansion on miss) are secondary: worth measuring, expected to help 2–3x
-   at most, not 12 rounds → 2.
+   expansion on miss) are moot if the sketch geometry ships: round depth 1
+   beats any traversal tuning.
 
 Closed lines (do not reopen without new evidence):
 
