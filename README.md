@@ -19,18 +19,36 @@ npm install pancake-wasm
 The API documented in this README is the Pancake 0.2 contract, which ships in
 `pancake-wasm@0.2.0` and later.
 
-Or work from a repository checkout:
+Or work from a repository checkout. The checkout ships prebuilt WASM in
+`dist/`, so the library works with no build step and no install — you can
+`require('./pancake.js')` and search immediately:
 
 ```bash
 git clone https://github.com/mcn92/pancake.git
 cd pancake
-./build.sh          # produces dist/engine.js and dist/engine.wasm
-node run_tests.js   # optional: verify the build
+node -e "const P=require('./pancake.js'); P.create({dim:8,metric:'l2'}).then(i=>{i.add(new Float32Array(8).fill(1)); console.log(i.search(new Float32Array(8).fill(1),1)); i.dispose();})"
+```
+
+To run the demos and tests, install the dev dependencies first:
+
+```bash
+npm install          # dev deps for demos, benchmarks, and tests
+npm test             # optional: verify the shipped build (core + conformance)
+```
+
+You only need to rebuild the WASM engine if you are modifying the C++ under
+`src/`; the prebuilt artifacts already match the source. Building requires an
+Emscripten toolchain (see [Building from source](#building-from-source)):
+
+```bash
+./build.sh           # rebuilds dist/engine.{js,wasm} — only if changing the engine
 ```
 
 The root `pancake.js` / `pancake.node.mjs` / `pancake.web.mjs` entry points are
 the same files that ship in the npm package, so code written against the repo
 checkout works unchanged against the installed package.
+
+See [`DEMOS.md`](DEMOS.md) for copy-paste commands to run each demo.
 
 The native addon under `native/` is not part of the npm package. It is an
 opt-in benchmarking tool used in this repo to separate runtime overhead from

@@ -660,9 +660,20 @@ class TechnicalDemoCLI {
     await cli.init(args.length === 0);
     try {
         if (args.length > 0) {
+            // One-shot mode: build an index first so commands that need one
+            // (validate, search, ...) work without an interactive session.
+            const command = args[0];
+            const needsIndex = !['help', 'status', 'checklist', 'build', 'reset'].includes(command);
+            if (needsIndex) await cli.handleCommand('build');
             await cli.handleCommand(args.join(' '));
-        } else {
+        } else if (process.stdin.isTTY) {
             await cli.runInteractive();
+        } else {
+            // Non-interactive invocation (e.g. `npm run demo` with no TTY):
+            // run the full proof suite instead of blocking on stdin.
+            cli.log('No TTY detected — running the validation suite. For the REPL, run this script in a terminal.', 'info');
+            await cli.handleCommand('build');
+            await cli.handleCommand('validate all');
         }
     } finally {
         cli.dispose();

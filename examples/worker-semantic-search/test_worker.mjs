@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { Miniflare } from 'miniflare';
 
@@ -27,6 +27,18 @@ function searchRequest(body) {
 }
 
 const bundleDir = path.resolve(argument('bundle-dir', '.tmp-test-work/student-worker-distilled'));
+if (!existsSync(path.join(bundleDir, 'worker.js'))) {
+  console.error(
+    `\nThis test needs a bundled Worker at ${bundleDir}/worker.js, which is not present.\n` +
+    'It is produced by a Wrangler dry-run of the demo. From the repo root:\n\n' +
+    '  cd examples/worker-semantic-search\n' +
+    '  npx wrangler deploy --dry-run --outdir ../../.tmp-test-work/student-worker-distilled\n' +
+    '  cd ../..\n' +
+    '  node examples/worker-semantic-search/test_worker.mjs\n\n' +
+    'Or point --bundle-dir at an existing bundle.\n'
+  );
+  process.exit(1);
+}
 const goldenFixtures = JSON.parse(
   readFileSync(new URL('./fixtures/abstention-golden.json', import.meta.url), 'utf8')
 );
