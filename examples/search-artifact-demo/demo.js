@@ -5,15 +5,34 @@ const fs = require('fs');
 const path = require('path');
 const Pancake = require('../../pancake.js');
 
+// Default to the docs artifact committed to the repo so the demo runs on a
+// fresh clone with no extra data. Point --artifact at a larger .pancake-range
+// (e.g. a SIFT1M export) to exercise scale.
 const DEFAULT_ARTIFACT = path.join(
     __dirname,
-    '..',
-    '..',
-    'benchmark_results',
-    'layout',
-    'pancake-sift1m-u8-metis-split.pancake-range'
+    'static',
+    'public',
+    'artifacts',
+    'pancake-docs.pancake-range'
 );
+// Optional real-query source; when absent the demo synthesizes queries at the
+// artifact's own dimension so it works standalone.
 const DEFAULT_QUERY_FILE = path.join(__dirname, '..', '..', 'sift', 'sift_query.fvecs');
+
+function syntheticQueries(count, dim, seed = 1234) {
+    let state = seed >>> 0;
+    const next = () => {
+        state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+        return state / 0xffffffff;
+    };
+    const queries = [];
+    for (let i = 0; i < count; i++) {
+        const v = new Float32Array(dim);
+        for (let d = 0; d < dim; d++) v[d] = next() * 2 - 1;
+        queries.push(v);
+    }
+    return queries;
+}
 
 function getArg(name, fallback) {
     const index = process.argv.indexOf(`--${name}`);
@@ -83,23 +102,27 @@ async function main() {
         throw new Error([
             `Artifact not found: ${artifactPath}`,
             '',
-            'Generate or copy the v2 split artifact before running this demo.',
-            'Expected default:',
-            `  ${path.relative(process.cwd(), DEFAULT_ARTIFACT)}`,
-            '',
-            'Current SIFT1M artifact inputs used during development:',
-            '  snapshot: /tmp/pancake-sift1m-u8.pnck',
-            '  partition: benchmark_results/layout/pancake-sift1m-base.metis.part.5036',
+            'The default is the docs artifact committed to the repo. Pass',
+            '--artifact <file.pancake-range> to point at your own.',
         ].join('\n'));
     }
-    if (!fs.existsSync(queryFile)) {
-        throw new Error(`Query file not found: ${queryFile}`);
-    }
-
-    const queries = readFvecs(queryFile, queryCount);
-    if (queries.length === 0) throw new Error(`No queries found in ${queryFile}`);
 
     const artifact = await Pancake.openRangeArtifactFile(artifactPath);
+
+    // Use the real query file when it matches the artifact's dimension;
+    // otherwise synthesize queries at the artifact's dimension so the demo
+    // runs on any artifact without external data.
+    let queries;
+    const haveQueryFile = fs.existsSync(queryFile);
+    if (haveQueryFile) {
+        const fromFile = readFvecs(queryFile, queryCount);
+        if (fromFile.length > 0 && fromFile[0].length === artifact.dim) {
+            queries = fromFile;
+        }
+    }
+    if (!queries) {
+        queries = syntheticQueries(queryCount, artifact.dim);
+    }
     try {
         const perQueryRequests = [];
         const perQueryBytes = [];

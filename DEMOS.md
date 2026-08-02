@@ -60,16 +60,26 @@ the measured warm-cache and static-host findings.
 
 ### Node Search Artifact demo (in-process, from a file)
 
-Opens a `.pancake-range` artifact from disk and searches it lazily. Works on
-any `.pancake-range` file:
+Opens a `.pancake-range` artifact from disk and searches it lazily, printing
+per-query range-read stats. Runs on a fresh clone against the committed docs
+artifact, synthesizing queries at the artifact's dimension:
 
 ```bash
-node examples/search-artifact-demo/demo.js --artifact <path-to.pancake-range>
+npm run demo:artifact
 ```
 
-There is a default SIFT1M path, but that 494 MB artifact is not in the repo —
-pass `--artifact` with your own file, or build one from a snapshot with
-`Pancake.buildRangeArtifactFile(...)`.
+Point it at a larger artifact to exercise scale (queries come from a matching
+`.fvecs` file when supplied, otherwise synthetic):
+
+```bash
+node examples/search-artifact-demo/demo.js \
+  --artifact path/to/sift1m.pancake-range \
+  --query-file sift/sift_query.fvecs --queries 5
+```
+
+Build your own artifact from a uint8 snapshot with
+`Pancake.buildRangeArtifactFile(snapshotPath, outPath)`, or a sketch artifact
+with `Pancake.buildSketchArtifactFile(...)`.
 
 ## Needs one setup step
 
