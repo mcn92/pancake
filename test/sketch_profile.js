@@ -148,6 +148,55 @@ async function run() {
         }
     }
 
+    // Bounded-cache behavior: eviction must bound memory without changing
+    // results, for both artifact readers.
+    console.log('\nbounded caches');
+    {
+        const rows = seededVectors(COUNT, DIM, 42);
+        const index = await Pancake.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
+        index.addBatch(rows);
+        const snapshotPath = path.join(tmp, 'cache-snap.pnck');
+        fs.writeFileSync(snapshotPath, index.export());
+        index.dispose();
+        const queries = seededVectors(30, DIM, 99);
+
+        const rangePath = path.join(tmp, 'cache.pancake-range');
+        Pancake.buildRangeArtifactFile(snapshotPath, rangePath);
+        const unboundedRange = await Pancake.openRangeArtifactFile(rangePath, { maxCacheBytes: Infinity });
+        const boundedRange = await Pancake.openRangeArtifactFile(rangePath, { maxCacheBytes: 1 }); // clamps to 64 records
+        let rangeMatch = true;
+        for (const q of queries) {
+            const a = (await unboundedRange.search(q, K, { efSearch: 80 })).results.map((r) => r.id);
+            const b = (await boundedRange.search(q, K, { efSearch: 80 })).results.map((r) => r.id);
+            if (JSON.stringify(a) !== JSON.stringify(b)) rangeMatch = false;
+        }
+        const rangeStats = boundedRange.stats();
+        check('range reader: identical results under eviction', rangeMatch);
+        check('range reader: lazy cache bounded', rangeStats.lazyCacheBytes <= 64 * boundedRange.recordBytes,
+            `lazyCacheBytes=${rangeStats.lazyCacheBytes}`);
+        await unboundedRange.close();
+        await boundedRange.close();
+
+        const sketchPath = path.join(tmp, 'cache.pancake-sketch');
+        Pancake.buildSketchArtifactFile(snapshotPath, sketchPath, { sketchDims: 16, sketchBits: 8 });
+        const unboundedSketch = await Pancake.openSketchArtifactFile(sketchPath, { maxCacheBytes: Infinity });
+        const boundedSketch = await Pancake.openSketchArtifactFile(sketchPath, { maxCacheBytes: 1 }); // clamps to 256 rows
+        let sketchMatch = true;
+        for (const q of queries) {
+            // rerank 400 exceeds the 256-row cache budget on purpose:
+            // correctness must come from fetchRows' returned rows, not cache.
+            const a = (await unboundedSketch.search(q, K, { rerank: 400 })).results.map((r) => r.id);
+            const b = (await boundedSketch.search(q, K, { rerank: 400 })).results.map((r) => r.id);
+            if (JSON.stringify(a) !== JSON.stringify(b)) sketchMatch = false;
+        }
+        const sketchStats = boundedSketch.stats();
+        check('sketch reader: identical results under eviction', sketchMatch);
+        check('sketch reader: row cache bounded', sketchStats.cacheBytes <= 256 * DIM && sketchStats.cachedRows <= 256,
+            `cacheBytes=${sketchStats.cacheBytes} rows=${sketchStats.cachedRows}`);
+        await unboundedSketch.close();
+        await boundedSketch.close();
+    }
+
     console.log(`\nSketch profile conformance: ${passed} passed, ${failed} failed`);
     if (failed > 0) process.exit(1);
 }

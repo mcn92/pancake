@@ -150,6 +150,13 @@ class PancakeRangeArtifact {
         this.baseRecordsOffset = header.baseRecordsOffset;
         this.originalToLocation = idMap;
         this.cache = new Map();
+        // Lazily fetched records live in a byte-budgeted LRU so a long-lived
+        // reader stays bounded; the router segment (this.cache) is permanent.
+        this.lazyCache = new Map();
+        this.lazyCacheBytes = 0;
+        this.maxCacheBytes = Number.isFinite(options.maxCacheBytes) && options.maxCacheBytes > 0
+            ? Math.max(options.maxCacheBytes, 64 * this.recordBytes)
+            : (options.maxCacheBytes === Infinity ? Infinity : 64 * 1024 * 1024);
         this.currentRanges = [];
         this.routerResident = { records: 0, bytes: 0 };
         this.rangeRequests = 0;
@@ -201,6 +208,8 @@ class PancakeRangeArtifact {
 
     clearCache(options = {}) {
         this.cache.clear();
+        this.lazyCache.clear();
+        this.lazyCacheBytes = 0;
         if (options.reloadRouter !== false && this.loadRouter && this.version >= 2) {
             return this.loadRouterSegment().then((resident) => {
                 this.routerResident = resident;
@@ -216,7 +225,8 @@ class PancakeRangeArtifact {
             rangeRequests: this.rangeRequests,
             rangeBytes: this.rangeBytes,
             rangeNodesDecoded: this.rangeNodesDecoded,
-            cachedNodes: this.cache.size,
+            cachedNodes: this.cache.size + this.lazyCache.size,
+            lazyCacheBytes: this.lazyCacheBytes,
             routerResident: { ...this.routerResident },
         };
     }
@@ -247,18 +257,42 @@ class PancakeRangeArtifact {
         return this.recordsOffset + location * this.recordBytes;
     }
 
+    cachedNode(id) {
+        const resident = this.cache.get(id);
+        if (resident !== undefined) return resident;
+        const lazy = this.lazyCache.get(id);
+        if (lazy !== undefined) {
+            // Touch for LRU: move to the tail of insertion order.
+            this.lazyCache.delete(id);
+            this.lazyCache.set(id, lazy);
+            return lazy;
+        }
+        return undefined;
+    }
+
+    cacheLazyNode(id, node) {
+        if (this.lazyCache.has(id)) return;
+        this.lazyCache.set(id, node);
+        this.lazyCacheBytes += this.recordBytes;
+        while (this.lazyCacheBytes > this.maxCacheBytes && this.lazyCache.size > 1) {
+            const oldest = this.lazyCache.keys().next().value;
+            this.lazyCache.delete(oldest);
+            this.lazyCacheBytes -= this.recordBytes;
+        }
+    }
+
     async readNode(id) {
-        const cached = this.cache.get(id);
-        if (cached) return cached;
+        const cached = this.cachedNode(id);
+        if (cached !== undefined) return cached;
         await this.prefetch([id]);
-        return this.cache.get(id);
+        return this.cachedNode(id);
     }
 
     async prefetch(ids, options = {}) {
         const addresses = [];
         const seen = new Set();
         for (const id of ids) {
-            if (this.cache.has(id) || seen.has(id)) continue;
+            if (this.cache.has(id) || this.lazyCache.has(id) || seen.has(id)) continue;
             seen.add(id);
             addresses.push(this.recordAddressForId(id));
         }
@@ -288,8 +322,8 @@ class PancakeRangeArtifact {
             for (let off = 0; off + this.recordBytes <= bytes; off += this.recordBytes) {
                 const record = buffer.subarray(off, off + this.recordBytes);
                 const originalId = new DataView(record.buffer, record.byteOffset, record.byteLength).getUint32(0, true);
-                if (!this.cache.has(originalId)) {
-                    this.cache.set(originalId, this.decodeNode(record));
+                if (!this.cache.has(originalId) && !this.lazyCache.has(originalId)) {
+                    this.cacheLazyNode(originalId, this.decodeNode(record));
                     this.rangeNodesDecoded++;
                 }
             }
@@ -932,10 +966,34 @@ function buildSketchArtifactFile(snapshotPath, outPath, options = {}) {
 class PancakeSketchArtifact {
     constructor(source) {
         this.source = source;
+        // Fetched rows live in a byte-budgeted LRU; search correctness never
+        // depends on retention because fetchRows returns rows directly.
         this.cache = new Map();
+        this.cacheBytes = 0;
+        this.maxCacheBytes = 64 * 1024 * 1024;
         this.rangeRequests = 0;
         this.rangeBytes = 0;
         this.residentVerified = false;
+    }
+
+    cachedRow(id) {
+        const row = this.cache.get(id);
+        if (row !== undefined) {
+            this.cache.delete(id);
+            this.cache.set(id, row);
+        }
+        return row;
+    }
+
+    cacheRow(id, row) {
+        if (this.cache.has(id)) return;
+        this.cache.set(id, row);
+        this.cacheBytes += this.dim;
+        while (this.cacheBytes > this.maxCacheBytes && this.cache.size > 1) {
+            const oldest = this.cache.keys().next().value;
+            this.cache.delete(oldest);
+            this.cacheBytes -= this.dim;
+        }
     }
 
     static async open(source, options = {}) {
@@ -969,6 +1027,11 @@ class PancakeSketchArtifact {
         artifact.vectorsOffset = view.getUint32(44, true);
         const fileBytes = Number(view.getBigUint64(48, true));
         artifact.recommendedRerank = view.getUint32(120, true);
+        if (Number.isFinite(options.maxCacheBytes) && options.maxCacheBytes > 0) {
+            artifact.maxCacheBytes = Math.max(options.maxCacheBytes, 256 * artifact.dim);
+        } else if (options.maxCacheBytes === Infinity) {
+            artifact.maxCacheBytes = Infinity;
+        }
 
         const { metric, dim, count, sketchDims, sketchBits, vectorsOffset } = artifact;
         if (metric !== 0 && metric !== 1) {
@@ -1030,6 +1093,7 @@ class PancakeSketchArtifact {
             rangeRequests: this.rangeRequests,
             rangeBytes: this.rangeBytes,
             cachedRows: this.cache.size,
+            cacheBytes: this.cacheBytes,
             residentBytes: this.residentBytes,
             residentVerified: this.residentVerified,
         };
@@ -1045,17 +1109,21 @@ class PancakeSketchArtifact {
     async fetchRows(ids, options = {}) {
         const gap = Math.max(0, options.gap === undefined ? 2048 : options.gap);
         const parallelism = Math.max(1, Math.trunc(options.parallelism || 8));
+        const rows = new Map();
         const missing = [];
-        const seen = new Set();
         for (const id of ids) {
-            if (this.cache.has(id) || seen.has(id)) continue;
+            if (rows.has(id)) continue;
             if (!Number.isInteger(id) || id < 0 || id >= this.count) {
                 throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'row id out of range', { id });
             }
-            seen.add(id);
-            missing.push(id);
+            const cached = this.cachedRow(id);
+            if (cached !== undefined) rows.set(id, cached);
+            else {
+                rows.set(id, null);
+                missing.push(id);
+            }
         }
-        if (!missing.length) return;
+        if (!missing.length) return rows;
         missing.sort((a, b) => a - b);
         const dim = this.dim;
         const ranges = [];
@@ -1087,12 +1155,13 @@ class PancakeSketchArtifact {
             }));
             for (const { startId, endId, bytes } of buffers) {
                 for (let id = startId; id < endId; id++) {
-                    if (!this.cache.has(id)) {
-                        this.cache.set(id, bytes.subarray((id - startId) * dim, (id - startId + 1) * dim));
-                    }
+                    const row = bytes.subarray((id - startId) * dim, (id - startId + 1) * dim);
+                    if (rows.has(id)) rows.set(id, row);
+                    this.cacheRow(id, row);
                 }
             }
         }
+        return rows;
     }
 
     async search(query, k, options = {}) {
@@ -1159,11 +1228,11 @@ class PancakeSketchArtifact {
             for (let j = 0; j < C; j++) if (candId[j] >= 0) ids.push(candId[j]);
         }
 
-        await this.fetchRows(ids, options);
+        const rows = await this.fetchRows(ids, options);
 
         const exact = [];
         for (const id of ids) {
-            const row = this.cache.get(id);
+            const row = rows.get(id);
             const s = this.scales[id];
             const o = this.offsets[id];
             let acc = 0;

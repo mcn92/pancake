@@ -192,7 +192,8 @@ async function loadAssets() {
   const loadedManifest = MANIFEST_ASSET;
   assertManifestMatches(loadedManifest);
   const source = createBundledRangeSource(ARTIFACT_ASSET, 'Search artifact');
-  const loadedArtifact = await Pancake.RangeArtifact.open(source);
+  const cacheMb = positiveEnvInt(env, 'ARTIFACT_CACHE_MB', 64);
+  const loadedArtifact = await Pancake.RangeArtifact.open(source, { maxCacheBytes: cacheMb * 1024 * 1024 });
   if (loadedArtifact.dim !== loadedManifest.dims) {
     throw Object.assign(new Error(`Search Artifact dimension mismatch (${loadedArtifact.dim} !== ${loadedManifest.dims})`), { code: 'MANIFEST_MISMATCH' });
   }

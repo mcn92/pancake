@@ -128,6 +128,7 @@ export interface RangeArtifactStats {
   readonly rangeBytes: number;
   readonly rangeNodesDecoded: number;
   readonly cachedNodes: number;
+  readonly lazyCacheBytes: number;
   readonly routerResident: {
     readonly records: number;
     readonly bytes: number;
@@ -150,6 +151,12 @@ export interface RangeArtifactSearchResult {
 export interface RangeArtifactOpenOptions {
   /** Eagerly load the v2 router segment. Default: true. */
   loadRouter?: boolean;
+  /**
+   * Byte budget for the lazily-fetched record cache (LRU eviction; the
+   * resident router segment is not counted). Default: 64 MiB. Pass Infinity
+   * for the pre-0.3 unbounded behavior.
+   */
+  maxCacheBytes?: number;
 }
 
 export interface RangeArtifactBuildOptions {
@@ -203,6 +210,11 @@ export class PancakeRangeArtifact {
 export interface SketchArtifactOpenOptions {
   /** Verify the resident prefix hash when a crypto backend exists. Default: true. */
   verify?: boolean;
+  /**
+   * Byte budget for the fetched-row cache (LRU eviction; the resident sketch
+   * tier is not counted). Default: 64 MiB. Pass Infinity to disable eviction.
+   */
+  maxCacheBytes?: number;
 }
 
 export interface SketchArtifactSearchOptions {
@@ -220,6 +232,7 @@ export interface SketchArtifactStats {
   readonly rangeRequests: number;
   readonly rangeBytes: number;
   readonly cachedRows: number;
+  readonly cacheBytes: number;
   readonly residentBytes: number;
   readonly residentVerified: boolean;
 }
