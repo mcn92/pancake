@@ -217,6 +217,19 @@ export interface SketchArtifactOpenOptions {
   maxCacheBytes?: number;
 }
 
+export interface SketchScanner {
+  /** Return the top-C row ids for a pooled query, ascending by sketch distance. */
+  scan(pooledQuery: Float32Array | readonly number[], c: number): number[];
+  /** Free the scanner's WASM heap allocations. */
+  dispose(): void;
+  readonly maxRerank: number;
+}
+
+export interface SketchScannerOptions {
+  /** Upper bound on rerank depth the scanner will return. Default: 1024. */
+  maxRerank?: number;
+}
+
 export interface SketchArtifactSearchOptions {
   /** Rerank depth (top-C sketch candidates fetched for exact scoring). */
   rerank?: number;
@@ -224,8 +237,8 @@ export interface SketchArtifactSearchOptions {
   gap?: number;
   /** Concurrent range reads per fetch round. Default: 8. */
   parallelism?: number;
-  /** External top-C scanner (e.g. the engine's SIMD kernel). */
-  scanner?: { scan(pooledQuery: Float32Array, c: number): number[] };
+  /** External top-C scanner (e.g. from createSketchScanner). */
+  scanner?: SketchScanner | { scan(pooledQuery: Float32Array, c: number): number[] };
 }
 
 export interface SketchArtifactStats {
@@ -363,6 +376,8 @@ export interface PancakeApi {
   readonly PANCAKE_ERROR_CODES: typeof PANCAKE_ERROR_CODES;
   readonly RangeArtifact: typeof PancakeRangeArtifact;
   readonly SketchArtifact: typeof PancakeSketchArtifact;
+  /** Build a WASM-backed SIMD scanner for a sketch artifact's resident tier. */
+  createSketchScanner(artifact: PancakeSketchArtifact, options?: SketchScannerOptions): Promise<SketchScanner>;
   /** Create a new Pancake index using the runtime-specific packaged entrypoint. */
   create(opts: CreateOptions): Promise<PancakeIndex>;
   /** Restore an envelope snapshot, inferring its construction config. */

@@ -8,7 +8,7 @@ import loaderContract from './pancake-loader.js';
 import artifactContract from './pancake-artifact.js';
 const { PancakeError, PANCAKE_ERROR_CODES, pancakeError } = errorContract;
 const { createCachedModuleLoader } = loaderContract;
-const { PancakeRangeArtifact, PancakeSketchArtifact } = artifactContract;
+const { PancakeRangeArtifact, PancakeSketchArtifact, createSketchScanner } = artifactContract;
 let engineVariantPromise = null;
 
 function makeLoadError(message, error) {
@@ -74,6 +74,7 @@ export { PancakeError, PANCAKE_ERROR_CODES };
 
 Pancake.RangeArtifact = PancakeRangeArtifact;
 Pancake.SketchArtifact = PancakeSketchArtifact;
+Pancake.createSketchScanner = (artifact, options) => createSketchScanner(loadWebEngine, artifact, options);
 
 function unsupportedNodeFileHelper(name) {
   return async function unsupported() {

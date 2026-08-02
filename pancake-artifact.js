@@ -1259,9 +1259,74 @@ class PancakeSketchArtifact {
     }
 }
 
+// Build a WASM-backed scanner for a sketch artifact's resident tier, usable
+// as the `scanner` option to PancakeSketchArtifact.search(). The engine's
+// pancake_sketch_scan SIMD kernel runs the O(count*sketchDims) resident scan
+// that is otherwise the browser query bottleneck. `loadEngine` is the
+// entrypoint's own async engine loader (Node/web/workerd all supply one);
+// the sketch tier is staged in the engine heap once at creation.
+async function createSketchScanner(loadEngine, artifact, options = {}) {
+    if (typeof loadEngine !== 'function') {
+        throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'createSketchScanner() requires an engine loader');
+    }
+    if (!artifact || !(artifact instanceof PancakeSketchArtifact)) {
+        throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'createSketchScanner() requires a sketch artifact');
+    }
+    const engine = await loadEngine();
+    const { count, sketchDims } = artifact;
+    const maxC = Math.max(1, Math.trunc(options.maxRerank || 1024));
+
+    // The kernel reads u8 sketch values; expand 4-bit nibbles to their
+    // reconstructed u8 once so the scan needs no per-element unpacking.
+    const expanded = new Uint8Array(count * sketchDims);
+    if (artifact.sketchBits === 4) {
+        for (let i = 0; i < count; i++) {
+            for (let sd = 0; sd < sketchDims; sd++) expanded[i * sketchDims + sd] = artifact.sketchValue(i, sd);
+        }
+    } else {
+        expanded.set(artifact.sketches);
+    }
+
+    const sketchesPtr = engine._emsc_malloc(expanded.length);
+    const scalesPtr = engine._emsc_malloc(count * 4);
+    const offsetsPtr = engine._emsc_malloc(count * 4);
+    const queryPtr = engine._emsc_malloc(sketchDims * 4);
+    const outIdsPtr = engine._emsc_malloc(maxC * 4);
+    const outDistsPtr = engine._emsc_malloc(maxC * 4);
+    if (!sketchesPtr || !scalesPtr || !offsetsPtr || !queryPtr || !outIdsPtr || !outDistsPtr) {
+        throw pancakeError(PANCAKE_ERROR_CODES.WASM_ALLOCATION_FAILED, 'sketch scanner heap allocation failed');
+    }
+    engine.HEAPU8.set(expanded, sketchesPtr);
+    engine.HEAPF32.set(artifact.scales, scalesPtr >> 2);
+    engine.HEAPF32.set(artifact.offsets, offsetsPtr >> 2);
+
+    let disposed = false;
+    return {
+        maxRerank: maxC,
+        scan(pooledQuery, c) {
+            if (disposed) throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'sketch scanner disposed');
+            const query = pooledQuery instanceof Float32Array ? pooledQuery : Float32Array.from(pooledQuery);
+            engine.HEAPF32.set(query, queryPtr >> 2);
+            const topC = Math.min(Math.max(1, Math.trunc(c)), maxC);
+            const n = engine._pancake_sketch_scan(
+                sketchesPtr, scalesPtr, offsetsPtr, count, sketchDims, queryPtr, topC, outIdsPtr, outDistsPtr
+            );
+            return Array.from(engine.HEAPU32.subarray(outIdsPtr >> 2, (outIdsPtr >> 2) + n));
+        },
+        dispose() {
+            if (disposed) return;
+            disposed = true;
+            for (const ptr of [sketchesPtr, scalesPtr, offsetsPtr, queryPtr, outIdsPtr, outDistsPtr]) {
+                engine._emsc_free(ptr);
+            }
+        },
+    };
+}
+
 module.exports = {
     PancakeRangeArtifact,
     PancakeSketchArtifact,
+    createSketchScanner,
     NodeFileRangeSource,
     buildRangeArtifact,
     buildRangeArtifactFile,
