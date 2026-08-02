@@ -197,6 +197,46 @@ async function run() {
         await boundedSketch.close();
     }
 
+    // Golden fixtures: the reference reader must reproduce committed results
+    // byte-for-byte from committed artifact bytes (spec section 5).
+    console.log('\ngolden fixtures');
+    {
+        const golden = require('./fixtures/sketch_golden.js');
+        for (const c of golden.cases) {
+            const bytes = Buffer.from(c.artifactBase64, 'base64');
+            const goldenPath = path.join(tmp, `golden-${c.metric}-${c.sketchBits}.pancake-sketch`);
+            fs.writeFileSync(goldenPath, bytes);
+            const artifact = await Pancake.openSketchArtifactFile(goldenPath);
+            let ok = true;
+            let ri = 0;
+            for (const q of c.queries) {
+                for (const [k, C] of [[5, 32], [10, 64]]) {
+                    const expected = c.results[ri++];
+                    const got = (await artifact.search(new Float32Array(q), k, { rerank: C })).results;
+                    const gotIds = got.map((x) => x.id);
+                    const gotDists = got.map((x) => Number(x.distance.toFixed(5)));
+                    if (JSON.stringify(gotIds) !== JSON.stringify(expected.ids)) ok = false;
+                    if (JSON.stringify(gotDists) !== JSON.stringify(expected.dists)) ok = false;
+                }
+            }
+            // The WASM scanner path must reproduce the same golden results.
+            const scanner = await Pancake.createSketchScanner(artifact);
+            let scannerOk = true;
+            ri = 0;
+            for (const q of c.queries) {
+                for (const [k, C] of [[5, 32], [10, 64]]) {
+                    const expected = c.results[ri++];
+                    const got = (await artifact.search(new Float32Array(q), k, { rerank: C, scanner })).results;
+                    if (JSON.stringify(got.map((x) => x.id)) !== JSON.stringify(expected.ids)) scannerOk = false;
+                }
+            }
+            scanner.dispose();
+            await artifact.close();
+            check(`golden ${c.metric} u${c.sketchBits}: reference reader reproduces committed results`, ok);
+            check(`golden ${c.metric} u${c.sketchBits}: WASM scanner reproduces committed ids`, scannerOk);
+        }
+    }
+
     console.log(`\nSketch profile conformance: ${passed} passed, ${failed} failed`);
     if (failed > 0) process.exit(1);
 }

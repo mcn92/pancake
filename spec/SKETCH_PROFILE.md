@@ -192,10 +192,16 @@ Mapping to the Search Artifact Contract's layers:
   an adjacent asset and set `recommendedRerank`; this becomes a mandatory
   segment in the complete profile.
 
-Conformance fixtures (contract 5.4): a seeded small corpus, its
-`.pancake-sketch` bytes, fixed queries, reference-reader results at fixed
-`(k, C)`, and a brute-force oracle bound. To be added alongside the
-reference reader implementation.
+Conformance fixtures (contract 5.4): committed in
+`test/fixtures/sketch_golden.js` and checked by `test/sketch_profile.js`
+(part of `npm test`). Each of the four cases (l2/cosine × 4-bit/8-bit)
+carries the base64 `.pancake-sketch` bytes, fixed queries, and the reference
+reader's exact ids and distances at `(k, C)` of `(5, 32)` and `(10, 64)`. A
+conforming reader must reproduce those results from the committed bytes; the
+WASM-scanner path is held to the same ids. Regenerate with
+`node scripts/make-sketch-fixture.mjs`. The suite additionally checks
+C=count exactness against the restored engine and recall floors against
+float brute force.
 
 ## 6. Relationship to other profiles
 

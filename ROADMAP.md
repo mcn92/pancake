@@ -102,10 +102,13 @@ Structural work (the real fix for miss-round depth):
    resident prefix in 2.26 s in one request, hash-verified, queries
    RTT-bound as before); and a real browser via pancake-wasm/web
    (Playwright: opens in 0.9 s, resident verified through crypto.subtle,
-   91.5% recall over 20 queries, zero page errors — query wall ~3 s because
-   the browser runs the pure-JS 4-bit scan). Remaining: expose an
-   engine-backed scanner on the web entry (the JS scan is the browser
-   bottleneck; the hook already exists) and committed golden fixtures.
+   91.5% recall over 20 queries, zero page errors). The sketch arc is now
+   complete: Pancake.createSketchScanner exposes the SIMD kernel on every
+   entrypoint — in a real browser via pancake-wasm/web the scan drops from
+   3147 ms to 17.8 ms/query (176x, identical recall), so browser queries are
+   RTT-bound; and golden fixtures (test/fixtures/sketch_golden.js, 4 cases,
+   regenerable via scripts/make-sketch-fixture.mjs) hold both the reference
+   reader and the WASM scanner to committed results in npm test.
    Closed geometry lines (measured, do not reopen without new evidence):
    - cluster-page routing with centroid selection: needs P=128 pages /
      11.8 MiB for 96% — selection, not partition quality, is the bottleneck
