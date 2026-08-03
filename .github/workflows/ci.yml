@@ -24,7 +24,10 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - run: npm ci
-      - run: node run_tests.js
+      # npm test = run_tests.js + model_c_loader + sketch_profile conformance;
+      # running the script (not run_tests.js directly) keeps CI and the local
+      # gate identical.
+      - run: npm test
       - run: npm run test:fuzz
 
   build-from-source:
@@ -52,8 +55,11 @@ jobs:
         run: npm run build:all
         env:
           EMCC: emcc
-      - run: node run_tests.js
+      - run: npm test
       - run: npm run test:simd
+      # workerd entrypoint smoke (wrangler needs Node >= 20.3, so it lives in
+      # this single Node 22 job rather than the version matrix).
+      - run: npm run test:worker-web
 
   test-browser-entry:
     name: Bundled browser consumer (Vite + Playwright)
