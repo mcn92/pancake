@@ -1155,7 +1155,12 @@ class PancakeSketchArtifact {
             }));
             for (const { startId, endId, bytes } of buffers) {
                 for (let id = startId; id < endId; id++) {
-                    const row = bytes.subarray((id - startId) * dim, (id - startId + 1) * dim);
+                    // Copy each row out of the coalesced fetch buffer: a view
+                    // would pin the whole range in the LRU, so cacheBytes
+                    // would count dim bytes while retaining the full fetch.
+                    // (Explicit copy constructor — .slice() is unreliable here
+                    // because Node Buffers override it with view semantics.)
+                    const row = new Uint8Array(bytes.subarray((id - startId) * dim, (id - startId + 1) * dim));
                     if (rows.has(id)) rows.set(id, row);
                     this.cacheRow(id, row);
                 }
