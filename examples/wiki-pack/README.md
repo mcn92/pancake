@@ -18,10 +18,22 @@ Measured on the built pack (2026-08-03):
   search + ~35 ms hydrate, ~66 range requests / ~390 KiB per query.
 - **Cold boot** is the honest cost: ~93 MB before the first query (47 MB
   resident tier + 45 MB fp16 encoder + ONNX runtime), all
-  browser-cacheable. Locally that's ~3.5 s; on a real network it is
-  bandwidth-bound (~8 s at 100 Mbit/s). The economics favor repeat-query
-  contexts — a docs site, an installed pack — over drive-by pageloads;
-  real-CDN cold/warm numbers belong here once the demo is deployed.
+  browser-cacheable. Measured on the live Pages/R2 deployment
+  (pancake-wiki-pack-demo.pages.dev, ~100 Mbit/s client): 13-14 s cold
+  time-to-first-query, ~7 s on a warm reload. The economics favor
+  repeat-query contexts — a docs site, an installed pack — over drive-by
+  pageloads.
+- **Live queries** (same deployment): 1.2-4.2 s search on a cold edge,
+  0.7-2.0 s once the colo's edge cache has seen the ranges, ~20 ms on
+  browser-warm repeats. Two deployment lessons are baked into the code:
+  the Pages Function edge-caches every range (identical reads — the
+  resident open, the encoder — are served from the colo after first
+  touch), and the page shards range reads across Pages branch aliases,
+  because all same-origin fetches share one h2 connection whose Function
+  isolate caps at ~6 concurrent R2 reads — single-origin live queries ran
+  5.7-18.6 s. The remaining gap to the ~280 ms localhost number is
+  per-request edge latency times wave count; the durable fix is fewer,
+  larger reads (see the residency note below).
 - **Abstention**: AUC 1.0000 on the 122-point fit set (96 answerable, 26
   unanswerable — a small sample, so read the clean score gap between the
   classes, not the headline AUC); 14/14 golden probes pass in Node and in

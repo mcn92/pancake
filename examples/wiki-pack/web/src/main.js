@@ -12,6 +12,21 @@ const FETCH_PARALLELISM = Number(params.get('p') || 32);
 const FETCH_GAP = Number(params.get('gap') || 16384);
 const RERANK = params.get('C') ? Number(params.get('C')) : undefined;
 
+// All same-origin fetches share one h2 connection, and connection-affine
+// Function invocations share one isolate whose ~6-connection cap to R2
+// serializes concurrent range reads. Rotating across Pages branch aliases
+// (identical deployments, distinct origins) gives the browser separate
+// connections and the backend separate isolates. Localhost keeps one origin.
+const SHARD_ORIGINS = params.get('shards') === '0'
+    ? [location.origin]
+    : location.hostname.endsWith('pancake-wiki-pack-demo.pages.dev')
+        ? ['https://pancake-wiki-pack-demo.pages.dev',
+           'https://shard1.pancake-wiki-pack-demo.pages.dev',
+           'https://shard2.pancake-wiki-pack-demo.pages.dev',
+           'https://shard3.pancake-wiki-pack-demo.pages.dev']
+        : [location.origin];
+let shardCounter = 0;
+
 env.allowRemoteModels = false;
 env.allowLocalModels = true;
 env.localModelPath = '/models/';
@@ -34,7 +49,8 @@ function createHttpRangeSource(url, kind) {
     return {
         async read(offset, length) {
             if (fullBuffer) return fullBuffer.subarray(offset, offset + length);
-            const response = await fetch(url, { headers: { Range: `bytes=${offset}-${offset + length - 1}` } });
+            const origin = SHARD_ORIGINS[shardCounter++ % SHARD_ORIGINS.length];
+            const response = await fetch(`${origin}${url}`, { headers: { Range: `bytes=${offset}-${offset + length - 1}` } });
             if (response.status !== 206 && response.status !== 200) {
                 throw new Error(`Range read failed: ${response.status}`);
             }

@@ -1,0 +1,10 @@
+# Cloudflare Pages config for the wiki knowledge-pack demo. The page is
+# static (vite dist); /pack, /models, and /ort are Pages Functions serving
+# the R2 bucket with Range support so the artifact reader gets real 206s.
+name = "pancake-wiki-pack-demo"
+compatibility_date = "2026-07-01"
+pages_build_output_dir = "dist"
+
+[[r2_buckets]]
+binding = "PACK"
+bucket_name = "pancake-wiki-pack"
