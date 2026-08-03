@@ -191,10 +191,20 @@ function renderQuery(text, { results, rows, t, abstention }) {
         div.className = 'hit';
         const title = document.createElement('div');
         title.className = 't';
-        title.textContent = `${i + 1}. ${row.title}  `;
+        title.textContent = `${i + 1}. `;
+        if (row.url && /^https:\/\/simple\.wikipedia\.org\//.test(row.url)) {
+            const link = document.createElement('a');
+            link.href = row.url;
+            link.target = '_blank';
+            link.rel = 'noopener';
+            link.textContent = row.title;
+            title.appendChild(link);
+        } else {
+            title.append(row.title);
+        }
         const dist = document.createElement('span');
         dist.className = 'd';
-        dist.textContent = `distance ${r.distance.toFixed(3)}`;
+        dist.textContent = ` distance ${r.distance.toFixed(3)}`;
         title.appendChild(dist);
         const body = document.createElement('div');
         body.textContent = row.text.slice(row.title.length + 2, row.title.length + 300);

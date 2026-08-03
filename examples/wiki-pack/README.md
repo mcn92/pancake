@@ -16,8 +16,16 @@ Measured on the built pack (2026-08-03):
   100% at both.
 - **Browser query** (Chromium, local HTTP/2): ~27 ms encode + ~216 ms
   search + ~35 ms hydrate, ~66 range requests / ~390 KiB per query.
-- **Abstention**: AUC 1.0000 on the calibration set; 14/14 golden probes
-  pass in Node and in Chromium.
+- **Cold boot** is the honest cost: ~93 MB before the first query (47 MB
+  resident tier + 45 MB fp16 encoder + ONNX runtime), all
+  browser-cacheable. Locally that's ~3.5 s; on a real network it is
+  bandwidth-bound (~8 s at 100 Mbit/s). The economics favor repeat-query
+  contexts — a docs site, an installed pack — over drive-by pageloads;
+  real-CDN cold/warm numbers belong here once the demo is deployed.
+- **Abstention**: AUC 1.0000 on the 122-point fit set (96 answerable, 26
+  unanswerable — a small sample, so read the clean score gap between the
+  classes, not the headline AUC); 14/14 golden probes pass in Node and in
+  Chromium.
 
 ## Pipeline
 
@@ -110,6 +118,16 @@ probes in the live page. Search knobs via URL: `?C=200&gap=16384&p=32`.
   article and is scored as the strong match it is. The vocabulary feature is
   what catches gibberish, which lands at cosine distances inside the
   answerable band and is invisible to distance alone.
+- **The query path never touches the HNSW graph.** The sketch profile is
+  edge-free — resident scan plus one fetch round beats graph traversal over
+  ranged reads (one round-trip per hop) by design. The pipeline's index
+  build exists only because the pack builder consumes engine snapshots; a
+  direct vectors-to-pack path would drop that ~10-minute step.
+- **Residency scales linearly** at ~104 bytes/chunk (96 B sketch + 8 B
+  scale/offset): this corpus costs 47 MB resident; full English Wikipedia
+  (~25M chunks) would cost ~2.5 GB, out of scope for a tab. Bounded corpora
+  are the point of the pack framing; a two-level tier (resident centroids,
+  ranged per-cluster sketches) is the plausible path past the ceiling.
 
 ## Licensing
 
