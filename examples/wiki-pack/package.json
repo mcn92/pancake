@@ -1,0 +1,8 @@
+{
+  "name": "wiki-pack-demo",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@huggingface/transformers": "^3.5.0"
+  }
+}

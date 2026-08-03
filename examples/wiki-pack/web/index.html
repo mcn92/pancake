@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wiki Knowledge Pack — Pancake demo skeleton</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 780px; margin: 2rem auto; padding: 0 1rem; }
+    #status { color: #555; white-space: pre-line; }
+    #meter { font-variant-numeric: tabular-nums; background: #f4f4f4; padding: .6rem .8rem; border-radius: 6px; margin: 1rem 0; }
+    #query { width: 70%; padding: .4rem; font-size: 1rem; }
+    .hit { margin: .7rem 0; }
+    .hit .t { font-weight: 600; }
+    .hit .d { color: #777; font-size: .85rem; }
+    .timing { color: #555; font-size: .9rem; margin-top: .5rem; }
+    footer { margin-top: 3rem; font-size: .8rem; color: #777; }
+  </style>
+</head>
+<body>
+  <h1>Wiki Knowledge Pack <small>(skeleton)</small></h1>
+  <div id="status">booting…</div>
+  <div id="meter"></div>
+  <div>
+    <input id="query" placeholder="ask Simple English Wikipedia…" disabled />
+    <button id="go" disabled>Search</button>
+  </div>
+  <div id="timing" class="timing"></div>
+  <div id="results"></div>
+  <footer>
+    Corpus: <a href="https://simple.wikipedia.org">Simple English Wikipedia</a>,
+    <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA</a>.
+    Encoder: all-MiniLM-L6-v2 (Apache-2.0), served from this origin.
+    No data leaves this page.
+  </footer>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
