@@ -121,6 +121,23 @@ export interface RangeArtifactSearchOptions {
   efSearch?: number;
   /** Merge adjacent v1 record runs separated by this many skipped records. Default: 0. */
   gap?: number;
+  /** Candidates expanded per fetch round (deeper rounds trade requests for latency). Default: 1. */
+  expansionBatch?: number;
+  /** Concurrent range reads per fetch round. Default: 1. */
+  parallelism?: number;
+  /** Overrides `parallelism` for range reads when both are set. */
+  rangeParallelism?: number;
+}
+
+/** A decoded graph record, as returned by {@link PancakeRangeArtifact.readNode}. */
+export interface RangeArtifactNode {
+  readonly id: number;
+  readonly level: number;
+  readonly base: Uint32Array;
+  readonly upper: readonly Uint32Array[];
+  readonly qdata: Uint8Array;
+  readonly scale: number;
+  readonly offset: number;
 }
 
 export interface RangeArtifactStats {
@@ -206,6 +223,16 @@ export class PancakeRangeArtifact {
   stats(): RangeArtifactStats;
   resetStats(): void;
   clearCache(options?: { reloadRouter?: boolean }): Promise<{ records: number; bytes: number }>;
+  /** Fetch (and cache) the given node ids in coalesced ranges. Returns the number of range reads issued. */
+  prefetch(ids: readonly number[], options?: { gap?: number; parallelism?: number }): Promise<number>;
+  /** Read a single node, fetching it if not cached. */
+  readNode(id: number): Promise<RangeArtifactNode>;
+  /** Byte offset of a node's record within the artifact. */
+  recordAddressForId(id: number): number;
+  /** Mark the current position in the range-read log (see rangesSince). */
+  markRanges(): number;
+  /** Ranges read since a markRanges() mark, as [start, end) byte offsets. */
+  rangesSince(mark: number): Array<[number, number]>;
   close(): Promise<void>;
 }
 
@@ -417,7 +444,6 @@ export interface PancakeApi {
  * the narrower {@link PancakeApi}.
  */
 export interface NodePancakeApi extends PancakeApi {
-  readonly RangeArtifact: typeof PancakeRangeArtifact;
   readonly NodeFileRangeSource: typeof NodeFileRangeSource;
   /** Build a range-readable Search Artifact from a uint8 Pancake snapshot. */
   buildRangeArtifact(snapshot: Uint8Array | ArrayBufferLike, outPath: string, opts?: RangeArtifactBuildOptions): RangeArtifactBuildManifest;

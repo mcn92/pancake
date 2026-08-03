@@ -1,9 +1,42 @@
 // Types for the browser / Cloudflare Workers entrypoints (`pancake-wasm/web`).
 // These runtimes expose the portable API, including range-readable Search
-// Artifacts. Node-only file helpers (loadJsonFile / loadSnapshotFile) are not
-// available here and are absent from this type so calling them is a compile
+// Artifacts. Only PancakeError and PANCAKE_ERROR_CODES exist as named runtime
+// exports; every other re-export below is type-only. Node-only helpers
+// (NodeFileRangeSource, the build*/open*File functions, loadJsonFile /
+// loadSnapshotFile) are absent from this surface so using them is a compile
 // error rather than a runtime throw.
-export * from './pancake.js';
+export { PancakeError, PANCAKE_ERROR_CODES } from './pancake.js';
+export type {
+  Metric,
+  PancakeErrorCode,
+  VectorInput,
+  VectorRecord,
+  CreateOptions,
+  SearchOptions,
+  FromVectorsResult,
+  RestoreOptions,
+  SnapshotFormat,
+  SnapshotInspection,
+  SearchResult,
+  MemoryUsage,
+  ResolvedConfig,
+  PancakeIndex,
+  RangeReadSource,
+  RangeArtifactSearchOptions,
+  RangeArtifactNode,
+  RangeArtifactStats,
+  RangeArtifactRound,
+  RangeArtifactSearchResult,
+  RangeArtifactOpenOptions,
+  PancakeRangeArtifact,
+  SketchArtifactOpenOptions,
+  SketchScanner,
+  SketchScannerOptions,
+  SketchArtifactSearchOptions,
+  SketchArtifactStats,
+  PancakeSketchArtifact,
+  PancakeApi,
+} from './pancake.js';
 
 import type { PancakeApi } from './pancake.js';
 
