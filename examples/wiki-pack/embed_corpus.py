@@ -37,8 +37,8 @@ SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 
 def chunk_article(title, text):
-    # Drop reference cruft and blank runs; Simple English articles are short,
-    # so most become one or two chunks.
+    # Collapse blank runs; Simple English articles are short, so most become
+    # one or two chunks.
     text = re.sub(r"\n{2,}", "\n", text).strip()
     if not text:
         return
@@ -53,7 +53,9 @@ def chunk_article(title, text):
             buf, size = [], 0
         buf.append(sentence)
         size += len(sentence) + 1
-    if size >= MIN_CHARS or (buf and size > 0):
+    # The final chunk is kept regardless of MIN_CHARS: a short tail is still
+    # the only home its sentences have, and stub articles ARE short tails.
+    if buf:
         yield f"{title}: " + " ".join(buf)
 
 

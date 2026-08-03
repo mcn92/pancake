@@ -43,7 +43,7 @@ server.on('stream', (stream, headers) => {
         if (url.startsWith(prefix)) {
             const rel = url === '/' ? 'index.html' : url.slice(prefix.length);
             const candidate = path.normalize(path.join(root, rel));
-            if (!candidate.startsWith(root)) break;
+            if (!candidate.startsWith(root + path.sep)) break;
             file = openCached(candidate);
             if (file) break;
         }

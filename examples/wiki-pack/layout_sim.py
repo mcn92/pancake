@@ -96,8 +96,7 @@ def main():
             r_new, f_new = coalesce(new_id[top], gap)
             tot_old += r_old; tot_new += r_new; fill_old += f_old; fill_new += f_new
         n = q.shape[0]
-        print(f"gap={gap:6d}: requests {tot_old/n:6.1f} -> {tot_new:6.1f}"[:0] or
-              f"gap={gap:6d}: requests {tot_old/n:6.1f} -> {tot_new/n:6.1f}   "
+        print(f"gap={gap:6d}: requests {tot_old/n:6.1f} -> {tot_new/n:6.1f}   "
               f"filler/query {fill_old/n/1024:7.1f} KiB -> {fill_new/n/1024:7.1f} KiB")
 
     np.save(args.data / "layout-perm.npy", perm)

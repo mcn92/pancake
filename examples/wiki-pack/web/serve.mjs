@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const roots = [
-    ['/pack/', path.join(here, '..', 'data-full')],
+    ['/pack/', path.join(here, '..', process.env.PACK_DATA || 'data-full')],
     ['/models/', path.join(here, '..', 'node_modules', '@huggingface', 'transformers', '.cache')],
     ['/ort/', path.join(here, '..', 'node_modules', 'onnxruntime-web', 'dist')],
     ['/', path.join(here, 'dist')],
@@ -38,7 +38,7 @@ const server = http.createServer((req, res) => {
         if (url.startsWith(prefix)) {
             const rel = url === '/' ? 'index.html' : url.slice(prefix.length);
             const candidate = path.normalize(path.join(root, rel));
-            if (!candidate.startsWith(root)) break;
+            if (!candidate.startsWith(root + path.sep)) break;
             file = openCached(candidate);
             if (file) { file.path = candidate; break; }
         }

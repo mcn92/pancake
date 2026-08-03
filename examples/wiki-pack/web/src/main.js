@@ -117,11 +117,30 @@ async function embed(text) {
 }
 
 async function hydrate(ids) {
-    return Promise.all(ids.map(async (id) => {
-        const start = state.offsets[id];
-        const bytes = await state.corpusSource.read(start, state.offsets[id + 1] - start);
-        return JSON.parse(new TextDecoder().decode(bytes));
+    // The cluster layout often makes top-k chunks physically adjacent, so
+    // coalesce hydration reads the same way the rerank fetch does.
+    const spans = ids
+        .map((id) => ({ id, start: state.offsets[id], end: state.offsets[id + 1] }))
+        .sort((a, b) => a.start - b.start);
+    const HYDRATE_GAP = 4096;
+    const groups = [];
+    for (const s of spans) {
+        const g = groups[groups.length - 1];
+        if (g && s.start - g.end <= HYDRATE_GAP) {
+            g.spans.push(s);
+            g.end = Math.max(g.end, s.end);
+        } else {
+            groups.push({ start: s.start, end: s.end, spans: [s] });
+        }
+    }
+    const byId = new Map();
+    await Promise.all(groups.map(async (g) => {
+        const bytes = await state.corpusSource.read(g.start, g.end - g.start);
+        for (const s of g.spans) {
+            byId.set(s.id, JSON.parse(new TextDecoder().decode(bytes.subarray(s.start - g.start, s.end - g.start))));
+        }
     }));
+    return ids.map((id) => byId.get(id));
 }
 
 async function runQuery(text) {
@@ -186,8 +205,16 @@ function renderQuery(text, { results, rows, t, abstention }) {
 
 els.go.addEventListener('click', async () => {
     const q = els.query.value.trim();
-    if (!q) return;
-    renderQuery(q, await runQuery(q));
+    if (!q || els.go.disabled) return;
+    els.go.disabled = true;
+    try {
+        renderQuery(q, await runQuery(q));
+    } catch (e) {
+        els.timing.textContent = `query failed: ${e.message}`;
+        console.error(e);
+    } finally {
+        els.go.disabled = false;
+    }
 });
 els.query.addEventListener('keydown', (e) => { if (e.key === 'Enter') els.go.click(); });
 

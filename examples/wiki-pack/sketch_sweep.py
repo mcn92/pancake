@@ -32,7 +32,9 @@ for i in range(q.shape[0]):
     scores = xq @ q[i]
     ref_top.append(torch.topk(scores, K).indices.cpu().numpy())
 
-def sketch_scores(sd, bits, qv):
+def sketch_matrix(sd, bits):
+    # Pool + quantize the whole corpus once per config; per-query work is
+    # just the pooled dot product.
     pool = DIM // sd
     pooled = x.reshape(-1, sd, pool).mean(dim=2)
     pmn = pooled.min(dim=1, keepdim=True).values
@@ -40,15 +42,15 @@ def sketch_scores(sd, bits, qv):
     levels = (1 << bits) - 1
     pscale = (pmx - pmn) / levels
     pq = torch.round((pooled - pmn) / pscale.clamp(min=1e-12)).clamp(0, levels)
-    deq = pmn + pscale * pq
-    qp = qv.reshape(sd, pool).mean(dim=1)
-    return deq @ qp * pool   # pooled dot approximates full dot
+    return pmn + pscale * pq, pool
 
 for sd, bits in [(96, 4), (96, 8), (192, 4), (192, 8)]:
-    resident_mb = (456153 * (sd * bits // 8 + 8)) / 1e6
+    deq, pool = sketch_matrix(sd, bits)
+    resident_mb = (x.shape[0] * (sd * bits // 8 + 8)) / 1e6
     hits = {c: 0 for c in (50, 100, 150, 200, 300, 600)}
     for i in range(q.shape[0]):
-        s = sketch_scores(sd, bits, q[i])
+        qp = q[i].reshape(sd, pool).mean(dim=1)
+        s = deq @ qp * pool   # pooled dot approximates full dot
         order = torch.argsort(s, descending=True).cpu().numpy()
         for c in hits:
             topc = set(order[:c].tolist())

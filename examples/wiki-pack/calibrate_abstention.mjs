@@ -200,7 +200,9 @@ function buildVocabBloom(corpusPath) {
 const bloomPath = path.join(dataDir, 'wiki-vocab.bloom');
 let bloom;
 if (fs.existsSync(bloomPath)) {
-    bloom = new Uint8Array(fs.readFileSync(bloomPath).buffer.slice(0));
+    // Copy out of the read buffer: small files share Node's buffer pool, so
+    // aliasing .buffer directly would read unrelated bytes.
+    bloom = Uint8Array.from(fs.readFileSync(bloomPath));
     console.log('vocab bloom: loaded existing');
 } else {
     bloom = buildVocabBloom(path.join(dataDir, 'corpus.jsonl'));
@@ -223,7 +225,8 @@ function knownFrac(text) {
 const embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', { dtype: 'fp16' });
 const artifact = await Pancake.openSketchArtifactFile(path.join(dataDir, 'wiki.pancake-sketch'));
 const scanner = await Pancake.createSketchScanner(artifact);
-const offsets = new Uint32Array(fs.readFileSync(path.join(dataDir, 'corpus-offsets.u32')).buffer);
+const offsetsBuf = fs.readFileSync(path.join(dataDir, 'corpus-offsets.u32'));
+const offsets = new Uint32Array(offsetsBuf.buffer, offsetsBuf.byteOffset, offsetsBuf.byteLength / 4);
 const corpusFd = fs.openSync(path.join(dataDir, 'corpus.bin'), 'r');
 function chunkTitle(id) {
     const buf = Buffer.alloc(offsets[id + 1] - offsets[id]);

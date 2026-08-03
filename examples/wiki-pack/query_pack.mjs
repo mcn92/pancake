@@ -10,8 +10,9 @@ import { fileURLToPath } from 'node:url';
 import { pipeline } from '@huggingface/transformers';
 import Pancake from '../../pancake.node.mjs';
 
+// Usage: node query_pack.mjs [dataDir] [query ...]
 const here = path.dirname(fileURLToPath(import.meta.url));
-const dataDir = path.join(here, 'data');
+const dataDir = path.join(here, process.argv[2] || 'data-perm');
 const DIM = 384;
 
 const embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', { dtype: 'fp32' });
@@ -38,7 +39,10 @@ console.log(`encoder parity (JS fp32 vs Python fp32): worst cosine ${worst.toFix
 // --- Search + hydrate ----------------------------------------------------
 const artifact = await Pancake.openSketchArtifactFile(path.join(dataDir, 'wiki.pancake-sketch'));
 const scanner = await Pancake.createSketchScanner(artifact);
-const offsets = new Uint32Array(fs.readFileSync(path.join(dataDir, 'corpus-offsets.u32')).buffer);
+// View through byteOffset/byteLength: small readFileSync results share
+// Node's buffer pool, so bare .buffer would alias unrelated bytes.
+const offsetsBuf = fs.readFileSync(path.join(dataDir, 'corpus-offsets.u32'));
+const offsets = new Uint32Array(offsetsBuf.buffer, offsetsBuf.byteOffset, offsetsBuf.byteLength / 4);
 const corpusFd = fs.openSync(path.join(dataDir, 'corpus.bin'), 'r');
 
 function hydrate(id) {
@@ -49,7 +53,7 @@ function hydrate(id) {
     return JSON.parse(buf.toString('utf8'));
 }
 
-const queries = process.argv.length > 2 ? process.argv.slice(2) : [
+const queries = process.argv.length > 3 ? process.argv.slice(3) : [
     'how do plants turn sunlight into energy',
     'what causes earthquakes',
     'who wrote romeo and juliet',

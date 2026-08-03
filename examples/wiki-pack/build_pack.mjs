@@ -17,9 +17,12 @@ import Pancake from '../../pancake.node.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.join(here, process.argv[2] || 'data');
 const DIM = 384;
-// C=300 was the validated rerank depth on SIFT1M; carried here as the
-// producer recommendation until this corpus gets its own recall sweep.
-const RECOMMENDED_RERANK = 300;
+// From this corpus's own recall sweep (eval_recall.mjs, 2026-08-03):
+// C=200 gives 95.65% recall@10 vs exact float truth (100% on hand-written
+// natural questions) at ~66 requests / ~390 KiB per browser query; C=300
+// adds 1.3 points for ~35% more requests. The abstention calibration is
+// fitted at this depth and must move with it.
+const RECOMMENDED_RERANK = 200;
 
 const manifest = JSON.parse(fs.readFileSync(path.join(dataDir, 'corpus-manifest.json'), 'utf8'));
 const vectorsBytes = fs.readFileSync(path.join(dataDir, 'vectors.f32'));

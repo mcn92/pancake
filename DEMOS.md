@@ -129,6 +129,24 @@ rejection; the `--var` overrides above take precedence, or move the file aside.
 
 When done, stop the dev servers (Ctrl-C in terminals A and B).
 
+### Wiki knowledge pack (all of Simple English Wikipedia, client-side)
+
+The flagship demonstrator: ~242k articles compiled into one range-readable
+sketch artifact, searched entirely in the browser — self-hosted MiniLM
+encoder, WASM sketch scan, exact rerank over ~66 coalesced range reads, and
+calibrated abstention. The pack data is generated, not committed (~1.3 GB of
+build outputs; ~2 h of GPU embedding on the full corpus), so build it first:
+
+```bash
+cd examples/wiki-pack
+ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm install
+# full pipeline + local demo server: see examples/wiki-pack/README.md
+node query_pack.mjs data-perm "what causes earthquakes"   # CLI smoke test
+```
+
+`examples/wiki-pack/README.md` has the step-by-step pipeline, the measured
+recall/latency numbers, and the design notes.
+
 ## Verification suites
 
 ```bash
