@@ -24,6 +24,19 @@ function asUint8Array(bytes) {
     throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'Range source returned a non-binary value');
 }
 
+// Both readers accept a maxCacheBytes option: undefined keeps the default,
+// Infinity disables the bound, and any other value must be a positive number.
+// Each reader raises small budgets to a floor so the LRU always holds enough
+// records for one search round.
+function resolveMaxCacheBytes(value, floorBytes, defaultBytes) {
+    if (value === undefined) return defaultBytes;
+    if (value === Infinity) return Infinity;
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+        throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'maxCacheBytes must be a positive number or Infinity', { maxCacheBytes: value });
+    }
+    return Math.max(value, floorBytes);
+}
+
 function readU32(view, state) {
     const value = view.getUint32(state.offset, true);
     state.offset += 4;
@@ -154,9 +167,7 @@ class PancakeRangeArtifact {
         // reader stays bounded; the router segment (this.cache) is permanent.
         this.lazyCache = new Map();
         this.lazyCacheBytes = 0;
-        this.maxCacheBytes = Number.isFinite(options.maxCacheBytes) && options.maxCacheBytes > 0
-            ? Math.max(options.maxCacheBytes, 64 * this.recordBytes)
-            : (options.maxCacheBytes === Infinity ? Infinity : 64 * 1024 * 1024);
+        this.maxCacheBytes = resolveMaxCacheBytes(options.maxCacheBytes, 64 * this.recordBytes, 64 * 1024 * 1024);
         this.currentRanges = [];
         this.routerResident = { records: 0, bytes: 0 };
         this.rangeRequests = 0;
@@ -368,8 +379,18 @@ class PancakeRangeArtifact {
         const id = readU32(view, state);
         const level = readU16(view, state);
         const baseCount = readU16(view, state);
+        // Records are untrusted bytes. Counts beyond the header geometry would
+        // read filler (or zeros) as edges; fail closed instead.
+        if (level > this.maxLevel || baseCount > this.M0) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Range artifact record structure is inconsistent', { id, level, baseCount });
+        }
         const upperCounts = new Uint16Array(this.maxLevel);
-        for (let i = 0; i < this.maxLevel; i++) upperCounts[i] = readU16(view, state);
+        for (let i = 0; i < this.maxLevel; i++) {
+            upperCounts[i] = readU16(view, state);
+            if (upperCounts[i] > this.M) {
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Range artifact record structure is inconsistent', { id, level: i + 1, edges: upperCounts[i] });
+            }
+        }
         const qdata = new Uint8Array(this.dim);
         qdata.set(bytes.subarray(state.offset, state.offset + this.dim));
         state.offset += this.dim;
@@ -378,14 +399,24 @@ class PancakeRangeArtifact {
         const base = new Uint32Array(baseCount);
         for (let i = 0; i < this.M0; i++) {
             const neighbor = readU32(view, state);
-            if (i < baseCount) base[i] = neighbor;
+            if (i < baseCount) {
+                if (neighbor >= this.count) {
+                    throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Range artifact record has an out-of-bounds neighbor', { id, neighbor, count: this.count });
+                }
+                base[i] = neighbor;
+            }
         }
         const upper = Array.from({ length: this.maxLevel }, () => new Uint32Array(0));
         for (let levelIndex = 0; levelIndex < this.maxLevel; levelIndex++) {
             const edges = new Uint32Array(upperCounts[levelIndex]);
             for (let i = 0; i < this.M; i++) {
                 const neighbor = readU32(view, state);
-                if (i < edges.length) edges[i] = neighbor;
+                if (i < edges.length) {
+                    if (neighbor >= this.count) {
+                        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Range artifact record has an out-of-bounds neighbor', { id, neighbor, count: this.count });
+                    }
+                    edges[i] = neighbor;
+                }
             }
             upper[levelIndex] = edges;
         }
@@ -579,19 +610,50 @@ function parseHeader(headerBytes) {
     if (version < 1 || version > 2) {
         throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Unsupported Pancake range artifact version', { version });
     }
+    // recordBytes must agree with the layout the geometry implies, or
+    // decodeNode would read past record boundaries on a corrupt header.
+    const expectedRecordBytes = 4 + 2 + 2 + header.maxLevel * 2 + header.dim
+        + 8 + header.M0 * 4 + header.maxLevel * header.M * 4;
+    if (header.dim < 1 || header.count < 1 || header.M < 1 || header.M0 < 1
+        || header.maxLevel > 64
+        || header.entryPoint >= header.count
+        || header.recordBytes !== expectedRecordBytes
+        || (version >= 2 && header.routerCount + header.baseCount !== header.count)) {
+        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Range artifact header geometry is inconsistent', {
+            dim: header.dim, count: header.count, maxLevel: header.maxLevel,
+            M: header.M, M0: header.M0, recordBytes: header.recordBytes, expectedRecordBytes,
+        });
+    }
     return header;
 }
 
 function unwrapSnapshot(bytes) {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     if (bytes.byteLength < 4 || view.getUint32(0, true) !== PANCAKE_MAGIC) return bytes;
+    // Envelope fields are untrusted: every size read from them must be
+    // checked against the actual buffer before slicing, so a corrupt
+    // envelope fails closed with a coded error instead of a raw RangeError.
+    if (bytes.byteLength < 8) {
+        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Pancake envelope is truncated', { byteLength: bytes.byteLength });
+    }
     const version = view.getUint32(4, true);
-    if (version === 1) return bytes.subarray(V1_ENVELOPE_HEADER_SIZE);
-    if (version === 2) return bytes.subarray(V2_ENVELOPE_HEADER_SIZE);
+    if (version === 1 || version === 2) {
+        const headerSize = version === 1 ? V1_ENVELOPE_HEADER_SIZE : V2_ENVELOPE_HEADER_SIZE;
+        if (bytes.byteLength < headerSize) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Pancake envelope is truncated', { version, byteLength: bytes.byteLength });
+        }
+        return bytes.subarray(headerSize);
+    }
     if (version === 3) {
+        if (bytes.byteLength < V3_ENVELOPE_HEADER_SIZE) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Pancake envelope is truncated', { version, byteLength: bytes.byteLength });
+        }
         const mappingCount = view.getUint32(24, true);
         const rawSize = view.getUint32(28, true);
         const rawOffset = V3_ENVELOPE_HEADER_SIZE + mappingCount * MAPPING_ENTRY_SIZE;
+        if (rawOffset + rawSize > bytes.byteLength) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Pancake envelope declares more data than the snapshot contains', { mappingCount, rawSize, byteLength: bytes.byteLength });
+        }
         return bytes.subarray(rawOffset, rawOffset + rawSize);
     }
     throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, `Unsupported Pancake envelope version ${version}`, { version });
@@ -601,12 +663,18 @@ function parseUint8Snapshot(bytes) {
     const raw = unwrapSnapshot(asUint8Array(bytes));
     const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
     let offset = 0;
+    // Snapshot bytes are untrusted: sizes read from the header drive every
+    // subsequent read, so each read checks the remaining buffer and fails
+    // closed with a coded error instead of a raw RangeError.
+    const truncated = () => pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'uint8 snapshot is truncated', { offset, byteLength: raw.byteLength });
     const u32 = () => {
+        if (raw.byteLength - offset < 4) throw truncated();
         const value = view.getUint32(offset, true);
         offset += 4;
         return value;
     };
     const f32 = () => {
+        if (raw.byteLength - offset < 4) throw truncated();
         const value = view.getFloat32(offset, true);
         offset += 4;
         return value;
@@ -628,6 +696,13 @@ function parseUint8Snapshot(bytes) {
     if (metric !== 0 && metric !== 1) {
         throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Unsupported uint8 snapshot metric', { metric });
     }
+    // Same structural sanity the engine's own deserialize enforces; the
+    // level cap mirrors MAX_DESERIALIZE_LEVEL in src/uint8_float_hnsw.hpp.
+    if (dim < 1 || count < 1 || entryPoint >= count || maxLevel > 64
+        || !Number.isSafeInteger(count * dim)
+        || raw.byteLength - offset < count * 8 + count * dim) {
+        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'uint8 snapshot header is inconsistent', { dim, count, entryPoint, maxLevel, byteLength: raw.byteLength });
+    }
 
     const scales = new Float32Array(count);
     const offsets = new Float32Array(count);
@@ -641,6 +716,9 @@ function parseUint8Snapshot(bytes) {
     const upper = Array.from({ length: count }, () => []);
     for (let id = 0; id < count; id++) {
         const level = u32();
+        if (level > maxLevel) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'uint8 snapshot node level exceeds header maxLevel', { id, level, maxLevel });
+        }
         levels[id] = level;
         for (let l = 0; l <= level; l++) {
             const size = u32();
@@ -1027,11 +1105,7 @@ class PancakeSketchArtifact {
         artifact.vectorsOffset = view.getUint32(44, true);
         const fileBytes = Number(view.getBigUint64(48, true));
         artifact.recommendedRerank = view.getUint32(120, true);
-        if (Number.isFinite(options.maxCacheBytes) && options.maxCacheBytes > 0) {
-            artifact.maxCacheBytes = Math.max(options.maxCacheBytes, 256 * artifact.dim);
-        } else if (options.maxCacheBytes === Infinity) {
-            artifact.maxCacheBytes = Infinity;
-        }
+        artifact.maxCacheBytes = resolveMaxCacheBytes(options.maxCacheBytes, 256 * artifact.dim, artifact.maxCacheBytes);
 
         const { metric, dim, count, sketchDims, sketchBits, vectorsOffset } = artifact;
         if (metric !== 0 && metric !== 1) {

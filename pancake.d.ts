@@ -154,7 +154,9 @@ export interface RangeArtifactOpenOptions {
   /**
    * Byte budget for the lazily-fetched record cache (LRU eviction; the
    * resident router segment is not counted). Default: 64 MiB. Pass Infinity
-   * for the pre-0.3 unbounded behavior.
+   * for the pre-0.3 unbounded behavior. Budgets below 64 records are raised
+   * to that floor; other non-positive or non-numeric values throw
+   * INVALID_ARGUMENT.
    */
   maxCacheBytes?: number;
 }
@@ -213,6 +215,8 @@ export interface SketchArtifactOpenOptions {
   /**
    * Byte budget for the fetched-row cache (LRU eviction; the resident sketch
    * tier is not counted). Default: 64 MiB. Pass Infinity to disable eviction.
+   * Budgets below 256 rows are raised to that floor; other non-positive or
+   * non-numeric values throw INVALID_ARGUMENT.
    */
   maxCacheBytes?: number;
 }
