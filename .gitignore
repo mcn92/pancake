@@ -131,3 +131,14 @@ examples/demo/demo_hybrid_search.js
 examples/demo/demo_recipe_search.js
 examples/demo/demo_recipe_search_enhanced.js
 examples/search-artifact-demo/static/dist/
+
+# Local toolchains and vendored checkouts (multi-GB, never ship)
+/external/
+
+# Local dataset dumps and profiler captures
+/train-images-idx3-ubyte*
+/Firefox*
+
+# Local working notes and one-off bundles
+/AWS_BENCHMARK_BUNDLE.md
+/commit*.txt
