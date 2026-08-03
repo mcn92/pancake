@@ -1,14 +1,24 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
+
+// Count only compiles of the engine binaries: Node itself compiles WASM
+// through the same global (its cjs-module-lexer, ~24 KB, on the first CJS
+// import from an ESM graph on Node 18), and that must not trip the
+// compile-once assertion.
+const ENGINE_SIZES = new Set([
+    fs.statSync(path.join(__dirname, '..', 'dist', 'engine.wasm')).size,
+    fs.statSync(path.join(__dirname, '..', 'dist', 'engine.scalar.wasm')).size,
+]);
 
 async function verifyEntry(loadApi, label) {
     const originalCompile = WebAssembly.compile;
     let compileCount = 0;
     WebAssembly.compile = async function countedCompile(source) {
-        compileCount++;
+        if (ENGINE_SIZES.has(source.byteLength)) compileCount++;
         return originalCompile.call(WebAssembly, source);
     };
 
