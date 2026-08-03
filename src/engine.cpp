@@ -300,7 +300,10 @@ int pancake_bulk_insert_flat(uint32_t h, const float* vecs, int n) {
 }
 
 uint8_t* pancake_export(uint32_t h, size_t* out_size) {
-    if (h >= MAX_HANDLES || !g_handles[h].index) return nullptr;
+    if (h >= MAX_HANDLES || !g_handles[h].index) {
+        if (out_size) *out_size = 0;
+        return nullptr;
+    }
     g_export_bufs[h] = g_handles[h].index->serialize();
     *out_size = g_export_bufs[h].size();
     return g_export_bufs[h].data();
@@ -357,12 +360,18 @@ void pancake_profile_reset() {
 //
 // Brute-force top-C scan over a resident tier of row-quantized sketches:
 // per-row affine u8 values (dequantized as offset + scale * byte) against a
-// float32 query, L2. Stateless — operates on caller-provided heap buffers,
+// float32 query. Stateless — operates on caller-provided heap buffers,
 // no index handle involved. Used by the range-artifact sketch-rerank
 // geometry, where this scan selects the records to fetch remotely.
 //
+// metric 0 scores rows by squared L2; metric 1 scores by negated dot
+// product against a caller-normalized query, so ascending order is best
+// cosine first (out_dists then hold -dot; the reference reader's clamped
+// 1 - pool*dot transform is monotone in -dot, so the selected top-C is
+// identical up to clamp ties).
+//
 // Returns the number of results written to out_ids/out_dists (ascending by
-// distance). dims must be a multiple of 16 for the SIMD path; any dims works
+// score). dims must be a multiple of 16 for the SIMD path; any dims works
 // on the scalar tail.
 
 int pancake_sketch_scan(const uint8_t* sketches,
@@ -371,11 +380,12 @@ int pancake_sketch_scan(const uint8_t* sketches,
                         uint32_t count,
                         uint32_t dims,
                         const float* query,
+                        uint32_t metric,
                         uint32_t top_c,
                         uint32_t* out_ids,
                         float* out_dists) {
     if (!sketches || !scales || !offsets || !query || !out_ids || !out_dists) return 0;
-    if (count == 0 || dims == 0 || top_c == 0) return 0;
+    if (count == 0 || dims == 0 || top_c == 0 || metric > 1) return 0;
 
     // Max-heap over the current top-C (root = worst kept distance).
     uint32_t heap_size = 0;
@@ -417,30 +427,54 @@ int pancake_sketch_scan(const uint8_t* sketches,
         v128_t v_scale = wasm_f32x4_splat(s);
         v128_t v_offset = wasm_f32x4_splat(o);
 
-        for (; d + 16 <= dims; d += 16) {
-            v128_t bytes = wasm_v128_load(data + d);
-            v128_t u16_lo = wasm_u16x8_extend_low_u8x16(bytes);
-            v128_t u16_hi = wasm_u16x8_extend_high_u8x16(bytes);
+        if (metric == 1) {
+            for (; d + 16 <= dims; d += 16) {
+                v128_t bytes = wasm_v128_load(data + d);
+                v128_t u16_lo = wasm_u16x8_extend_low_u8x16(bytes);
+                v128_t u16_hi = wasm_u16x8_extend_high_u8x16(bytes);
 
-            v128_t f0 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_low_u16x8(u16_lo));
-            v128_t val0 = WFMA(v_offset, f0, v_scale);
-            v128_t diff0 = wasm_f32x4_sub(wasm_v128_load(query + d), val0);
-            acc0 = WFMA(acc0, diff0, diff0);
+                v128_t f0 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_low_u16x8(u16_lo));
+                v128_t val0 = WFMA(v_offset, f0, v_scale);
+                acc0 = WFMA(acc0, wasm_v128_load(query + d), val0);
 
-            v128_t f1 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_high_u16x8(u16_lo));
-            v128_t val1 = WFMA(v_offset, f1, v_scale);
-            v128_t diff1 = wasm_f32x4_sub(wasm_v128_load(query + d + 4), val1);
-            acc1 = WFMA(acc1, diff1, diff1);
+                v128_t f1 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_high_u16x8(u16_lo));
+                v128_t val1 = WFMA(v_offset, f1, v_scale);
+                acc1 = WFMA(acc1, wasm_v128_load(query + d + 4), val1);
 
-            v128_t f2 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_low_u16x8(u16_hi));
-            v128_t val2 = WFMA(v_offset, f2, v_scale);
-            v128_t diff2 = wasm_f32x4_sub(wasm_v128_load(query + d + 8), val2);
-            acc2 = WFMA(acc2, diff2, diff2);
+                v128_t f2 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_low_u16x8(u16_hi));
+                v128_t val2 = WFMA(v_offset, f2, v_scale);
+                acc2 = WFMA(acc2, wasm_v128_load(query + d + 8), val2);
 
-            v128_t f3 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_high_u16x8(u16_hi));
-            v128_t val3 = WFMA(v_offset, f3, v_scale);
-            v128_t diff3 = wasm_f32x4_sub(wasm_v128_load(query + d + 12), val3);
-            acc3 = WFMA(acc3, diff3, diff3);
+                v128_t f3 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_high_u16x8(u16_hi));
+                v128_t val3 = WFMA(v_offset, f3, v_scale);
+                acc3 = WFMA(acc3, wasm_v128_load(query + d + 12), val3);
+            }
+        } else {
+            for (; d + 16 <= dims; d += 16) {
+                v128_t bytes = wasm_v128_load(data + d);
+                v128_t u16_lo = wasm_u16x8_extend_low_u8x16(bytes);
+                v128_t u16_hi = wasm_u16x8_extend_high_u8x16(bytes);
+
+                v128_t f0 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_low_u16x8(u16_lo));
+                v128_t val0 = WFMA(v_offset, f0, v_scale);
+                v128_t diff0 = wasm_f32x4_sub(wasm_v128_load(query + d), val0);
+                acc0 = WFMA(acc0, diff0, diff0);
+
+                v128_t f1 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_high_u16x8(u16_lo));
+                v128_t val1 = WFMA(v_offset, f1, v_scale);
+                v128_t diff1 = wasm_f32x4_sub(wasm_v128_load(query + d + 4), val1);
+                acc1 = WFMA(acc1, diff1, diff1);
+
+                v128_t f2 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_low_u16x8(u16_hi));
+                v128_t val2 = WFMA(v_offset, f2, v_scale);
+                v128_t diff2 = wasm_f32x4_sub(wasm_v128_load(query + d + 8), val2);
+                acc2 = WFMA(acc2, diff2, diff2);
+
+                v128_t f3 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_high_u16x8(u16_hi));
+                v128_t val3 = WFMA(v_offset, f3, v_scale);
+                v128_t diff3 = wasm_f32x4_sub(wasm_v128_load(query + d + 12), val3);
+                acc3 = WFMA(acc3, diff3, diff3);
+            }
         }
 
         v128_t acc = wasm_f32x4_add(wasm_f32x4_add(acc0, acc1),
@@ -449,9 +483,16 @@ int pancake_sketch_scan(const uint8_t* sketches,
               wasm_f32x4_extract_lane(acc, 2) + wasm_f32x4_extract_lane(acc, 3);
 #endif
 
-        for (; d < dims; d++) {
-            const float diff = query[d] - (o + s * static_cast<float>(data[d]));
-            sum += diff * diff;
+        if (metric == 1) {
+            for (; d < dims; d++) {
+                sum += query[d] * (o + s * static_cast<float>(data[d]));
+            }
+            sum = -sum;
+        } else {
+            for (; d < dims; d++) {
+                const float diff = query[d] - (o + s * static_cast<float>(data[d]));
+                sum += diff * diff;
+            }
         }
 
         if (heap_size < top_c) {

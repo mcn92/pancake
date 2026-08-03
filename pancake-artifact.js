@@ -1195,6 +1195,16 @@ class PancakeSketchArtifact {
 
         let ids;
         if (options.scanner) {
+            // A scanner scores the resident sketches itself, so it must
+            // implement this artifact's metric. Cosine requires an explicit
+            // declaration: a metric-blind scanner silently loses recall there.
+            const scannerMetric = options.scanner.metric;
+            if (scannerMetric !== undefined && scannerMetric !== this.metric) {
+                throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'scanner metric does not match artifact metric', { scannerMetric, metric: this.metric });
+            }
+            if (this.metric === 1 && scannerMetric !== 1) {
+                throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'cosine sketch artifacts require a metric-aware scanner (scanner.metric === 1)', { metric: this.metric });
+            }
             ids = options.scanner.scan(qPool, C);
         } else {
             const candDist = new Float64Array(C).fill(Infinity);
@@ -1273,7 +1283,7 @@ async function createSketchScanner(loadEngine, artifact, options = {}) {
         throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'createSketchScanner() requires a sketch artifact');
     }
     const engine = await loadEngine();
-    const { count, sketchDims } = artifact;
+    const { count, sketchDims, metric } = artifact;
     const maxC = Math.max(1, Math.trunc(options.maxRerank || 1024));
 
     // The kernel reads u8 sketch values; expand 4-bit nibbles to their
@@ -1303,13 +1313,14 @@ async function createSketchScanner(loadEngine, artifact, options = {}) {
     let disposed = false;
     return {
         maxRerank: maxC,
+        metric,
         scan(pooledQuery, c) {
             if (disposed) throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'sketch scanner disposed');
             const query = pooledQuery instanceof Float32Array ? pooledQuery : Float32Array.from(pooledQuery);
             engine.HEAPF32.set(query, queryPtr >> 2);
             const topC = Math.min(Math.max(1, Math.trunc(c)), maxC);
             const n = engine._pancake_sketch_scan(
-                sketchesPtr, scalesPtr, offsetsPtr, count, sketchDims, queryPtr, topC, outIdsPtr, outDistsPtr
+                sketchesPtr, scalesPtr, offsetsPtr, count, sketchDims, queryPtr, metric, topC, outIdsPtr, outDistsPtr
             );
             return Array.from(engine.HEAPU32.subarray(outIdsPtr >> 2, (outIdsPtr >> 2) + n));
         },

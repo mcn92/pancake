@@ -142,7 +142,7 @@ async function createWasmScanner(sidecar, maxC) {
     scan(qSketch, C) {
       Module.HEAPF32.set(qSketch, queryPtr >> 2);
       const n = Module._pancake_sketch_scan(
-        sketchesPtr, scalesPtr, offsetsPtr, count, sketchDims, queryPtr, C, outIdsPtr, outDistsPtr
+        sketchesPtr, scalesPtr, offsetsPtr, count, sketchDims, queryPtr, 0 /* l2 */, C, outIdsPtr, outDistsPtr
       );
       return Array.from(Module.HEAPU32.subarray(outIdsPtr >> 2, (outIdsPtr >> 2) + n));
     },

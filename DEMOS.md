@@ -132,7 +132,7 @@ When done, stop the dev servers (Ctrl-C in terminals A and B).
 ## Verification suites
 
 ```bash
-npm test                 # core (1204) + model loader + sketch conformance (44)
+npm test                 # core (1204) + model loader + sketch conformance (56)
 npm run test:browser     # Chromium/Firefox/WebKit consumer smoke (Playwright)
 npm run test:worker-web  # workerd entrypoint smoke
 npm run test:simd        # SIMD vs scalar output parity

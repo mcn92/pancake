@@ -218,11 +218,16 @@ export interface SketchArtifactOpenOptions {
 }
 
 export interface SketchScanner {
-  /** Return the top-C row ids for a pooled query, ascending by sketch distance. */
+  /**
+   * Return the top-C row ids for a pooled query, ascending by sketch
+   * distance. `c` is silently clamped to {@link maxRerank}.
+   */
   scan(pooledQuery: Float32Array | readonly number[], c: number): number[];
   /** Free the scanner's WASM heap allocations. */
   dispose(): void;
   readonly maxRerank: number;
+  /** The artifact metric this scanner scores (0 = l2, 1 = cosine). */
+  readonly metric: number;
 }
 
 export interface SketchScannerOptions {
@@ -231,14 +236,23 @@ export interface SketchScannerOptions {
 }
 
 export interface SketchArtifactSearchOptions {
-  /** Rerank depth (top-C sketch candidates fetched for exact scoring). */
+  /**
+   * Rerank depth (top-C sketch candidates fetched for exact scoring). A
+   * scanner-backed search additionally clamps this to the scanner's
+   * maxRerank.
+   */
   rerank?: number;
   /** Byte gap for coalescing row fetches. Default: 2048. */
   gap?: number;
   /** Concurrent range reads per fetch round. Default: 8. */
   parallelism?: number;
-  /** External top-C scanner (e.g. from createSketchScanner). */
-  scanner?: SketchScanner | { scan(pooledQuery: Float32Array, c: number): number[] };
+  /**
+   * External top-C scanner (e.g. from createSketchScanner). Must implement
+   * the artifact's metric: cosine artifacts require `metric === 1`, and a
+   * declared metric that disagrees with the artifact throws
+   * INVALID_ARGUMENT.
+   */
+  scanner?: SketchScanner | { metric?: number; scan(pooledQuery: Float32Array, c: number): number[] };
 }
 
 export interface SketchArtifactStats {

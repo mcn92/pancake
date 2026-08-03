@@ -134,6 +134,78 @@ async function run() {
             const after = artifact.stats();
             check('repeat query fully cached', after.rangeRequests === mid.rangeRequests && mid.rangeRequests >= before);
 
+            // The WASM scanner must implement the artifact's metric. Compare
+            // its raw candidate set against the reference sketch scan, before
+            // exact rerank can mask a wrong-metric selection: no unselected
+            // row may beat a selected one (tie-safe top-C).
+            const scanner = await Pancake.createSketchScanner(artifact);
+            check('scanner reports artifact metric', scanner.metric === artifact.metric);
+            const pool = DIM / artifact.sketchDims;
+            let topCOk = true;
+            for (const q of queries) {
+                let qv = q;
+                if (metric === 'cosine') {
+                    let norm = 0;
+                    for (let d = 0; d < DIM; d++) norm += q[d] * q[d];
+                    norm = Math.sqrt(norm);
+                    qv = Float32Array.from(q, (x) => x / norm);
+                }
+                const qPool = new Float32Array(artifact.sketchDims);
+                for (let sd = 0; sd < artifact.sketchDims; sd++) {
+                    let acc = 0;
+                    for (let j = 0; j < pool; j++) acc += qv[sd * pool + j];
+                    qPool[sd] = acc / pool;
+                }
+                const dists = new Float64Array(COUNT);
+                for (let i = 0; i < COUNT; i++) {
+                    const s = artifact.scales[i];
+                    const o = artifact.offsets[i];
+                    let acc = 0;
+                    if (metric === 'cosine') {
+                        for (let sd = 0; sd < artifact.sketchDims; sd++) acc += qPool[sd] * (o + s * artifact.sketchValue(i, sd));
+                        acc = 1 - Math.max(-1, Math.min(1, acc * pool));
+                    } else {
+                        for (let sd = 0; sd < artifact.sketchDims; sd++) {
+                            const diff = qPool[sd] - (o + s * artifact.sketchValue(i, sd));
+                            acc += diff * diff;
+                        }
+                    }
+                    dists[i] = acc;
+                }
+                const C = 60;
+                const ids = scanner.scan(qPool, C);
+                if (ids.length !== C || new Set(ids).size !== C) { topCOk = false; continue; }
+                const selected = new Set(ids);
+                let maxSel = -Infinity;
+                let minUnsel = Infinity;
+                for (let i = 0; i < COUNT; i++) {
+                    if (selected.has(i)) maxSel = Math.max(maxSel, dists[i]);
+                    else minUnsel = Math.min(minUnsel, dists[i]);
+                }
+                if (maxSel > minUnsel + 1e-4) topCOk = false;
+            }
+            scanner.dispose();
+            check('WASM scanner selects a metric-correct top-C', topCOk);
+
+            // A scanner that does not declare the artifact's metric must be
+            // refused for cosine (where a metric-blind scan silently loses
+            // recall) and accepted for l2 (the historical default).
+            if (metric === 'cosine') {
+                let refused = false;
+                try {
+                    await artifact.search(queries[0], K, { rerank: 60, scanner: { scan: () => [0] } });
+                } catch (err) {
+                    refused = err && err.code === 'INVALID_ARGUMENT';
+                }
+                check('metric-blind scanner refused for cosine', refused);
+            } else {
+                const custom = await artifact.search(queries[0], K, {
+                    rerank: 60,
+                    scanner: { scan: (qp, c) => Array.from({ length: Math.min(c, COUNT) }, (_, i) => i) },
+                });
+                check('custom metric-blind scanner still accepted for l2', custom.results.length === K);
+            }
+
             await artifact.close();
 
             // Tampering with the resident prefix must fail verification.
