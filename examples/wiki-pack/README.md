@@ -19,8 +19,9 @@ Measured on the built pack (2026-08-03):
 - **Cold boot** is the honest cost: ~93 MB before the first query (47 MB
   resident tier + 45 MB fp16 encoder + ONNX runtime), all
   browser-cacheable. Measured on the live Pages/R2 deployment
-  (pancake-wiki-pack-demo.pages.dev, ~100 Mbit/s client): 13-14 s cold
-  time-to-first-query, ~7 s on a warm reload. The economics favor
+  (pancake-wiki-pack-demo.pages.dev, ~100 Mbit/s client): ~8 s cold
+  time-to-first-query (encoder and resident tier load in parallel), ~2 s on
+  repeat visits (service-worker cache; the residual is WASM compile). The economics favor
   repeat-query contexts — a docs site, an installed pack — over drive-by
   pageloads.
 - **Live queries** (same deployment): 0.6-1.5 s search on a cold edge,

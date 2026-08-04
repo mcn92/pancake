@@ -1,0 +1,161 @@
+/* Wiki Knowledge Pack — precision-instrument styling.
+   Tokens follow the repo's dataviz reference palette: surfaces #fcfcfb/#1a1a19,
+   text inks, one accent (categorical slot 1 blue), status warning for weak
+   verdicts (always paired with an icon+label — sub-3:1 on light by design). */
+
+:root {
+  color-scheme: light;
+  --surface: #fcfcfb;
+  --surface-2: #f2f2f0;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --ink-3: #8a8984;
+  --accent: #2a78d6;
+  --warning: #fab219;
+  --line: #e4e3e0;
+  --ok: #0ca30c;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --surface: #1a1a19;
+    --surface-2: #232322;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --ink-3: #8a8984;
+    --accent: #3987e5;
+    --warning: #fab219;
+    --line: #33332f;
+    --ok: #0ca30c;
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.wrap { max-width: 760px; margin: 0 auto; padding: 2.2rem 1.1rem 3rem; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* numbers everywhere read as instrumentation */
+.meter, .boot-stages, .timing, .numbers, .hit-dist, .meter-fine, .verdict-fine {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- masthead ---- */
+.masthead { margin-bottom: 1.6rem; }
+.wordmark {
+  font-size: .8rem; font-weight: 700; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+h1 { margin: .15rem 0 .4rem; font-size: 1.7rem; letter-spacing: -0.015em; }
+.tagline { margin: 0; color: var(--ink-2); max-width: 56ch; }
+
+/* ---- search ---- */
+.searchrow { display: flex; gap: .5rem; }
+#query {
+  flex: 1; padding: .65rem .8rem; font-size: 1.05rem;
+  color: var(--ink); background: var(--surface);
+  border: 1.5px solid var(--line); border-radius: 8px;
+}
+#query:focus { outline: none; border-color: var(--accent); }
+#go {
+  padding: .65rem 1.1rem; font-size: 1rem; font-weight: 600;
+  color: #fff; background: var(--accent);
+  border: none; border-radius: 8px; cursor: pointer;
+}
+#go:disabled { opacity: .45; cursor: default; }
+
+.chips { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: .7rem; }
+.chip {
+  padding: .28rem .7rem; font-size: .85rem;
+  color: var(--ink-2); background: var(--surface-2);
+  border: 1px solid var(--line); border-radius: 999px; cursor: pointer;
+}
+.chip:hover { border-color: var(--accent); color: var(--ink); }
+.chip small { color: var(--ink-3); }
+
+/* ---- meter ---- */
+.meter {
+  display: grid; grid-template-columns: 1fr 1fr; gap: .2rem 1.4rem;
+  margin: 1.4rem 0 0; padding: .85rem 1rem .7rem;
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.meter-label {
+  font-size: .72rem; font-weight: 600; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+.meter-value { font-size: 1.15rem; font-weight: 650; }
+.meter-fine { font-size: .8rem; color: var(--ink-2); min-height: 1.2em; }
+.meter-note {
+  grid-column: 1 / -1; margin-top: .35rem; padding-top: .45rem;
+  border-top: 1px dashed var(--line);
+  font-size: .78rem; color: var(--ink-3);
+}
+@media (max-width: 560px) { .meter { grid-template-columns: 1fr; } }
+
+/* ---- boot ---- */
+.boot { margin: 1.2rem 0 0; }
+.boot-headline { color: var(--ink-2); font-size: .95rem; }
+.boot-stages { list-style: none; margin: .5rem 0 0; padding: 0; }
+.boot-stages li {
+  display: flex; justify-content: space-between; gap: 1rem;
+  padding: .18rem 0; font-size: .88rem; color: var(--ink-3);
+  border-bottom: 1px solid var(--line);
+}
+.boot-stages li.active { color: var(--ink); }
+.boot-stages li.done { color: var(--ink-2); }
+.boot-stages li.done .stage-name::before { content: "✓ "; color: var(--ok); }
+.boot-stages li.active .stage-name::before { content: "▸ "; color: var(--accent); }
+.boot-stages .stage-detail { white-space: nowrap; }
+.boot.collapsed .boot-stages { display: none; }
+.boot.collapsed .boot-headline { font-size: .85rem; }
+.hash { font-family: ui-monospace, monospace; font-size: .82em; }
+
+/* ---- results ---- */
+.results { margin-top: 1.4rem; }
+.hit { margin: 0 0 1.05rem; }
+.hit-title { font-weight: 650; }
+.hit-title a { color: var(--ink); }
+.hit-title a:hover { color: var(--accent); }
+.hit-dist { font-size: .8rem; font-weight: 400; color: var(--ink-3); margin-left: .45rem; }
+.hit-body { color: var(--ink-2); font-size: .95rem; }
+
+.verdict {
+  margin: 0 0 1rem; padding: .7rem .9rem;
+  border-radius: 8px; font-size: .92rem;
+}
+.verdict-weak {
+  background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--line));
+}
+.verdict-weak::before { content: "⚠ weak match — "; font-weight: 650; }
+.verdict-abstain {
+  background: var(--surface-2); border: 1px solid var(--line);
+  color: var(--ink);
+}
+.verdict-abstain b { display: block; margin-bottom: .2rem; }
+.verdict-fine { font-size: .8rem; color: var(--ink-3); margin-top: .3rem; }
+
+/* ---- explainer ---- */
+.explainer { margin-top: 3rem; border-top: 1px solid var(--line); padding-top: 1.4rem; }
+.explainer h2 { font-size: 1.05rem; margin: 1.6rem 0 .6rem; }
+.flow { margin: 0; padding-left: 1.2rem; color: var(--ink-2); }
+.flow li { margin-bottom: .45rem; }
+.flow b { color: var(--ink); }
+.numbers { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.numbers td { padding: .4rem .6rem .4rem 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.numbers td:first-child { color: var(--ink-3); white-space: nowrap; width: 7.5rem; }
+.limits { margin: 0; padding-left: 1.2rem; color: var(--ink-2); font-size: .92rem; }
+.limits li { margin-bottom: .45rem; }
+.links { font-size: .9rem; }
+
+.foot {
+  margin-top: 2.6rem; padding-top: 1rem; border-top: 1px solid var(--line);
+  font-size: .8rem; color: var(--ink-3);
+}

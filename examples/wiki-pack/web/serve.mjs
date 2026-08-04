@@ -36,7 +36,10 @@ const server = http.createServer((req, res) => {
     let file = null;
     for (const [prefix, root] of roots) {
         if (url.startsWith(prefix)) {
-            const rel = url === '/' ? 'index.html' : url.slice(prefix.length);
+            let rel = url === '/' ? 'index.html' : url.slice(prefix.length);
+            // Pack URLs carry a cache-busting version segment (/pack/vXXXX/…)
+            // that the Pages Function strips before lookup; mirror that here.
+            if (prefix === '/pack/') rel = rel.replace(/^v[0-9a-f]{6,}\//, '');
             const candidate = path.normalize(path.join(root, rel));
             if (!candidate.startsWith(root + path.sep)) break;
             file = openCached(candidate);

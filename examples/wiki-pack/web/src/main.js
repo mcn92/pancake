@@ -1,9 +1,12 @@
-// Wiki knowledge-pack demo skeleton: the real browser pipeline with timing
-// instrumentation, minimal UI. Everything loads from this origin — the pack
-// via range reads, the fp16 MiniLM encoder, and the ONNX runtime wasm.
+// Wiki knowledge-pack demo: the full pipeline in-browser — self-hosted fp16
+// MiniLM encoder, resident WASM sketch scan, ranged rerank fetches against a
+// static artifact, coalesced hydration, and calibrated abstention — with the
+// network meter as the page's centerpiece. Headless hooks (__bench, __probes)
+// are load-bearing for CI/measurement and must keep their shapes.
 import Pancake from '../../../../pancake.web.mjs';
 import { pipeline, env } from '@huggingface/transformers';
 import { createAbstentionScorer } from './abstention.js';
+import './style.css';
 
 const PACK_BASE = '/pack';
 const K = 10;
@@ -12,22 +15,33 @@ const FETCH_PARALLELISM = Number(params.get('p') || 32);
 const FETCH_GAP = Number(params.get('gap') || 16384);
 const RERANK = params.get('C') ? Number(params.get('C')) : undefined;
 
-
 env.allowRemoteModels = false;
 env.allowLocalModels = true;
 env.localModelPath = '/models/';
 env.backends.onnx.wasm.wasmPaths = '/ort/';
 
-const els = Object.fromEntries(['status', 'meter', 'query', 'go', 'timing', 'results']
-    .map((id) => [id, document.getElementById(id)]));
+const SAMPLE_QUERIES = [
+    { q: 'what causes earthquakes', note: '' },
+    { q: 'what are eggs?', note: 'ranking depth' },
+    { q: 'who won the 2026 world cup', note: 'finds the pre-event article' },
+    { q: 'reset netgear router admin password', note: 'abstains' },
+    { q: 'zzyzx qwfp jkl glorp', note: 'abstains' },
+];
 
+const els = Object.fromEntries(
+    ['status', 'query', 'go', 'timing', 'results', 'chips', 'bootPanel',
+     'bootStages', 'meterSession', 'meterBreakdown', 'meterQuery']
+        .map((id) => [id, document.getElementById(id)]));
+
+// ---- meter ----------------------------------------------------------------
 const meter = { requests: 0, bytes: 0, note: {} };
 function meterAdd(kind, bytes, requests = 1) {
     meter.requests += requests;
     meter.bytes += bytes;
     meter.note[kind] = (meter.note[kind] || 0) + bytes;
-    const parts = Object.entries(meter.note).map(([k, v]) => `${k} ${(v / 1e6).toFixed(1)} MB`);
-    els.meter.textContent = `network: ${meter.requests} requests, ${(meter.bytes / 1e6).toFixed(1)} MB total — ${parts.join(' · ')}`;
+    els.meterSession.textContent = `${meter.requests} requests · ${(meter.bytes / 1e6).toFixed(1)} MB`;
+    els.meterBreakdown.textContent = Object.entries(meter.note)
+        .map(([k, v]) => `${k} ${(v / 1e6).toFixed(1)} MB`).join(' · ');
 }
 
 function createHttpRangeSource(url, kind) {
@@ -58,70 +72,118 @@ function createHttpRangeSource(url, kind) {
     };
 }
 
+// ---- boot -----------------------------------------------------------------
 const state = {};
 const timings = { boot: {} };
 
-async function timed(name, fn) {
+const BOOT_STAGES = [
+    ['manifest', 'Pack manifest (version pointer)'],
+    ['modelLoad', 'Encoder — MiniLM-L6 fp16, runs in this tab'],
+    ['encoderWarmup', 'Encoder warmup'],
+    ['packOpen', 'Resident index tier — 4-bit sketches of every chunk'],
+    ['scannerBuild', 'WASM SIMD scanner'],
+    ['offsetsLoad', 'Corpus offset table'],
+    ['abstention', 'Abstention calibration + vocabulary filter'],
+];
+const activeStages = new Set();
+function renderStages() {
+    els.bootStages.innerHTML = '';
+    for (const [key, label] of BOOT_STAGES) {
+        const li = document.createElement('li');
+        const done = timings.boot[key] !== undefined;
+        li.className = done ? 'done' : activeStages.has(key) ? 'active' : '';
+        const name = document.createElement('span');
+        name.className = 'stage-name';
+        name.textContent = label;
+        const detail = document.createElement('span');
+        detail.className = 'stage-detail';
+        detail.textContent = done ? `${timings.boot[key]} ms` : '';
+        li.append(name, detail);
+        els.bootStages.appendChild(li);
+    }
+}
+async function stage(key, fn) {
+    activeStages.add(key);
+    renderStages();
     const t0 = performance.now();
-    const out = await fn();
-    timings.boot[name] = Math.round(performance.now() - t0);
-    return out;
+    try {
+        return await fn();
+    } finally {
+        timings.boot[key] = Math.round(performance.now() - t0);
+        activeStages.delete(key);
+        renderStages();
+    }
 }
 
 async function boot() {
-    const status = (s) => { els.status.textContent = s; };
-
     // Manifest first: it is the version pointer (short cache), and its
     // packVersion threads a content-hash segment into every other pack URL
     // so those can be cached as immutable without a purge story.
-    status('loading pack manifest…');
-    const manifest = await (await fetch(`${PACK_BASE}/pack-manifest.json`)).json();
+    els.status.textContent = 'Loading the pack — one-time download, cached by your browser.';
+    const manifest = await stage('manifest', async () =>
+        (await fetch(`${PACK_BASE}/pack-manifest.json`)).json());
     state.manifest = manifest;
     state.packBase = manifest.packVersion ? `${PACK_BASE}/${manifest.packVersion}` : PACK_BASE;
 
-    status('loading encoder (fp16 MiniLM, self-hosted)…');
-    state.embedder = await timed('modelLoad', () =>
-        pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', { dtype: 'fp16' }));
-    // meter the model+wasm downloads coarsely via resource timing
-    for (const entry of performance.getEntriesByType('resource')) {
-        if (entry.name.includes('/models/') || entry.name.includes('/ort/')) {
-            meterAdd('encoder', entry.transferSize || entry.encodedBodySize || 0);
+    // Everything after the manifest is independent, so it loads in parallel:
+    // the encoder download (the largest asset) fully overlaps the resident
+    // fetch — measured sequentially these were ~6 s + ~6 s of a ~13 s cold
+    // boot. Time-to-first-query is the max of the branches, not the sum.
+    const encoderReady = stage('modelLoad', () =>
+        pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', { dtype: 'fp16' })
+    ).then(async (embedder) => {
+        state.embedder = embedder;
+        for (const entry of performance.getEntriesByType('resource')) {
+            if (entry.name.includes('/models/') || entry.name.includes('/ort/')) {
+                meterAdd('encoder', entry.transferSize || entry.encodedBodySize || 0);
+            }
         }
-    }
+        await stage('encoderWarmup', () => embed('warmup query'));
+    });
 
-    status('warming up encoder…');
-    await timed('encoderWarmup', () => embed('warmup query'));
+    const packReady = stage('packOpen', () =>
+        Pancake.SketchArtifact.open(createHttpRangeSource(`${state.packBase}/wiki.pancake-sketch`, 'pack'), {})
+    ).then(async (artifact) => {
+        state.artifact = artifact;
+        state.scanner = await stage('scannerBuild', () => Pancake.createSketchScanner(artifact));
+    });
 
-    status('opening pack (verifying resident tier)…');
-    state.artifact = await timed('packOpen', () =>
-        Pancake.SketchArtifact.open(createHttpRangeSource(`${state.packBase}/wiki.pancake-sketch`, 'pack'), {}));
-
-    status('building WASM scanner…');
-    state.scanner = await timed('scannerBuild', () => Pancake.createSketchScanner(state.artifact));
-
-    status('loading corpus offsets…');
-    state.offsets = await timed('offsetsLoad', async () => {
+    const offsetsReady = stage('offsetsLoad', async () => {
         const r = await fetch(`${state.packBase}/corpus-offsets.u32`);
         const b = await r.arrayBuffer();
         meterAdd('offsets', b.byteLength);
         return new Uint32Array(b);
+    }).then((offsets) => {
+        state.offsets = offsets;
+        state.corpusSource = createHttpRangeSource(`${state.packBase}/corpus.bin`, 'hydration');
     });
-    state.corpusSource = createHttpRangeSource(`${state.packBase}/corpus.bin`, 'hydration');
 
-    status('loading abstention calibration…');
-    const [abstentionAsset, bloomBuf] = await Promise.all([
+    const abstentionReady = stage('abstention', () => Promise.all([
         fetch(`${state.packBase}/wiki-abstention.json`).then((r) => r.json()),
         fetch(`${state.packBase}/wiki-vocab.bloom`).then((r) => r.arrayBuffer()),
-    ]);
-    meterAdd('abstention', bloomBuf.byteLength);
-    state.abstention = createAbstentionScorer(abstentionAsset, bloomBuf);
+    ])).then(([abstentionAsset, bloomBuf]) => {
+        meterAdd('abstention', bloomBuf.byteLength);
+        state.abstention = createAbstentionScorer(abstentionAsset, bloomBuf);
+    });
 
-    status(`ready — ${state.artifact.count.toLocaleString()} chunks (${manifest.articles.toLocaleString()} articles), `
+    await Promise.all([encoderReady, packReady, offsetsReady, abstentionReady]);
+
+    els.bootPanel.classList.add('collapsed');
+    els.status.innerHTML = '';
+    const ready = document.createElement('span');
+    ready.textContent = `Ready — ${state.artifact.count.toLocaleString()} chunks from ${manifest.articles.toLocaleString()} articles, `
         + `${(state.artifact.residentBytes / 1e6).toFixed(1)} MB resident`
-        + (state.artifact.residentVerified ? ', hash verified' : '')
-        + `\nboot: ${Object.entries(timings.boot).map(([k, v]) => `${k} ${v}ms`).join(', ')}`);
+        + (state.artifact.residentVerified ? ', hash verified ' : ' ');
+    els.status.appendChild(ready);
+    if (manifest.packVersion) {
+        const hash = document.createElement('span');
+        hash.className = 'hash';
+        hash.textContent = manifest.packVersion;
+        els.status.appendChild(hash);
+    }
     els.query.disabled = false;
     els.go.disabled = false;
+    els.query.focus();
     window.__wikiPackReady = true;
 }
 
@@ -180,31 +242,38 @@ async function runQuery(text) {
     return { results, rows, t, abstention };
 }
 
+// ---- rendering ------------------------------------------------------------
 function renderQuery(text, { results, rows, t, abstention }) {
-    els.timing.textContent = `embed ${t.embed.toFixed(0)} ms · search ${t.search.toFixed(0)} ms · `
-        + `hydrate ${t.hydrate.toFixed(0)} ms · total ${t.total.toFixed(0)} ms — `
-        + `${t.queryRequests} requests, ${(t.queryBytes / 1024).toFixed(0)} KiB for this query`;
+    els.meterQuery.textContent = `${t.queryRequests} requests · ${(t.queryBytes / 1024).toFixed(0)} KiB · ${t.total.toFixed(0)} ms`;
+    els.timing.textContent = `embed ${t.embed.toFixed(0)} · search ${t.search.toFixed(0)} · hydrate ${t.hydrate.toFixed(0)} ms`;
     els.results.innerHTML = '';
+
     if (abstention && abstention.verdict === 'abstain') {
-        const div = document.createElement('div');
-        div.className = 'hit';
-        div.textContent = 'This pack has nothing useful for that query — abstaining rather than '
-            + `showing noise. (confidence ${abstention.p.toFixed(2)}, best distance ${abstention.signals.d0.toFixed(2)})`;
-        els.results.appendChild(div);
+        const card = document.createElement('div');
+        card.className = 'verdict verdict-abstain';
+        const head = document.createElement('b');
+        head.textContent = 'Nothing useful in this pack for that.';
+        const body = document.createElement('span');
+        body.textContent = 'Abstaining rather than showing noise — note the meter: no text was even fetched.';
+        const fine = document.createElement('div');
+        fine.className = 'verdict-fine';
+        fine.textContent = `confidence ${abstention.p.toFixed(2)} · best distance ${abstention.signals.d0.toFixed(2)} · known vocabulary ${(abstention.signals.known_frac * 100).toFixed(0)}%`;
+        card.append(head, body, fine);
+        els.results.appendChild(card);
         return;
     }
     if (abstention && abstention.verdict === 'weak') {
-        const div = document.createElement('div');
-        div.className = 'hit d';
-        div.textContent = 'Weak match — the closest content is distant from the question; showing it anyway.';
-        els.results.appendChild(div);
+        const card = document.createElement('div');
+        card.className = 'verdict verdict-weak';
+        card.append('the closest content is distant from the question; showing it anyway.');
+        els.results.appendChild(card);
     }
     results.forEach((r, i) => {
         const row = rows[i];
         const div = document.createElement('div');
         div.className = 'hit';
         const title = document.createElement('div');
-        title.className = 't';
+        title.className = 'hit-title';
         title.textContent = `${i + 1}. `;
         if (row.url && /^https:\/\/simple\.wikipedia\.org\//.test(row.url)) {
             const link = document.createElement('a');
@@ -217,14 +286,31 @@ function renderQuery(text, { results, rows, t, abstention }) {
             title.append(row.title);
         }
         const dist = document.createElement('span');
-        dist.className = 'd';
-        dist.textContent = ` distance ${r.distance.toFixed(3)}`;
+        dist.className = 'hit-dist';
+        dist.textContent = `distance ${r.distance.toFixed(3)}`;
         title.appendChild(dist);
         const body = document.createElement('div');
+        body.className = 'hit-body';
         body.textContent = row.text.slice(row.title.length + 2, row.title.length + 300);
         div.append(title, body);
         els.results.appendChild(div);
     });
+}
+
+for (const { q, note } of SAMPLE_QUERIES) {
+    const chip = document.createElement('button');
+    chip.className = 'chip';
+    chip.append(q);
+    if (note) {
+        const small = document.createElement('small');
+        small.textContent = ` · ${note}`;
+        chip.appendChild(small);
+    }
+    chip.addEventListener('click', () => {
+        els.query.value = q;
+        els.go.click();
+    });
+    els.chips.appendChild(chip);
 }
 
 els.go.addEventListener('click', async () => {
@@ -267,4 +353,15 @@ window.__probes = async () => {
     return { total: probes.length, failures };
 };
 
-boot().catch((e) => { els.status.textContent = `boot failed: ${e.message}`; console.error(e); window.__wikiPackError = String(e); });
+// Service worker: caches the versioned pack assets, the encoder, and the
+// ONNX runtime so a repeat visit boots from disk. Best-effort — the demo is
+// fully functional without it.
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
+
+boot().catch((e) => {
+    els.status.textContent = `boot failed: ${e.message}`;
+    console.error(e);
+    window.__wikiPackError = String(e);
+});
