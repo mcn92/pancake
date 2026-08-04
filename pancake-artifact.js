@@ -969,14 +969,39 @@ function exportSketchArtifact(index, outPath, options = {}) {
     if (sketchBits === 4 && sketchDims % 2 !== 0) {
         throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'sketchDims must be even for 4-bit sketches', { sketchDims });
     }
+    // Optional staged-boot micro tier: a second, coarser pooling of the same
+    // quantized rows, stored after the full sketches so v1 readers see it
+    // only as opaque resident tail bytes (their layout check permits a gap
+    // between sketches end and vectorsOffset, and the resident hash already
+    // covers it). Pooling commutes with the per-row affine map, so the micro
+    // tier reuses scales/offsets unchanged, exactly like the full tier.
+    const microDims = options.microDims || 0;
+    // 4-bit default: the 2026-08-04 sweep on the 456k wiki corpus measured
+    // bit depth as worthless at fixed bytes (48d/4b == 48d/8b within noise)
+    // while halved pooling at the same bytes gained +28 recall points
+    // (96d/4b 87.8% vs 48d/8b 59.4% capture at C=800). Micro tiers should
+    // spend their byte budget on dims, never on bits.
+    const microBits = microDims ? (options.microBits || 4) : 0;
+    if (microDims) {
+        if (!Number.isInteger(microDims) || microDims < 1 || sketchDims % microDims !== 0 || microDims >= sketchDims) {
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'microDims must divide sketchDims and be smaller', { microDims, sketchDims });
+        }
+        if (![4, 8].includes(microBits) || (microBits === 4 && microDims % 2 !== 0)) {
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'invalid micro sketch encoding', { microBits, microDims });
+        }
+    }
     const pool = dim / sketchDims;
     const sketchRowBytes = (sketchDims * sketchBits) / 8;
+    const microPool = microDims ? dim / microDims : 0;
+    const microRowBytes = microDims ? (microDims * microBits) / 8 : 0;
 
     const scalesOffset = SKETCH_HEADER_BYTES;
     const offsetsOffset = scalesOffset + count * 4;
     const sketchesOffset = offsetsOffset + count * 4;
     const sketchesEnd = sketchesOffset + count * sketchRowBytes;
-    const vectorsOffset = Math.ceil(sketchesEnd / 16) * 16;
+    const microOffset = microDims ? sketchesEnd : 0;
+    const residentEnd = microDims ? microOffset + count * microRowBytes : sketchesEnd;
+    const vectorsOffset = Math.ceil(residentEnd / 16) * 16;
     const fileBytes = vectorsOffset + count * dim;
 
     const out = Buffer.alloc(fileBytes);
@@ -994,6 +1019,11 @@ function exportSketchArtifact(index, outPath, options = {}) {
     out.writeUInt32LE(vectorsOffset, 44);
     out.writeBigUInt64LE(BigInt(fileBytes), 48);
     out.writeUInt32LE(recommendedRerank, 120);
+    if (microDims) {
+        out.writeUInt32LE(microDims, 124);
+        out.writeUInt32LE(microBits, 128);
+        out.writeUInt32LE(microOffset, 132);
+    }
 
     for (let i = 0; i < count; i++) out.writeFloatLE(index.scales[i], scalesOffset + i * 4);
     for (let i = 0; i < count; i++) out.writeFloatLE(index.offsets[i], offsetsOffset + i * 4);
@@ -1009,9 +1039,23 @@ function exportSketchArtifact(index, outPath, options = {}) {
             } else {
                 const q = Math.min(15, Math.round(pooled / 17));
                 const byteIndex = sketchesOffset + i * sketchRowBytes + (sd >> 1);
-                // Low nibble first: even sketch dims in bits 0-3.
-                if (sd % 2 === 0) out[byteIndex] |= q;
-                else out[byteIndex] |= q << 4;
+                if (sd % 2 === 0) out[byteIndex] = (out[byteIndex] & 0xf0) | q;
+                else out[byteIndex] = (out[byteIndex] & 0x0f) | (q << 4);
+            }
+        }
+        if (microDims) {
+            for (let sd = 0; sd < microDims; sd++) {
+                let acc = 0;
+                for (let j = 0; j < microPool; j++) acc += index.qdata[rowBase + sd * microPool + j];
+                const pooled = Math.round(acc / microPool);
+                if (microBits === 8) {
+                    out[microOffset + i * microRowBytes + sd] = pooled;
+                } else {
+                    const q = Math.min(15, Math.round(pooled / 17));
+                    const byteIndex = microOffset + i * microRowBytes + (sd >> 1);
+                    if (sd % 2 === 0) out[byteIndex] = (out[byteIndex] & 0xf0) | q;
+                    else out[byteIndex] = (out[byteIndex] & 0x0f) | (q << 4);
+                }
             }
         }
     }
@@ -1020,6 +1064,16 @@ function exportSketchArtifact(index, outPath, options = {}) {
 
     sha256Bytes(out.subarray(SKETCH_HEADER_BYTES, vectorsOffset)).copy(out, 56);
     sha256Bytes(out.subarray(vectorsOffset)).copy(out, 88);
+    if (microDims) {
+        // Stage-1 hash: scales+offsets plus the micro segment, exactly the
+        // bytes a staged open serves from, verifiable before the full
+        // sketches arrive. The full resident hash still covers everything.
+        const stage1 = Buffer.concat([
+            out.subarray(SKETCH_HEADER_BYTES, sketchesOffset),
+            out.subarray(microOffset, microOffset + count * microRowBytes),
+        ]);
+        sha256Bytes(stage1).copy(out, 136);
+    }
 
     const fs = require('fs');
     fs.writeFileSync(outPath, out);
@@ -1031,6 +1085,7 @@ function exportSketchArtifact(index, outPath, options = {}) {
         metric: index.metric === 1 ? 'cosine' : 'l2',
         graph: { count, dim },
         sketch: { sketchDims, sketchBits, pool, residentBytes: vectorsOffset },
+        micro: microDims ? { microDims, microBits, microPool, stage1Bytes: sketchesOffset + count * microRowBytes } : null,
         addressing: { scalesOffset, offsetsOffset, sketchesOffset, vectorsOffset },
         recommendedRerank,
     };
@@ -1105,6 +1160,9 @@ class PancakeSketchArtifact {
         artifact.vectorsOffset = view.getUint32(44, true);
         const fileBytes = Number(view.getBigUint64(48, true));
         artifact.recommendedRerank = view.getUint32(120, true);
+        artifact.microDims = view.getUint32(124, true);
+        artifact.microBits = artifact.microDims ? view.getUint32(128, true) : 0;
+        const microOffset = artifact.microDims ? view.getUint32(132, true) : 0;
         artifact.maxCacheBytes = resolveMaxCacheBytes(options.maxCacheBytes, 256 * artifact.dim, artifact.maxCacheBytes);
 
         const { metric, dim, count, sketchDims, sketchBits, vectorsOffset } = artifact;
@@ -1128,34 +1186,121 @@ class PancakeSketchArtifact {
             || fileBytes !== vectorsOffset + expectVectors) {
             throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact layout is inconsistent');
         }
-
-        const resident = asUint8Array(await source.read(SKETCH_HEADER_BYTES, vectorsOffset - SKETCH_HEADER_BYTES));
-        if (resident.byteLength !== vectorsOffset - SKETCH_HEADER_BYTES) {
-            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact resident prefix is truncated');
+        let microRowBytes = 0;
+        if (artifact.microDims) {
+            microRowBytes = (artifact.microDims * artifact.microBits) / 8;
+            if (sketchDims % artifact.microDims !== 0 || artifact.microDims >= sketchDims
+                || ![4, 8].includes(artifact.microBits) || (artifact.microBits === 4 && artifact.microDims % 2 !== 0)
+                || microOffset !== sketchesOffset + count * sketchRowBytes
+                || microOffset + count * microRowBytes > vectorsOffset) {
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact micro tier layout is inconsistent', { microDims: artifact.microDims });
+            }
         }
-        // Copy into an aligned buffer so the typed-array views are valid
-        // regardless of the source's byteOffset.
-        const residentCopy = new Uint8Array(resident.byteLength);
-        residentCopy.set(resident);
-        artifact.scales = new Float32Array(residentCopy.buffer, 0, count);
-        artifact.offsets = new Float32Array(residentCopy.buffer, count * 4, count);
-        artifact.sketches = new Uint8Array(residentCopy.buffer, count * 8, count * sketchRowBytes);
-        artifact.residentBytes = vectorsOffset;
+        artifact.microOffset = microOffset;
 
         const verify = options.verify !== false;
+        const staged = options.staged === true && artifact.microDims > 0;
+        artifact.tier = 'full';
+        artifact.fullyResident = Promise.resolve(artifact);
+
+        if (!staged) {
+            const resident = asUint8Array(await source.read(SKETCH_HEADER_BYTES, vectorsOffset - SKETCH_HEADER_BYTES));
+            if (resident.byteLength !== vectorsOffset - SKETCH_HEADER_BYTES) {
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact resident prefix is truncated');
+            }
+            // Copy into an aligned buffer so the typed-array views are valid
+            // regardless of the source's byteOffset.
+            const residentCopy = new Uint8Array(resident.byteLength);
+            residentCopy.set(resident);
+            artifact._adoptResident(residentCopy, count, sketchRowBytes, microRowBytes, microOffset);
+            if (verify) await artifact._verifyFullResident(residentCopy, header);
+            return artifact;
+        }
+
+        // Staged boot: serve queries from the coarse micro tier after
+        // fetching only scales+offsets and the micro segment (one parallel
+        // wave after the header), then complete residency in the background.
+        // Stage 1 is independently hash-verified; stage 2 re-verifies the
+        // full resident hash before the tier swap, so both states honor the
+        // integrity contract. Result semantics differ between tiers, so the
+        // tier is reported on every search result rather than hidden.
+        artifact.tier = 'micro';
+        const [affine, micro] = await Promise.all([
+            source.read(SKETCH_HEADER_BYTES, sketchesOffset - SKETCH_HEADER_BYTES),
+            source.read(microOffset, count * microRowBytes),
+        ]);
+        const affineBytes = asUint8Array(affine);
+        const microBytes = asUint8Array(micro);
+        if (affineBytes.byteLength !== sketchesOffset - SKETCH_HEADER_BYTES || microBytes.byteLength !== count * microRowBytes) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact stage-1 read is truncated');
+        }
+        const affineCopy = new Uint8Array(affineBytes.byteLength);
+        affineCopy.set(affineBytes);
+        const microCopy = new Uint8Array(microBytes.byteLength);
+        microCopy.set(microBytes);
         if (verify) {
-            const digest = await sha256BytesAsync(residentCopy);
+            const stage1 = new Uint8Array(affineCopy.byteLength + microCopy.byteLength);
+            stage1.set(affineCopy, 0);
+            stage1.set(microCopy, affineCopy.byteLength);
+            const digest = await sha256BytesAsync(stage1);
             if (digest) {
-                const expected = header.subarray(56, 88);
-                for (let i = 0; i < 32; i++) {
-                    if (digest[i] !== expected[i]) {
-                        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact resident prefix failed hash verification');
+                const expected = header.subarray(136, 168);
+                for (let b = 0; b < 32; b++) {
+                    if (digest[b] !== expected[b]) {
+                        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact stage-1 prefix failed hash verification');
                     }
                 }
                 artifact.residentVerified = true;
             }
         }
+        artifact.scales = new Float32Array(affineCopy.buffer, 0, count);
+        artifact.offsets = new Float32Array(affineCopy.buffer, count * 4, count);
+        artifact.sketches = null;
+        artifact.microSketches = microCopy;
+        artifact.residentBytes = SKETCH_HEADER_BYTES + affineCopy.byteLength + microCopy.byteLength;
+
+        const onStage = typeof options.onStage === 'function' ? options.onStage : null;
+        if (onStage) onStage({ tier: 'micro', residentBytes: artifact.residentBytes });
+        artifact.fullyResident = (async () => {
+            const rest = asUint8Array(await source.read(sketchesOffset, vectorsOffset - sketchesOffset));
+            if (rest.byteLength !== vectorsOffset - sketchesOffset) {
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact stage-2 read is truncated');
+            }
+            const residentCopy = new Uint8Array((sketchesOffset - SKETCH_HEADER_BYTES) + rest.byteLength);
+            residentCopy.set(affineCopy, 0);
+            residentCopy.set(rest, sketchesOffset - SKETCH_HEADER_BYTES);
+            if (verify) await artifact._verifyFullResident(residentCopy, header);
+            artifact._adoptResident(residentCopy, count, sketchRowBytes, microRowBytes, microOffset);
+            artifact.tier = 'full';
+            if (onStage) onStage({ tier: 'full', residentBytes: artifact.residentBytes });
+            return artifact;
+        })();
+        // Surfacing failures is the caller's job via the promise; an
+        // unobserved rejection must not crash the process mid-boot.
+        artifact.fullyResident.catch(() => {});
         return artifact;
+    }
+
+    _adoptResident(residentCopy, count, sketchRowBytes, microRowBytes, microOffset) {
+        this.scales = new Float32Array(residentCopy.buffer, 0, count);
+        this.offsets = new Float32Array(residentCopy.buffer, count * 4, count);
+        this.sketches = new Uint8Array(residentCopy.buffer, count * 8, count * sketchRowBytes);
+        if (this.microDims) {
+            this.microSketches = new Uint8Array(residentCopy.buffer, microOffset - SKETCH_HEADER_BYTES, count * microRowBytes);
+        }
+        this.residentBytes = this.vectorsOffset;
+    }
+
+    async _verifyFullResident(residentCopy, header) {
+        const digest = await sha256BytesAsync(residentCopy);
+        if (!digest) return;
+        const expected = header.subarray(56, 88);
+        for (let b = 0; b < 32; b++) {
+            if (digest[b] !== expected[b]) {
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact resident prefix failed hash verification');
+            }
+        }
+        this.residentVerified = true;
     }
 
     static async openFile(filePath, options = {}) {
@@ -1178,6 +1323,21 @@ class PancakeSketchArtifact {
         const byte = this.sketches[id * (this.sketchDims >> 1) + (sd >> 1)];
         const nibble = sd % 2 === 0 ? (byte & 0x0f) : (byte >> 4);
         return nibble * 17;
+    }
+
+    microValue(id, sd) {
+        if (this.microBits === 8) return this.microSketches[id * this.microDims + sd];
+        const byte = this.microSketches[id * (this.microDims >> 1) + (sd >> 1)];
+        const nibble = sd % 2 === 0 ? (byte & 0x0f) : (byte >> 4);
+        return nibble * 17;
+    }
+
+    // Active resident tier for candidate selection. 'full' whenever the full
+    // sketches are adopted; 'micro' only during a staged boot window.
+    activeTier() {
+        return this.tier === 'micro'
+            ? { name: 'micro', dims: this.microDims, value: (i, sd) => this.microValue(i, sd) }
+            : { name: 'full', dims: this.sketchDims, value: (i, sd) => this.sketchValue(i, sd) };
     }
 
     async fetchRows(ids, options = {}) {
@@ -1250,9 +1410,17 @@ class PancakeSketchArtifact {
         if (!Number.isInteger(k) || k < 1) {
             throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'search() k must be a positive integer', { k });
         }
-        const C = Math.max(k, Math.trunc(options.rerank || this.recommendedRerank || Math.max(100, k * 10)));
-        const { dim, sketchDims, count } = this;
-        const pool = dim / sketchDims;
+        const tier = this.activeTier();
+        // The micro tier is coarser, so its candidate pool defaults wider:
+        // an explicit options.rerank always wins; otherwise recommendedRerank
+        // is scaled by microBoost while serving from the micro tier.
+        const base = Math.trunc(options.rerank || 0);
+        const boost = Math.max(1, Math.trunc(options.microBoost || 4));
+        const rec = this.recommendedRerank || Math.max(100, k * 10);
+        const C = Math.max(k, base > 0 ? base : tier.name === 'micro' ? rec * boost : rec);
+        const { dim, count } = this;
+        const tierDims = tier.dims;
+        const pool = dim / tierDims;
 
         let q = query;
         if (this.metric === 1) {
@@ -1265,26 +1433,29 @@ class PancakeSketchArtifact {
             q = new Float32Array(dim);
             for (let d = 0; d < dim; d++) q[d] = query[d] / norm;
         }
-        const qPool = new Float32Array(sketchDims);
-        for (let sd = 0; sd < sketchDims; sd++) {
+        const qPool = new Float32Array(tierDims);
+        for (let sd = 0; sd < tierDims; sd++) {
             let acc = 0;
             for (let j = 0; j < pool; j++) acc += q[sd * pool + j];
             qPool[sd] = acc / pool;
         }
 
         let ids;
-        if (options.scanner) {
+        let scanner = options.scanner || null;
+        if (scanner && scanner.sketchDims !== undefined && scanner.sketchDims !== tierDims) scanner = null;
+        if (!scanner && options.microScanner && options.microScanner.sketchDims === tierDims) scanner = options.microScanner;
+        if (scanner) {
             // A scanner scores the resident sketches itself, so it must
             // implement this artifact's metric. Cosine requires an explicit
             // declaration: a metric-blind scanner silently loses recall there.
-            const scannerMetric = options.scanner.metric;
+            const scannerMetric = scanner.metric;
             if (scannerMetric !== undefined && scannerMetric !== this.metric) {
                 throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'scanner metric does not match artifact metric', { scannerMetric, metric: this.metric });
             }
             if (this.metric === 1 && scannerMetric !== 1) {
                 throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'cosine sketch artifacts require a metric-aware scanner (scanner.metric === 1)', { metric: this.metric });
             }
-            ids = options.scanner.scan(qPool, C);
+            ids = scanner.scan(qPool, C);
         } else {
             const candDist = new Float64Array(C).fill(Infinity);
             const candId = new Int32Array(C).fill(-1);
@@ -1294,13 +1465,13 @@ class PancakeSketchArtifact {
                 const o = this.offsets[i];
                 let metricAcc = 0;
                 if (this.metric === 1) {
-                    for (let sd = 0; sd < sketchDims; sd++) {
-                        metricAcc += qPool[sd] * (o + s * this.sketchValue(i, sd));
+                    for (let sd = 0; sd < tierDims; sd++) {
+                        metricAcc += qPool[sd] * (o + s * tier.value(i, sd));
                     }
                     metricAcc = 1 - Math.max(-1, Math.min(1, metricAcc * pool));
                 } else {
-                    for (let sd = 0; sd < sketchDims; sd++) {
-                        const diff = qPool[sd] - (o + s * this.sketchValue(i, sd));
+                    for (let sd = 0; sd < tierDims; sd++) {
+                        const diff = qPool[sd] - (o + s * tier.value(i, sd));
                         metricAcc += diff * diff;
                     }
                 }
@@ -1340,6 +1511,7 @@ class PancakeSketchArtifact {
         return {
             results: exact.slice(0, k).map(([distance, id]) => ({ id, distance })),
             rerank: ids.length,
+            tier: tier.name,
         };
     }
 
@@ -1362,18 +1534,27 @@ async function createSketchScanner(loadEngine, artifact, options = {}) {
         throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'createSketchScanner() requires a sketch artifact');
     }
     const engine = await loadEngine();
-    const { count, sketchDims, metric } = artifact;
+    const { count, metric } = artifact;
+    const tierName = options.tier === 'micro' ? 'micro' : 'full';
+    if (tierName === 'micro' && !artifact.microDims) {
+        throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'artifact has no micro tier');
+    }
+    if (tierName === 'full' && !artifact.sketches) {
+        throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'full sketches are not resident yet (staged open still in stage 1; await artifact.fullyResident)');
+    }
+    const sketchDims = tierName === 'micro' ? artifact.microDims : artifact.sketchDims;
+    const tierBits = tierName === 'micro' ? artifact.microBits : artifact.sketchBits;
     const maxC = Math.max(1, Math.trunc(options.maxRerank || 1024));
 
     // The kernel reads u8 sketch values; expand 4-bit nibbles to their
     // reconstructed u8 once so the scan needs no per-element unpacking.
     const expanded = new Uint8Array(count * sketchDims);
-    if (artifact.sketchBits === 4) {
+    if (tierBits === 4) {
         for (let i = 0; i < count; i++) {
-            for (let sd = 0; sd < sketchDims; sd++) expanded[i * sketchDims + sd] = artifact.sketchValue(i, sd);
+            for (let sd = 0; sd < sketchDims; sd++) expanded[i * sketchDims + sd] = tierName === 'micro' ? artifact.microValue(i, sd) : artifact.sketchValue(i, sd);
         }
     } else {
-        expanded.set(artifact.sketches);
+        expanded.set(tierName === 'micro' ? artifact.microSketches : artifact.sketches);
     }
 
     const sketchesPtr = engine._emsc_malloc(expanded.length);
@@ -1393,6 +1574,8 @@ async function createSketchScanner(loadEngine, artifact, options = {}) {
     return {
         maxRerank: maxC,
         metric,
+        sketchDims,
+        tier: tierName,
         scan(pooledQuery, c) {
             if (disposed) throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'sketch scanner disposed');
             const query = pooledQuery instanceof Float32Array ? pooledQuery : Float32Array.from(pooledQuery);

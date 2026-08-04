@@ -225,3 +225,41 @@ re-embedding or re-training anything.
 3. Sub-4-bit or trained (PQ) sketch encodings, which would introduce
    codebook segments.
 4. An optional resident index over the sketch tier for very large counts.
+
+
+## 7. Staged residency extension (optional, v1-compatible)
+
+A producer MAY append a **micro tier**: a coarser pooling of the same
+quantized rows, written after the full sketches and before `vectorsOffset`.
+Because pooling commutes with the per-row affine map, the micro tier reuses
+`scales`/`offsets` unchanged. Header fields (all zero when absent):
+`microDims` u32 @124, `microBits` u32 @128 (4 or 8), `microOffset` u32 @132,
+and a **stage-1 hash** @136..167: SHA-256 over the concatenation of the
+scales+offsets segment and the micro segment, in that order.
+
+Constraints: `microDims` divides `sketchDims`, `microDims < sketchDims`,
+`microOffset == sketchesOffset + count*sketchRowBytes`, and the micro segment
+ends at or before `vectorsOffset`. v1 readers that ignore these fields remain
+correct: the micro segment is resident-tail bytes already covered by the
+resident hash, and all existing layout checks pass.
+
+Geometry guidance (measured, 456k-chunk 384-D corpus, 2026-08-04): spend the
+micro byte budget on dims, never bits. At identical stage-1 bytes, 96d/4-bit
+captured 87.8% of the exact top-10 at C=800 versus 48d/8-bit's 59.4%, and
+4-bit equaled 8-bit at every width tested. Producers SHOULD set
+`microDims = sketchDims / 2` with `microBits = 4` (the builder default), and
+MUST NOT pool deeper than 4:1 relative to `dim` without measuring — the same
+pooling cliff governs both tiers.
+
+**Staged open** (`open(source, { staged: true })`): the reader fetches the
+header, then scales+offsets and the micro segment in one parallel wave,
+verifies the stage-1 hash, and serves queries from the micro tier while the
+remainder of the resident prefix streams in the background. On completion the
+full resident hash is verified before the tier swap; a failed verification
+rejects `fullyResident` and the reader keeps serving the verified micro tier.
+Tier state is explicit: every search result carries `tier: 'micro' | 'full'`,
+and `fullyResident` resolves at convergence, after which results are
+byte-identical to a non-staged open. While serving from the micro tier the
+default candidate pool is `recommendedRerank * microBoost` (default 4).
+Caching still MUST NOT change result semantics within a tier; the tier
+transition is the one sanctioned, labeled semantic change.
