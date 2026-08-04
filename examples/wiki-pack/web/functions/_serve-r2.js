@@ -26,11 +26,38 @@ const CORS = {
     'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges, ETag',
 };
 
+// Cache-busting version segment: the client threads pack-manifest.json's
+// packVersion (a content hash of the artifact) into every pack URL as
+// /pack/vXXXX/<name>. The segment exists only to make immutable cache
+// entries version-specific — it is stripped before the R2 key lookup, so
+// the bucket layout never changes. The manifest itself is the version
+// pointer and gets a short cache instead of immutable.
+const VERSION_SEGMENT = /^v[0-9a-f]{6,}$/;
+const MANIFEST_CACHE = 'public, max-age=300';
+// Full-object reads above this are served but never edge-cached: a stray
+// crawler doing a no-Range GET of the 332 MB corpus should not tee it into
+// cache.put per request per colo. (The 45 MB encoder stays cacheable —
+// that is the legitimate full-body read.)
+const CACHE_MAX_FULL_BODY = 100 * 1024 * 1024;
+
+// Single-range parser supporting bytes=a-b, bytes=a-, and the suffix form
+// bytes=-n (which needs the object size to resolve, so it is converted by
+// the caller once the size is known). Multipart ranges are ignored and
+// served as full 200s per spec — the cache guard above bounds the damage.
 function parseRange(request) {
     const header = request.headers.get('Range');
-    const match = header && /^bytes=(\d+)-(\d*)$/.exec(header);
-    if (!match) return null;
-    return { offset: Number(match[1]), end: match[2] === '' ? undefined : Number(match[2]) };
+    if (!header) return null;
+    let match = /^bytes=(\d+)-(\d*)$/.exec(header);
+    if (match) return { offset: Number(match[1]), end: match[2] === '' ? undefined : Number(match[2]) };
+    match = /^bytes=-(\d+)$/.exec(header);
+    if (match) return { suffix: Number(match[1]) };
+    return null;
+}
+
+function resolveSuffix(range, totalSize) {
+    if (!range || range.suffix === undefined) return range;
+    const length = Math.min(range.suffix, totalSize);
+    return { offset: totalSize - length, end: totalSize - 1 };
 }
 
 function baseHeaders(contentType, etag) {
@@ -55,13 +82,20 @@ export function onOptions() {
     });
 }
 
+// Bump CACHE_GENERATION to orphan every previously cached entry at once —
+// needed when the caching policy itself changes (e.g. generation 1 stored
+// the manifest as immutable, which would have pinned the version pointer
+// for a year).
+const CACHE_GENERATION = '2';
+
 function cacheKeyFor(request, range) {
     const url = new URL(request.url);
-    url.search = range ? `?r=${range.offset}-${range.end ?? ''}` : '';
+    url.search = `?g=${CACHE_GENERATION}` + (range ? `&r=${range.offset}-${range.end ?? ''}` : '');
     return new Request(url.toString(), { method: 'GET' });
 }
 
 async function serveSplit(env, key, spec, range, waitUntil) {
+    range = resolveSuffix(range, spec.total);
     const offset = range ? range.offset : 0;
     const end = range ? Math.min(range.end ?? spec.total - 1, spec.total - 1) : spec.total - 1;
     if (offset > end || offset >= spec.total) return new Response('range not satisfiable', { status: 416, headers: CORS });
@@ -103,28 +137,41 @@ async function serveSplit(env, key, spec, range, waitUntil) {
 
 export async function serveFromR2(context, prefix) {
     const { env, params, request } = context;
-    const key = `${prefix}/${Array.isArray(params.path) ? params.path.join('/') : params.path}`;
-    const range = parseRange(request);
+    const parts = Array.isArray(params.path) ? [...params.path] : [params.path];
+    if (parts.length > 1 && VERSION_SEGMENT.test(parts[0])) parts.shift();
+    const key = `${prefix}/${parts.join('/')}`;
+    const isManifest = key === 'pack/pack-manifest.json';
+    let range = parseRange(request);
+    // Captured before suffix resolution mutates `range`: suffix reads are
+    // never cached because their cache key needs an absolute offset.
+    const hadSuffix = !!(range && range.suffix !== undefined);
 
     // Edge cache first: hits skip R2 (and the isolate connection cap) entirely.
     const cache = caches.default;
     const cacheKey = cacheKeyFor(request, range);
-    const hit = await cache.match(cacheKey);
+    const hit = hadSuffix ? null : await cache.match(cacheKey);
     if (hit) {
         const headers = new Headers(hit.headers);
-        if (range) {
-            return new Response(hit.body, { status: 206, headers });
-        }
-        return new Response(hit.body, { status: 200, headers });
+        return new Response(hit.body, { status: range ? 206 : 200, headers });
     }
 
     let response;
     const split = SPLIT_OBJECTS[key];
+    let fullBodySize = split ? split.total : 0;
     if (split) {
         response = await serveSplit(env, key, split, range, context.waitUntil.bind(context));
+        range = resolveSuffix(range, split.total);
     } else {
         let object;
-        if (range) {
+        if (range && range.suffix !== undefined) {
+            // R2 supports suffix reads natively.
+            object = await env.PACK.get(key, { range: { suffix: range.suffix } });
+            if (object) range = resolveSuffix(range, object.size);
+        } else if (range) {
+            // The requested length may run past EOF; R2 clamps it (the split
+            // path clamps explicitly instead). A wholly out-of-range offset
+            // makes R2 return null, surfacing as 404 rather than the split
+            // path's 416 — a known asymmetry, harmless to the reader.
             object = await env.PACK.get(key, {
                 range: range.end === undefined ? { offset: range.offset } : { offset: range.offset, length: range.end - range.offset + 1 },
             });
@@ -132,6 +179,7 @@ export async function serveFromR2(context, prefix) {
             object = await env.PACK.get(key);
         }
         if (!object) return new Response('not found', { status: 404, headers: CORS });
+        fullBodySize = object.size;
 
         const headers = baseHeaders(object.httpMetadata?.contentType, object.httpEtag);
         if (range) {
@@ -145,7 +193,17 @@ export async function serveFromR2(context, prefix) {
         }
     }
 
-    if (response.status === 200 || response.status === 206) {
+    if (isManifest) {
+        // The manifest is the version pointer — it must be revalidatable so
+        // clients pick up a rebuilt pack within minutes.
+        response.headers.set('Cache-Control', MANIFEST_CACHE);
+    }
+
+    const cacheable = (response.status === 200 || response.status === 206)
+        && !isManifest
+        && !hadSuffix
+        && (range || fullBodySize <= CACHE_MAX_FULL_BODY);
+    if (cacheable) {
         // Store as a synthetic 200 (the Cache API rejects 206); the range
         // lives in the key. Content-Range survives in the stored headers and
         // is re-sent on hits.

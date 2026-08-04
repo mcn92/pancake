@@ -1,19 +1,45 @@
 #!/bin/bash
-set -x
+# Upload the wiki pack to R2. See DEPLOY.md for the full runbook.
+#
+# corpus.bin exceeds wrangler's 300 MiB single-upload ceiling, so it is
+# uploaded as two fixed-size parts; the Pages Function's SPLIT_OBJECTS map
+# (web/functions/_serve-r2.js) must agree with PART_SIZE and the file's
+# total size. Everything else uploads whole.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+BUCKET=pancake-wiki-pack
+DATA=data-perm
 M=node_modules/@huggingface/transformers/.cache/Xenova/all-MiniLM-L6-v2
 O=node_modules/onnxruntime-web/dist
-npx wrangler r2 object put pancake-wiki-pack/pack/corpus.bin --file data-perm/corpus.bin --content-type application/octet-stream --remote
-npx wrangler r2 object put pancake-wiki-pack/pack/wiki.pancake-sketch --file data-perm/wiki.pancake-sketch --content-type application/octet-stream --remote
-npx wrangler r2 object put pancake-wiki-pack/pack/corpus-offsets.u32 --file data-perm/corpus-offsets.u32 --content-type application/octet-stream --remote
-npx wrangler r2 object put pancake-wiki-pack/pack/wiki-vocab.bloom --file data-perm/wiki-vocab.bloom --content-type application/octet-stream --remote
-npx wrangler r2 object put pancake-wiki-pack/pack/wiki-abstention.json --file data-perm/wiki-abstention.json --content-type application/json --remote
-npx wrangler r2 object put pancake-wiki-pack/pack/wiki-abstention-probes.json --file data-perm/wiki-abstention-probes.json --content-type application/json --remote
-npx wrangler r2 object put pancake-wiki-pack/models/Xenova/all-MiniLM-L6-v2/config.json --file $M/config.json --content-type application/json --remote
-npx wrangler r2 object put pancake-wiki-pack/models/Xenova/all-MiniLM-L6-v2/tokenizer.json --file $M/tokenizer.json --content-type application/json --remote
-npx wrangler r2 object put pancake-wiki-pack/models/Xenova/all-MiniLM-L6-v2/tokenizer_config.json --file $M/tokenizer_config.json --content-type application/json --remote
-npx wrangler r2 object put pancake-wiki-pack/models/Xenova/all-MiniLM-L6-v2/onnx/model_fp16.onnx --file $M/onnx/model_fp16.onnx --content-type application/octet-stream --remote
-npx wrangler r2 object put pancake-wiki-pack/ort/ort-wasm-simd-threaded.jsep.wasm --file $O/ort-wasm-simd-threaded.jsep.wasm --content-type application/wasm --remote
-npx wrangler r2 object put pancake-wiki-pack/ort/ort-wasm-simd-threaded.wasm --file $O/ort-wasm-simd-threaded.wasm --content-type application/wasm --remote
-npx wrangler r2 object put pancake-wiki-pack/ort/ort-wasm-simd-threaded.jsep.mjs --file $O/ort-wasm-simd-threaded.jsep.mjs --content-type text/javascript --remote
-npx wrangler r2 object put pancake-wiki-pack/ort/ort-wasm-simd-threaded.mjs --file $O/ort-wasm-simd-threaded.mjs --content-type text/javascript --remote
-echo ALL_UPLOADS_DONE
+PART_SIZE=209715200   # 200 MiB; keep in sync with SPLIT_OBJECTS
+
+put() { npx wrangler r2 object put "$BUCKET/$1" --file "$2" --content-type "$3" --remote; }
+
+# --- pack: corpus split ---
+split -b "$PART_SIZE" "$DATA/corpus.bin" "$DATA/corpus.split."
+put pack/corpus.bin.p0 "$DATA/corpus.split.aa" application/octet-stream
+put pack/corpus.bin.p1 "$DATA/corpus.split.ab" application/octet-stream
+rm "$DATA"/corpus.split.*
+
+# --- pack: everything else ---
+put pack/wiki.pancake-sketch      "$DATA/wiki.pancake-sketch"      application/octet-stream
+put pack/corpus-offsets.u32       "$DATA/corpus-offsets.u32"       application/octet-stream
+put pack/wiki-vocab.bloom         "$DATA/wiki-vocab.bloom"         application/octet-stream
+put pack/wiki-abstention.json     "$DATA/wiki-abstention.json"     application/json
+put pack/wiki-abstention-probes.json "$DATA/wiki-abstention-probes.json" application/json
+put pack/pack-manifest.json       "$DATA/pack-manifest.json"       application/json
+
+# --- encoder (self-hosted MiniLM) ---
+put models/Xenova/all-MiniLM-L6-v2/config.json           "$M/config.json"           application/json
+put models/Xenova/all-MiniLM-L6-v2/tokenizer.json        "$M/tokenizer.json"        application/json
+put models/Xenova/all-MiniLM-L6-v2/tokenizer_config.json "$M/tokenizer_config.json" application/json
+put models/Xenova/all-MiniLM-L6-v2/onnx/model_fp16.onnx  "$M/onnx/model_fp16.onnx"  application/octet-stream
+
+# --- ONNX runtime wasm ---
+put ort/ort-wasm-simd-threaded.jsep.wasm "$O/ort-wasm-simd-threaded.jsep.wasm" application/wasm
+put ort/ort-wasm-simd-threaded.wasm      "$O/ort-wasm-simd-threaded.wasm"      application/wasm
+put ort/ort-wasm-simd-threaded.jsep.mjs  "$O/ort-wasm-simd-threaded.jsep.mjs"  text/javascript
+put ort/ort-wasm-simd-threaded.mjs      "$O/ort-wasm-simd-threaded.mjs"      text/javascript
+
+echo "ALL_UPLOADS_DONE"

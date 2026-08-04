@@ -23,17 +23,16 @@ Measured on the built pack (2026-08-03):
   time-to-first-query, ~7 s on a warm reload. The economics favor
   repeat-query contexts — a docs site, an installed pack — over drive-by
   pageloads.
-- **Live queries** (same deployment): 1.2-4.2 s search on a cold edge,
-  0.7-2.0 s once the colo's edge cache has seen the ranges, ~20 ms on
-  browser-warm repeats. Two deployment lessons are baked into the code:
-  the Pages Function edge-caches every range (identical reads — the
-  resident open, the encoder — are served from the colo after first
-  touch), and the page shards range reads across Pages branch aliases,
-  because all same-origin fetches share one h2 connection whose Function
-  isolate caps at ~6 concurrent R2 reads — single-origin live queries ran
-  5.7-18.6 s. The remaining gap to the ~280 ms localhost number is
-  per-request edge latency times wave count; the durable fix is fewer,
-  larger reads (see the residency note below).
+- **Live queries** (same deployment): 0.6-1.5 s search on a cold edge,
+  ~20 ms on browser-warm repeats. Two deployment lessons are baked into
+  the code: the Pages Function edge-caches every range (identical reads —
+  the resident open, the encoder — skip R2 after first touch per colo),
+  and every range read carries its range in the query string, because
+  Chromium serializes concurrent fetches of one cacheable URL on its
+  HTTP-cache entry lock — same-URL range reads ran one at a time
+  (5.7-18.6 s per query) until the URLs were made distinct. The remaining
+  gap to the ~280 ms localhost number is per-request edge latency; the
+  durable fix is fewer, larger reads (see the residency note below).
 - **Abstention**: AUC 1.0000 on the 122-point fit set (96 answerable, 26
   unanswerable — a small sample, so read the clean score gap between the
   classes, not the headline AUC); 14/14 golden probes pass in Node and in

@@ -12,20 +12,6 @@ const FETCH_PARALLELISM = Number(params.get('p') || 32);
 const FETCH_GAP = Number(params.get('gap') || 16384);
 const RERANK = params.get('C') ? Number(params.get('C')) : undefined;
 
-// All same-origin fetches share one h2 connection, and connection-affine
-// Function invocations share one isolate whose ~6-connection cap to R2
-// serializes concurrent range reads. Rotating across Pages branch aliases
-// (identical deployments, distinct origins) gives the browser separate
-// connections and the backend separate isolates. Localhost keeps one origin.
-const SHARD_ORIGINS = params.get('shards') === '0'
-    ? [location.origin]
-    : location.hostname.endsWith('pancake-wiki-pack-demo.pages.dev')
-        ? ['https://pancake-wiki-pack-demo.pages.dev',
-           'https://shard1.pancake-wiki-pack-demo.pages.dev',
-           'https://shard2.pancake-wiki-pack-demo.pages.dev',
-           'https://shard3.pancake-wiki-pack-demo.pages.dev']
-        : [location.origin];
-let shardCounter = 0;
 
 env.allowRemoteModels = false;
 env.allowLocalModels = true;
@@ -49,8 +35,14 @@ function createHttpRangeSource(url, kind) {
     return {
         async read(offset, length) {
             if (fullBuffer) return fullBuffer.subarray(offset, offset + length);
-            const origin = SHARD_ORIGINS[shardCounter++ % SHARD_ORIGINS.length];
-            const response = await fetch(`${origin}${url}`, { headers: { Range: `bytes=${offset}-${offset + length - 1}` } });
+            // The range rides in the query string as well as the header:
+            // Chromium serializes concurrent fetches of one cacheable URL on
+            // its cache-entry write lock, so same-URL range reads execute
+            // one at a time no matter the requested parallelism (measured
+            // live: 5.7-18.6 s per query before this line, 0.6-1.5 s after).
+            // Distinct URLs per range dissolve the lock; the server ignores
+            // the query for routing and normalizes its own cache key.
+            const response = await fetch(`${url}?r=${offset}-${offset + length - 1}`, { headers: { Range: `bytes=${offset}-${offset + length - 1}` } });
             if (response.status !== 206 && response.status !== 200) {
                 throw new Error(`Range read failed: ${response.status}`);
             }
@@ -79,6 +71,14 @@ async function timed(name, fn) {
 async function boot() {
     const status = (s) => { els.status.textContent = s; };
 
+    // Manifest first: it is the version pointer (short cache), and its
+    // packVersion threads a content-hash segment into every other pack URL
+    // so those can be cached as immutable without a purge story.
+    status('loading pack manifest…');
+    const manifest = await (await fetch(`${PACK_BASE}/pack-manifest.json`)).json();
+    state.manifest = manifest;
+    state.packBase = manifest.packVersion ? `${PACK_BASE}/${manifest.packVersion}` : PACK_BASE;
+
     status('loading encoder (fp16 MiniLM, self-hosted)…');
     state.embedder = await timed('modelLoad', () =>
         pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', { dtype: 'fp16' }));
@@ -94,30 +94,28 @@ async function boot() {
 
     status('opening pack (verifying resident tier)…');
     state.artifact = await timed('packOpen', () =>
-        Pancake.SketchArtifact.open(createHttpRangeSource(`${PACK_BASE}/wiki.pancake-sketch`, 'pack'), {}));
+        Pancake.SketchArtifact.open(createHttpRangeSource(`${state.packBase}/wiki.pancake-sketch`, 'pack'), {}));
 
     status('building WASM scanner…');
     state.scanner = await timed('scannerBuild', () => Pancake.createSketchScanner(state.artifact));
 
     status('loading corpus offsets…');
     state.offsets = await timed('offsetsLoad', async () => {
-        const r = await fetch(`${PACK_BASE}/corpus-offsets.u32`);
+        const r = await fetch(`${state.packBase}/corpus-offsets.u32`);
         const b = await r.arrayBuffer();
         meterAdd('offsets', b.byteLength);
         return new Uint32Array(b);
     });
-    state.corpusSource = createHttpRangeSource(`${PACK_BASE}/corpus.bin`, 'hydration');
+    state.corpusSource = createHttpRangeSource(`${state.packBase}/corpus.bin`, 'hydration');
 
     status('loading abstention calibration…');
     const [abstentionAsset, bloomBuf] = await Promise.all([
-        fetch(`${PACK_BASE}/wiki-abstention.json`).then((r) => r.json()),
-        fetch(`${PACK_BASE}/wiki-vocab.bloom`).then((r) => r.arrayBuffer()),
+        fetch(`${state.packBase}/wiki-abstention.json`).then((r) => r.json()),
+        fetch(`${state.packBase}/wiki-vocab.bloom`).then((r) => r.arrayBuffer()),
     ]);
     meterAdd('abstention', bloomBuf.byteLength);
     state.abstention = createAbstentionScorer(abstentionAsset, bloomBuf);
 
-    const manifest = await (await fetch(`${PACK_BASE}/pack-manifest.json`)).json();
-    state.manifest = manifest;
     status(`ready — ${state.artifact.count.toLocaleString()} chunks (${manifest.articles.toLocaleString()} articles), `
         + `${(state.artifact.residentBytes / 1e6).toFixed(1)} MB resident`
         + (state.artifact.residentVerified ? ', hash verified' : '')
@@ -257,7 +255,7 @@ window.__bench = async (queries) => {
 
 // Golden-probe hook: verify the shipped calibration in the real browser.
 window.__probes = async () => {
-    const probes = await (await fetch(`${PACK_BASE}/wiki-abstention-probes.json`)).json();
+    const probes = await (await fetch(`${state.packBase}/wiki-abstention-probes.json`)).json();
     const failures = [];
     for (const probe of probes) {
         const { abstention } = await runQuery(probe.text);
