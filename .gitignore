@@ -65,10 +65,10 @@ pancake_gt_snapshot_*.tar.gz
 pancake_gt_snapshot_*.tar.gz.sha256
 
 # Worker build output
-examples/worker/dist/
-examples/worker/.dev.vars
-examples/worker-semantic-search/.dev.vars
-examples/worker-semantic-search-pages/dist/
+examples/reference-worker/dist/
+examples/reference-worker/.dev.vars
+examples/03-edge-docs-search/.dev.vars
+examples/03-edge-docs-search/pages-ui/dist/
 
 # Local benchmark/analysis artifacts
 pareto/
@@ -95,14 +95,15 @@ nytimes/sweep_*.png
 
 # Local webanns experiment data
 /public/
-examples/browser-vite/public/
-examples/browser-vite/webanns_1k/
-examples/browser-vite/webanns_compare/
-examples/demo/test.js
+examples/01-hello-pack/public/
+examples/01-hello-pack/webanns_1k/
+examples/01-hello-pack/webanns_compare/
+examples/legacy/technical-demo/test.js
 
 # Generated binaries — regenerate with emb.py or demo scripts
 /vectors.bin
-examples/demo/loyalty-index.bin
+examples/02-catalog-hydration/runtime_mappings.json
+examples/legacy/technical-demo/loyalty-index.bin
 
 # Experimental engine build variants (OUT_BASENAME=<name> builds). The shipped
 # artifacts are dist/engine.{js,wasm} and dist/engine.scalar.{js,wasm}; anything
@@ -125,12 +126,16 @@ dist/rag.html
 
 # Embedding model excluded from public release
 src/embedding_model.hpp
-examples/cli/embed_documents.js
-examples/cli/search_index.js
-examples/demo/demo_hybrid_search.js
-examples/demo/demo_recipe_search.js
-examples/demo/demo_recipe_search_enhanced.js
-examples/search-artifact-demo/static/dist/
+examples/legacy/cli/embed_documents.js
+examples/legacy/cli/search_index.js
+examples/legacy/technical-demo/demo_hybrid_search.js
+examples/legacy/technical-demo/demo_recipe_search.js
+examples/legacy/technical-demo/demo_recipe_search_enhanced.js
+examples/legacy/range-artifact-demo/static/dist/
+
+# Ignored-only wiki demo leftovers from the pre-repackage path. Move or delete
+# manually after local Node/Workers handles release their files.
+examples/wiki-pack/
 
 # Local toolchains and vendored checkouts (multi-GB, never ship)
 /external/

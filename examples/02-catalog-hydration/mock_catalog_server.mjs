@@ -11,6 +11,25 @@ const productsPath = path.join(__dirname, 'products.json');
 const products = JSON.parse(fs.readFileSync(productsPath, 'utf8'));
 const byId = new Map(products.map((product) => [product.id, { ...product }]));
 
+function validateProduct(product) {
+  if (!product || typeof product !== 'object') return 'product must be an object';
+  for (const field of ['id', 'title', 'category', 'description']) {
+    if (typeof product[field] !== 'string' || product[field].trim() === '') {
+      return `${field} must be a non-empty string`;
+    }
+  }
+  if (!Number.isInteger(product.priceCents) || product.priceCents < 0) {
+    return 'priceCents must be a non-negative integer';
+  }
+  if (!Number.isInteger(product.inventory) || product.inventory < 0) {
+    return 'inventory must be a non-negative integer';
+  }
+  if (product.url !== undefined && typeof product.url !== 'string') {
+    return 'url must be a string when provided';
+  }
+  return null;
+}
+
 function sendJson(res, status, body) {
   const text = JSON.stringify(body, null, 2);
   res.writeHead(status, {
@@ -77,6 +96,31 @@ const server = http.createServer(async (req, res) => {
     }
 
     return sendJson(res, 200, { updated: product });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/create') {
+    let body;
+    try {
+      body = await parseBody(req);
+    } catch {
+      return sendJson(res, 400, { error: 'Invalid JSON' });
+    }
+
+    const error = validateProduct(body);
+    if (error) return sendJson(res, 400, { error });
+    if (byId.has(body.id)) return sendJson(res, 409, { error: 'Product id already exists' });
+
+    const product = {
+      id: body.id.trim(),
+      title: body.title.trim(),
+      category: body.category.trim(),
+      description: body.description.trim(),
+      priceCents: body.priceCents,
+      inventory: body.inventory,
+      url: body.url || `/products/${body.id.trim()}`,
+    };
+    byId.set(product.id, product);
+    return sendJson(res, 201, { created: product });
   }
 
   return sendJson(res, 404, { error: 'Not found' });

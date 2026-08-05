@@ -6,6 +6,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const WORKER_URL = process.env.PANCAKE_WORKER_URL || 'http://127.0.0.1:8787';
+const API_KEY = process.env.PANCAKE_API_KEY || '';
 const SNAPSHOT_PATH = path.join(__dirname, 'catalog_index.pnck');
 
 async function main() {
@@ -15,6 +16,7 @@ async function main() {
     headers: {
       'Content-Type': 'application/octet-stream',
       'Content-Length': String(body.byteLength),
+      ...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {}),
     },
     body,
   });

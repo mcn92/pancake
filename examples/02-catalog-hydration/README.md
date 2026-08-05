@@ -18,6 +18,9 @@ demo vectors, not model-generated embeddings.
 - `mock_catalog_server.mjs` — serves live catalog hydration over HTTP
 - `worker_import_snapshot.mjs` — imports the Worker snapshot blob into the reference Worker
 - `demo_client.mjs` — queries the Worker, hydrates catalog data, and prints ranked results
+- `live_update.mjs` — deletes the rain shell from the Worker index, creates a
+  leather boot in the catalog, adds its vector to the Worker, and writes the
+  runtime Worker-id mapping used by `demo_client.mjs`
 
 ## What This Demonstrates
 
@@ -38,28 +41,39 @@ From the repo root:
 
 ```bash
 ./build.sh
-node examples/catalog-demo/build_snapshot.mjs
-node examples/catalog-demo/mock_catalog_server.mjs
+node examples/02-catalog-hydration/build_snapshot.mjs
+node examples/02-catalog-hydration/mock_catalog_server.mjs
 ```
 
 In another terminal, start the reference Worker with unauthenticated admin
 routes enabled for local demo use:
 
 ```bash
-cd examples/worker
+cd examples/reference-worker
 npx wrangler dev --port 8787 --log-level error --var ALLOW_INSECURE_ADMIN:1
+```
+
+If you have a local `.dev.vars` file with `READ_ONLY=1`, change it to
+`READ_ONLY=0` or comment it out for this demo. The snapshot import uses
+`/import`, which is intentionally rejected in read-only mode.
+
+If `.dev.vars` sets `API_KEY`, pass the same value to the importer:
+
+```bash
+PANCAKE_API_KEY=local-demo-key \
+  node examples/02-catalog-hydration/worker_import_snapshot.mjs
 ```
 
 Back at the repo root, import the generated Worker snapshot:
 
 ```bash
-node examples/catalog-demo/worker_import_snapshot.mjs
+node examples/02-catalog-hydration/worker_import_snapshot.mjs
 ```
 
 Run a query and hydrate the product cards:
 
 ```bash
-node examples/catalog-demo/demo_client.mjs "lightweight waterproof hiking jacket"
+node examples/02-catalog-hydration/demo_client.mjs "lightweight waterproof hiking jacket"
 ```
 
 ## Show Live Catalog Hydration
@@ -75,11 +89,31 @@ curl -X POST http://127.0.0.1:9090/admin/update \
 Re-run the same search:
 
 ```bash
-node examples/catalog-demo/demo_client.mjs "lightweight waterproof hiking jacket"
+node examples/02-catalog-hydration/demo_client.mjs "lightweight waterproof hiking jacket"
 ```
 
 The Worker returns the same semantic match order, but the hydrated catalog
 response now shows the item as out of stock.
+
+## Show Live Search Mutation
+
+With the mock catalog and reference Worker still running, remove the rain shell
+from the Worker index and add a leather hiking boot with 20 in stock:
+
+```bash
+PANCAKE_API_KEY=local-demo-key \
+  node examples/02-catalog-hydration/live_update.mjs
+```
+
+Then search for boots:
+
+```bash
+node examples/02-catalog-hydration/demo_client.mjs "leather hiking boots"
+```
+
+The script writes `runtime_mappings.json`, which is ignored by Git. That file
+maps the new Worker id returned by `/add` to the catalog product id so the demo
+client can hydrate the live-created product.
 
 ## Rebuild The Snapshot
 
@@ -87,8 +121,8 @@ If you change the indexed search text or vectors in `search_corpus.jsonl`,
 rebuild and re-import:
 
 ```bash
-node examples/catalog-demo/build_snapshot.mjs
-node examples/catalog-demo/worker_import_snapshot.mjs
+node examples/02-catalog-hydration/build_snapshot.mjs
+node examples/02-catalog-hydration/worker_import_snapshot.mjs
 ```
 
 That changes retrieval behavior, which is the right boundary for a snapshot-

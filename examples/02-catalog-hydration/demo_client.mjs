@@ -8,6 +8,7 @@ const __dirname = path.dirname(__filename);
 const WORKER_URL = process.env.PANCAKE_WORKER_URL || 'http://127.0.0.1:8787';
 const CATALOG_URL = process.env.CATALOG_DEMO_URL || 'http://127.0.0.1:9090';
 const CORPUS_PATH = path.join(__dirname, 'search_corpus.jsonl');
+const RUNTIME_MAPPINGS_PATH = path.join(__dirname, 'runtime_mappings.json');
 
 const corpusRows = fs.readFileSync(CORPUS_PATH, 'utf8')
   .split(/\r?\n/)
@@ -15,6 +16,13 @@ const corpusRows = fs.readFileSync(CORPUS_PATH, 'utf8')
   .map((line) => JSON.parse(line));
 
 const workerIdToProductId = new Map(corpusRows.map((row, idx) => [idx, row.id]));
+
+if (fs.existsSync(RUNTIME_MAPPINGS_PATH)) {
+  const mappings = JSON.parse(fs.readFileSync(RUNTIME_MAPPINGS_PATH, 'utf8'));
+  for (const [workerId, productId] of Object.entries(mappings.workerIdToProductId || {})) {
+    workerIdToProductId.set(Number(workerId), productId);
+  }
+}
 
 function queryToDemoVector(queryText) {
   const text = queryText.toLowerCase();
@@ -56,6 +64,12 @@ function formatPrice(priceCents) {
   return `$${(priceCents / 100).toFixed(2)}`;
 }
 
+function formatLatencyMs(ms) {
+  if (!Number.isFinite(ms)) return 'unknown';
+  if (ms > 0 && ms < 0.01) return `${(ms * 1000).toFixed(1)} us`;
+  return `${ms.toFixed(2)} ms`;
+}
+
 async function main() {
   const queryText = process.argv.slice(2).join(' ').trim() || 'lightweight waterproof hiking jacket';
   const query = queryToDemoVector(queryText);
@@ -73,7 +87,7 @@ async function main() {
 
   console.log(`Query: ${queryText}`);
   console.log(`Demo vector: [${query.map((value) => value.toFixed(3)).join(', ')}]`);
-  console.log(`Worker latency: ${search.search_ms.toFixed(2)} ms`);
+  console.log(`Worker search time: ${formatLatencyMs(search.search_ms)}`);
   console.log('');
 
   workerIds.forEach((workerId, index) => {
