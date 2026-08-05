@@ -5,7 +5,7 @@ backends, the WASM C ABI, the JavaScript wrapper, the native benchmarking addon,
 serialization, and the Cloudflare Worker reference deployments.
 **Last updated:** 2026-07-19
 **Status:** Reflects the current source tree (`src/`, `pancake-core.js`,
-`native/`, `examples/worker*`). This document was written from a ground-up
+`native/`, `examples/reference-worker*`). This document was written from a ground-up
 re-read of the code.
 
 > Verification note: every mechanism below was read out of the source. Where a
@@ -633,8 +633,8 @@ the native build exists only to measure the runtime-overhead delta.
 
 ## 11. Cloudflare Worker Deployment
 
-Two reference Workers live under `examples/`. The first (`examples/worker/`) is a
-full read/write reference; the second (`examples/worker-semantic-search/`) is a
+Two reference Workers live under `examples/`. The first (`examples/reference-worker/`) is a
+full read/write reference; the second (`examples/03-edge-docs-search/`) is a
 hardened snapshot-first demo. The mental model for both is **snapshot search at
 the edge**, not a durable mutable database inside one isolate.
 
@@ -645,7 +645,7 @@ promise. The index stays warm across requests within an isolate. On any
 non-trivial route, if `index` is null
 and a bucket is bound, the Worker lazily **restores from R2** before serving
 (`/health`, `/readiness`, `/reset_cache`, `/init`, `/import` skip auto-restore).
-(`examples/worker/worker.js`, `restoreIndex()`.)
+(`examples/reference-worker/worker.js`, `restoreIndex()`.)
 
 ### 11.2 Endpoints
 
@@ -709,7 +709,7 @@ the CORS preflight: `if (ADMIN_ROUTES.has(path) && isReadOnly(env)) return 403`.
 `/search`, `/stats`, `/health`, `/readiness` remain available. This is the
 recommended posture for a public, snapshot-backed search endpoint: publish the
 index out-of-band, deploy read-only, expose only search.
-(`examples/worker/worker.js`, `ADMIN_ROUTES` / `isReadOnly()`.)
+(`examples/reference-worker/worker.js`, `ADMIN_ROUTES` / `isReadOnly()`.)
 
 ### 11.5 ID mapping
 
@@ -720,7 +720,7 @@ exercise the same mapping contract as Node and browser consumers.
 
 ### 11.6 Semantic-search demo differences
 
-`examples/worker-semantic-search/` is snapshot-first and read-oriented: it
+`examples/03-edge-docs-search/` is snapshot-first and read-oriented: it
 builds the index offline and **bundles four assets into the Worker script** as
 ES-module imports (`assets/docs-index.bin` snapshot, `assets/docs-student.bin`
 distilled encoder weights, `assets/docs-corpus.json`, `assets/docs-manifest.json`)

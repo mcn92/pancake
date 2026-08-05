@@ -8,7 +8,7 @@ const path = require('path');
 const { chromium, webkit, firefox } = require('playwright');
 
 const ROOT_DIR = process.cwd();
-const FIXTURE_DIR = path.join(process.cwd(), 'examples', 'browser-vite');
+const FIXTURE_DIR = path.join(process.cwd(), 'examples', '01-hello-pack');
 const HOST = '127.0.0.1';
 const PORT = 4173;
 const URL = `http://${HOST}:${PORT}`;

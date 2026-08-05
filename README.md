@@ -504,7 +504,7 @@ Pancake can also run inside Cloudflare Workers, but the right mental model is
 **snapshot search at the edge**, not **a durable mutable vector database inside
 one long-lived isolate**.
 
-The reference Worker in [`examples/worker/`](examples/worker/) keeps a Pancake
+The reference Worker in [`examples/reference-worker/`](examples/reference-worker/) keeps a Pancake
 index warm in process when possible and restores snapshots from R2 on cold
 start. It works well for:
 
@@ -529,12 +529,12 @@ useful for demos, admin tooling, and local validation, but the main use case
 is snapshot-backed search rather than a fully stateful ANN service.
 
 For a deployable public webpage with no storage or inference bindings, see the
-[`worker-semantic-search`](examples/worker-semantic-search/) demo. It bundles a
+[`worker-semantic-search`](examples/03-edge-docs-search/) demo. It bundles a
 1.08 MB domain-distilled int8 query encoder, a quantized Pancake snapshot, and
 the result corpus directly into one Worker. Query embedding and Pancake search
 both run locally with zero outbound requests; the offline teacher never ships.
 
-See [`examples/worker/README.md`](examples/worker/README.md) for:
+See [`examples/reference-worker/README.md`](examples/reference-worker/README.md) for:
 
 - endpoint documentation
 - local development and deployment steps
@@ -584,13 +584,13 @@ external-ID translation inside that isolated instance.
 
 ## Examples
 
-- [`examples/cli/build_index.js`](https://github.com/mcn92/pancake/blob/main/examples/cli/build_index.js) -- build an HNSW index from precomputed embeddings
-- [`examples/demo/technical_demo_cli.js`](https://github.com/mcn92/pancake/blob/main/examples/demo/technical_demo_cli.js) -- interactive local REPL
-- [`examples/demo/technical_demo_worker.js`](https://github.com/mcn92/pancake/blob/main/examples/demo/technical_demo_worker.js) -- interactive Worker-targeted REPL
+- [`examples/legacy/cli/build_index.js`](https://github.com/mcn92/pancake/blob/main/examples/legacy/cli/build_index.js) -- build an HNSW index from precomputed embeddings
+- [`examples/legacy/technical-demo/technical_demo_cli.js`](https://github.com/mcn92/pancake/blob/main/examples/legacy/technical-demo/technical_demo_cli.js) -- interactive local REPL
+- [`examples/legacy/technical-demo/technical_demo_worker.js`](https://github.com/mcn92/pancake/blob/main/examples/legacy/technical-demo/technical_demo_worker.js) -- interactive Worker-targeted REPL
 - [`dist/technical-demo.html`](https://github.com/mcn92/pancake/blob/main/dist/technical-demo.html) -- browser demo page with latency and stress views
-- [`examples/browser-vite/`](https://github.com/mcn92/pancake/tree/main/examples/browser-vite) -- minimal bundled browser consumer fixture used by `npm run test:browser`
-- [`examples/worker/`](https://github.com/mcn92/pancake/tree/main/examples/worker) -- reference Cloudflare Worker deployment built on top of Pancake
-- [`examples/worker-semantic-search/`](https://github.com/mcn92/pancake/tree/main/examples/worker-semantic-search) -- zero-runtime-dependency distilled docs search webpage bundled into one Worker
+- [`examples/01-hello-pack/`](https://github.com/mcn92/pancake/tree/main/examples/01-hello-pack) -- minimal bundled browser consumer fixture used by `npm run test:browser`
+- [`examples/reference-worker/`](https://github.com/mcn92/pancake/tree/main/examples/reference-worker) -- reference Cloudflare Worker deployment built on top of Pancake
+- [`examples/03-edge-docs-search/`](https://github.com/mcn92/pancake/tree/main/examples/03-edge-docs-search) -- zero-runtime-dependency distilled docs search webpage bundled into one Worker
 
 ## Architecture
 
@@ -618,7 +618,7 @@ For a real bundled browser-consumer check of `import Pancake from 'pancake-wasm/
 npm run test:browser
 ```
 
-This starts a minimal Vite app in `examples/browser-vite/` and verifies the published web entry
+This starts a minimal Vite app in `examples/01-hello-pack/` and verifies the published web entry
 in Chromium via Playwright.
 
 For SIMD parity coverage, run:

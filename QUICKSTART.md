@@ -174,7 +174,7 @@ When you run or deploy this example, it runs in your own Cloudflare environment:
 ### Run The Worker Locally
 
 ```bash
-cd examples/worker
+cd examples/reference-worker
 npx wrangler dev --port 8787 --var ALLOW_INSECURE_ADMIN:1
 ```
 
@@ -183,7 +183,7 @@ npx wrangler dev --port 8787 --var ALLOW_INSECURE_ADMIN:1
 ### Deploy The Worker To Your Own Cloudflare Account
 
 ```bash
-cd examples/worker
+cd examples/reference-worker
 wrangler r2 bucket create pancake-indexes
 wrangler deploy
 ```
@@ -235,8 +235,8 @@ Do not assume that a Node.js `index.export()` snapshot is interchangeable with t
 From the repo root, with the Worker already running:
 
 ```bash
-node examples/demo/test_worker.js http://localhost:8787
-node examples/demo/technical_demo_worker.js
+node examples/legacy/technical-demo/test_worker.js http://localhost:8787
+node examples/legacy/technical-demo/technical_demo_worker.js
 ```
 
 The demos exercise different paths:
@@ -282,5 +282,5 @@ The Worker `/import` route expects the Worker export format, not a raw local pac
 ## Next Steps
 
 - [README.md](README.md) for the full package API surface
-- [examples/worker/README.md](examples/worker/README.md) for the reference Worker deployment model
+- [examples/reference-worker/README.md](examples/reference-worker/README.md) for the reference Worker deployment model
 - [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) for the deeper system design document

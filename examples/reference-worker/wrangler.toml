@@ -1,0 +1,46 @@
+name = "pancake-search"
+main = "worker.js"
+compatibility_date = "2025-04-09"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# API_KEY = "replace-me-with-a-secret"      # Recommended for any non-local deployment
+# ALLOWED_ORIGIN = "https://yourdomain.com" # Recommended for browser access; unset => no CORS header
+# RATE_LIMIT_RPM = "120"                    # Requests per minute per IP (default: no limit)
+# MAX_JSON_BYTES = "1048576"                # Optional JSON body cap override (default: 1 MiB)
+# ALLOW_INSECURE_ADMIN = "1"                # Local/demo opt-in only; admin routes otherwise require API_KEY
+MAX_ELEMENTS_LIMIT = "200000"               # Keep this aligned with Worker memory limits and vector dimensions
+# ---------------------------------------------------------------------------
+# R2 bucket — for persisting serialized indexes across deployments.
+# Commented out for the in-memory demo flow (examples/legacy/technical-demo/technical_demo_worker.js): with an
+# active R2 binding, `wrangler dev` recycles isolates and races the
+# persist/restore path, which can 503 mutation routes mid-demo. Uncomment to
+# enable snapshot persistence for a real deployment.
+# 1. Create the bucket:   wrangler r2 bucket create pancake-indexes
+# 2. Uncomment below, then redeploy.
+# ---------------------------------------------------------------------------
+# [[r2_buckets]]
+# binding = "INDEX_BUCKET"
+# bucket_name = "pancake-indexes"
+
+# ---------------------------------------------------------------------------
+# KV — lighter alternative to R2 for small indexes (< 25MB value limit).
+# 1. Create:  wrangler kv namespace create INDEXES
+# 2. Paste the returned id below and uncomment.
+# ---------------------------------------------------------------------------
+# [[kv_namespaces]]
+# binding = "INDEXES"
+# id = "your-kv-namespace-id-here"
+
+# ---------------------------------------------------------------------------
+# Durable Objects — for mutable, strongly-consistent index state
+# shared across requests (multi-tenant or live-insert workloads).
+# ---------------------------------------------------------------------------
+# [[durable_objects.bindings]]
+# name = "SEARCH_INDEX"
+# class_name = "SearchIndex"
+# script_name = "pancake-search"
+
+# [[migrations]]
+# tag = "v1"
+# new_classes = ["SearchIndex"]

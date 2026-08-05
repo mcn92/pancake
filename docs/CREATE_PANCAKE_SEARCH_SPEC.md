@@ -24,7 +24,7 @@ package; this mapping only works cleanly for an unscoped name — see §12, Q1 r
 - Embed corpus at build time with a local ONNX model (no Python).
 - Query-time embedding via Cloudflare Workers AI binding (`--mode workers-ai`, default).
 - Generate a complete, deployable Worker project. The runtime is a vendored adaptation of
-  `examples/worker-semantic-search/worker.js`, importing `pancake-wasm` from the registry
+  `examples/03-edge-docs-search/worker.js`, importing `pancake-wasm` from the registry
   (the `workerd` export condition resolves to the Workers entrypoint).
 - Optional immediate deploy via `wrangler deploy` with the live URL printed at the end.
 - Emit a GitHub Action that rebuilds the index and redeploys on content changes.
@@ -37,7 +37,7 @@ package; this mapping only works cleanly for an unscoped name — see §12, Q1 r
   link to the manual guide.
 - Incremental / delta reindexing (full rebuild every time; acceptable within the bundled-asset
   ceiling, see §10 R5).
-- R2-backed snapshot serving for large corpora (the `examples/worker` restore-from-R2 pattern) —
+- R2-backed snapshot serving for large corpora (the `examples/reference-worker` restore-from-R2 pattern) —
   this is the designated v1.1 path past the bundle ceiling; v1 hard-fails with guidance instead.
 - Sitemap ingestion, multi-domain crawling, JS-rendered pages (no headless browser).
 - Hybrid BM25 + vector scoring.
@@ -138,7 +138,7 @@ the worker template imports it under `workerd`.
   the first occurrence and record dropped duplicates in the build log. This is required for the
   Stage 4 self-recall gate to be meaningful.
 - Output: `corpus.json` — array of chunk records. Match the schema already used by
-  `examples/worker-semantic-search/assets/docs-corpus.json` so the worker template consumes it
+  `examples/03-edge-docs-search/assets/docs-corpus.json` so the worker template consumes it
   unmodified. **If any field must differ, update the worker template, not the schema consumers'
   expectations — the deployed worker.js and corpus must always agree.**
 
@@ -186,7 +186,7 @@ the worker template imports it under `workerd`.
   the query chunk's text — exact-duplicate ties are impossible after Stage 2 dedupe, but
   quantization ties on near-duplicates are judged by text, not id), and brute-force
   recall@10 ≥ 98% on 50 random held-out queries. Reuse the validation approach from
-  `examples/demo/technical_demo_cli.js`.
+  `examples/legacy/technical-demo/technical_demo_cli.js`.
 - **Bundle-ceiling gate (see §10 R5):** compute the compressed size of
   `worker.js + snapshot.pnck + corpus.json + manifest.json + ui.html` (gzip) and fail with
   guidance if it exceeds the deploy target's script-size limit (~3 MB compressed on the free
@@ -342,7 +342,7 @@ nav-heavy page, non-English).
    (embeddings may differ only if the model is nondeterministic; document if so).
 4. Generated worker passes a smoke test under **miniflare** with the bundled modules and a
    stubbed AI binding — extend the existing harness pattern from
-   `examples/worker-semantic-search/test_worker.mjs` (miniflare is already a declared
+   `examples/03-edge-docs-search/test_worker.mjs` (miniflare is already a declared
    devDependency of the main repo): `/search?q=...` returns 200 + ranked results; AI-binding
    failure returns the `EMBED_UNAVAILABLE` 503 contract; manifest/model mismatch returns the
    `MANIFEST_MISMATCH` 500 contract.
@@ -409,7 +409,7 @@ nav-heavy page, non-English).
 
 ### Still open
 
-- **Q6:** When the R2-backed tier lands (v1.1), does it reuse `examples/worker`'s append-only
+- **Q6:** When the R2-backed tier lands (v1.1), does it reuse `examples/reference-worker`'s append-only
   snapshot-key scheme as-is, or simplify to a single fixed key since the scaffold's rebuild flow
   is the only writer?
 - **Q7:** Whether `--model` accepts base/large at v1.0 behind a `--experimental` flag or stays
