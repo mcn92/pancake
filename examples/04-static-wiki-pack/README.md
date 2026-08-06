@@ -52,27 +52,41 @@ ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm install
 Then, in order:
 
 ```bash
-# 1. Stream the dump, chunk (~800 chars, title-prefixed), embed fp32 on GPU.
-#    ~103 min on an RTX 2060 for the full corpus; --limit 1000 for a smoke run.
+# 1. Read JSONL docs, chunk (~800 chars, title-prefixed), embed fp32 on GPU.
+#    Input rows are { "id": "...", "title": "...", "text": "...", "url": "..." }.
+python3 embed_corpus.py --input sample-corpus.jsonl --out data-sample
+
+#    Or use the Wikipedia adapter. ~103 min on an RTX 2060 for the full corpus;
+#    --limit 1000 for a smoke run.
+python3 embed_corpus.py --limit 1000 --out data-full
 python3 embed_corpus.py --out data-full
 
 # 2. Cluster the embeddings (k-means, k=1024, nearest-centroid chain order)
 #    and write the layout permutation. Also prints the coalescing simulation
 #    that motivates the layout.
-python3 eval_queries.py --data data-full        # eval set + exact ground truth
-python3 layout_sim.py                            # -> data-full/layout-perm.npy
+python3 eval_queries.py --data data-full        # wiki eval set + exact ground truth
+python3 layout_sim.py --data data-full          # -> data-full/layout-perm.npy
+
+#    For a non-Wikipedia pack, use title-sampled eval only unless you provide
+#    your own corpus-specific hand probes.
+python3 eval_queries.py --data data-sample --sampled 5 --no-hand
+python3 layout_sim.py --data data-sample --k 5
 
 # 3. Reorder the corpus by cluster. Chunk ids are positional, so this is the
 #    entire layout change — vectors, corpus text, and offsets stay in lockstep.
-python3 permute_corpus.py                        # -> data-perm/
+python3 permute_corpus.py --src data-full --out data-perm
+python3 permute_corpus.py --src data-sample --out data-sample-perm
 
 # 4. Build the pack: cosine u8 HNSW index -> sketch artifact (192-dim 4-bit
 #    sketches, 2:1 pooling) + corpus.bin + corpus-offsets.u32.  ~10 min.
 node build_pack.mjs data-perm
+node build_pack.mjs data-sample-perm
 
 # 5. Evaluate: recall vs exact float truth at the shipped settings.
 python3 eval_queries.py --data data-perm         # ground truth for the permuted ids
 node eval_recall.mjs data-perm 200
+python3 eval_queries.py --data data-sample-perm --sampled 5 --no-hand
+node eval_recall.mjs data-sample-perm 200
 
 # 6. Calibrate abstention: fits the scorer, writes wiki-abstention.json,
 #    the vocabulary bloom, and the golden probes; prints the confusion table.

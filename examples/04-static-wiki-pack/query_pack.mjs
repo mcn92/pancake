@@ -26,7 +26,9 @@ const corpusLines = fs.readFileSync(path.join(dataDir, 'corpus.jsonl'), 'utf8').
 const vecBytes = fs.readFileSync(path.join(dataDir, 'vectors.f32'));
 const pyVectors = new Float32Array(vecBytes.buffer, vecBytes.byteOffset, vecBytes.byteLength / 4);
 let worst = 1;
-for (const id of [0, 100, 1000, 3000, 5000]) {
+const parityIds = [0, 100, 1000, 3000, 5000].filter((id) => id < corpusLines.length - 1);
+if (!parityIds.length) parityIds.push(0);
+for (const id of parityIds) {
     const row = JSON.parse(corpusLines[id]);
     const js = await embed(row.text);
     const py = pyVectors.subarray(id * DIM, (id + 1) * DIM);
@@ -34,7 +36,7 @@ for (const id of [0, 100, 1000, 3000, 5000]) {
     for (let d = 0; d < DIM; d++) dot += js[d] * py[d];
     worst = Math.min(worst, dot);
 }
-console.log(`encoder parity (JS fp32 vs Python fp32): worst cosine ${worst.toFixed(5)} over 5 chunks`);
+console.log(`encoder parity (JS fp32 vs Python fp32): worst cosine ${worst.toFixed(5)} over ${parityIds.length} chunks`);
 
 // --- Search + hydrate ----------------------------------------------------
 const artifact = await Pancake.openSketchArtifactFile(path.join(dataDir, 'wiki.pancake-sketch'));

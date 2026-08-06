@@ -16,6 +16,7 @@ const RERANK = Number(process.argv[3] || 300);
 
 const queries = JSON.parse(fs.readFileSync(path.join(dataDir, 'eval-queries.json'), 'utf8'));
 const gt = JSON.parse(fs.readFileSync(path.join(dataDir, 'eval-gt.json'), 'utf8'));
+const EVAL_K = gt[0]?.length || K;
 
 const artifact = await Pancake.openSketchArtifactFile(path.join(dataDir, 'wiki.pancake-sketch'));
 const scanner = await Pancake.createSketchScanner(artifact);
@@ -28,19 +29,19 @@ async function evalDtype(dtype) {
     const t0 = performance.now();
     for (let i = 0; i < queries.length; i++) {
         const out = await embed(queries[i].text, { pooling: 'mean', normalize: true });
-        const { results } = await artifact.search(Float32Array.from(out.data), K, { rerank: RERANK, scanner });
+        const { results } = await artifact.search(Float32Array.from(out.data), EVAL_K, { rerank: RERANK, scanner });
         const got = new Set(results.map((r) => r.id));
         const q = gt[i].filter((id) => got.has(id)).length;
         hits += q;
-        if (queries[i].source === 'hand') { handHits += q; handTotal += K; }
+        if (queries[i].source === 'hand') { handHits += q; handTotal += EVAL_K; }
     }
-    const recall = hits / (queries.length * K);
-    const handRecall = handHits / handTotal;
-    console.log(`${dtype.padEnd(5)} recall@${K}: ${(recall * 100).toFixed(2)}%  (hand-written only: ${(handRecall * 100).toFixed(2)}%)  [${((performance.now() - t0) / queries.length).toFixed(0)} ms/q total]`);
+    const recall = hits / (queries.length * EVAL_K);
+    const handPart = handTotal ? `  (hand-written only: ${((handHits / handTotal) * 100).toFixed(2)}%)` : '';
+    console.log(`${dtype.padEnd(5)} recall@${EVAL_K}: ${(recall * 100).toFixed(2)}%${handPart}  [${((performance.now() - t0) / queries.length).toFixed(0)} ms/q total]`);
     return recall;
 }
 
-console.log(`pack: ${artifact.count} chunks, rerank C=${RERANK}, ${queries.length} queries vs exact fp32 float top-${K}`);
+console.log(`pack: ${artifact.count} chunks, rerank C=${RERANK}, ${queries.length} queries vs exact fp32 float top-${EVAL_K}`);
 await evalDtype('fp32');
 await evalDtype('fp16');
 await evalDtype('q8');

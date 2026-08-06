@@ -12,10 +12,6 @@ import json
 import random
 from pathlib import Path
 
-import numpy as np
-import torch
-from transformers import AutoModel, AutoTokenizer
-
 MODEL_ID = "sentence-transformers/all-MiniLM-L6-v2"
 DIM = 384
 K = 10
@@ -48,7 +44,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=Path, default=Path(__file__).parent / "data-full")
     parser.add_argument("--sampled", type=int, default=180)
+    parser.add_argument("--no-hand", action="store_true", help="do not append the built-in Wikipedia-flavored hand queries")
     args = parser.parse_args()
+
+    import numpy as np
+    import torch
+    from transformers import AutoModel, AutoTokenizer
 
     rng = random.Random(20260803)
     titles = []
@@ -59,10 +60,10 @@ def main():
             if title not in seen:
                 seen.add(title)
                 titles.append(title)
-    sampled = rng.sample(titles, args.sampled)
-    queries = [{"text": t, "source": "title"} for t in sampled] + [
-        {"text": t, "source": "hand"} for t in HAND_WRITTEN
-    ]
+    sampled = rng.sample(titles, min(args.sampled, len(titles)))
+    queries = [{"text": t, "source": "title"} for t in sampled]
+    if not args.no_hand:
+        queries += [{"text": t, "source": "hand"} for t in HAND_WRITTEN]
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     tok = AutoTokenizer.from_pretrained(MODEL_ID)
@@ -77,11 +78,12 @@ def main():
 
     vectors = np.memmap(args.data / "vectors.f32", dtype=np.float32, mode="r")
     vectors = vectors.reshape(-1, DIM)
+    k = min(K, vectors.shape[0])
     gt = []
     block = 50
     for i in range(0, len(queries), block):
         scores = vectors @ emb[i:i + block].T          # (N, block); rows are unit vectors
-        top = np.argpartition(-scores, K, axis=0)[:K]  # (K, block) unsorted
+        top = np.argpartition(-scores, k - 1, axis=0)[:k]  # (k, block) unsorted
         for c in range(scores.shape[1]):
             ids = top[:, c]
             order = np.argsort(-scores[ids, c])
@@ -91,7 +93,7 @@ def main():
     (args.data / "eval-queries.json").write_text(json.dumps(queries, indent=1) + "\n")
     (args.data / "eval-gt.json").write_text(json.dumps(gt) + "\n")
     emb.tofile(args.data / "eval-queries.f32")
-    print(f"wrote {len(queries)} queries + exact top-{K} ground truth")
+    print(f"wrote {len(queries)} queries + exact top-{k} ground truth")
 
 
 if __name__ == "__main__":

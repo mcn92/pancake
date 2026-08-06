@@ -73,11 +73,14 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     vecs = np.memmap(args.data / "vectors.f32", dtype=np.float32, mode="r").reshape(-1, DIM)
     x = torch.from_numpy(np.ascontiguousarray(vecs)).to(device)
+    k = min(args.k, x.shape[0])
+    if k != args.k:
+        print(f"k-means: reducing k from {args.k} to {k} for {x.shape[0]} vectors")
 
-    print(f"k-means: {x.shape[0]} vectors -> {args.k} clusters on {device}")
-    assign, centroids = kmeans(x, args.k)
+    print(f"k-means: {x.shape[0]} vectors -> {k} clusters on {device}")
+    assign, centroids = kmeans(x, k)
     order = chain_order(centroids)
-    rank_of_cluster = np.empty(args.k, dtype=np.int64)
+    rank_of_cluster = np.empty(k, dtype=np.int64)
     for rank, c in enumerate(order):
         rank_of_cluster[c] = rank
     # Permutation: stable sort by chained cluster rank; new_id[old_id]
@@ -87,11 +90,12 @@ def main():
 
     q = np.fromfile(args.data / "eval-queries.f32", dtype=np.float32).reshape(-1, DIM)
     qt = torch.from_numpy(q).to(device)
+    candidate_count = min(args.C, x.shape[0])
     for gap in (4096, 16384, 65536):
         tot_old = tot_new = fill_old = fill_new = 0
         for i in range(q.shape[0]):
             scores = (x @ qt[i]).cpu().numpy()
-            top = np.argpartition(-scores, args.C)[:args.C]
+            top = np.argpartition(-scores, candidate_count - 1)[:candidate_count]
             r_old, f_old = coalesce(top, gap)
             r_new, f_new = coalesce(new_id[top], gap)
             tot_old += r_old; tot_new += r_new; fill_old += f_old; fill_new += f_new

@@ -1,8 +1,7 @@
 # Generated pack data: corpus, embeddings, artifacts, eval sets (gigabytes;
 # rebuild with embed_corpus.py -> permute_corpus.py -> build_pack.mjs)
 data/
-data-full/
-data-perm/
+data-*/
 
 # Dependencies (includes the transformers.js model cache)
 node_modules/
