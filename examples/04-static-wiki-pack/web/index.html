@@ -70,7 +70,7 @@
         <tr><td>Recall@10</td><td>95.65% vs exact float search; 100% on hand-written questions</td></tr>
         <tr><td>Per query</td><td>~66 range requests · ~390 KiB · 0.6–1.5 s cold edge, ~330 ms warm edge, ~20 ms warm browser</td></tr>
         <tr><td>Boot</td><td>~93 MB one-time (encoder + resident tier), ~8 s cold (loads in parallel); ~2 s on repeat visits via service worker</td></tr>
-        <tr><td>Abstention</td><td>14/14 golden probes pass in CI and in this page</td></tr>
+        <tr><td>Abstention</td><td>Generated held-out-shard probes pass in CI and in this page</td></tr>
         </tbody>
       </table>
 

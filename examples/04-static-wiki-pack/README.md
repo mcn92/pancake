@@ -34,10 +34,16 @@ Measured on the built pack (2026-08-03):
   (5.7-18.6 s per query) until the URLs were made distinct. The remaining
   gap to the ~280 ms localhost number is per-request edge latency; the
   durable fix is fewer, larger reads (see the residency note below).
-- **Abstention**: AUC 1.0000 on the 122-point fit set (96 answerable, 26
-  unanswerable — a small sample, so read the clean score gap between the
-  classes, not the headline AUC); 14/14 golden probes pass in Node and in
-  Chromium.
+- **Abstention**: Calibrated from a generated held-out title shard rather than
+  hand-written questions. The script holds out about 2% of titles by chunk
+  count, builds a reduced pack without them, treats title questions from that
+  shard as hard in-domain negatives, verifies retained-title positives by
+  source-title retrieval, adds synthetic out-of-vocabulary gibberish negatives,
+  adds generated real-English negatives from an unrelated title bank,
+  mines a weak band from retained-title queries whose source lands at rank
+  5-50, and reports per-negative-kind AUC plus reduced-vs-full shift before
+  shipping the scorer with the full pack. Negative rows that retrieve as close
+  as a median verified positive are dropped as semantic overlap.
 
 ## Pipeline
 
@@ -88,10 +94,54 @@ node eval_recall.mjs data-perm 200
 python3 eval_queries.py --data data-sample-perm --sampled 5 --no-hand
 node eval_recall.mjs data-sample-perm 200
 
-# 6. Calibrate abstention: fits the scorer, writes wiki-abstention.json,
-#    the vocabulary bloom, and the golden probes; prints the confusion table.
+# 6. Calibrate abstention: builds a reduced held-out calibration pack, fits the
+#    scorer, writes wiki-abstention.json, the vocabulary bloom, and generated
+#    probes; prints the confusion table and reduced-vs-full shift.
 node calibrate_abstention.mjs data-perm
 ```
+
+Step 6 is intentionally not a quick metadata pass: it writes a reduced copy of
+`corpus.jsonl`/`vectors.f32`, rebuilds a second pack in-process, and embeds the
+generated fit queries. On the 456k-chunk wiki pack, expect another pack-build-
+sized job and peak memory that includes the source vectors file.
+
+The default abstention fit is agnostic and generated, but it is not a substitute
+for corpus-owner judgment. For a pack users will rely on, add owner probes for
+in-domain answerable queries and hard out-of-domain queries; those probes are
+the per-corpus ground truth that catches over-abstention and false confidence.
+The built-in foreign-title bank is used for fit pressure and diagnostics, not
+as a hard generated probe set, because some real-English "foreign" queries are
+semantically close enough that retrieval cannot separate them without losing
+verified positives.
+
+Calibration knobs:
+
+```bash
+HOLDOUT_RATE=0.02 FIT_QUERIES=160 HOLDOUT_QUERIES=160 \
+FOREIGN_QUERIES=80 GIBBERISH_QUERIES=80 WEAK_QUERIES=80 \
+ABSTENTION_SEED=424242 \
+  node calibrate_abstention.mjs data-perm
+```
+
+Pack owners can add corpus-specific correctness probes without changing the
+default agnostic fit:
+
+```bash
+node calibrate_abstention.mjs data-perm --probes probes.json
+```
+
+`probes.json` is an array of `{ "text": "...", "expect": "answer" }` rows;
+`expect` may also be an array such as `["weak", "answer"]`.
+
+Pack owners can also replace the default foreign-title bank:
+
+```bash
+node calibrate_abstention.mjs data-perm --foreign-titles foreign-titles.txt
+```
+
+`foreign-titles.txt` can be newline-delimited text; `.json` files are parsed as
+an array of title strings. The calibrator logs dropped foreign entries so domain
+overlap is visible instead of silently poisoning labels.
 
 `query_pack.mjs` is a CLI smoke test of the full flow (JS-side encoding,
 search, hydration) against whichever data directory you pass it.
@@ -136,14 +186,22 @@ probes in the live page. Search knobs via URL: `?C=200&gap=16384&p=32`.
   parallelism. Writing chunks in k-means cluster order makes a query's
   candidates physically adjacent: ~66 coalesced requests instead of ~430,
   with no format changes — the layout is a build-time permutation.
-- **Abstention verdicts measure match strength, not intent.** The scorer
-  (logistic over top-distance, margin, mean-of-10, and known-vocabulary
-  fraction from a 256 KB bloom filter) cleanly separates "nothing useful
-  here" from real matches. It deliberately does not try to detect temporal
-  or intent gaps — "who won the 2026 world cup" surfaces the real pre-event
-  article and is scored as the strong match it is. The vocabulary feature is
-  what catches gibberish, which lands at cosine distances inside the
-  answerable band and is invisible to distance alone.
+- **Abstention is pack-local, not wiki-specific.** The scorer is still just
+  logistic regression over top-distance, margin, mean-of-10, and known-
+  vocabulary fraction from a 256 KB bloom filter, but the labels now come from
+  the pack itself. Calibration removes a deterministic title shard, generates
+  questions from those absent titles as hard negatives, verifies positives from
+  retained titles, adds generated real-English foreign-title negatives,
+  synthesizes gibberish from tokens outside the vocabulary bloom, mines weak
+  examples from rank-5-to-50 source-title hits, then measures how much the
+  fitted scores move when evaluated against the final full pack. Gibberish rows
+  are downweighted in both standardization and fit, and AUC is reported by
+  negative kind so the easy vocabulary failures cannot hide the harder in-
+  vocabulary cases. Negative labels are verified against this pack: title
+  identity is only a proxy, so held-out and foreign-bank negatives are dropped
+  when their retrieval distance is as strong as a median verified positive.
+  Holding out by title rather than by individual chunk matters: if another
+  chunk with the same title remains, the negative is no longer provably absent.
 - **The query path never touches the HNSW graph.** The sketch profile is
   edge-free — resident scan plus one fetch round beats graph traversal over
   ranged reads (one round-trip per hop) by design. The pipeline's index
