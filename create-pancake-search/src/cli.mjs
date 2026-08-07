@@ -209,6 +209,10 @@ async function rebuildProject(projectDir, flags = {}) {
   console.log('Rebuilt Pancake search assets.');
 }
 
+export async function buildSearchAssets(projectDir, config, options = {}) {
+  await buildAssets(projectDir, config, options);
+}
+
 function applyRuntimeOverrides(config, projectDir, flags) {
   if (!flags.runtime && !flags.artifact) return;
   const runtime = flags.runtime || (flags.artifact ? 'artifact' : config.runtime?.mode || 'snapshot');
@@ -331,7 +335,9 @@ async function buildAssets(projectDir, config, options = {}) {
     index.dispose();
   }
 
-  const assetsDir = path.join(projectDir, 'assets');
+  const assetsDir = options.assetsDir
+    ? path.resolve(options.assetsDir)
+    : path.join(projectDir, 'assets');
   await fs.mkdir(assetsDir, { recursive: true });
   const artifactPath = config.runtime?.mode === 'artifact' && config.runtime.artifactPath
     ? path.resolve(projectDir, config.runtime.artifactPath)
@@ -386,14 +392,14 @@ async function buildAssets(projectDir, config, options = {}) {
   await fs.writeFile(path.join(assetsDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   await fs.mkdir(path.join(projectDir, '.pancake'), { recursive: true });
   await fs.writeFile(path.join(projectDir, '.pancake', 'last-build.log'), `${logLines.join('\n')}\n`);
-  const gzipBytes = await projectedGzipBytes(projectDir);
+  const gzipBytes = options.skipBundleSizeCheck ? null : await projectedGzipBytes(projectDir);
   if (config.runtime?.mode === 'artifact') {
     log(`Built corpus assets with ${(artifact.byteLength / 1024 / 1024).toFixed(2)} MB Search Artifact`);
   } else {
     log(`Built index: ${(snapshot.byteLength / 1024 / 1024).toFixed(2)} MB snapshot`);
   }
-  log(`Projected bundled gzip size: ${(gzipBytes / 1024 / 1024).toFixed(2)} MB`);
-  if (gzipBytes > 3 * 1024 * 1024) {
+  if (gzipBytes !== null) log(`Projected bundled gzip size: ${(gzipBytes / 1024 / 1024).toFixed(2)} MB`);
+  if (gzipBytes !== null && gzipBytes > 3 * 1024 * 1024) {
     throw new CliError('Projected Worker bundle exceeds the free-plan 3 MB compressed limit. Next: reduce source scope or wait for the R2-backed tier.', 2);
   }
 }
@@ -456,6 +462,8 @@ function matchesSource(rel, source) {
 function globMatch(file, glob) {
   const normalized = glob.replace(/\\/g, '/');
   if (normalized.includes('{md,mdx,html,txt}')) return /\.(md|mdx|html|txt)$/i.test(file);
+  if (normalized.startsWith('**/*.')) return file.toLowerCase().endsWith(normalized.slice(4).toLowerCase());
+  if (normalized.startsWith('*.')) return !file.includes('/') && file.toLowerCase().endsWith(normalized.slice(1).toLowerCase());
   if (normalized.startsWith('**/') && normalized.endsWith('/**')) return file.includes(normalized.slice(3, -3));
   if (normalized.startsWith('**/')) return file.endsWith(normalized.slice(3)) || file.includes(normalized.slice(3).replace('/**', ''));
   return file === normalized || file.startsWith(`${normalized}/`);

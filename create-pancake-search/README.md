@@ -31,3 +31,47 @@ range-read stats so cold-load and warm-cache behavior are visible directly.
 
 URL ingestion is intentionally conservative: crawls stay on the seed origin,
 skip redirects, and cap HTML response bodies before parsing.
+
+## Docusaurus
+
+Docusaurus sites can build a static Pancake Search Artifact through the package
+subpath plugin:
+
+```js
+// docusaurus.config.js
+import pancakeSearch from 'create-pancake-search/docusaurus';
+
+export default {
+  plugins: [
+    [
+      pancakeSearch,
+      {
+        assetBase: 'pancake-search',
+        name: 'my-docs-search',
+      },
+    ],
+  ],
+};
+```
+
+On `docusaurus build`, the plugin indexes the rendered HTML in the build output
+directory and writes static artifact assets into
+`build/pancake-search/`:
+
+- `index.pancake-range` — range-readable Pancake Search Artifact
+- `corpus.json` — result metadata and snippets
+- `manifest.json` — embedding/index/runtime metadata and URLs
+
+That means docs, blog posts, pages, and rendered MDX all flow through the same
+folder ingestion, chunking, embedding, and Search Artifact builder as the CLI,
+without generating or deploying a Worker.
+
+For local mechanics tests without downloading an embedding model, enable stub
+embeddings:
+
+```js
+[pancakeSearch, { assetBase: 'pancake-search', stubEmbeddings: true }]
+```
+
+Stub-built indexes are not semantic. Rebuild without `stubEmbeddings` before
+publishing the site.

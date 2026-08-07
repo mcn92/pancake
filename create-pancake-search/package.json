@@ -6,8 +6,13 @@
   "bin": {
     "create-pancake-search": "./bin/create-pancake-search.mjs"
   },
+  "exports": {
+    "./docusaurus": "./docusaurus/index.mjs",
+    "./package.json": "./package.json"
+  },
   "files": [
     "bin",
+    "docusaurus",
     "src",
     "templates",
     "schemas",
