@@ -8,11 +8,13 @@ import { stdin as input, stdout as output } from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import zlib from 'node:zlib';
 import { spawnSync } from 'node:child_process';
+import { embedTextWithStudent, loadStudentModel } from './student-embedder.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PACKAGE_ROOT = path.resolve(__dirname, '..');
 const REPO_ROOT = path.resolve(PACKAGE_ROOT, '..');
+const STUDENT_TRAINER = path.join(PACKAGE_ROOT, 'tools', 'train_student.py');
 const DEFAULT_PREFIX = 'Represent this sentence for searching relevant passages: ';
 const CONFIG_SCHEMA_URL = 'https://raw.githubusercontent.com/mcn92/pancake/main/create-pancake-search/schemas/v1/pancake.config.schema.json';
 const MAX_CRAWL_BODY_BYTES = 2 * 1024 * 1024;
@@ -71,7 +73,7 @@ Usage:
 Flags:
   --name <dir>          Generated project directory
   --source <path|url>   Local folder or website URL
-  --mode workers-ai     Query embedding mode (student is stubbed)
+  --mode workers-ai     Query embedding mode
   --model <id>          bge-small-en-v1.5
   --max-pages <n>       URL crawl cap
   --include <glob>      Folder include glob, repeatable
@@ -322,7 +324,7 @@ async function buildAssets(projectDir, config, options = {}) {
   if (chunks.length === 0) throw new CliError('Chunking produced 0 chunks. Next: use longer content or adjust source filters.', 1);
   log(`Ingested ${docs.length} docs -> ${chunks.length} chunks`);
 
-  const vectors = await embedChunks(chunks, config.embedding, log);
+  const vectors = await embedChunks(chunks, config.embedding, log, projectDir);
   const Pancake = await loadPancake();
   const maxElements = Math.max(chunks.length, Math.ceil(chunks.length * 1.25));
   const index = await Pancake.create({ ...config.index, dim: config.embedding.dims, maxElements });
@@ -408,10 +410,15 @@ function validateConfig(config) {
   if (!config || config.version !== 1) throw new CliError('pancake.config.json version must be 1', 1);
   if (!config.name) throw new CliError('pancake.config.json name is required', 1);
   if (!config.source || !['folder', 'url'].includes(config.source.type)) throw new CliError('source.type must be folder or url', 1);
-  if (config.embedding?.mode !== 'workers-ai') throw new CliError('embedding.mode must be workers-ai', 1);
-  const model = MODEL_MAP[config.embedding?.buildModel];
-  if (!model) throw new CliError(`Unsupported embedding.buildModel ${config.embedding?.buildModel}`, 1);
-  if (config.embedding.dims !== model.dims) throw new CliError(`embedding.dims must be ${model.dims}`, 1);
+  const embeddingMode = config.embedding?.mode || 'workers-ai';
+  if (!['workers-ai', 'student'].includes(embeddingMode)) throw new CliError('embedding.mode must be workers-ai or student', 1);
+  if (embeddingMode === 'workers-ai') {
+    const model = MODEL_MAP[config.embedding?.buildModel];
+    if (!model) throw new CliError(`Unsupported embedding.buildModel ${config.embedding?.buildModel}`, 1);
+    if (config.embedding.dims !== model.dims) throw new CliError(`embedding.dims must be ${model.dims}`, 1);
+  } else if (!config.embedding.studentModelPath) {
+    throw new CliError('embedding.studentModelPath is required when embedding.mode is student', 1);
+  }
   const runtimeMode = config.runtime?.mode || 'snapshot';
   if (!['snapshot', 'artifact'].includes(runtimeMode)) throw new CliError('runtime.mode must be snapshot or artifact', 1);
   if (runtimeMode === 'artifact' && config.runtime?.storage !== 'bundled') throw new CliError('runtime.storage must be bundled for artifact mode in this release', 1);
@@ -638,10 +645,28 @@ function dedupeChunks(chunks) {
   return out;
 }
 
-async function embedChunks(chunks, embeddingConfig, log) {
+async function embedChunks(chunks, embeddingConfig, log, projectDir) {
   if (process.env.PANCAKE_SEARCH_STUB_EMBEDDINGS === '1') {
     log('Embedding with deterministic local stub (PANCAKE_SEARCH_STUB_EMBEDDINGS=1)');
     return chunks.map((chunk) => hashEmbedding(chunk.text, embeddingConfig.dims));
+  }
+  if (embeddingConfig.mode === 'student') {
+    if (embeddingConfig.trainStudent?.enabled) {
+      return trainStudentVectors(chunks, embeddingConfig, log, projectDir);
+    }
+    const modelPath = path.resolve(projectDir, embeddingConfig.studentModelPath);
+    const modelBytes = await fs.readFile(modelPath);
+    const model = loadStudentModel(modelBytes);
+    if (model.outputDim !== embeddingConfig.dims) {
+      throw new CliError(`Student model dimension mismatch (${model.outputDim} !== ${embeddingConfig.dims})`, 2);
+    }
+    const vectors = [];
+    for (let i = 0; i < chunks.length; i++) {
+      const text = `${embeddingConfig.prefixPolicy?.passage || ''}${chunks[i].text}`;
+      vectors.push(embedTextWithStudent(text, model).vector);
+      if ((i + 1) % 128 === 0 || i + 1 === chunks.length) log(`Embedded ${i + 1}/${chunks.length} chunks with student encoder`);
+    }
+    return vectors;
   }
   const model = MODEL_MAP[embeddingConfig.buildModel];
   let transformers;
@@ -657,6 +682,68 @@ async function embedChunks(chunks, embeddingConfig, log) {
     const output = await extractor(batch, { pooling: embeddingConfig.pooling || 'mean', normalize: embeddingConfig.normalize !== false });
     vectors.push(...tensorToVectors(output, embeddingConfig.dims));
     log(`Embedded ${Math.min(i + 16, chunks.length)}/${chunks.length} chunks`);
+  }
+  return vectors;
+}
+
+async function trainStudentVectors(chunks, embeddingConfig, log, projectDir) {
+  const trainConfig = embeddingConfig.trainStudent || {};
+  const outDir = path.resolve(projectDir, trainConfig.outDir || 'student');
+  const corpusPath = path.join(outDir, 'student-corpus.json');
+  await fs.rm(outDir, { recursive: true, force: true });
+  await fs.mkdir(outDir, { recursive: true });
+  await fs.writeFile(corpusPath, `${JSON.stringify(chunks.map(publicChunk), null, 2)}\n`);
+
+  const python = trainConfig.python || process.env.PANCAKE_SEARCH_PYTHON || 'python3';
+  const args = [
+    STUDENT_TRAINER,
+    '--corpus',
+    corpusPath,
+    '--out',
+    outDir,
+    '--skip-abstention',
+  ];
+  if (trainConfig.teacher) args.push('--teacher', String(trainConfig.teacher));
+  if (trainConfig.teacherRevision) args.push('--teacher-revision', String(trainConfig.teacherRevision));
+  if (trainConfig.epochs) args.push('--epochs', String(trainConfig.epochs));
+  if (trainConfig.buckets) args.push('--buckets', String(trainConfig.buckets));
+  if (trainConfig.hidden) args.push('--hidden', String(trainConfig.hidden));
+  if (trainConfig.batchSize) args.push('--batch-size', String(trainConfig.batchSize));
+  if (trainConfig.learningRate) args.push('--learning-rate', String(trainConfig.learningRate));
+  if (trainConfig.maxFeatures) args.push('--max-features', String(trainConfig.maxFeatures));
+  if (trainConfig.seed) args.push('--seed', String(trainConfig.seed));
+
+  log(`Training corpus-specific student encoder with ${python}`);
+  const result = spawnSync(python, args, { cwd: projectDir, stdio: 'inherit' });
+  if (result.error) {
+    throw new CliError(`Failed to start student trainer: ${result.error.message}`, 2);
+  }
+  if (result.status !== 0) {
+    throw new CliError(`Student trainer failed with exit code ${result.status}. Next: install torch/transformers or provide a corpus-specific studentModel.`, 2);
+  }
+
+  const manifestPath = path.join(outDir, 'student-manifest.json');
+  const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+  if (manifest.outputDim !== embeddingConfig.dims) {
+    throw new CliError(`Student trainer dimension mismatch (${manifest.outputDim} !== ${embeddingConfig.dims})`, 2);
+  }
+  const vectorPath = path.join(outDir, 'docs-vectors.f32');
+  const vectors = await readF32Vectors(vectorPath, chunks.length, embeddingConfig.dims);
+  log(`Loaded ${vectors.length} teacher document vectors from student trainer`);
+  return vectors;
+}
+
+async function readF32Vectors(file, count, dims) {
+  const bytes = await fs.readFile(file);
+  const expected = count * dims * 4;
+  if (bytes.byteLength !== expected) {
+    throw new CliError(`docs-vectors.f32 size mismatch: expected ${expected}, received ${bytes.byteLength}`, 2);
+  }
+  const view = new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
+  const vectors = [];
+  for (let row = 0; row < count; row++) {
+    const start = row * dims;
+    vectors.push(Float32Array.from(view.subarray(start, start + dims)));
   }
   return vectors;
 }
@@ -746,7 +833,9 @@ function inspectRangeArtifactHeader(bytes, label = 'Search Artifact') {
 }
 
 function makeManifest(config, chunks, snapshot, vectors, artifact = null, artifactInfo = null) {
-  const model = MODEL_MAP[config.embedding.buildModel];
+  const model = config.embedding.mode === 'student'
+    ? null
+    : MODEL_MAP[config.embedding.buildModel];
   const firstVectorHash = vectors[0]
     ? crypto.createHash('sha256').update(Buffer.from(vectors[0].buffer, vectors[0].byteOffset, vectors[0].byteLength)).digest('hex')
     : null;
@@ -755,8 +844,21 @@ function makeManifest(config, chunks, snapshot, vectors, artifact = null, artifa
     generatedAt: new Date().toISOString(),
     cliVersion: '0.1.0',
     name: config.name,
-    model: config.embedding.buildModel,
-    workersAiModel: model.workersAiModel,
+    model: config.embedding.mode === 'student'
+      ? 'pancake-distilled-student'
+      : config.embedding.buildModel,
+    workersAiModel: model?.workersAiModel || null,
+    encoder: config.embedding.mode === 'student'
+      ? {
+          mode: 'student',
+          format: 'pstu',
+          studentModelPath: config.embedding.studentModelPath,
+        }
+      : {
+          mode: 'workers-ai',
+          hfModel: model.hfModel,
+          workersAiModel: model.workersAiModel,
+        },
     dims: config.embedding.dims,
     dim: config.embedding.dims,
     metric: config.index.metric,
@@ -769,7 +871,7 @@ function makeManifest(config, chunks, snapshot, vectors, artifact = null, artifa
     prefixPolicy: config.embedding.prefixPolicy || DEFAULT_CONFIG.embedding.prefixPolicy,
     pooling: config.embedding.pooling || 'mean',
     normalize: config.embedding.normalize !== false,
-    maxInputTokens: model.maxInputTokens,
+    maxInputTokens: model?.maxInputTokens || null,
     maxQueryChars: 4096,
     runtime: config.runtime || DEFAULT_CONFIG.runtime,
     firstVectorSha256: firstVectorHash,

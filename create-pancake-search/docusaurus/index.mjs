@@ -35,6 +35,20 @@ function normalizeOptions(options = {}) {
     include: options.include || ['**/*.html'],
     exclude: options.exclude || [],
     stubEmbeddings: options.stubEmbeddings === true,
+    studentModel: options.studentModel || null,
+    trainStudent: {
+      enabled: options.trainStudent !== false && !options.studentModel,
+      python: options.trainStudent?.python,
+      teacher: options.trainStudent?.teacher,
+      teacherRevision: options.trainStudent?.teacherRevision,
+      epochs: options.trainStudent?.epochs || 100,
+      buckets: options.trainStudent?.buckets,
+      hidden: options.trainStudent?.hidden,
+      batchSize: options.trainStudent?.batchSize,
+      learningRate: options.trainStudent?.learningRate,
+      maxFeatures: options.trainStudent?.maxFeatures,
+      seed: options.trainStudent?.seed,
+    },
     chunking: {
       targetTokens: options.chunking?.targetTokens || 256,
       overlapPercent: options.chunking?.overlapPercent ?? 15,
@@ -61,8 +75,9 @@ function makeConfig(context, options, workDir, outDir) {
     },
     chunking: options.chunking,
     embedding: {
-      mode: 'workers-ai',
-      buildModel: 'bge-small-en-v1.5',
+      mode: 'student',
+      studentModelPath: options.studentModel ? 'student-model.bin' : 'student/student-model.bin',
+      ...(options.trainStudent.enabled ? { trainStudent: { ...options.trainStudent, outDir: 'student' } } : {}),
       dims: 384,
       prefixPolicy: { passage: '', query: DEFAULT_PREFIX },
       pooling: 'mean',
@@ -86,7 +101,7 @@ async function withOptionalStubEmbeddings(enabled, fn) {
   }
 }
 
-async function copyRuntimeManifest(assetDir, context, options) {
+async function copyRuntimeManifest(assetDir, context, options, studentModelInfo) {
   const manifestPath = path.join(assetDir, 'manifest.json');
   const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
   const assetUrlBase = joinSitePath(context.siteConfig?.baseUrl || '/', options.assetBase);
@@ -95,8 +110,46 @@ async function copyRuntimeManifest(assetDir, context, options) {
     artifactUrl: `${assetUrlBase}/index.pancake-range`,
     corpusUrl: `${assetUrlBase}/corpus.json`,
     manifestUrl: `${assetUrlBase}/manifest.json`,
+    studentModelUrl: `${assetUrlBase}/student-model.bin`,
+  };
+  manifest.encoder = {
+    ...(manifest.encoder || {}),
+    studentModelUrl: manifest.docusaurus.studentModelUrl,
+    studentModelSha256: studentModelInfo.sha256,
+    studentModelBytes: studentModelInfo.bytes,
   };
   await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+}
+
+async function stageExternalStudentModel(options, context, workDir) {
+  if (!options.studentModel) return null;
+  const sourcePath = path.resolve(context.siteDir, options.studentModel);
+  if (!fssync.existsSync(sourcePath)) {
+    throw new Error(`Pancake student model not found: ${sourcePath}`);
+  }
+  const workPath = path.join(workDir, 'student-model.bin');
+  await fs.copyFile(sourcePath, workPath);
+  return workPath;
+}
+
+async function publishStudentModel(options, context, workDir, assetDir) {
+  const sourcePath = options.studentModel
+    ? path.resolve(context.siteDir, options.studentModel)
+    : path.join(workDir, 'student', 'student-model.bin');
+  if (options.studentModel && !fssync.existsSync(sourcePath)) {
+    throw new Error(`Pancake student model not found: ${sourcePath}`);
+  }
+  const assetPath = path.join(assetDir, 'student-model.bin');
+  if (!fssync.existsSync(sourcePath)) {
+    throw new Error(`Pancake student model was not produced: ${sourcePath}`);
+  }
+  await fs.copyFile(sourcePath, assetPath);
+  const bytes = await fs.readFile(sourcePath);
+  const { createHash } = await import('node:crypto');
+  return {
+    bytes: bytes.byteLength,
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+  };
 }
 
 export default function pancakeDocusaurusPlugin(context, rawOptions = {}) {
@@ -116,9 +169,11 @@ export default function pancakeDocusaurusPlugin(context, rawOptions = {}) {
       const assetDir = path.join(resolvedOutDir, options.assetBase);
       await fs.rm(assetDir, { recursive: true, force: true });
       await fs.mkdir(workDir, { recursive: true });
+      await fs.mkdir(assetDir, { recursive: true });
 
       const config = makeConfig(context, options, workDir, resolvedOutDir);
       await fs.writeFile(path.join(workDir, 'pancake.config.json'), `${JSON.stringify(config, null, 2)}\n`);
+      await stageExternalStudentModel(options, context, workDir);
 
       await withOptionalStubEmbeddings(options.stubEmbeddings, () =>
         buildSearchAssets(workDir, config, {
@@ -127,7 +182,8 @@ export default function pancakeDocusaurusPlugin(context, rawOptions = {}) {
           skipBundleSizeCheck: true,
         })
       );
-      await copyRuntimeManifest(assetDir, context, options);
+      const studentModelInfo = await publishStudentModel(options, context, workDir, assetDir);
+      await copyRuntimeManifest(assetDir, context, options, studentModelInfo);
     },
 
     injectHtmlTags() {
@@ -173,5 +229,17 @@ export function validateOptions({ options }) {
   const normalized = normalizeOptions(options);
   if (!normalized.assetBase) throw new Error('assetBase must not be empty');
   if (!['boolean', 'undefined'].includes(typeof options?.mount)) throw new Error('mount must be a boolean');
+  if (options?.stubEmbeddings === true) {
+    throw new Error('stubEmbeddings is not supported by the Docusaurus plugin; provide a studentModel instead');
+  }
+  if (options?.studentModel !== undefined && typeof options.studentModel !== 'string') {
+    throw new Error('studentModel must be a string path');
+  }
+  if (options?.trainStudent !== undefined && typeof options.trainStudent !== 'object' && options.trainStudent !== false) {
+    throw new Error('trainStudent must be an object or false');
+  }
+  if (options?.trainStudent === false && !options?.studentModel) {
+    throw new Error('trainStudent: false requires studentModel to point at a corpus-specific PSTU model');
+  }
   return options || {};
 }

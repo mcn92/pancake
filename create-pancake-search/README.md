@@ -55,16 +55,19 @@ export default {
 ```
 
 On `docusaurus build`, the plugin indexes the rendered HTML in the build output
-directory and writes static artifact assets into
-`build/pancake-search/`:
+directory, trains a corpus-specific teacher-student distilled encoder for those
+rendered chunks, then writes static artifact assets into `build/pancake-search/`:
 
 - `index.pancake-range` — range-readable Pancake Search Artifact
 - `corpus.json` — result metadata and snippets
 - `manifest.json` — embedding/index/runtime metadata and URLs
+- `student-model.bin` — the PSTU student encoder used by browser queries
 
 That means docs, blog posts, pages, and rendered MDX all flow through the same
-folder ingestion, chunking, embedding, and Search Artifact builder as the CLI,
-without generating or deploying a Worker.
+folder ingestion, chunking, teacher-vector indexing, and Search Artifact builder
+as the CLI, without generating or deploying a Worker. The teacher model runs at
+build time; the built site only serves the compact student model for browser
+query vectors.
 
 By default, the plugin injects a floating, draggable search panel into the page
 and exposes `window.PancakeDocusaurusSearch` for custom UI code. The panel's JS
@@ -76,12 +79,14 @@ UI, disable the default mount:
 [pancakeSearch, { assetBase: 'pancake-search', mount: false }]
 ```
 
-For local mechanics tests without downloading an embedding model, enable stub
-embeddings:
+The default build expects a Python environment with `torch` and `transformers`.
+Set `trainStudent.python` if Docusaurus should call a specific interpreter:
 
 ```js
-[pancakeSearch, { assetBase: 'pancake-search', stubEmbeddings: true }]
+[pancakeSearch, { trainStudent: { python: '.venv/bin/python', epochs: 60 } }]
 ```
 
-Stub-built indexes are not semantic. Rebuild without `stubEmbeddings` before
-publishing the site.
+Advanced users can provide a pre-trained model with `studentModel`, but it must
+be trained for this site or a very close corpus. A Wikipedia-trained student is
+only useful for smoke testing the mechanics; it is not a general-purpose docs
+encoder.

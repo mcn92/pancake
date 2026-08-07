@@ -1,4 +1,5 @@
 import './search.css';
+import { embedTextWithStudent, loadStudentModel } from '../../src/student-embedder.mjs';
 
 const DEFAULT_K = 8;
 const DEFAULT_EF_SEARCH = 120;
@@ -62,10 +63,8 @@ function renderRows(results, corpusById) {
 async function loadBrowserRuntime() {
   if (typeof window === 'undefined') throw new Error('Pancake search can only load in a browser');
   const pancakeModule = await Promise.resolve().then(() => require('pancake-wasm/web'));
-  const transformersModule = await Promise.resolve().then(() => require('@xenova/transformers'));
   return {
     Pancake: pancakeModule.default || pancakeModule,
-    pipeline: transformersModule.pipeline,
   };
 }
 
@@ -123,7 +122,6 @@ class PancakeDocusaurusSearch {
     this.assetBase = normalizeBase(options.assetBase);
     this.k = Number(options.k || DEFAULT_K);
     this.efSearch = Number(options.efSearch || DEFAULT_EF_SEARCH);
-    this.pipelineOptions = options.pipelineOptions || { quantized: true };
     this.state = null;
     this.ready = null;
   }
@@ -143,20 +141,25 @@ class PancakeDocusaurusSearch {
     const urls = manifest.docusaurus || {
       artifactUrl: `${this.assetBase}/index.pancake-range`,
       corpusUrl: `${this.assetBase}/corpus.json`,
+      studentModelUrl: `${this.assetBase}/student-model.bin`,
     };
-    const { Pancake, pipeline } = await loadBrowserRuntime();
-    const [corpus, embedder, artifact] = await Promise.all([
+    const { Pancake } = await loadBrowserRuntime();
+    const [corpus, studentBytes, artifact] = await Promise.all([
       fetch(urls.corpusUrl).then((r) => {
         if (!r.ok) throw new Error(`Corpus fetch failed: ${r.status}`);
         return r.json();
       }),
-      pipeline('feature-extraction', 'Xenova/bge-small-en-v1.5', this.pipelineOptions),
+      fetch(urls.studentModelUrl).then((r) => {
+        if (!r.ok) throw new Error(`Student model fetch failed: ${r.status}`);
+        return r.arrayBuffer();
+      }),
       Pancake.RangeArtifact.open(createRangeSource(urls.artifactUrl)),
     ]);
+    const studentModel = loadStudentModel(studentBytes);
     this.state = {
       manifest,
       artifact,
-      embedder,
+      studentModel,
       corpusById: new Map(corpus.map((chunk) => [chunk.id, chunk])),
     };
     return this.state;
@@ -165,11 +168,8 @@ class PancakeDocusaurusSearch {
   async search(query, options = {}) {
     const state = await this.load();
     const prefixed = `${state.manifest.prefixPolicy?.query || ''}${query}`;
-    const embedding = await state.embedder(prefixed, {
-      pooling: state.manifest.pooling || 'mean',
-      normalize: state.manifest.normalize !== false,
-    });
-    const result = await state.artifact.search(Float32Array.from(embedding.data), Number(options.k || this.k), {
+    const embedding = embedTextWithStudent(prefixed, state.studentModel).vector;
+    const result = await state.artifact.search(embedding, Number(options.k || this.k), {
       efSearch: Number(options.efSearch || state.manifest.efSearch || this.efSearch),
     });
     return {

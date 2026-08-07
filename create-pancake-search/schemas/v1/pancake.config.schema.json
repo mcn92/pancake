@@ -41,21 +41,64 @@
       "additionalProperties": false
     },
     "embedding": {
-      "type": "object",
-      "required": ["mode", "buildModel", "dims"],
-      "properties": {
-        "mode": { "const": "workers-ai" },
-        "buildModel": { "enum": ["bge-small-en-v1.5"] },
-        "dims": { "const": 384 },
-        "prefixPolicy": {
+      "oneOf": [
+        {
           "type": "object",
+          "required": ["mode", "buildModel", "dims"],
           "properties": {
-            "passage": { "type": "string" },
-            "query": { "type": "string" }
-          }
+            "mode": { "const": "workers-ai" },
+            "buildModel": { "enum": ["bge-small-en-v1.5"] },
+            "dims": { "const": 384 },
+            "prefixPolicy": {
+              "type": "object",
+              "properties": {
+                "passage": { "type": "string" },
+                "query": { "type": "string" }
+              }
+            },
+            "pooling": { "enum": ["mean"] },
+            "normalize": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["mode", "studentModelPath", "dims"],
+          "properties": {
+            "mode": { "const": "student" },
+            "studentModelPath": { "type": "string" },
+            "trainStudent": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "outDir": { "type": "string" },
+                "python": { "type": "string" },
+                "teacher": { "type": "string" },
+                "teacherRevision": { "type": "string" },
+                "epochs": { "type": "integer", "minimum": 1 },
+                "buckets": { "type": "integer", "minimum": 1 },
+                "hidden": { "type": "integer", "minimum": 1 },
+                "batchSize": { "type": "integer", "minimum": 1 },
+                "learningRate": { "type": "number", "exclusiveMinimum": 0 },
+                "maxFeatures": { "type": "integer", "minimum": 1 },
+                "seed": { "type": "integer" }
+              },
+              "additionalProperties": false
+            },
+            "dims": { "const": 384 },
+            "prefixPolicy": {
+              "type": "object",
+              "properties": {
+                "passage": { "type": "string" },
+                "query": { "type": "string" }
+              }
+            },
+            "pooling": { "enum": ["mean"] },
+            "normalize": { "type": "boolean" }
+          },
+          "additionalProperties": false
         }
-      },
-      "additionalProperties": false
+      ]
     },
     "index": {
       "type": "object",
