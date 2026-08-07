@@ -1,0 +1,164 @@
+.pancake-search {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 2147483000;
+  width: min(28rem, calc(100vw - 1.5rem));
+  max-height: min(38rem, calc(100vh - 1.5rem));
+  font: var(--ifm-font-size-base, 16px) / 1.45 var(--ifm-font-family-base, system-ui, sans-serif);
+}
+
+.pancake-search-launcher,
+.pancake-search-button,
+.pancake-search-close,
+.pancake-search-drag-handle {
+  font: inherit;
+}
+
+.pancake-search-launcher {
+  float: right;
+  border: 1px solid var(--ifm-color-primary-dark, #2f6fcf);
+  border-radius: 999px;
+  padding: 0.7rem 1rem;
+  background: var(--ifm-color-primary, #3578e5);
+  color: var(--ifm-color-white, #fff);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 20%);
+  cursor: pointer;
+}
+
+.pancake-search-card {
+  display: flex;
+  overflow: hidden;
+  max-height: inherit;
+  flex-direction: column;
+  border: 1px solid var(--ifm-color-emphasis-300, #c8c8c8);
+  border-radius: 8px;
+  background: var(--ifm-background-surface-color, #fff);
+  box-shadow: 0 18px 60px rgb(0 0 0 / 24%);
+}
+
+.pancake-search-card[hidden],
+.pancake-search-launcher[hidden] {
+  display: none;
+}
+
+.pancake-search-titlebar {
+  display: flex;
+  min-height: 2.75rem;
+  align-items: center;
+  border-bottom: 1px solid var(--ifm-color-emphasis-200, #e5e5e5);
+  background: var(--ifm-color-emphasis-100, #f5f6f7);
+}
+
+.pancake-search-drag-handle {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  align-self: stretch;
+  border: 0;
+  padding: 0 0.875rem;
+  background: transparent;
+  color: var(--ifm-color-emphasis-900, #1f1f1f);
+  cursor: grab;
+  font-weight: 600;
+  touch-action: none;
+}
+
+.pancake-search-dragging .pancake-search-drag-handle {
+  cursor: grabbing;
+}
+
+.pancake-search-close {
+  width: 2.75rem;
+  height: 2.75rem;
+  border: 0;
+  background: transparent;
+  color: var(--ifm-color-emphasis-700, #555);
+  cursor: pointer;
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.pancake-search-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  padding: 0.875rem;
+}
+
+.pancake-search-input {
+  min-width: 0;
+  border: 1px solid var(--ifm-color-emphasis-300, #c8c8c8);
+  border-radius: 6px;
+  padding: 0.625rem 0.75rem;
+  background: var(--ifm-background-color, #fff);
+  color: var(--ifm-font-color-base, #1f1f1f);
+  font: inherit;
+}
+
+.pancake-search-button {
+  border: 1px solid var(--ifm-color-primary, #3578e5);
+  border-radius: 6px;
+  padding: 0.625rem 0.875rem;
+  background: var(--ifm-color-primary, #3578e5);
+  color: var(--ifm-color-white, #fff);
+  cursor: pointer;
+}
+
+.pancake-search-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.pancake-search-status {
+  min-height: 1.5rem;
+  padding: 0 0.875rem 0.625rem;
+  color: var(--ifm-color-emphasis-700, #555);
+  font-size: 0.875rem;
+}
+
+.pancake-search-output {
+  overflow: auto;
+  min-height: 4rem;
+  max-height: min(24rem, calc(100vh - 13rem));
+  padding: 0 0.875rem 0.875rem;
+}
+
+.pancake-search-results {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pancake-search-results li {
+  border-top: 1px solid var(--ifm-color-emphasis-200, #e5e5e5);
+  padding: 0.75rem 0;
+}
+
+.pancake-search-results a {
+  font-weight: 600;
+}
+
+.pancake-search-results p {
+  margin: 0.25rem 0;
+  color: var(--ifm-color-emphasis-800, #333);
+}
+
+.pancake-search-results span,
+.pancake-search-empty {
+  color: var(--ifm-color-emphasis-600, #666);
+  font-size: 0.8125rem;
+}
+
+@media (max-width: 520px) {
+  .pancake-search {
+    right: 0.75rem;
+    bottom: 0.75rem;
+    width: calc(100vw - 1.5rem);
+  }
+
+  .pancake-search-form {
+    grid-template-columns: 1fr;
+  }
+}

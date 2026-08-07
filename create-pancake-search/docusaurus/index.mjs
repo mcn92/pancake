@@ -1,9 +1,11 @@
 import fs from 'node:fs/promises';
 import fssync from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { buildSearchAssets } from '../src/cli.mjs';
 
 const DEFAULT_PREFIX = 'Represent this sentence for searching relevant passages: ';
+const here = path.dirname(fileURLToPath(import.meta.url));
 
 function slugifyName(value) {
   return String(value || 'docusaurus')
@@ -27,6 +29,7 @@ function normalizeOptions(options = {}) {
   return {
     enabled: options.enabled !== false,
     assetBase: trimSlashes(options.assetBase || 'pancake-search'),
+    mount: options.mount !== false,
     workDir: options.workDir || path.join('.docusaurus', 'pancake-search'),
     name: options.name,
     include: options.include || ['**/*.html'],
@@ -127,6 +130,35 @@ export default function pancakeDocusaurusPlugin(context, rawOptions = {}) {
       await copyRuntimeManifest(assetDir, context, options);
     },
 
+    injectHtmlTags() {
+      if (!options.enabled || !options.mount) return {};
+      const assetUrlBase = joinSitePath(context.siteConfig?.baseUrl || '/', options.assetBase);
+      return {
+        headTags: [
+          {
+            tagName: 'script',
+            innerHTML: `window.__PANCAKE_SEARCH__ = ${JSON.stringify({ assetBase: assetUrlBase })};`,
+          },
+        ],
+        preBodyTags: [
+          {
+            tagName: 'div',
+            attributes: {
+              class: 'pancake-search',
+              'data-pancake-search': '',
+              'data-pancake-asset-base': assetUrlBase,
+            },
+          },
+        ],
+      };
+    },
+
+    getClientModules() {
+      return options.enabled && options.mount
+        ? [path.join(here, 'client', 'search.js')]
+        : [];
+    },
+
     getPathsToWatch() {
       return [
         path.join(context.siteDir, 'docs'),
@@ -140,5 +172,6 @@ export default function pancakeDocusaurusPlugin(context, rawOptions = {}) {
 export function validateOptions({ options }) {
   const normalized = normalizeOptions(options);
   if (!normalized.assetBase) throw new Error('assetBase must not be empty');
+  if (!['boolean', 'undefined'].includes(typeof options?.mount)) throw new Error('mount must be a boolean');
   return options || {};
 }

@@ -66,6 +66,16 @@ That means docs, blog posts, pages, and rendered MDX all flow through the same
 folder ingestion, chunking, embedding, and Search Artifact builder as the CLI,
 without generating or deploying a Worker.
 
+By default, the plugin injects a floating, draggable search panel into the page
+and exposes `window.PancakeDocusaurusSearch` for custom UI code. The panel's JS
+and CSS are bundled through Docusaurus; the generated static directory only
+contains the search artifact assets. To ship only the assets and mount your own
+UI, disable the default mount:
+
+```js
+[pancakeSearch, { assetBase: 'pancake-search', mount: false }]
+```
+
 For local mechanics tests without downloading an embedding model, enable stub
 embeddings:
 
