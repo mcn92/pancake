@@ -67,6 +67,7 @@
           "properties": {
             "mode": { "const": "student" },
             "studentModelPath": { "type": "string" },
+            "teacherVectorsPath": { "type": "string" },
             "trainStudent": {
               "type": "object",
               "properties": {

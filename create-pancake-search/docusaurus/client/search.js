@@ -1,5 +1,5 @@
 import './search.css';
-import { embedTextWithStudent, loadStudentModel } from '../../src/student-embedder.mjs';
+import { computeMatchQuality, embedTextWithStudent, loadStudentModel } from '../../src/student-embedder.mjs';
 
 const DEFAULT_K = 8;
 const DEFAULT_EF_SEARCH = 120;
@@ -142,9 +142,10 @@ class PancakeDocusaurusSearch {
       artifactUrl: `${this.assetBase}/index.pancake-range`,
       corpusUrl: `${this.assetBase}/corpus.json`,
       studentModelUrl: `${this.assetBase}/student-model.bin`,
+      abstentionUrl: `${this.assetBase}/student-abstention.json`,
     };
     const { Pancake } = await loadBrowserRuntime();
-    const [corpus, studentBytes, artifact] = await Promise.all([
+    const [corpus, studentBytes, abstention, artifact] = await Promise.all([
       fetch(urls.corpusUrl).then((r) => {
         if (!r.ok) throw new Error(`Corpus fetch failed: ${r.status}`);
         return r.json();
@@ -153,6 +154,13 @@ class PancakeDocusaurusSearch {
         if (!r.ok) throw new Error(`Student model fetch failed: ${r.status}`);
         return r.arrayBuffer();
       }),
+      urls.abstentionUrl
+        ? fetch(urls.abstentionUrl).then((r) => {
+            if (r.status === 404) return null;
+            if (!r.ok) throw new Error(`Abstention fetch failed: ${r.status}`);
+            return r.json();
+          })
+        : null,
       Pancake.RangeArtifact.open(createRangeSource(urls.artifactUrl)),
     ]);
     const studentModel = loadStudentModel(studentBytes);
@@ -160,6 +168,7 @@ class PancakeDocusaurusSearch {
       manifest,
       artifact,
       studentModel,
+      abstention,
       corpusById: new Map(corpus.map((chunk) => [chunk.id, chunk])),
     };
     return this.state;
@@ -168,13 +177,18 @@ class PancakeDocusaurusSearch {
   async search(query, options = {}) {
     const state = await this.load();
     const prefixed = `${state.manifest.prefixPolicy?.query || ''}${query}`;
-    const embedding = embedTextWithStudent(prefixed, state.studentModel).vector;
+    const embedded = embedTextWithStudent(prefixed, state.studentModel);
+    const embedding = embedded.vector;
     const result = await state.artifact.search(embedding, Number(options.k || this.k), {
       efSearch: Number(options.efSearch || state.manifest.efSearch || this.efSearch),
     });
+    const quality = computeMatchQuality(result.results, embedded, state.abstention);
+    const results = quality.match_quality === 'none' ? [] : result.results;
     return {
       ...result,
-      rows: result.results.map((hit) => state.corpusById.get(hit.id)),
+      ...quality,
+      results,
+      rows: results.map((hit) => state.corpusById.get(hit.id)),
     };
   }
 }
@@ -237,7 +251,10 @@ function mountSearch() {
     try {
       const t0 = performance.now();
       const result = await search.search(query);
-      status.textContent = `${result.results.length} results in ${(performance.now() - t0).toFixed(0)} ms`;
+      const quality = result.match_quality && result.match_quality !== 'unscored'
+        ? ` - ${result.match_quality}`
+        : '';
+      status.textContent = `${result.results.length} results${quality} in ${(performance.now() - t0).toFixed(0)} ms`;
       output.innerHTML = renderRows(result.results, search.state.corpusById);
     } catch (error) {
       status.textContent = error.message || String(error);

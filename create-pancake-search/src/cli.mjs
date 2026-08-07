@@ -8,7 +8,6 @@ import { stdin as input, stdout as output } from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import zlib from 'node:zlib';
 import { spawnSync } from 'node:child_process';
-import { embedTextWithStudent, loadStudentModel } from './student-embedder.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -418,6 +417,8 @@ function validateConfig(config) {
     if (config.embedding.dims !== model.dims) throw new CliError(`embedding.dims must be ${model.dims}`, 1);
   } else if (!config.embedding.studentModelPath) {
     throw new CliError('embedding.studentModelPath is required when embedding.mode is student', 1);
+  } else if (!config.embedding.trainStudent?.enabled && !config.embedding.teacherVectorsPath) {
+    throw new CliError('embedding.teacherVectorsPath is required when embedding.mode is student and trainStudent is disabled', 1);
   }
   const runtimeMode = config.runtime?.mode || 'snapshot';
   if (!['snapshot', 'artifact'].includes(runtimeMode)) throw new CliError('runtime.mode must be snapshot or artifact', 1);
@@ -654,19 +655,13 @@ async function embedChunks(chunks, embeddingConfig, log, projectDir) {
     if (embeddingConfig.trainStudent?.enabled) {
       return trainStudentVectors(chunks, embeddingConfig, log, projectDir);
     }
-    const modelPath = path.resolve(projectDir, embeddingConfig.studentModelPath);
-    const modelBytes = await fs.readFile(modelPath);
-    const model = loadStudentModel(modelBytes);
-    if (model.outputDim !== embeddingConfig.dims) {
-      throw new CliError(`Student model dimension mismatch (${model.outputDim} !== ${embeddingConfig.dims})`, 2);
+    if (embeddingConfig.teacherVectorsPath) {
+      const vectorPath = path.resolve(projectDir, embeddingConfig.teacherVectorsPath);
+      const vectors = await readF32Vectors(vectorPath, chunks.length, embeddingConfig.dims);
+      log(`Loaded ${vectors.length} teacher document vectors from ${embeddingConfig.teacherVectorsPath}`);
+      return vectors;
     }
-    const vectors = [];
-    for (let i = 0; i < chunks.length; i++) {
-      const text = `${embeddingConfig.prefixPolicy?.passage || ''}${chunks[i].text}`;
-      vectors.push(embedTextWithStudent(text, model).vector);
-      if ((i + 1) % 128 === 0 || i + 1 === chunks.length) log(`Embedded ${i + 1}/${chunks.length} chunks with student encoder`);
-    }
-    return vectors;
+    throw new CliError('Student mode requires trainStudent.enabled or teacherVectorsPath; refusing to embed passages with the student query encoder.', 2);
   }
   const model = MODEL_MAP[embeddingConfig.buildModel];
   let transformers;
@@ -701,7 +696,6 @@ async function trainStudentVectors(chunks, embeddingConfig, log, projectDir) {
     corpusPath,
     '--out',
     outDir,
-    '--skip-abstention',
   ];
   if (trainConfig.teacher) args.push('--teacher', String(trainConfig.teacher));
   if (trainConfig.teacherRevision) args.push('--teacher-revision', String(trainConfig.teacherRevision));
@@ -853,6 +847,8 @@ function makeManifest(config, chunks, snapshot, vectors, artifact = null, artifa
           mode: 'student',
           format: 'pstu',
           studentModelPath: config.embedding.studentModelPath,
+          teacherVectorsPath: config.embedding.teacherVectorsPath || null,
+          trainedDuringBuild: config.embedding.trainStudent?.enabled === true,
         }
       : {
           mode: 'workers-ai',

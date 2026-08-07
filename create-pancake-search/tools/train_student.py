@@ -197,6 +197,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-features", type=int, default=512)
     parser.add_argument("--seed", type=int, default=20260712)
     parser.add_argument("--skip-abstention", action="store_true")
+    parser.add_argument("--golden-fixtures", type=Path)
     return parser.parse_args()
 
 
@@ -918,8 +919,10 @@ def summarize_abstention(
     }
 
 
-def load_golden_fixtures() -> list[dict]:
-    fixtures = json.loads(GOLDEN_ABSTENTION_FIXTURES_PATH.read_text(encoding="utf-8"))
+def load_golden_fixtures(path: Path | None) -> list[dict]:
+    if path is None:
+        return []
+    fixtures = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(fixtures, list) or not fixtures:
         raise ValueError("Golden abstention fixture must be a non-empty JSON array")
     for fixture in fixtures:
@@ -1015,7 +1018,7 @@ def train_abstention(
     weak_threshold = choose_weak_threshold(rows_by_split["validation"], validation_scores)
     test_scores = logistic_scores(matrices["test"], weights, bias)
     train_scores = logistic_scores(matrices["train"], weights, bias)
-    golden_fixtures = load_golden_fixtures()
+    golden_fixtures = load_golden_fixtures(args.golden_fixtures)
     golden_matrix, golden_rows, _golden_hidden = compute_signal_rows(
         golden_fixture_examples(golden_fixtures),
         docs,

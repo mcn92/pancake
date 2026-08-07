@@ -173,3 +173,123 @@ export function embedTextWithStudent(text, model) {
   for (let row = 0; row < model.outputDim; row++) output[row] *= inverseNorm;
   return { vector: output, preNorm: norm, features, hidden: hiddenOutput };
 }
+
+function sigmoid(value) {
+  if (value >= 0) {
+    const z = Math.exp(-value);
+    return 1 / (1 + z);
+  }
+  const z = Math.exp(value);
+  return z / (1 + z);
+}
+
+function buildKnownBucketTables(abstention) {
+  const word = new Map();
+  for (const row of abstention?.wordBuckets || []) {
+    if (!Array.isArray(row) || row.length < 2) continue;
+    const bucket = Number(row[0]);
+    const idf = Number(row[1]);
+    if (Number.isInteger(bucket) && bucket >= 0 && Number.isFinite(idf) && idf >= 0) {
+      word.set(bucket, idf);
+    }
+  }
+  const char = new Set();
+  for (const value of abstention?.charBuckets || []) {
+    const bucket = Number(value);
+    if (Number.isInteger(bucket) && bucket >= 0) char.add(bucket);
+  }
+  return { word, char };
+}
+
+export function computeKnownFractions(features, abstention) {
+  if (!abstention) return { known_word: 0, known_char: 0, n_feats: features.length };
+  const tables = abstention._knownBucketTables || (abstention._knownBucketTables = buildKnownBucketTables(abstention));
+  let wordKnown = 0;
+  let wordTotal = 0;
+  let charKnown = 0;
+  let charTotal = 0;
+
+  for (const feature of features) {
+    if (feature.family === 'word') {
+      wordTotal += 1;
+      if (tables.word.has(feature.bucket)) wordKnown += 1;
+    } else if (feature.family === 'char') {
+      charTotal += 1;
+      if (tables.char.has(feature.bucket)) charKnown += 1;
+    }
+  }
+
+  return {
+    known_word: wordTotal > 0 ? wordKnown / wordTotal : 0,
+    known_char: charTotal > 0 ? charKnown / charTotal : 0,
+    n_feats: features.length,
+  };
+}
+
+export function computeHiddenProbe(embedded, abstention) {
+  const probe = abstention?.hiddenProbe;
+  if (!probe || !Array.isArray(probe.weights) || !embedded.hidden) return 0;
+  let logit = Number(probe.bias) || 0;
+  const limit = Math.min(probe.weights.length, embedded.hidden.length);
+  for (let index = 0; index < limit; index++) {
+    logit += (Number(probe.weights[index]) || 0) * embedded.hidden[index];
+  }
+  return sigmoid(logit);
+}
+
+export function scoreQuery(signals, abstention) {
+  if (!abstention) return { match_quality: 'unscored' };
+  const featureNames = abstention.features || ['d0', 'margin', 'pre_norm', 'known_word', 'known_char'];
+  const weights = abstention.weights || [];
+  let logit = Number(abstention.bias) || 0;
+  for (let i = 0; i < featureNames.length; i++) {
+    logit += (Number(weights[i]) || 0) * (Number(signals[featureNames[i]]) || 0);
+  }
+
+  const confidence = sigmoid(logit);
+  const thresholds = abstention.thresholds || {};
+  const hard = Number.isFinite(thresholds.hard) ? thresholds.hard : 0.05;
+  const weak = Number.isFinite(thresholds.weak) ? thresholds.weak : 0;
+  const preNormFloor = Number.isFinite(thresholds.preNormFloor) ? thresholds.preNormFloor : 0.4;
+  const minFeatures = Number.isInteger(thresholds.minFeatures) ? thresholds.minFeatures : 3;
+  const epsilon = 1e-6;
+  const floorTriggered = confidence < hard
+    || (Number(signals.n_feats) || 0) < minFeatures
+    || (Number(signals.pre_norm) || 0) < preNormFloor;
+  const match_quality = floorTriggered
+    ? 'none'
+    : confidence + epsilon >= weak
+      ? 'strong'
+      : 'weak';
+  return {
+    match_quality,
+    score: confidence,
+    confidence: Math.round(confidence * 1000) / 1000,
+    signals: {
+      d0: signals.d0,
+      margin: signals.margin,
+      pre_norm: signals.pre_norm,
+      known_word: signals.known_word,
+      known_char: signals.known_char,
+      hidden_probe: signals.hidden_probe,
+      n_feats: signals.n_feats,
+    },
+  };
+}
+
+export function computeMatchQuality(hits, embedded, abstention) {
+  if (!abstention) return { match_quality: 'unscored' };
+  const d0 = hits.length > 0 ? hits[0].distance : 1;
+  const marginIndex = Math.min(4, hits.length - 1);
+  const margin = marginIndex > 0 ? hits[marginIndex].distance - d0 : 0;
+  const known = computeKnownFractions(embedded.features, abstention);
+  return scoreQuery({
+    d0,
+    margin,
+    pre_norm: embedded.preNorm,
+    known_word: known.known_word,
+    known_char: known.known_char,
+    hidden_probe: computeHiddenProbe(embedded, abstention),
+    n_feats: known.n_feats,
+  }, abstention);
+}

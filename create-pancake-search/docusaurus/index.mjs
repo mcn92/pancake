@@ -4,7 +4,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildSearchAssets } from '../src/cli.mjs';
 
-const DEFAULT_PREFIX = 'Represent this sentence for searching relevant passages: ';
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 function slugifyName(value) {
@@ -36,6 +35,8 @@ function normalizeOptions(options = {}) {
     exclude: options.exclude || [],
     stubEmbeddings: options.stubEmbeddings === true,
     studentModel: options.studentModel || null,
+    studentVectors: options.studentVectors || null,
+    studentAbstention: options.studentAbstention || null,
     trainStudent: {
       enabled: options.trainStudent !== false && !options.studentModel,
       python: options.trainStudent?.python,
@@ -77,9 +78,10 @@ function makeConfig(context, options, workDir, outDir) {
     embedding: {
       mode: 'student',
       studentModelPath: options.studentModel ? 'student-model.bin' : 'student/student-model.bin',
+      ...(options.studentVectors ? { teacherVectorsPath: 'docs-vectors.f32' } : {}),
       ...(options.trainStudent.enabled ? { trainStudent: { ...options.trainStudent, outDir: 'student' } } : {}),
       dims: 384,
-      prefixPolicy: { passage: '', query: DEFAULT_PREFIX },
+      prefixPolicy: { passage: '', query: '' },
       pooling: 'mean',
       normalize: true,
     },
@@ -111,12 +113,16 @@ async function copyRuntimeManifest(assetDir, context, options, studentModelInfo)
     corpusUrl: `${assetUrlBase}/corpus.json`,
     manifestUrl: `${assetUrlBase}/manifest.json`,
     studentModelUrl: `${assetUrlBase}/student-model.bin`,
+    abstentionUrl: studentModelInfo.abstention ? `${assetUrlBase}/student-abstention.json` : null,
   };
   manifest.encoder = {
     ...(manifest.encoder || {}),
     studentModelUrl: manifest.docusaurus.studentModelUrl,
     studentModelSha256: studentModelInfo.sha256,
     studentModelBytes: studentModelInfo.bytes,
+    abstentionUrl: manifest.docusaurus.abstentionUrl,
+    abstentionSha256: studentModelInfo.abstention?.sha256 || null,
+    abstentionBytes: studentModelInfo.abstention?.bytes || null,
   };
   await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 }
@@ -127,15 +133,28 @@ async function stageExternalStudentModel(options, context, workDir) {
   if (!fssync.existsSync(sourcePath)) {
     throw new Error(`Pancake student model not found: ${sourcePath}`);
   }
-  const workPath = path.join(workDir, 'student-model.bin');
-  await fs.copyFile(sourcePath, workPath);
-  return workPath;
+  await fs.copyFile(sourcePath, path.join(workDir, 'student-model.bin'));
+  const vectorsPath = path.resolve(context.siteDir, options.studentVectors);
+  if (!fssync.existsSync(vectorsPath)) {
+    throw new Error(`Pancake teacher vectors not found: ${vectorsPath}`);
+  }
+  await fs.copyFile(vectorsPath, path.join(workDir, 'docs-vectors.f32'));
+  if (options.studentAbstention) {
+    const abstentionPath = path.resolve(context.siteDir, options.studentAbstention);
+    if (!fssync.existsSync(abstentionPath)) {
+      throw new Error(`Pancake abstention model not found: ${abstentionPath}`);
+    }
+    await fs.copyFile(abstentionPath, path.join(workDir, 'student-abstention.json'));
+  }
 }
 
 async function publishStudentModel(options, context, workDir, assetDir) {
   const sourcePath = options.studentModel
     ? path.resolve(context.siteDir, options.studentModel)
     : path.join(workDir, 'student', 'student-model.bin');
+  const abstentionPath = options.studentAbstention
+    ? path.resolve(context.siteDir, options.studentAbstention)
+    : path.join(workDir, 'student', 'student-abstention.json');
   if (options.studentModel && !fssync.existsSync(sourcePath)) {
     throw new Error(`Pancake student model not found: ${sourcePath}`);
   }
@@ -146,9 +165,19 @@ async function publishStudentModel(options, context, workDir, assetDir) {
   await fs.copyFile(sourcePath, assetPath);
   const bytes = await fs.readFile(sourcePath);
   const { createHash } = await import('node:crypto');
+  let abstention = null;
+  if (fssync.existsSync(abstentionPath)) {
+    const abstentionBytes = await fs.readFile(abstentionPath);
+    await fs.writeFile(path.join(assetDir, 'student-abstention.json'), abstentionBytes);
+    abstention = {
+      bytes: abstentionBytes.byteLength,
+      sha256: createHash('sha256').update(abstentionBytes).digest('hex'),
+    };
+  }
   return {
     bytes: bytes.byteLength,
     sha256: createHash('sha256').update(bytes).digest('hex'),
+    abstention,
   };
 }
 
@@ -234,6 +263,15 @@ export function validateOptions({ options }) {
   }
   if (options?.studentModel !== undefined && typeof options.studentModel !== 'string') {
     throw new Error('studentModel must be a string path');
+  }
+  if (options?.studentVectors !== undefined && typeof options.studentVectors !== 'string') {
+    throw new Error('studentVectors must be a string path');
+  }
+  if (options?.studentAbstention !== undefined && typeof options.studentAbstention !== 'string') {
+    throw new Error('studentAbstention must be a string path');
+  }
+  if (options?.studentModel && !options?.studentVectors) {
+    throw new Error('studentModel requires studentVectors so passage indexing uses matching teacher document vectors');
   }
   if (options?.trainStudent !== undefined && typeof options.trainStudent !== 'object' && options.trainStudent !== false) {
     throw new Error('trainStudent must be an object or false');

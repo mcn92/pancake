@@ -62,12 +62,13 @@ rendered chunks, then writes static artifact assets into `build/pancake-search/`
 - `corpus.json` — result metadata and snippets
 - `manifest.json` — embedding/index/runtime metadata and URLs
 - `student-model.bin` — the PSTU student encoder used by browser queries
+- `student-abstention.json` — the generated match-quality scorer
 
 That means docs, blog posts, pages, and rendered MDX all flow through the same
 folder ingestion, chunking, teacher-vector indexing, and Search Artifact builder
 as the CLI, without generating or deploying a Worker. The teacher model runs at
 build time; the built site only serves the compact student model for browser
-query vectors.
+query vectors and abstention scorer.
 
 By default, the plugin injects a floating, draggable search panel into the page
 and exposes `window.PancakeDocusaurusSearch` for custom UI code. The panel's JS
@@ -86,7 +87,21 @@ Set `trainStudent.python` if Docusaurus should call a specific interpreter:
 [pancakeSearch, { trainStudent: { python: '.venv/bin/python', epochs: 60 } }]
 ```
 
-Advanced users can provide a pre-trained model with `studentModel`, but it must
-be trained for this site or a very close corpus. A Wikipedia-trained student is
-only useful for smoke testing the mechanics; it is not a general-purpose docs
-encoder.
+Advanced users can provide pre-trained assets, but the model has to travel with
+the matching teacher document vectors for the rendered corpus:
+
+```js
+[
+  pancakeSearch,
+  {
+    studentModel: './pancake-student.bin',
+    studentVectors: './docs-vectors.f32',
+    studentAbstention: './student-abstention.json',
+  },
+]
+```
+
+`studentModel` is query-side only. The plugin refuses to build passages from a
+bare student model because that silently changes the index geometry. A
+Wikipedia-trained student is only useful for smoke testing the mechanics; it is
+not a general-purpose docs encoder.
