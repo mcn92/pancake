@@ -633,7 +633,7 @@ For the Worker reference deployment, run:
 node test/test_worker_features.js
 ```
 
-Current core suite status on this tree: **1191 passed, 0 failed**.
+Current core suite status on this tree: **1211 passed, 0 failed**.
 
 ## Building from source
 

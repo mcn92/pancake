@@ -29,15 +29,19 @@ or later.
 ```bash
 git clone https://github.com/mcn92/pancake.git
 cd pancake
-npm run build:all
+npm install          # dev deps for the demos, benchmarks, and tests
 ```
 
-`npm run build:all` produces all of the WASM engine artifacts used by the local entrypoints and Worker example:
+No build step is needed: the checkout ships the prebuilt WASM engine in
+`dist/` (`engine.{js,wasm}` plus the scalar fallback `engine.scalar.{js,wasm}`),
+and the root entry points use it directly.
 
-- `dist/engine.js`
-- `dist/engine.wasm`
-- `dist/engine.scalar.js`
-- `dist/engine.scalar.wasm`
+Rebuild the engine only if you are changing the C++ under `src/`. That
+requires an Emscripten toolchain (see the README's "Building from source"):
+
+```bash
+npm run build:all    # rebuilds dist/engine.* — engine development only
+```
 
 (`./build.sh` builds only the SIMD pair, `dist/engine.{js,wasm}`; use `build:all` when you also need the scalar fallback.)
 

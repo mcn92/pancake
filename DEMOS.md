@@ -31,15 +31,22 @@ the interactive REPL instead, run it in a terminal (a TTY):
 
 ```bash
 npm run demo:data
-node examples/demo/technical_demo_cli.js       # then type: build, then: validate all
+node examples/legacy/technical-demo/technical_demo_cli.js   # then type: build, then: validate all
 ```
 
 Any single command also works one-shot (it builds an index first):
 
 ```bash
-node examples/demo/technical_demo_cli.js validate all
-node examples/demo/technical_demo_cli.js search 1000
+node examples/legacy/technical-demo/technical_demo_cli.js validate all
+node examples/legacy/technical-demo/technical_demo_cli.js search 1000
 ```
+
+### Hello pack (smallest browser consumer)
+
+`examples/01-hello-pack/` is the minimal bundled-browser fixture for
+`pancake-wasm/web` — the starting point for "can my app load and search a
+packaged index?". It runs as part of `npm run test:browser`; see its README
+to serve it standalone.
 
 ### Browser Search Artifact demo (client-side semantic docs search)
 
@@ -55,8 +62,8 @@ npm run demo:artifact:browser        # serves at http://127.0.0.1:4173
 Open the printed URL. Try a sample chip, then watch the browser's Network
 panel: the range requests on the first query drop toward zero on the next as
 the artifact warms into cache. Try `banana pancake recipe` to see abstention
-return no results. See `examples/search-artifact-demo/static/README.md` for
-the measured warm-cache and static-host findings.
+return no results. See `examples/legacy/range-artifact-demo/static/README.md`
+for the measured warm-cache and static-host findings.
 
 ### Node Search Artifact demo (in-process, from a file)
 
@@ -72,7 +79,7 @@ Point it at a larger artifact to exercise scale (queries come from a matching
 `.fvecs` file when supplied, otherwise synthetic):
 
 ```bash
-node examples/search-artifact-demo/demo.js \
+node examples/legacy/range-artifact-demo/demo.js \
   --artifact path/to/sift1m.pancake-range \
   --query-file sift/sift_query.fvecs --queries 5
 ```
@@ -83,17 +90,17 @@ with `Pancake.buildSketchArtifactFile(...)`.
 
 ## Needs one setup step
 
-### Worker semantic-search integration test
+### Edge docs-search integration test
 
 The distilled docs-search Worker (bundled snapshot + int8 encoder + abstention,
 zero outbound requests). The test drives it through Miniflare, so bundle the
 Worker first with a Wrangler dry-run:
 
 ```bash
-cd examples/worker-semantic-search
+cd examples/03-edge-docs-search
 npx wrangler deploy --dry-run --outdir ../../.tmp-test-work/student-worker-distilled
 cd ../..
-node examples/worker-semantic-search/test_worker.mjs
+node examples/03-edge-docs-search/test_worker.mjs
 ```
 
 (The test prints these exact commands if the bundle is missing.)
@@ -105,27 +112,37 @@ terminals:
 
 ```bash
 # terminal A — mock catalog API
-node examples/catalog-demo/mock_catalog_server.mjs
+node examples/02-catalog-hydration/mock_catalog_server.mjs
 
 # terminal B — the reference Worker, with admin routes open for the demo
-cd examples/worker
+cd examples/reference-worker
 npx wrangler dev --port 8787 --log-level error \
   --var ALLOW_INSECURE_ADMIN:1 --var READ_ONLY:0 --var API_KEY:""
 
 # terminal C — build the snapshot, import it, query, then change inventory live
-node examples/catalog-demo/build_snapshot.mjs
-node examples/catalog-demo/worker_import_snapshot.mjs
-node examples/catalog-demo/demo_client.mjs "lightweight waterproof hiking jacket"
+node examples/02-catalog-hydration/build_snapshot.mjs
+node examples/02-catalog-hydration/worker_import_snapshot.mjs
+node examples/02-catalog-hydration/demo_client.mjs "lightweight waterproof hiking jacket"
 curl -X POST http://127.0.0.1:9090/admin/update \
   -H 'Content-Type: application/json' \
   -d '{"id":"jacket-rain-shell","inventory":0}'
-node examples/catalog-demo/demo_client.mjs "lightweight waterproof hiking jacket"
+node examples/02-catalog-hydration/demo_client.mjs "lightweight waterproof hiking jacket"
+```
+
+To see the live index mutate too (remove the rain shell, add a boot via
+`/add`, then search for it), follow "Show Live Search Mutation" in
+`examples/02-catalog-hydration/README.md`:
+
+```bash
+PANCAKE_API_KEY=local-demo-key node examples/02-catalog-hydration/live_update.mjs
+node examples/02-catalog-hydration/demo_client.mjs "leather hiking boots"
 ```
 
 The `--var` flags open admin routes and enable writes for the local demo. If
-you left a `.dev.vars` in `examples/worker/` from earlier work, a committed
-`API_KEY`/`READ_ONLY` there can cause a `401 Unauthorized` or read-only
-rejection; the `--var` overrides above take precedence, or move the file aside.
+you left a `.dev.vars` in `examples/reference-worker/` from earlier work, a
+committed `API_KEY`/`READ_ONLY` there can cause a `401 Unauthorized` or
+read-only rejection; the `--var` overrides above take precedence, or move the
+file aside.
 
 When done, stop the dev servers (Ctrl-C in terminals A and B).
 
@@ -135,22 +152,26 @@ The flagship demonstrator: ~242k articles compiled into one range-readable
 sketch artifact, searched entirely in the browser — self-hosted MiniLM
 encoder, WASM sketch scan, exact rerank over ~66 coalesced range reads, and
 calibrated abstention. The pack data is generated, not committed (~1.3 GB of
-build outputs; ~2 h of GPU embedding on the full corpus), so build it first:
+build outputs; ~2 h of GPU embedding on the full corpus). The committed
+5-doc sample corpus exercises the whole pipeline in a couple of minutes:
 
 ```bash
-cd examples/wiki-pack
+cd examples/04-static-wiki-pack
 ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm install
-# full pipeline + local demo server: see examples/wiki-pack/README.md
-node query_pack.mjs data-perm "what causes earthquakes"   # CLI smoke test
+python3 embed_corpus.py --input sample-corpus.jsonl --out data-sample
+python3 permute_corpus.py --src data-sample --out data-sample-perm
+node build_pack.mjs data-sample-perm
+node query_pack.mjs data-sample-perm "how is abstention calibrated"   # CLI smoke test
 ```
 
-`examples/wiki-pack/README.md` has the step-by-step pipeline, the measured
-recall/latency numbers, and the design notes.
+`examples/04-static-wiki-pack/README.md` has the full-corpus pipeline, the
+measured recall/latency numbers, and the design notes; `DEPLOY.md` beside it
+covers the Pages/R2 deployment.
 
 ## Verification suites
 
 ```bash
-npm test                 # core (1204) + model loader + sketch conformance (56)
+npm test                 # core (1211) + model loader + sketch conformance (62 + 13 staged)
 npm run test:browser     # Chromium/Firefox/WebKit consumer smoke (Playwright)
 npm run test:worker-web  # workerd entrypoint smoke
 npm run test:simd        # SIMD vs scalar output parity

@@ -184,7 +184,7 @@ verified working (see examples/README.md ordering).
 
 ## Track D: Core library
 
-The core is stable (1191 tests passing) and positioned honestly. Work here is
+The core is stable (1211 tests passing) and positioned honestly. Work here is
 maintenance, not features:
 
 - Keep the two HNSW backends separate (decision 2026-07-31, reversing the
