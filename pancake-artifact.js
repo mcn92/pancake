@@ -128,9 +128,16 @@ class NodeFileRangeSource {
     }
 
     async read(offset, length) {
-        const buffer = Buffer.allocUnsafe(length);
-        this.fs.readSync(this.fd, buffer, 0, length, offset);
-        return buffer;
+        const buffer = Buffer.alloc(length);
+        let bytesRead = 0;
+        while (bytesRead < length) {
+            const chunk = this.fs.readSync(this.fd, buffer, bytesRead, length - bytesRead, offset + bytesRead);
+            if (chunk === 0) break;
+            bytesRead += chunk;
+        }
+        // Return only the bytes actually read so callers' truncation checks
+        // fire instead of parsing an unwritten buffer tail.
+        return bytesRead === length ? buffer : buffer.subarray(0, bytesRead);
     }
 
     async close() {
@@ -296,7 +303,12 @@ class PancakeRangeArtifact {
         const cached = this.cachedNode(id);
         if (cached !== undefined) return cached;
         await this.prefetch([id]);
-        return this.cachedNode(id);
+        const node = this.cachedNode(id);
+        if (node === undefined) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                'Range artifact record for id was not resolved by its address', { id });
+        }
+        return node;
     }
 
     async prefetch(ids, options = {}) {
@@ -333,6 +345,15 @@ class PancakeRangeArtifact {
             for (let off = 0; off + this.recordBytes <= bytes; off += this.recordBytes) {
                 const record = buffer.subarray(off, off + this.recordBytes);
                 const originalId = new DataView(record.buffer, record.byteOffset, record.byteLength).getUint32(0, true);
+                // The embedded id is untrusted: it must map back to the byte
+                // address this record was read from, or a lying record would
+                // poison the cache under an attacker-chosen key and searches
+                // for the real id would die uncoded.
+                if (originalId >= this.count || this.recordAddressForId(originalId) !== start + off) {
+                    throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                        'Range artifact record id does not match its address',
+                        { originalId, address: start + off });
+                }
                 if (!this.cache.has(originalId) && !this.lazyCache.has(originalId)) {
                     this.cacheLazyNode(originalId, this.decodeNode(record));
                     this.rangeNodesDecoded++;
@@ -368,6 +389,14 @@ class PancakeRangeArtifact {
         for (let i = 0; i < this.routerCount; i++) {
             const record = buffer.subarray(i * this.recordBytes, (i + 1) * this.recordBytes);
             const originalId = new DataView(record.buffer, record.byteOffset, record.byteLength).getUint32(0, true);
+            const address = this.routerRecordsOffset + i * this.recordBytes;
+            // Same untrusted-id check as decodeRange: the embedded id must map
+            // back to this router slot's address.
+            if (originalId >= this.count || this.recordAddressForId(originalId) !== address) {
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                    'Range artifact router record id does not match its address',
+                    { originalId, address });
+            }
             if (!this.cache.has(originalId)) this.cache.set(originalId, this.decodeNode(record));
         }
         return { records: this.routerCount, bytes };
@@ -530,8 +559,14 @@ class PancakeRangeArtifact {
             }
         }
 
+        const top = results.items.sort(compareDistancesAsc).slice(0, k);
+        // Traversal orders by squared L2; the API contract (README "Distance
+        // values") reports Euclidean, matching PancakeIndex.search.
+        if (this.metric !== 1) {
+            for (const hit of top) hit.distance = Math.sqrt(hit.distance);
+        }
         return {
-            results: results.items.sort(compareDistancesAsc).slice(0, k),
+            results: top,
             rounds,
             stats: this.stats(),
         };
@@ -1508,8 +1543,11 @@ class PancakeSketchArtifact {
             exact.push([acc, id]);
         }
         exact.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+        // Rerank accumulates squared L2; the API contract (README "Distance
+        // values") reports Euclidean, matching PancakeIndex.search.
+        const sqrtL2 = this.metric !== 1;
         return {
-            results: exact.slice(0, k).map(([distance, id]) => ({ id, distance })),
+            results: exact.slice(0, k).map(([distance, id]) => ({ id, distance: sqrtL2 ? Math.sqrt(distance) : distance })),
             rerank: ids.length,
             tier: tier.name,
         };

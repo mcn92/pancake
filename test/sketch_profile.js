@@ -269,6 +269,101 @@ async function run() {
         await boundedSketch.close();
     }
 
+    // Truncated artifact files must fail closed with coded errors. The file
+    // source may not pad short reads to the requested length, or every
+    // downstream truncation check parses unwritten buffer tail instead.
+    console.log('\ntruncated files fail closed');
+    {
+        const rows = seededVectors(COUNT, DIM, 7);
+        const index = await Pancake.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
+        index.addBatch(rows);
+        const snapshotPath = path.join(tmp, 'trunc-snap.pnck');
+        fs.writeFileSync(snapshotPath, index.export());
+        index.dispose();
+        const queries = seededVectors(10, DIM, 11);
+
+        const readers = [
+            ['range', 'trunc.pancake-range',
+                (snap, out) => Pancake.buildRangeArtifactFile(snap, out),
+                (p) => Pancake.openRangeArtifactFile(p),
+                (artifact, q) => artifact.search(q, K, { efSearch: 200 })],
+            ['sketch', 'trunc.pancake-sketch',
+                (snap, out) => Pancake.buildSketchArtifactFile(snap, out, { sketchDims: 16, sketchBits: 8 }),
+                (p) => Pancake.openSketchArtifactFile(p),
+                (artifact, q) => artifact.search(q, K, { rerank: 200 })],
+        ];
+        for (const [label, name, build, open, search] of readers) {
+            const fullPath = path.join(tmp, name);
+            build(snapshotPath, fullPath);
+            const full = fs.readFileSync(fullPath);
+            for (const keep of [4, 64, Math.floor(full.length / 2)]) {
+                const cutPath = `${fullPath}.cut${keep}`;
+                fs.writeFileSync(cutPath, full.subarray(0, keep));
+                let coded = false;
+                let detail = 'no error thrown';
+                try {
+                    // Open may legitimately succeed when the cut falls past the
+                    // resident prefix; a search must then hit the missing bytes.
+                    const artifact = await open(cutPath);
+                    try {
+                        for (const q of queries) await search(artifact, q);
+                    } finally {
+                        await artifact.close();
+                    }
+                } catch (err) {
+                    coded = err instanceof Pancake.PancakeError && typeof err.code === 'string';
+                    detail = String(err && err.message);
+                }
+                check(`${label} artifact truncated to ${keep}B fails closed`, coded, detail);
+            }
+        }
+    }
+
+    // A range-artifact record lying about its own id must fail closed with a
+    // coded error, not poison the cache under the forged key (which used to
+    // surface as an uncoded TypeError deep inside search).
+    console.log('\nforged record ids fail closed');
+    {
+        const rows = seededVectors(COUNT, DIM, 21);
+        const index = await Pancake.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
+        index.addBatch(rows);
+        const snapshotPath = path.join(tmp, 'forge-snap.pnck');
+        fs.writeFileSync(snapshotPath, index.export());
+        index.dispose();
+        const rangePath = path.join(tmp, 'forge.pancake-range');
+        Pancake.buildRangeArtifactFile(snapshotPath, rangePath);
+
+        const clean = await Pancake.openRangeArtifactFile(rangePath);
+        const baseOffset = clean.baseRecordsOffset;
+        const routerOffset = clean.routerRecordsOffset;
+        await clean.close();
+
+        const forge = async (offset, label) => {
+            const bytes = Buffer.from(fs.readFileSync(rangePath));
+            const trueId = bytes.readUInt32LE(offset);
+            bytes.writeUInt32LE((trueId + 1) % COUNT, offset);
+            const forgedPath = `${rangePath}.${label}`;
+            fs.writeFileSync(forgedPath, bytes);
+            let coded = false;
+            let detail = 'no error thrown';
+            try {
+                const artifact = await Pancake.openRangeArtifactFile(forgedPath);
+                try {
+                    const queries = seededVectors(10, DIM, 22);
+                    for (const q of queries) await artifact.search(q, K, { efSearch: 200 });
+                } finally {
+                    await artifact.close();
+                }
+            } catch (err) {
+                coded = err instanceof Pancake.PancakeError && err.code === 'SNAPSHOT_INVALID';
+                detail = String(err && err.message);
+            }
+            check(`forged ${label} record id rejected with SNAPSHOT_INVALID`, coded, detail);
+        };
+        await forge(baseOffset, 'base');
+        await forge(routerOffset, 'router');
+    }
+
     // Golden fixtures: the reference reader must reproduce committed results
     // byte-for-byte from committed artifact bytes (spec section 5).
     console.log('\ngolden fixtures');
