@@ -405,6 +405,35 @@ async function testCreation() {
         () => Pancake.create({ ...DEFAULT_CONFIG, varianceSample: [normalizedVec(DIM)] }),
         'create() with removed varianceSample option throws'
     );
+
+    // maxElements bounds: the engine ABI takes a C int, so values above
+    // 2^31-1 must be rejected in JS instead of truncating (2^32+3 used to
+    // silently create a 3-element index reporting capacity 4294967299).
+    for (const bad of [2 ** 31, 2 ** 32 + 3, 0, -1, 1.5]) {
+        let err = null;
+        try { await Pancake.create({ ...DEFAULT_CONFIG, maxElements: bad }); } catch (e) { err = e; }
+        assert(err && err.code === 'INVALID_ARGUMENT',
+            `create() rejects maxElements=${bad} with INVALID_ARGUMENT`);
+    }
+
+    // Engine init failure surfaces as a coded error. The engine returns
+    // uint32_t INVALID_HANDLE (0xFFFFFFFF), which the i32 ABI delivers to JS
+    // as -1; create() must detect it and free its scratch allocations.
+    {
+        const createPancakeApi = require('./pancake-core.js');
+        const freed = [];
+        let nextPtr = 0;
+        const FailingInit = createPancakeApi(async () => ({
+            _emsc_malloc: () => (nextPtr += 8),
+            _emsc_free: (p) => freed.push(p),
+            _pancake_init: () => -1,
+        }));
+        let err = null;
+        try { await FailingInit.create({ dim: 4, maxElements: 10 }); } catch (e) { err = e; }
+        assert(err && err.code === 'WASM_ALLOCATION_FAILED' && /init failed/i.test(err.message),
+            'create() detects engine init failure (-1 handle) with a coded error');
+        assert(freed.length === 3, 'create() frees scratch buffers on init failure');
+    }
 }
 
 

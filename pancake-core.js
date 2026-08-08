@@ -836,9 +836,11 @@ function createPancakeApi(loadEngineImpl) {
             throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
                 "opts.metric must be 'cosine' or 'l2'", { argument: 'metric', value: opts.metric });
         }
-        if (opts.maxElements !== undefined && (!Number.isInteger(opts.maxElements) || opts.maxElements <= 0)) {
+        // Upper bound matches the engine ABI: pancake_init takes max_elem as a
+        // C int, so anything above 2^31-1 would truncate or go negative.
+        if (opts.maxElements !== undefined && (!Number.isInteger(opts.maxElements) || opts.maxElements <= 0 || opts.maxElements > 0x7fffffff)) {
             throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
-                'opts.maxElements must be a positive integer', { argument: 'maxElements', value: opts.maxElements });
+                'opts.maxElements must be an integer between 1 and 2147483647', { argument: 'maxElements', value: opts.maxElements });
         }
         if (opts.M !== undefined && (!Number.isInteger(opts.M) || opts.M <= 1 || opts.M > 128)) {
             throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
@@ -894,7 +896,9 @@ function createPancakeApi(loadEngineImpl) {
 
         const handle = e._pancake_init(dim, maxElements, quantized, metric, M, efConstruction, efSearch, seed);
 
-        if (handle === 0xFFFFFFFF) {
+        // The engine returns uint32_t INVALID_HANDLE (0xFFFFFFFF), which the
+        // Emscripten i32 ABI delivers to JS as -1.
+        if ((handle >>> 0) === 0xFFFFFFFF) {
             e._emsc_free(vecPtr);
             e._emsc_free(idPtr);
             e._emsc_free(distPtr);
