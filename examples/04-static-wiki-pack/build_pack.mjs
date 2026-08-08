@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Pancake from '../../pancake.node.mjs';
+import { stampPackVersion } from './stamp_pack_version.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.join(here, process.argv[2] || 'data');
@@ -98,4 +99,5 @@ const packManifest = {
     recommendedRerank: sketchManifest.recommendedRerank,
 };
 fs.writeFileSync(path.join(dataDir, 'pack-manifest.json'), JSON.stringify(packManifest, null, 2) + '\n');
-console.log('pack manifest written');
+const { packVersion } = stampPackVersion(dataDir);
+console.log(`pack manifest written (packVersion ${packVersion})`);

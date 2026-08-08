@@ -29,6 +29,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pipeline } from '@huggingface/transformers';
 import Pancake from '../../pancake.node.mjs';
+import { stampPackVersion } from './stamp_pack_version.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = parseArgs(process.argv.slice(2));
@@ -722,6 +723,10 @@ for (const probe of probes) {
 fs.writeFileSync(path.join(dataDir, 'wiki-abstention-probes.json'), JSON.stringify(probes, null, 2) + '\n');
 console.log(`golden probes: ${probes.length - probeFails}/${probes.length} pass`);
 console.log('wrote wiki-abstention.json + wiki-abstention-probes.json');
+// The abstention asset and bloom are served under the versioned pack URL, so
+// their bytes are part of the packVersion hash: re-stamp the manifest.
+const { packVersion } = stampPackVersion(dataDir);
+console.log(`pack manifest re-stamped (packVersion ${packVersion})`);
 
 await calibPack.close();
 await fullPack.close();
