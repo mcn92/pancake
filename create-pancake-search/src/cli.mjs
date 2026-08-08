@@ -320,7 +320,7 @@ async function buildAssets(projectDir, config, options = {}) {
     throw new CliError(`Ingest produced 0 documents from ${detail}. Next: check --source/include/exclude and ensure files contain enough text.`, 1);
   }
   const chunks = dedupeChunks(chunkDocs(docs, config.chunking));
-  if (chunks.length === 0) throw new CliError('Chunking produced 0 chunks. Next: use longer content or adjust source filters.', 1);
+  if (chunks.length === 0) throw new CliError('Chunking produced 0 chunks. Chunking counts whitespace-separated tokens and drops documents under 25 of them, so unsegmented scripts (e.g. CJK) are not supported. Next: use longer whitespace-delimited content or adjust source filters.', 1);
   log(`Ingested ${docs.length} docs -> ${chunks.length} chunks`);
 
   const vectors = await embedChunks(chunks, config.embedding, log, projectDir);

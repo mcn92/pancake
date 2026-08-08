@@ -62,9 +62,13 @@ function renderRows(results, corpusById) {
 
 async function loadBrowserRuntime() {
   if (typeof window === 'undefined') throw new Error('Pancake search can only load in a browser');
-  const pancakeModule = await Promise.resolve().then(() => require('pancake-wasm/web'));
+  // The widget only needs the range-artifact reader, which is pure JS. The
+  // full pancake-wasm/web entrypoint carries Vite-specific `?url` WASM asset
+  // imports that Docusaurus's webpack build cannot process.
+  const artifactModule = await import('pancake-wasm/artifact');
+  const contract = artifactModule.default || artifactModule;
   return {
-    Pancake: pancakeModule.default || pancakeModule,
+    RangeArtifact: contract.PancakeRangeArtifact,
   };
 }
 
@@ -144,7 +148,7 @@ class PancakeDocusaurusSearch {
       studentModelUrl: `${this.assetBase}/student-model.bin`,
       abstentionUrl: `${this.assetBase}/student-abstention.json`,
     };
-    const { Pancake } = await loadBrowserRuntime();
+    const { RangeArtifact } = await loadBrowserRuntime();
     const [corpus, studentBytes, abstention, artifact] = await Promise.all([
       fetch(urls.corpusUrl).then((r) => {
         if (!r.ok) throw new Error(`Corpus fetch failed: ${r.status}`);
@@ -161,7 +165,7 @@ class PancakeDocusaurusSearch {
             return r.json();
           })
         : null,
-      Pancake.RangeArtifact.open(createRangeSource(urls.artifactUrl)),
+      RangeArtifact.open(createRangeSource(urls.artifactUrl)),
     ]);
     const studentModel = loadStudentModel(studentBytes);
     this.state = {
@@ -178,6 +182,12 @@ class PancakeDocusaurusSearch {
     const state = await this.load();
     const prefixed = `${state.manifest.prefixPolicy?.query || ''}${query}`;
     const embedded = embedTextWithStudent(prefixed, state.studentModel);
+    // The student featurizer only recognizes Latin-script tokens; a query
+    // with no recognized terms embeds to the zero vector, which the cosine
+    // artifact rejects. Report a graceful no-match instead.
+    if (!(embedded.preNorm > 0)) {
+      return { results: [], rows: [], rerank: 0, match_quality: 'none' };
+    }
     const embedding = embedded.vector;
     const result = await state.artifact.search(embedding, Number(options.k || this.k), {
       efSearch: Number(options.efSearch || state.manifest.efSearch || this.efSearch),

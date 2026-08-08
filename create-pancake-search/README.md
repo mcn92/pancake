@@ -105,3 +105,11 @@ the matching teacher document vectors for the rendered corpus:
 bare student model because that silently changes the index geometry. A
 Wikipedia-trained student is only useful for smoke testing the mechanics; it is
 not a general-purpose docs encoder.
+
+## Limitations
+
+The bundled student encoder featurizes `[a-z0-9']` tokens only, and chunking
+counts whitespace-separated tokens. English and other Latin-script,
+whitespace-delimited content works; unsegmented scripts (CJK and similar) do
+not — the build fails with an explicit 0-chunks error, and queries with no
+recognized terms return a graceful no-match instead of results.

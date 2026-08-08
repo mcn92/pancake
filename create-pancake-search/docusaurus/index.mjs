@@ -32,7 +32,8 @@ function normalizeOptions(options = {}) {
     workDir: options.workDir || path.join('.docusaurus', 'pancake-search'),
     name: options.name,
     include: options.include || ['**/*.html'],
-    exclude: options.exclude || [],
+    // The build-output 404 page would otherwise be indexed as a document.
+    exclude: options.exclude || ['404.html'],
     stubEmbeddings: options.stubEmbeddings === true,
     studentModel: options.studentModel || null,
     studentVectors: options.studentVectors || null,
@@ -101,6 +102,28 @@ async function withOptionalStubEmbeddings(enabled, fn) {
     if (previous === undefined) delete process.env.PANCAKE_SEARCH_STUB_EMBEDDINGS;
     else process.env.PANCAKE_SEARCH_STUB_EMBEDDINGS = previous;
   }
+}
+
+// Ingest sees build-output file paths (docs/intro/index.html); the search UI
+// needs site routes. Map file path -> route and prefix the site baseUrl so
+// result links resolve from any page, at any nesting depth.
+function routeForBuildPath(buildPath, baseUrl) {
+  const raw = String(buildPath || '');
+  if (/^[a-z][a-z0-9+.-]*:/i.test(raw) || raw.startsWith('/')) return raw;
+  let route = raw.replace(/\\/g, '/').replace(/^\.\//, '');
+  if (route.endsWith('index.html')) route = route.slice(0, -'index.html'.length);
+  else if (route.endsWith('.html')) route = route.slice(0, -'.html'.length);
+  return joinSitePath(baseUrl, route) || baseUrl;
+}
+
+async function rewriteCorpusUrls(assetDir, context) {
+  const corpusPath = path.join(assetDir, 'corpus.json');
+  const corpus = JSON.parse(await fs.readFile(corpusPath, 'utf8'));
+  const baseUrl = context.siteConfig?.baseUrl || '/';
+  for (const chunk of corpus) {
+    chunk.url = routeForBuildPath(chunk.url || chunk.sourcePath, baseUrl);
+  }
+  await fs.writeFile(corpusPath, JSON.stringify(corpus));
 }
 
 async function copyRuntimeManifest(assetDir, context, options, studentModelInfo) {
@@ -211,6 +234,7 @@ export default function pancakeDocusaurusPlugin(context, rawOptions = {}) {
           skipBundleSizeCheck: true,
         })
       );
+      await rewriteCorpusUrls(assetDir, context);
       const studentModelInfo = await publishStudentModel(options, context, workDir, assetDir);
       await copyRuntimeManifest(assetDir, context, options, studentModelInfo);
     },
@@ -236,6 +260,13 @@ export default function pancakeDocusaurusPlugin(context, rawOptions = {}) {
           },
         ],
       };
+    },
+
+    configureWebpack(config, isServer) {
+      if (isServer) return {};
+      // pancake-wasm/artifact is pure JS in the browser, but its Node-only
+      // file helpers statically reference fs/crypto, which webpack must stub.
+      return { resolve: { fallback: { fs: false, crypto: false } } };
     },
 
     getClientModules() {
