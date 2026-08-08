@@ -195,15 +195,29 @@ export interface RangeArtifactBuildManifest {
   readonly addressing: Readonly<Record<string, number>>;
 }
 
-export class NodeFileRangeSource implements RangeReadSource {
+/**
+ * Node-only file-backed range source. This is NOT a named runtime export of
+ * any entrypoint: reach the constructor via the Node API object
+ * (`Pancake.NodeFileRangeSource`) or the `pancake-wasm/artifact` subpath.
+ */
+export interface NodeFileRangeSource extends RangeReadSource {
   readonly filePath: string;
   readonly size: number;
-  constructor(filePath: string);
   read(offset: number, length: number): Promise<Uint8Array>;
   close(): Promise<void>;
 }
 
-export class PancakeRangeArtifact {
+export interface NodeFileRangeSourceConstructor {
+  new (filePath: string): NodeFileRangeSource;
+  readonly prototype: NodeFileRangeSource;
+}
+
+/**
+ * A range-readable Search Artifact reader. The class is NOT a named runtime
+ * export of any entrypoint: reach it via `Pancake.RangeArtifact` or the
+ * `pancake-wasm/artifact` subpath.
+ */
+export interface PancakeRangeArtifact {
   readonly version: number;
   readonly kind: number;
   readonly dim: number;
@@ -217,8 +231,6 @@ export class PancakeRangeArtifact {
   readonly routerCount: number;
   readonly baseCount: number;
   readonly routerResident: { readonly records: number; readonly bytes: number };
-  static open(source: RangeReadSource, options?: RangeArtifactOpenOptions): Promise<PancakeRangeArtifact>;
-  static openFile(filePath: string, options?: RangeArtifactOpenOptions): Promise<PancakeRangeArtifact>;
   search(query: VectorInput, k: number, options?: RangeArtifactSearchOptions): Promise<RangeArtifactSearchResult>;
   stats(): RangeArtifactStats;
   resetStats(): void;
@@ -236,6 +248,21 @@ export class PancakeRangeArtifact {
   close(): Promise<void>;
 }
 
+export interface PancakeRangeArtifactConstructor {
+  open(source: RangeReadSource, options?: RangeArtifactOpenOptions): Promise<PancakeRangeArtifact>;
+  /** Node entrypoints only. */
+  openFile(filePath: string, options?: RangeArtifactOpenOptions): Promise<PancakeRangeArtifact>;
+  readonly prototype: PancakeRangeArtifact;
+}
+
+/** Resident sketch tier: the coarse staged-boot tier or the full tier. */
+export type SketchTier = 'micro' | 'full';
+
+export interface SketchStageEvent {
+  readonly tier: SketchTier;
+  readonly residentBytes: number;
+}
+
 export interface SketchArtifactOpenOptions {
   /** Verify the resident prefix hash when a crypto backend exists. Default: true. */
   verify?: boolean;
@@ -246,6 +273,15 @@ export interface SketchArtifactOpenOptions {
    * non-numeric values throw INVALID_ARGUMENT.
    */
   maxCacheBytes?: number;
+  /**
+   * Staged boot: when the artifact carries a micro tier, become searchable
+   * after loading only the stage-1 prefix and swap to the full tier in the
+   * background (see {@link PancakeSketchArtifact.fullyResident}). Ignored for
+   * artifacts without a micro tier. Default: false.
+   */
+  staged?: boolean;
+  /** Called on each residency transition of a staged open (micro, then full). */
+  onStage?: (event: SketchStageEvent) => void;
 }
 
 export interface SketchScanner {
@@ -259,11 +295,20 @@ export interface SketchScanner {
   readonly maxRerank: number;
   /** The artifact metric this scanner scores (0 = l2, 1 = cosine). */
   readonly metric: number;
+  /** Pooled dimensionality of the tier this scanner was built for. */
+  readonly sketchDims: number;
+  /** The resident tier this scanner scores. */
+  readonly tier: SketchTier;
 }
 
 export interface SketchScannerOptions {
   /** Upper bound on rerank depth the scanner will return. Default: 1024. */
   maxRerank?: number;
+  /**
+   * Which resident tier to build the scanner over. 'micro' requires an
+   * artifact with a micro tier. Default: 'full'.
+   */
+  tier?: SketchTier;
 }
 
 export interface SketchArtifactSearchOptions {
@@ -281,9 +326,29 @@ export interface SketchArtifactSearchOptions {
    * External top-C scanner (e.g. from createSketchScanner). Must implement
    * the artifact's metric: cosine artifacts require `metric === 1`, and a
    * declared metric that disagrees with the artifact throws
-   * INVALID_ARGUMENT.
+   * INVALID_ARGUMENT. A scanner whose tier does not match the artifact's
+   * current resident tier is bypassed, not misused.
    */
   scanner?: SketchScanner | { metric?: number; scan(pooledQuery: Float32Array, c: number): number[] };
+  /**
+   * While serving from the micro tier, multiply the candidate pool by this
+   * factor to compensate for the coarser sketches. Default: 4.
+   */
+  microBoost?: number;
+  /**
+   * Scanner built over the micro tier (createSketchScanner with
+   * `tier: 'micro'`); engaged only while the micro tier is the active
+   * resident tier and `sketchDims` matches it.
+   */
+  microScanner?: SketchScanner | { sketchDims: number; metric?: number; scan(pooledQuery: Float32Array, c: number): number[] };
+}
+
+export interface SketchArtifactSearchResult {
+  readonly results: SearchResult[];
+  /** Number of candidates fetched for exact rerank. */
+  readonly rerank: number;
+  /** The resident tier that served this search. */
+  readonly tier: SketchTier;
 }
 
 export interface SketchArtifactStats {
@@ -302,6 +367,13 @@ export interface SketchArtifactBuildOptions {
   sketchBits?: 4 | 8;
   /** Producer-recommended rerank depth recorded in the header. */
   recommendedRerank?: number;
+  /**
+   * Add a staged-boot micro tier at this pooled dimensionality; must divide
+   * sketchDims and be smaller. Default: no micro tier.
+   */
+  microDims?: number;
+  /** Bits per micro-tier dimension. Default: 4. */
+  microBits?: 4 | 8;
 }
 
 export interface SketchArtifactBuildManifest {
@@ -312,27 +384,53 @@ export interface SketchArtifactBuildManifest {
   readonly metric: Metric;
   readonly graph: Readonly<Record<string, number>>;
   readonly sketch: Readonly<Record<string, number>>;
+  /** Micro-tier geometry, or null when built without one. */
+  readonly micro: Readonly<{
+    microDims: number;
+    microBits: number;
+    microPool: number;
+    stage1Bytes: number;
+  }> | null;
   readonly addressing: Readonly<Record<string, number>>;
   readonly recommendedRerank: number;
 }
 
-export class PancakeSketchArtifact {
+/**
+ * A sketch Search Artifact reader. The class is NOT a named runtime export of
+ * any entrypoint: reach it via `Pancake.SketchArtifact` or the
+ * `pancake-wasm/artifact` subpath.
+ */
+export interface PancakeSketchArtifact {
   readonly metric: number;
   readonly dim: number;
   readonly count: number;
   readonly sketchDims: number;
   readonly sketchBits: number;
+  /** Micro-tier pooled dimensionality; 0 when the artifact has none. */
+  readonly microDims: number;
+  /** Micro-tier bits per dimension; 0 when the artifact has none. */
+  readonly microBits: number;
+  /** The currently active resident tier ('micro' only during a staged boot). */
+  readonly tier: SketchTier;
+  /**
+   * Resolves with this artifact once the full tier is resident and verified.
+   * Already resolved for non-staged opens; rejects if the background stage-2
+   * load fails.
+   */
+  readonly fullyResident: Promise<PancakeSketchArtifact>;
   readonly recommendedRerank: number;
   readonly residentBytes: number;
   readonly residentVerified: boolean;
-  static open(source: RangeReadSource, options?: SketchArtifactOpenOptions): Promise<PancakeSketchArtifact>;
-  static openFile(filePath: string, options?: SketchArtifactOpenOptions): Promise<PancakeSketchArtifact>;
-  search(query: VectorInput, k: number, options?: SketchArtifactSearchOptions): Promise<{
-    results: Array<{ id: number; distance: number }>;
-    rerank: number;
-  }>;
+  search(query: VectorInput, k: number, options?: SketchArtifactSearchOptions): Promise<SketchArtifactSearchResult>;
   stats(): SketchArtifactStats;
   close(): Promise<void>;
+}
+
+export interface PancakeSketchArtifactConstructor {
+  open(source: RangeReadSource, options?: SketchArtifactOpenOptions): Promise<PancakeSketchArtifact>;
+  /** Node entrypoints only. */
+  openFile(filePath: string, options?: SketchArtifactOpenOptions): Promise<PancakeSketchArtifact>;
+  readonly prototype: PancakeSketchArtifact;
 }
 
 export interface MemoryUsage {
@@ -419,8 +517,8 @@ export interface PancakeIndex {
 export interface PancakeApi {
   readonly PancakeError: typeof PancakeError;
   readonly PANCAKE_ERROR_CODES: typeof PANCAKE_ERROR_CODES;
-  readonly RangeArtifact: typeof PancakeRangeArtifact;
-  readonly SketchArtifact: typeof PancakeSketchArtifact;
+  readonly RangeArtifact: PancakeRangeArtifactConstructor;
+  readonly SketchArtifact: PancakeSketchArtifactConstructor;
   /** Build a WASM-backed SIMD scanner for a sketch artifact's resident tier. */
   createSketchScanner(artifact: PancakeSketchArtifact, options?: SketchScannerOptions): Promise<SketchScanner>;
   /** Create a new Pancake index using the runtime-specific packaged entrypoint. */
@@ -444,7 +542,7 @@ export interface PancakeApi {
  * the narrower {@link PancakeApi}.
  */
 export interface NodePancakeApi extends PancakeApi {
-  readonly NodeFileRangeSource: typeof NodeFileRangeSource;
+  readonly NodeFileRangeSource: NodeFileRangeSourceConstructor;
   /** Build a range-readable Search Artifact from a uint8 Pancake snapshot. */
   buildRangeArtifact(snapshot: Uint8Array | ArrayBufferLike, outPath: string, opts?: RangeArtifactBuildOptions): RangeArtifactBuildManifest;
   /** Build a range-readable Search Artifact from a uint8 Pancake snapshot file. */

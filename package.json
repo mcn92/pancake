@@ -60,7 +60,7 @@
       }
     },
     "./artifact": {
-      "types": "./pancake.d.ts",
+      "types": "./pancake-artifact.d.ts",
       "default": "./pancake-artifact.js"
     },
     "./engine.wasm": "./dist/engine.wasm"
@@ -76,6 +76,7 @@
     "pancake-loader.js",
     "pancake.d.ts",
     "pancake.web.d.ts",
+    "pancake-artifact.d.ts",
     "dist/engine.js",
     "dist/engine.wasm",
     "dist/engine.scalar.js",
@@ -94,7 +95,8 @@
     "demo:artifact:browser:build": "vite build examples/legacy/range-artifact-demo/static",
     "demo:artifact:browser": "vite preview examples/legacy/range-artifact-demo/static --host 127.0.0.1",
     "build:pages-demo": "node examples/03-edge-docs-search/pages-ui/build.mjs",
-    "test": "node run_tests.js && node test/model_c_loader.js && node test/sketch_profile.js && node test/sketch_staged.js",
+    "test": "node run_tests.js && node test/model_c_loader.js && node test/sketch_profile.js && node test/sketch_staged.js && npm run test:types",
+    "test:types": "tsc -p test/types/tsconfig.json",
     "test:browser": "node test/browser_smoke.js",
     "test:worker-web": "node test/test_worker_web_entry.js",
     "test:simd": "node test/simd_parity.js",
@@ -141,6 +143,7 @@
     "hnswlib-node": "^3.0.0",
     "miniflare": "^4.20260409.0",
     "playwright": "^1.60.0",
+    "typescript": "^7.0.2",
     "usearch": "^2.25.1",
     "vite": "^8.0.16",
     "wrangler": "^4.81.1"

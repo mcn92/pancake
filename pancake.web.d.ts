@@ -29,12 +29,17 @@ export type {
   RangeArtifactSearchResult,
   RangeArtifactOpenOptions,
   PancakeRangeArtifact,
+  PancakeRangeArtifactConstructor,
+  SketchTier,
+  SketchStageEvent,
   SketchArtifactOpenOptions,
   SketchScanner,
   SketchScannerOptions,
   SketchArtifactSearchOptions,
+  SketchArtifactSearchResult,
   SketchArtifactStats,
   PancakeSketchArtifact,
+  PancakeSketchArtifactConstructor,
   PancakeApi,
 } from './pancake.js';
 

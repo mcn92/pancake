@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "target": "es2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["esnext"],
+    "types": [],
+    "paths": {
+      "pancake-wasm": ["../../pancake.d.ts"],
+      "pancake-wasm/node": ["../../pancake.d.ts"],
+      "pancake-wasm/web": ["../../pancake.web.d.ts"],
+      "pancake-wasm/artifact": ["../../pancake-artifact.d.ts"]
+    }
+  },
+  "include": ["./check.ts"]
+}
