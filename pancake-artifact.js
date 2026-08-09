@@ -10,6 +10,41 @@ const MAPPING_ENTRY_SIZE = 8;
 const UINT8_HNSW_MAGIC_V1 = 0x49384831;
 const RANGE_MAGIC = 0x31415250; // PRA1
 const HEADER_BYTES = 128;
+
+// Hard ceiling on any single artifact-driven read. Header fields are
+// untrusted: a hostile count/offset must not turn into a multi-GB read or
+// allocation before the truncation checks run. 2 GiB comfortably clears any
+// legitimate single region (the largest is a full resident sketch tier) while
+// blocking the 32-bit-overflow class of pathological requests.
+const MAX_ARTIFACT_READ_BYTES = 2 * 1024 * 1024 * 1024;
+
+// Validate an artifact-derived (offset, length) before issuing source.read.
+// Rejects non-integer/negative/overflowing ranges, anything past the cap, and
+// — when the source reports a numeric size — anything past the source end, so
+// the read is refused instead of attempted. Returns the length for convenience.
+function checkArtifactRange(source, offset, length, label) {
+    if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(length)
+        || offset < 0 || length < 0 || !Number.isSafeInteger(offset + length)) {
+        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+            `Artifact ${label} range is out of bounds`, { offset, length });
+    }
+    if (length > MAX_ARTIFACT_READ_BYTES) {
+        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+            `Artifact ${label} range exceeds the maximum read size`, { length, max: MAX_ARTIFACT_READ_BYTES });
+    }
+    if (source && Number.isSafeInteger(source.size) && offset + length > source.size) {
+        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+            `Artifact ${label} range extends past the source size`, { offset, length, size: source.size });
+    }
+    return length;
+}
+
+// Read a checked artifact region: validate (offset, length) before touching
+// the source so a hostile header cannot drive a giant read or allocation.
+async function readChecked(source, offset, length, label) {
+    checkArtifactRange(source, offset, length, label);
+    return asUint8Array(await source.read(offset, length));
+}
 const HEADER_BYTES_V2 = 256;
 const RANGE_KIND_U8 = 1;
 const ROUTER_LOCATION_MASK = 0x80000000;
@@ -128,6 +163,15 @@ class NodeFileRangeSource {
     }
 
     async read(offset, length) {
+        // Defense in depth: the callers validate artifact-derived ranges, but
+        // a future caller must not be able to drive a giant Buffer.alloc or a
+        // read past the file end through this source directly.
+        if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(length)
+            || offset < 0 || length < 0 || length > MAX_ARTIFACT_READ_BYTES
+            || offset + length > this.size) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                'NodeFileRangeSource.read() range is out of bounds', { offset, length, size: this.size });
+        }
         const buffer = Buffer.alloc(length);
         let bytesRead = 0;
         while (bytesRead < length) {
@@ -187,12 +231,12 @@ class PancakeRangeArtifact {
         if (!source || typeof source.read !== 'function') {
             throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'PancakeRangeArtifact.open() requires a range source with read(offset, length)');
         }
-        const headerBytes = asUint8Array(await source.read(0, HEADER_BYTES));
+        const headerBytes = await readChecked(source, 0, HEADER_BYTES, 'header');
         if (headerBytes.byteLength < HEADER_BYTES) {
             throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Range artifact header is truncated');
         }
         const header = parseHeader(headerBytes);
-        const idMapBytes = asUint8Array(await source.read(header.idMapOffset, header.count * 4));
+        const idMapBytes = await readChecked(source, header.idMapOffset, header.count * 4, 'id map');
         if (idMapBytes.byteLength !== header.count * 4) {
             throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Range artifact id map is truncated');
         }
@@ -332,7 +376,7 @@ class PancakeRangeArtifact {
         };
         const readRange = async ([start, end]) => {
             const bytes = end - start;
-            const buffer = asUint8Array(await this.source.read(start, bytes));
+            const buffer = await readChecked(this.source, start, bytes, 'record');
             if (buffer.byteLength !== bytes) {
                 throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Range artifact record read returned a truncated range', { offset: start, bytes, actual: buffer.byteLength });
             }
@@ -382,7 +426,7 @@ class PancakeRangeArtifact {
     async loadRouterSegment() {
         if (this.version < 2 || this.routerCount === 0) return { records: 0, bytes: 0 };
         const bytes = this.routerCount * this.recordBytes;
-        const buffer = asUint8Array(await this.source.read(this.routerRecordsOffset, bytes));
+        const buffer = await readChecked(this.source, this.routerRecordsOffset, bytes, 'router segment');
         if (buffer.byteLength !== bytes) {
             throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Range artifact router segment is truncated');
         }
@@ -1169,7 +1213,7 @@ class PancakeSketchArtifact {
             throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'SketchArtifact.open() requires a range source with read(offset, length)');
         }
         const artifact = new PancakeSketchArtifact(source);
-        const header = asUint8Array(await source.read(0, SKETCH_HEADER_BYTES));
+        const header = await readChecked(source, 0, SKETCH_HEADER_BYTES, 'header');
         if (header.byteLength !== SKETCH_HEADER_BYTES) {
             throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact header is truncated');
         }
@@ -1239,7 +1283,7 @@ class PancakeSketchArtifact {
         artifact.fullyResident = Promise.resolve(artifact);
 
         if (!staged) {
-            const resident = asUint8Array(await source.read(SKETCH_HEADER_BYTES, vectorsOffset - SKETCH_HEADER_BYTES));
+            const resident = await readChecked(source, SKETCH_HEADER_BYTES, vectorsOffset - SKETCH_HEADER_BYTES, 'resident prefix');
             if (resident.byteLength !== vectorsOffset - SKETCH_HEADER_BYTES) {
                 throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact resident prefix is truncated');
             }
@@ -1260,12 +1304,10 @@ class PancakeSketchArtifact {
         // integrity contract. Result semantics differ between tiers, so the
         // tier is reported on every search result rather than hidden.
         artifact.tier = 'micro';
-        const [affine, micro] = await Promise.all([
-            source.read(SKETCH_HEADER_BYTES, sketchesOffset - SKETCH_HEADER_BYTES),
-            source.read(microOffset, count * microRowBytes),
+        const [affineBytes, microBytes] = await Promise.all([
+            readChecked(source, SKETCH_HEADER_BYTES, sketchesOffset - SKETCH_HEADER_BYTES, 'stage-1 affine'),
+            readChecked(source, microOffset, count * microRowBytes, 'stage-1 micro'),
         ]);
-        const affineBytes = asUint8Array(affine);
-        const microBytes = asUint8Array(micro);
         if (affineBytes.byteLength !== sketchesOffset - SKETCH_HEADER_BYTES || microBytes.byteLength !== count * microRowBytes) {
             throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact stage-1 read is truncated');
         }
@@ -1300,7 +1342,7 @@ class PancakeSketchArtifact {
         const onStage = typeof options.onStage === 'function' ? options.onStage : null;
         if (onStage) onStage({ tier: 'micro', residentBytes: artifact.residentBytes });
         artifact.fullyResident = (async () => {
-            const rest = asUint8Array(await source.read(sketchesOffset, vectorsOffset - sketchesOffset));
+            const rest = await readChecked(source, sketchesOffset, vectorsOffset - sketchesOffset, 'stage-2 sketches');
             if (rest.byteLength !== vectorsOffset - sketchesOffset) {
                 throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact stage-2 read is truncated');
             }
@@ -1423,7 +1465,7 @@ class PancakeSketchArtifact {
             const buffers = await Promise.all(batch.map(async ([startId, endId]) => {
                 const offset = this.vectorsOffset + startId * dim;
                 const length = (endId - startId) * dim;
-                const bytes = asUint8Array(await this.source.read(offset, length));
+                const bytes = await readChecked(this.source, offset, length, 'row');
                 if (bytes.byteLength !== length) {
                     throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact row read returned a truncated range', { offset, length });
                 }

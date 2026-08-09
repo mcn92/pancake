@@ -364,6 +364,55 @@ async function run() {
         await forge(routerOffset, 'router');
     }
 
+    // A hostile header must not drive a giant read or allocation: the range
+    // must be rejected before source.read() is called, and a source that
+    // cannot report its size (e.g. HTTP) must still be protected by the cap.
+    console.log('\nartifact read sizes bounded before fetch');
+    {
+        const rows = seededVectors(COUNT, DIM, 51);
+        const index = await Pancake.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
+        index.addBatch(rows);
+        const snapshotPath = path.join(tmp, 'bound-snap.pnck');
+        fs.writeFileSync(snapshotPath, index.export());
+        index.dispose();
+        const rangePath = path.join(tmp, 'bound.pancake-range');
+        Pancake.buildRangeArtifactFile(snapshotPath, rangePath);
+        const realHeader = Buffer.from(fs.readFileSync(rangePath)).subarray(0, 128);
+
+        // Wrap a real 128-byte header over a source that records read sizes and
+        // has more than 2 GiB of virtual size, so only the per-read cap can
+        // stop a pathological id-map read.
+        const makeSource = (reportSize) => {
+            const calls = [];
+            return {
+                calls,
+                size: reportSize ? 128 : undefined,
+                async read(offset, length) {
+                    calls.push([offset, length]);
+                    if (offset === 0) return Buffer.from(realHeader);
+                    return Buffer.alloc(0);
+                },
+            };
+        };
+        for (const reportSize of [true, false]) {
+            const src = makeSource(reportSize);
+            let threw = false;
+            try { await Pancake.RangeArtifact.open(src); } catch { threw = true; }
+            const giant = src.calls.some(([, l]) => l > 2 * 1024 * 1024 * 1024);
+            check(`open never issues a >2GiB read (size ${reportSize ? 'known' : 'unknown'})`, !giant && threw,
+                `calls=${JSON.stringify(src.calls)}`);
+        }
+
+        // NodeFileRangeSource.read must refuse an out-of-file range directly,
+        // independent of any caller validation (defense in depth).
+        const art = await Pancake.openRangeArtifactFile(rangePath);
+        let directCoded = false, ddetail = '';
+        try { await art.source.read(0, 0x40000000); }
+        catch (err) { directCoded = err instanceof Pancake.PancakeError && err.code === 'SNAPSHOT_INVALID'; ddetail = String(err && err.message); }
+        check('NodeFileRangeSource.read refuses an out-of-file range', directCoded, ddetail);
+        await art.close();
+    }
+
     // Scanner input is copied into a fixed-size WASM buffer; malformed input
     // must be rejected before the copy, not written out of bounds or fed to
     // the native kernel as garbage.
