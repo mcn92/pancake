@@ -1278,15 +1278,18 @@ class PancakeSketchArtifact {
             stage1.set(affineCopy, 0);
             stage1.set(microCopy, affineCopy.byteLength);
             const digest = await sha256BytesAsync(stage1);
-            if (digest) {
-                const expected = header.subarray(136, 168);
-                for (let b = 0; b < 32; b++) {
-                    if (digest[b] !== expected[b]) {
-                        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact stage-1 prefix failed hash verification');
-                    }
-                }
-                artifact.residentVerified = true;
+            if (!digest) {
+                // Verification requested but no crypto backend: fail closed.
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                    'Sketch artifact verification requested but no crypto backend is available; pass verify:false to skip');
             }
+            const expected = header.subarray(136, 168);
+            for (let b = 0; b < 32; b++) {
+                if (digest[b] !== expected[b]) {
+                    throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact stage-1 prefix failed hash verification');
+                }
+            }
+            artifact.residentVerified = true;
         }
         artifact.scales = new Float32Array(affineCopy.buffer, 0, count);
         artifact.offsets = new Float32Array(affineCopy.buffer, count * 4, count);
@@ -1328,7 +1331,13 @@ class PancakeSketchArtifact {
 
     async _verifyFullResident(residentCopy, header) {
         const digest = await sha256BytesAsync(residentCopy);
-        if (!digest) return;
+        if (!digest) {
+            // Verification was requested (callers gate this on verify) but no
+            // crypto backend is available. Fail closed rather than admit
+            // unverified bytes.
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                'Sketch artifact verification requested but no crypto backend is available; pass verify:false to skip');
+        }
         const expected = header.subarray(56, 88);
         for (let b = 0; b < 32; b++) {
             if (digest[b] !== expected[b]) {
@@ -1602,6 +1611,11 @@ async function createSketchScanner(loadEngine, artifact, options = {}) {
     const outIdsPtr = engine._emsc_malloc(maxC * 4);
     const outDistsPtr = engine._emsc_malloc(maxC * 4);
     if (!sketchesPtr || !scalesPtr || !offsetsPtr || !queryPtr || !outIdsPtr || !outDistsPtr) {
+        // Free whichever allocations succeeded before one failed, so a
+        // partial failure does not leak WASM heap (matches create()).
+        for (const ptr of [sketchesPtr, scalesPtr, offsetsPtr, queryPtr, outIdsPtr, outDistsPtr]) {
+            if (ptr) engine._emsc_free(ptr);
+        }
         throw pancakeError(PANCAKE_ERROR_CODES.WASM_ALLOCATION_FAILED, 'sketch scanner heap allocation failed');
     }
     engine.HEAPU8.set(expanded, sketchesPtr);
@@ -1617,6 +1631,20 @@ async function createSketchScanner(loadEngine, artifact, options = {}) {
         scan(pooledQuery, c) {
             if (disposed) throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'sketch scanner disposed');
             const query = pooledQuery instanceof Float32Array ? pooledQuery : Float32Array.from(pooledQuery);
+            // The query is copied into a queryPtr sized for exactly sketchDims
+            // floats: an over- or under-sized input would read/write outside
+            // that buffer in the WASM heap. Validate before the copy.
+            if (query.length !== sketchDims) {
+                throw pancakeError(PANCAKE_ERROR_CODES.DIMENSION_MISMATCH,
+                    `scan() pooled query has ${query.length} values, expected ${sketchDims}`,
+                    { expected: sketchDims, actual: query.length });
+            }
+            for (let i = 0; i < query.length; i++) {
+                if (!Number.isFinite(query[i])) {
+                    throw pancakeError(PANCAKE_ERROR_CODES.INVALID_VECTOR,
+                        'scan() pooled query contains a non-finite value', { index: i });
+                }
+            }
             engine.HEAPF32.set(query, queryPtr >> 2);
             const topC = Math.min(Math.max(1, Math.trunc(c)), maxC);
             const n = engine._pancake_sketch_scan(

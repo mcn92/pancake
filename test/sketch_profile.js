@@ -364,6 +364,89 @@ async function run() {
         await forge(routerOffset, 'router');
     }
 
+    // Scanner input is copied into a fixed-size WASM buffer; malformed input
+    // must be rejected before the copy, not written out of bounds or fed to
+    // the native kernel as garbage.
+    console.log('\nscanner input validation');
+    {
+        const rows = seededVectors(COUNT, DIM, 31);
+        const index = await Pancake.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
+        index.addBatch(rows);
+        const snapshotPath = path.join(tmp, 'scan-snap.pnck');
+        fs.writeFileSync(snapshotPath, index.export());
+        index.dispose();
+        const sketchPath = path.join(tmp, 'scan.pancake-sketch');
+        Pancake.buildSketchArtifactFile(snapshotPath, sketchPath, { sketchDims: 16, sketchBits: 8 });
+        const artifact = await Pancake.openSketchArtifactFile(sketchPath);
+        const scanner = await Pancake.createSketchScanner(artifact);
+        const sd = scanner.sketchDims;
+
+        const rejects = (input, label) => {
+            let coded = false, detail = 'no error thrown';
+            try { scanner.scan(input, 10); }
+            catch (err) { coded = err instanceof Pancake.PancakeError && typeof err.code === 'string'; detail = String(err && err.message); }
+            check(`scan() rejects ${label}`, coded, detail);
+        };
+        rejects(new Float32Array(sd + 5000).fill(0.5), 'oversized input');
+        rejects(new Float32Array(sd - 1).fill(0.5), 'undersized input');
+        rejects(Float32Array.from({ length: sd }, (_, i) => (i === 0 ? NaN : 0.5)), 'NaN in input');
+        rejects(Float32Array.from({ length: sd }, (_, i) => (i === 0 ? Infinity : 0.5)), 'Infinity in input');
+        // A correctly-sized finite query must still work after the guards.
+        const ok = scanner.scan(new Float32Array(sd).fill(0.1), 5);
+        check('scan() accepts a valid pooled query', Array.isArray(ok));
+        scanner.dispose();
+        await artifact.close();
+    }
+
+    // When verification is requested but no crypto backend exists, open must
+    // fail closed rather than admit unverified bytes.
+    console.log('\nverification fails closed without crypto');
+    {
+        const rows = seededVectors(COUNT, DIM, 41);
+        const index = await Pancake.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
+        index.addBatch(rows);
+        const snapshotPath = path.join(tmp, 'verify-snap.pnck');
+        fs.writeFileSync(snapshotPath, index.export());
+        index.dispose();
+        const sketchPath = path.join(tmp, 'verify.pancake-sketch');
+        Pancake.buildSketchArtifactFile(snapshotPath, sketchPath, { sketchDims: 16, sketchBits: 8 });
+
+        // Simulate an environment with no crypto backend at all. globalThis.crypto
+        // is a getter-only accessor, so override it via defineProperty and
+        // block the Node crypto require the async hash helper falls back to.
+        const realDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+        const Module = require('module');
+        const origModuleRequire = Module.prototype.require;
+        Object.defineProperty(globalThis, 'crypto', { value: undefined, configurable: true, writable: true });
+        Module.prototype.require = function (id) {
+            if (id === 'crypto' || id === 'node:crypto') throw new Error('crypto unavailable');
+            return origModuleRequire.apply(this, arguments);
+        };
+        try {
+            let coded = false, detail = 'no error thrown';
+            try {
+                const artifact = await Pancake.openSketchArtifactFile(sketchPath, { verify: true });
+                await artifact.close();
+            } catch (err) {
+                coded = err instanceof Pancake.PancakeError && err.code === 'SNAPSHOT_INVALID' && /no crypto backend/i.test(err.message);
+                detail = String(err && err.message);
+            }
+            check('open(verify:true) fails closed with no crypto backend', coded, detail);
+
+            // verify:false must still open in the same environment.
+            let opened = false, odetail = '';
+            try {
+                const artifact = await Pancake.openSketchArtifactFile(sketchPath, { verify: false });
+                opened = artifact.count === COUNT;
+                await artifact.close();
+            } catch (err) { odetail = String(err && err.message); }
+            check('open(verify:false) still opens with no crypto backend', opened, odetail);
+        } finally {
+            if (realDescriptor) Object.defineProperty(globalThis, 'crypto', realDescriptor);
+            Module.prototype.require = origModuleRequire;
+        }
+    }
+
     // Golden fixtures: the reference reader must reproduce committed results
     // byte-for-byte from committed artifact bytes (spec section 5).
     console.log('\ngolden fixtures');
