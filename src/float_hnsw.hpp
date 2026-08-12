@@ -662,6 +662,9 @@ public:
         uint32_t version = 0;
         if (is_v1) {
             if (!safe_read_u32(version)) return false;
+            // Reject unknown future versions instead of parsing them as v1:
+            // a changed layout must fail closed, not misparse (contract §6).
+            if (version > 1) return false;
         }
 
         uint32_t count_val, entry_val, level_val, m_val, m0_val, metric_val;

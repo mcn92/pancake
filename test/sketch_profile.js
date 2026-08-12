@@ -496,6 +496,154 @@ async function run() {
         }
     }
 
+    // Range artifact v3 carries whole-segment digests: id map and router are
+    // verified at open, the base segment on demand. Payload tampering — bytes
+    // the structural and address-roundtrip checks cannot see — must now be
+    // caught by the hashes. v2 artifacts (no digests) must still open.
+    console.log('\nrange artifact segment digests (v3)');
+    {
+        const rows = seededVectors(COUNT, DIM, 61);
+        const index = await Pancake.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
+        index.addBatch(rows);
+        const snapshotPath = path.join(tmp, 'digest-snap.pnck');
+        fs.writeFileSync(snapshotPath, index.export());
+        index.dispose();
+        const rangePath = path.join(tmp, 'digest.pancake-range');
+        const manifest = Pancake.buildRangeArtifactFile(snapshotPath, rangePath);
+        check('manifest declares v3 + integrity digests', manifest.formatVersion === 3
+            && /^[0-9a-f]{64}$/.test(manifest.integrity.idMapSha256)
+            && /^[0-9a-f]{64}$/.test(manifest.integrity.routerSha256)
+            && /^[0-9a-f]{64}$/.test(manifest.integrity.baseSha256));
+
+        const clean = await Pancake.openRangeArtifactFile(rangePath);
+        const stats = clean.stats();
+        check('id map + router verified at open', clean.version === 3
+            && stats.segmentVerified.idMap === true && stats.segmentVerified.router === true);
+        const baseOk = await clean.verifyBaseSegment();
+        check('base segment verifies on demand', baseOk === true && clean.stats().segmentVerified.base === true);
+        const cleanResults = (await clean.search(seededVectors(1, DIM, 62)[0], K, { efSearch: 80 })).results.map((r) => r.id);
+        const baseRecordsOffset = clean.baseRecordsOffset;
+        const routerRecordsOffset = clean.routerRecordsOffset;
+        const idMapOffset = clean.idMapOffset;
+        await clean.close();
+
+        // Payload tampering (not the record id, which the address round-trip
+        // already catches): flip a quantized-vector byte inside a record.
+        const tamper = async (offset, label, expectOpenRejected) => {
+            const bytes = Buffer.from(fs.readFileSync(rangePath));
+            bytes[offset] ^= 0xff;
+            const tamperedPath = `${rangePath}.${label}`;
+            fs.writeFileSync(tamperedPath, bytes);
+            let openRejected = false;
+            let baseRejected = false;
+            let detail = 'no error thrown';
+            try {
+                const artifact = await Pancake.openRangeArtifactFile(tamperedPath);
+                try { await artifact.verifyBaseSegment(); }
+                catch (err) { baseRejected = /hash verification/.test(String(err && err.message)); }
+                await artifact.close();
+            } catch (err) {
+                openRejected = /hash verification/.test(String(err && err.message));
+                detail = String(err && err.message);
+            }
+            if (expectOpenRejected) check(`tampered ${label} rejected at open`, openRejected, detail);
+            else check(`tampered ${label} passes open, rejected by verifyBaseSegment`, !openRejected && baseRejected, detail);
+        };
+        await tamper(idMapOffset + 5, 'id map', true);
+        await tamper(routerRecordsOffset + 9, 'router payload', true);
+        await tamper(baseRecordsOffset + 9, 'base payload', false);
+
+        // v2 compatibility: strip the digests and downgrade the version field;
+        // the reader must open it structurally and return identical results.
+        const v2Bytes = Buffer.from(fs.readFileSync(rangePath));
+        v2Bytes.writeUInt32LE(2, 4);
+        v2Bytes.fill(0, 128, 224);
+        const v2Path = `${rangePath}.v2`;
+        fs.writeFileSync(v2Path, v2Bytes);
+        const v2Artifact = await Pancake.openRangeArtifactFile(v2Path);
+        const v2Results = (await v2Artifact.search(seededVectors(1, DIM, 62)[0], K, { efSearch: 80 })).results.map((r) => r.id);
+        check('v2 artifact (no digests) still opens, same results', v2Artifact.version === 2
+            && v2Artifact.stats().segmentVerified.idMap === false
+            && JSON.stringify(v2Results) === JSON.stringify(cleanResults));
+        let v2BaseRefused = false;
+        try { await v2Artifact.verifyBaseSegment(); }
+        catch (err) { v2BaseRefused = err instanceof Pancake.PancakeError && err.code === 'INVALID_ARGUMENT'; }
+        check('verifyBaseSegment refuses a pre-digest artifact explicitly', v2BaseRefused);
+        await v2Artifact.close();
+
+        // Unknown future versions must be rejected, not misparsed.
+        const v9Bytes = Buffer.from(fs.readFileSync(rangePath));
+        v9Bytes.writeUInt32LE(9, 4);
+        const v9Path = `${rangePath}.v9`;
+        fs.writeFileSync(v9Path, v9Bytes);
+        let v9Rejected = false;
+        try { await Pancake.openRangeArtifactFile(v9Path); }
+        catch (err) { v9Rejected = err instanceof Pancake.PancakeError && /version/i.test(String(err.message)); }
+        check('unknown range artifact version rejected', v9Rejected);
+    }
+
+    // Raw snapshot payloads declaring an unknown future version must be
+    // rejected at import, not silently parsed as the newest known layout.
+    console.log('\nsnapshot format version bounded');
+    {
+        const rows = seededVectors(64, DIM, 71);
+        const index = await Pancake.create({ dim: DIM, maxElements: 64, metric: 'l2', quantized: true });
+        index.addBatch(rows);
+        const snapshot = Buffer.from(index.export());
+        index.dispose();
+        // v3 envelope: [magic, version, dim, metric, quantized, nextExtId,
+        // mappingCount, wasmSize], then mappings, then the raw payload whose
+        // own version field sits 8 bytes past the raw magic.
+        const mappingCount = snapshot.readUInt32LE(24);
+        const rawOffset = 32 + mappingCount * 8;
+        check('raw payload located for version patch', snapshot.readUInt32LE(rawOffset) === 0x49384831);
+        snapshot.writeUInt32LE(99, rawOffset + 8);
+        let rejected = false, detail = 'no error thrown';
+        try {
+            const restored = await Pancake.restore(snapshot);
+            restored.dispose();
+        } catch (err) {
+            rejected = err instanceof Pancake.PancakeError && err.code === 'SNAPSHOT_INVALID' && /format version/i.test(err.message);
+            detail = String(err && err.message);
+        }
+        check('unknown raw snapshot version rejected at import', rejected, detail);
+    }
+
+    // The sketch vectors segment (the lazy tier that decides final ranking)
+    // must be verifiable against the header's whole-segment hash.
+    console.log('\nsketch vectors segment digest');
+    {
+        const rows = seededVectors(COUNT, DIM, 81);
+        const index = await Pancake.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
+        index.addBatch(rows);
+        const snapshotPath = path.join(tmp, 'vecdigest-snap.pnck');
+        fs.writeFileSync(snapshotPath, index.export());
+        index.dispose();
+        const sketchPath = path.join(tmp, 'vecdigest.pancake-sketch');
+        Pancake.buildSketchArtifactFile(snapshotPath, sketchPath, { sketchDims: 16, sketchBits: 8 });
+
+        const clean = await Pancake.openSketchArtifactFile(sketchPath);
+        const ok = await clean.verifyVectors();
+        check('clean vectors segment verifies', ok === true && clean.stats().vectorsVerified === true);
+        const vectorsOffset = clean.vectorsOffset;
+        await clean.close();
+
+        const tampered = Buffer.from(fs.readFileSync(sketchPath));
+        tampered[vectorsOffset + 3] ^= 0xff;
+        const tamperedPath = `${sketchPath}.tampered`;
+        fs.writeFileSync(tamperedPath, tampered);
+        const artifact = await Pancake.openSketchArtifactFile(tamperedPath);
+        check('vectors tamper is invisible to the resident hash', artifact.stats().residentVerified === true);
+        let rejected = false, detail = 'no error thrown';
+        try { await artifact.verifyVectors(); }
+        catch (err) {
+            rejected = /hash verification/.test(String(err && err.message));
+            detail = String(err && err.message);
+        }
+        check('tampered vectors segment rejected by verifyVectors', rejected, detail);
+        await artifact.close();
+    }
+
     // Golden fixtures: the reference reader must reproduce committed results
     // byte-for-byte from committed artifact bytes (spec section 5).
     console.log('\ngolden fixtures');

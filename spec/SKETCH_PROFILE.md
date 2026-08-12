@@ -64,14 +64,18 @@ eagerly.
 | 56 | 32 bytes | residentSha256 | SHA-256 of `[256, vectorsOffset)` |
 | 88 | 32 bytes | vectorsSha256 | SHA-256 of the vectors segment |
 | 120 | u32 | recommendedRerank | producer's suggested top-C (see 4.3); `0` = unset |
-| 124..256 | — | reserved | MUST be zero in v1; readers MUST ignore |
+| 124..168 | — | staged residency extension | micro-tier fields and stage-1 hash (section 8); all zero when the extension is absent |
+| 168..256 | — | reserved | MUST be zero in v1; readers MUST ignore |
 
 Integrity stance: the two whole-segment hashes let a reader verify the
 resident prefix after loading it and the vectors segment after a full
-download. They do **not** make individual range reads verifiable; per-chunk
-commitments arrive with the contract's complete-profile manifest and are
-out of scope for v1. This is the same transitional stance as the snapshot
-and range profiles.
+download. The reference reader verifies `residentSha256` at open (default
+on, fail-closed when verification is requested but no crypto backend
+exists) and exposes `verifyVectors()` to check the vectors segment on
+demand in one full-segment read. The hashes do **not** make individual
+range reads verifiable; per-chunk commitments arrive with the contract's
+complete-profile manifest and are out of scope for v1. This is the same
+transitional stance as the snapshot and range profiles.
 
 ### 2.2 Row encoding
 
@@ -137,7 +141,9 @@ A conforming reader executes `search(query, k, C)` as:
    report `1 - cos`.
 
 Recall is governed by `C` (and by the sketch geometry the producer chose);
-round depth is 1 by construction. `k` MUST be `<= C`.
+round depth is 1 by construction. `k` MUST be `<= C`; a reader MAY satisfy
+this by raising an under-sized requested `C` to `k` (the reference reader
+clamps rather than rejects).
 
 A reader MAY cache fetched rows across queries; cache state MUST NOT
 change result semantics.
@@ -227,7 +233,7 @@ re-embedding or re-training anything.
 4. An optional resident index over the sketch tier for very large counts.
 
 
-## 7. Staged residency extension (optional, v1-compatible)
+## 8. Staged residency extension (optional, v1-compatible)
 
 A producer MAY append a **micro tier**: a coarser pooling of the same
 quantized rows, written after the full sketches and before `vectorsOffset`.

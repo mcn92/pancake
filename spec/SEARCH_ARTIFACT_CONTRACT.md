@@ -312,16 +312,27 @@ Every bound is explicit. Silent tolerance is not allowed.
 ### 5.4 Conformance Suite Assets
 
 The conformance suite is assembled from fixture assets that already exist in
-this repository, versioned alongside the profiles they exercise:
+this repository, versioned alongside the profiles they exercise. Each asset
+lists the gate that actually executes it:
 
 - golden snapshot fixtures and fixed-query golden results
-  (`test/fixtures/golden_snapshots.js`)
-- brute-force search oracles for recall bounds
-  (`test/fixtures/search_oracles.js`)
+  (`test/fixtures/golden_snapshots.js`; run by `npm test`)
+- recorded brute-force baselines locking recall and search output
+  (`test/fixtures/search_oracles.js`; the brute-force computation itself
+  lives in `run_tests.js` — the fixture freezes its outputs; run by
+  `npm test`)
+- sketch profile golden fixtures: committed artifact bytes with exact
+  reference-reader results (`test/fixtures/sketch_golden.js`, checked by
+  `test/sketch_profile.js`; run by `npm test`)
 - abstention golden fixtures with exact expected labels
-  (`examples/worker-semantic-search/fixtures/abstention-golden.json`)
+  (`examples/03-edge-docs-search/fixtures/abstention-golden.json`, driven
+  under Miniflare by `npm run test:worker-example`; run in CI)
 - encoder parity verification between independent implementations
-  (`examples/worker-semantic-search/verify_student.mjs`)
+  (`examples/03-edge-docs-search/verify_student.mjs`). This is a
+  producer-side gate: it requires the trained student artifacts, which are
+  not committed, so it runs when a student encoder is (re)trained — not in
+  the automated suite. An artifact shipping a distilled encoder without this
+  check passing is a non-conforming producer, not a missing fixture.
 
 Until these are packaged as a standalone kit, "pass the conformance suite"
 means passing the checks these assets drive. A contract requirement with no
@@ -390,6 +401,11 @@ entire index fits within memory and bundle limits.
 Current snapshots primarily cover the index layer. Corpus and query
 interpretation are supplied by surrounding application assets.
 
+Snapshots carry no integrity digests: readers validate them structurally
+(sizes, offsets, counts, version bounds) but cannot verify bytes against a
+committed hash. Identity as defined in 4.1 is not yet implemented for this
+profile; hosts that need integrity must hash the snapshot externally.
+
 ### 9.2 Range Artifact Profile (`.pancake-range`)
 
 The range artifact profile carries a range-readable Pancake index that separates
@@ -398,6 +414,16 @@ resident routing data from lazily materialized node records.
 It is intended for bounded-memory execution over immutable storage. Current
 range artifacts primarily cover the index and execution layers. Corpus, encoder,
 evaluation, and calibration are currently adjacent assets or future segments.
+
+Integrity stance: format v3 stamps whole-segment SHA-256 digests for the id
+map, router segment, and base segment into the header. The reference reader
+verifies the id map and resident router at open (default on, fail-closed
+when verification is requested but no crypto backend exists) and exposes
+`verifyBaseSegment()` to check the lazy base segment on demand in one
+full-segment read. Individual lazy range reads remain unverifiable until
+per-chunk commitments arrive with the complete profile's manifest — the same
+transitional stance as the sketch profile. Pre-v3 range artifacts carry no
+digests at all and open structurally validated but unverified.
 
 The current range profile is an HNSW split layout: a resident router segment
 over lazily materialized base records. Base-layer geometry changes — for

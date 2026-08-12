@@ -60,6 +60,10 @@ jobs:
       # workerd entrypoint smoke (wrangler needs Node >= 20.3, so it lives in
       # this single Node 22 job rather than the version matrix).
       - run: npm run test:worker-web
+      # Bundles the distilled-encoder Worker example with a Wrangler dry-run
+      # and drives it under Miniflare against the abstention golden fixtures
+      # (contract §5.4 asset — must run in CI, not just exist).
+      - run: npm run test:worker-example
 
   test-browser-entry:
     name: Bundled browser consumer (Vite + Playwright)

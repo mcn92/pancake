@@ -735,6 +735,17 @@ class PancakeIndex {
     }
 
     _validateRawSnapshotMetadata(metadata) {
+        // Unsupported major format versions must be rejected, not parsed as
+        // the newest known layout (Search Artifact Contract §6). Current
+        // writers emit v2 (quantized) / v1 (float); a future v3 would
+        // otherwise be silently misparsed as v2 by the open-ended version
+        // reads in the native deserializers.
+        const maxVersion = metadata.quantized ? 2 : 1;
+        if (!Number.isInteger(metadata.version) || metadata.version > maxVersion) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                `Import failed: unsupported snapshot format version ${metadata.version}`,
+                { version: metadata.version, maxSupported: maxVersion });
+        }
         if (!Number.isInteger(metadata.count) || metadata.count < 0) {
             throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
                 'Import failed: snapshot count is invalid');

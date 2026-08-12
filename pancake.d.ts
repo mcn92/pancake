@@ -150,6 +150,16 @@ export interface RangeArtifactStats {
     readonly records: number;
     readonly bytes: number;
   };
+  /**
+   * Which segments have passed their v3 whole-segment digests. Always false
+   * for pre-v3 artifacts (which carry no digests) and under verify:false;
+   * base becomes true only after a successful verifyBaseSegment().
+   */
+  readonly segmentVerified: {
+    readonly idMap: boolean;
+    readonly router: boolean;
+    readonly base: boolean;
+  };
 }
 
 export interface RangeArtifactRound {
@@ -169,6 +179,12 @@ export interface RangeArtifactOpenOptions {
   /** Eagerly load the v2 router segment. Default: true. */
   loadRouter?: boolean;
   /**
+   * Verify the id map and router segments against the header digests at open
+   * (v3 artifacts only; pre-v3 artifacts carry no digests and open
+   * unverified either way). Default: true.
+   */
+  verify?: boolean;
+  /**
    * Byte budget for the lazily-fetched record cache (LRU eviction; the
    * resident router segment is not counted). Default: 64 MiB. Pass Infinity
    * for the pre-0.3 unbounded behavior. Budgets below 64 records are raised
@@ -186,6 +202,12 @@ export interface RangeArtifactBuildOptions {
 export interface RangeArtifactBuildManifest {
   readonly format: 'pancake-range-artifact';
   readonly formatVersion: number;
+  /** Hex SHA-256 whole-segment digests stamped into the v3 header. */
+  readonly integrity: Readonly<{
+    idMapSha256: string;
+    routerSha256: string;
+    baseSha256: string;
+  }>;
   readonly file: string;
   readonly sizeBytes: number;
   readonly kind: string;
@@ -233,6 +255,13 @@ export interface PancakeRangeArtifact {
   readonly routerResident: { readonly records: number; readonly bytes: number };
   search(query: VectorInput, k: number, options?: RangeArtifactSearchOptions): Promise<RangeArtifactSearchResult>;
   stats(): RangeArtifactStats;
+  /**
+   * Verify the lazily-read base segment against the v3 header digest in one
+   * full-segment read (not a query-path operation). Resolves true on match;
+   * throws SNAPSHOT_INVALID on mismatch, INVALID_ARGUMENT for pre-v3
+   * artifacts, which carry no digests.
+   */
+  verifyBaseSegment(): Promise<true>;
   resetStats(): void;
   clearCache(options?: { reloadRouter?: boolean }): Promise<{ records: number; bytes: number }>;
   /** Fetch (and cache) the given node ids in coalesced ranges. Returns the number of range reads issued. */
@@ -358,6 +387,8 @@ export interface SketchArtifactStats {
   readonly cacheBytes: number;
   readonly residentBytes: number;
   readonly residentVerified: boolean;
+  /** True after a successful verifyVectors(). */
+  readonly vectorsVerified: boolean;
 }
 
 export interface SketchArtifactBuildOptions {
@@ -421,8 +452,17 @@ export interface PancakeSketchArtifact {
   readonly recommendedRerank: number;
   readonly residentBytes: number;
   readonly residentVerified: boolean;
+  /** True after a successful verifyVectors(). */
+  readonly vectorsVerified: boolean;
   search(query: VectorInput, k: number, options?: SketchArtifactSearchOptions): Promise<SketchArtifactSearchResult>;
   stats(): SketchArtifactStats;
+  /**
+   * Verify the lazy vectors segment against the header's whole-segment hash
+   * in one full-segment read (not a query-path operation). Resolves true on
+   * match; throws SNAPSHOT_INVALID on mismatch or when verification is
+   * impossible (no crypto backend).
+   */
+  verifyVectors(): Promise<true>;
   close(): Promise<void>;
 }
 

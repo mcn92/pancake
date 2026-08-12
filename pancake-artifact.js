@@ -47,6 +47,11 @@ async function readChecked(source, offset, length, label) {
 }
 const HEADER_BYTES_V2 = 256;
 const RANGE_KIND_U8 = 1;
+// v3 appends three whole-segment SHA-256 digests (id map, router, base) in
+// the second half of the 256-byte header, after the v2 field block.
+const RANGE_VERSION = 3;
+const RANGE_DIGESTS_OFFSET = 128;
+const RANGE_DIGEST_BYTES = 32;
 const ROUTER_LOCATION_MASK = 0x80000000;
 const LOCATION_ORDINAL_MASK = 0x7fffffff;
 
@@ -225,6 +230,10 @@ class PancakeRangeArtifact {
         this.rangeBytes = 0;
         this.rangeNodesDecoded = 0;
         this.loadRouter = options.loadRouter !== false;
+        this.verify = options.verify !== false;
+        // v3 artifacts carry whole-segment digests; older versions have none.
+        this.digests = null;
+        this.segmentVerified = { idMap: false, router: false, base: false };
     }
 
     static async open(source, options = {}) {
@@ -236,6 +245,18 @@ class PancakeRangeArtifact {
             throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Range artifact header is truncated');
         }
         const header = parseHeader(headerBytes);
+        let digests = null;
+        if (header.version >= 3) {
+            const digestBytes = await readChecked(source, RANGE_DIGESTS_OFFSET, RANGE_DIGEST_BYTES * 3, 'header digests');
+            if (digestBytes.byteLength !== RANGE_DIGEST_BYTES * 3) {
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Range artifact header digests are truncated');
+            }
+            digests = {
+                idMap: new Uint8Array(digestBytes.subarray(0, RANGE_DIGEST_BYTES)),
+                router: new Uint8Array(digestBytes.subarray(RANGE_DIGEST_BYTES, RANGE_DIGEST_BYTES * 2)),
+                base: new Uint8Array(digestBytes.subarray(RANGE_DIGEST_BYTES * 2, RANGE_DIGEST_BYTES * 3)),
+            };
+        }
         const idMapBytes = await readChecked(source, header.idMapOffset, header.count * 4, 'id map');
         if (idMapBytes.byteLength !== header.count * 4) {
             throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Range artifact id map is truncated');
@@ -244,6 +265,11 @@ class PancakeRangeArtifact {
         copied.set(idMapBytes);
         const idMap = new Uint32Array(copied.buffer);
         const artifact = new PancakeRangeArtifact(source, header, idMap, options);
+        artifact.digests = digests;
+        if (digests && artifact.verify) {
+            await verifySha256(copied, digests.idMap, 'Range artifact id map');
+            artifact.segmentVerified.idMap = true;
+        }
         if (artifact.loadRouter && artifact.version >= 2) {
             artifact.routerResident = await artifact.loadRouterSegment();
             artifact.resetStats();
@@ -290,7 +316,28 @@ class PancakeRangeArtifact {
             cachedNodes: this.cache.size + this.lazyCache.size,
             lazyCacheBytes: this.lazyCacheBytes,
             routerResident: { ...this.routerResident },
+            segmentVerified: { ...this.segmentVerified },
         };
+    }
+
+    // Verify the lazily-read base segment against the header's whole-segment
+    // digest (v3+). This is one full-segment read — intended for producers,
+    // CI, and hosts that materialize artifacts, not the query path. Verifying
+    // individual lazy ranges needs per-chunk commitments, which arrive with
+    // the contract's complete-profile manifest.
+    async verifyBaseSegment() {
+        if (!this.digests) {
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+                'Range artifact predates segment digests (format v3); nothing to verify against', { version: this.version });
+        }
+        const bytes = this.baseCount * this.recordBytes;
+        const buffer = await readChecked(this.source, this.baseRecordsOffset, bytes, 'base segment');
+        if (buffer.byteLength !== bytes) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Range artifact base segment is truncated');
+        }
+        await verifySha256(buffer, this.digests.base, 'Range artifact base segment');
+        this.segmentVerified.base = true;
+        return true;
     }
 
     markRanges() {
@@ -429,6 +476,10 @@ class PancakeRangeArtifact {
         const buffer = await readChecked(this.source, this.routerRecordsOffset, bytes, 'router segment');
         if (buffer.byteLength !== bytes) {
             throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Range artifact router segment is truncated');
+        }
+        if (this.digests && this.verify) {
+            await verifySha256(buffer, this.digests.router, 'Range artifact router segment');
+            this.segmentVerified.router = true;
         }
         for (let i = 0; i < this.routerCount; i++) {
             const record = buffer.subarray(i * this.recordBytes, (i + 1) * this.recordBytes);
@@ -686,7 +737,7 @@ function parseHeader(headerBytes) {
         header.baseCount = header.count;
         header.baseRecordsOffset = header.recordsOffset;
     }
-    if (version < 1 || version > 2) {
+    if (version < 1 || version > RANGE_VERSION) {
         throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Unsupported Pancake range artifact version', { version });
     }
     // recordBytes must agree with the layout the geometry implies, or
@@ -771,6 +822,11 @@ function parseUint8Snapshot(bytes) {
     const efConstruction = u32();
     if (magic !== UINT8_HNSW_MAGIC_V1) {
         throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Search Artifact export currently supports uint8 Pancake snapshots only');
+    }
+    // Contract §6: reject unknown future versions instead of parsing them
+    // as v2 — a changed layout must fail closed, not misparse.
+    if (version > 2) {
+        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Unsupported uint8 snapshot format version', { version });
     }
     if (metric !== 0 && metric !== 1) {
         throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Unsupported uint8 snapshot metric', { metric });
@@ -913,11 +969,36 @@ function exportSplitArtifact(index, outPath, options = {}) {
     const baseRecordsOffset = routerRecordsOffset + routerIds.length * recBytes;
     const totalBytes = baseRecordsOffset + baseIds.length * recBytes;
     const fd = fs.openSync(outPath, 'w');
+    // Whole-segment digests (v3): streamed while the segments are written so
+    // the file is hashed exactly once, then stamped into the header at the
+    // end. The id map and router are verified by the reader at open; the base
+    // segment is verifiable on demand via verifyBaseSegment().
+    const crypto = require('crypto');
+    const idMapBuffer = Buffer.from(locationMap.buffer);
+    const idMapDigest = crypto.createHash('sha256').update(idMapBuffer).digest();
+    const routerHash = crypto.createHash('sha256');
+    const baseHash = crypto.createHash('sha256');
+    let routerDigest;
+    let baseDigest;
     try {
+        fs.writeSync(fd, idMapBuffer, 0, index.count * 4, idMapOffset);
+
+        const record = Buffer.alloc(recBytes);
+        for (let i = 0; i < routerIds.length; i++) {
+            writeNodeRecord(index, routerIds[i], record);
+            routerHash.update(record);
+            fs.writeSync(fd, record, 0, record.length, routerRecordsOffset + i * recBytes);
+        }
+        for (let i = 0; i < baseIds.length; i++) {
+            writeNodeRecord(index, baseIds[i], record);
+            baseHash.update(record);
+            fs.writeSync(fd, record, 0, record.length, baseRecordsOffset + i * recBytes);
+        }
+
         const header = Buffer.alloc(HEADER_BYTES_V2);
         let h = 0;
         header.writeUInt32LE(RANGE_MAGIC, h); h += 4;
-        header.writeUInt32LE(2, h); h += 4;
+        header.writeUInt32LE(RANGE_VERSION, h); h += 4;
         header.writeUInt32LE(RANGE_KIND_U8, h); h += 4;
         header.writeUInt32LE(index.dim, h); h += 4;
         header.writeUInt32LE(index.count, h); h += 4;
@@ -934,24 +1015,23 @@ function exportSplitArtifact(index, outPath, options = {}) {
         header.writeUInt32LE(baseIds.length, h); h += 4;
         header.writeUInt32LE(routerRecordsOffset, h); h += 4;
         header.writeUInt32LE(baseRecordsOffset, h); h += 4;
+        routerDigest = routerHash.digest();
+        baseDigest = baseHash.digest();
+        idMapDigest.copy(header, RANGE_DIGESTS_OFFSET);
+        routerDigest.copy(header, RANGE_DIGESTS_OFFSET + RANGE_DIGEST_BYTES);
+        baseDigest.copy(header, RANGE_DIGESTS_OFFSET + RANGE_DIGEST_BYTES * 2);
         fs.writeSync(fd, header, 0, header.length, 0);
-        fs.writeSync(fd, Buffer.from(locationMap.buffer), 0, index.count * 4, idMapOffset);
-
-        const record = Buffer.alloc(recBytes);
-        for (let i = 0; i < routerIds.length; i++) {
-            writeNodeRecord(index, routerIds[i], record);
-            fs.writeSync(fd, record, 0, record.length, routerRecordsOffset + i * recBytes);
-        }
-        for (let i = 0; i < baseIds.length; i++) {
-            writeNodeRecord(index, baseIds[i], record);
-            fs.writeSync(fd, record, 0, record.length, baseRecordsOffset + i * recBytes);
-        }
     } finally {
         fs.closeSync(fd);
     }
     return {
         format: 'pancake-range-artifact',
-        formatVersion: 2,
+        formatVersion: RANGE_VERSION,
+        integrity: {
+            idMapSha256: idMapDigest.toString('hex'),
+            routerSha256: routerDigest.toString('hex'),
+            baseSha256: baseDigest.toString('hex'),
+        },
         file: outPath,
         sizeBytes: totalBytes,
         kind: 'u8-affine',
@@ -1020,6 +1100,22 @@ async function sha256BytesAsync(bytes) {
         return new Uint8Array(sha256Bytes(bytes));
     } catch {
         return null; // no crypto available in this environment
+    }
+}
+
+// Verify bytes against an expected 32-byte SHA-256 digest. Verification was
+// requested by the caller, so a missing crypto backend fails closed rather
+// than admitting unverified bytes.
+async function verifySha256(bytes, expected, label) {
+    const digest = await sha256BytesAsync(bytes);
+    if (!digest) {
+        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+            'Artifact verification requested but no crypto backend is available; pass verify:false to skip');
+    }
+    for (let b = 0; b < 32; b++) {
+        if (digest[b] !== expected[b]) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, `${label} failed hash verification`);
+        }
     }
 }
 
@@ -1186,6 +1282,7 @@ class PancakeSketchArtifact {
         this.rangeRequests = 0;
         this.rangeBytes = 0;
         this.residentVerified = false;
+        this.vectorsVerified = false;
     }
 
     cachedRow(id) {
@@ -1239,6 +1336,9 @@ class PancakeSketchArtifact {
         artifact.vectorsOffset = view.getUint32(44, true);
         const fileBytes = Number(view.getBigUint64(48, true));
         artifact.recommendedRerank = view.getUint32(120, true);
+        // Retained so the lazy tier stays verifiable after open — see
+        // verifyVectors(). Copied out of the header read buffer.
+        artifact.vectorsSha256 = new Uint8Array(header.subarray(88, 120));
         artifact.microDims = view.getUint32(124, true);
         artifact.microBits = artifact.microDims ? view.getUint32(128, true) : 0;
         const microOffset = artifact.microDims ? view.getUint32(132, true) : 0;
@@ -1401,7 +1501,24 @@ class PancakeSketchArtifact {
             cacheBytes: this.cacheBytes,
             residentBytes: this.residentBytes,
             residentVerified: this.residentVerified,
+            vectorsVerified: this.vectorsVerified,
         };
+    }
+
+    // Verify the lazy vectors segment against the header's whole-segment
+    // hash. This is one full-segment read — intended for producers, CI, and
+    // hosts that materialize artifacts, not the query path. Verifying
+    // individual row ranges needs per-chunk commitments, which arrive with
+    // the contract's complete-profile manifest.
+    async verifyVectors() {
+        const bytes = this.count * this.dim;
+        const buffer = await readChecked(this.source, this.vectorsOffset, bytes, 'vectors segment');
+        if (buffer.byteLength !== bytes) {
+            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact vectors segment is truncated');
+        }
+        await verifySha256(buffer, this.vectorsSha256, 'Sketch artifact vectors segment');
+        this.vectorsVerified = true;
+        return true;
     }
 
     sketchValue(id, sd) {
