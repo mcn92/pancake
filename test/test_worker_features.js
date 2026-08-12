@@ -351,8 +351,12 @@ async function testReadOnlyMode(env) {
 // Runner
 // ---------------------------------------------------------------------------
 
-const WORKER_DIR = path.resolve(__dirname, '..', 'examples', 'worker');
+const WORKER_DIR = path.resolve(__dirname, '..', 'examples', 'reference-worker');
 const DEV_VARS_PATH = path.join(WORKER_DIR, '.dev.vars');
+
+function wranglerCommand() {
+  return path.resolve(__dirname, '..', 'node_modules', 'wrangler', 'bin', 'wrangler.js');
+}
 
 function writeDevVars(envVars = {}) {
   const entries = Object.entries(envVars);
@@ -385,10 +389,9 @@ function getFreePort() {
 function startWorker(envVars = {}) {
   writeDevVars(envVars);
   const args = ['wrangler', 'dev', '--port', String(PORT), '--log-level', 'error'];
-  const proc = spawn('npx', args, {
+  const proc = spawn(process.execPath, [wranglerCommand(), ...args.slice(1)], {
     cwd: WORKER_DIR,
     stdio: ['ignore', 'pipe', 'pipe'],
-    shell: true,
   });
 
   return new Promise((resolve, reject) => {

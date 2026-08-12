@@ -7,6 +7,10 @@ const net = require('net');
 let passed = 0;
 let failed = 0;
 
+function wranglerCommand() {
+  return path.join(process.cwd(), 'node_modules', 'wrangler', 'bin', 'wrangler.js');
+}
+
 function assert(cond, msg) {
   if (cond) {
     passed++;
@@ -29,7 +33,7 @@ function getFreePort() {
 
 function startWorker(port) {
   const cwd = path.join(process.cwd(), 'test', 'fixtures', 'worker_web_entry');
-  const proc = spawn('npx', ['wrangler', 'dev', '--port', String(port), '--log-level', 'error'], {
+  const proc = spawn(process.execPath, [wranglerCommand(), 'dev', '--port', String(port), '--log-level', 'error'], {
     cwd,
     stdio: ['ignore', 'pipe', 'pipe'],
   });

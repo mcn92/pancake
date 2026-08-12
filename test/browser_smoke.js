@@ -13,11 +13,18 @@ const HOST = '127.0.0.1';
 const PORT = 4173;
 const URL = `http://${HOST}:${PORT}`;
 
+function npmCliPath() {
+  if (process.env.npm_execpath && process.env.npm_execpath.endsWith('.js')) {
+    return process.env.npm_execpath;
+  }
+  return path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+}
+
 function prepareFixtureDependency() {
   const npmCacheDir = path.join(os.tmpdir(), '.npm-pack-cache');
   const packJson = execFileSync(
-    'npm',
-    ['pack', '--json', '--ignore-scripts', '--dry-run=false', '--cache', npmCacheDir],
+    process.execPath,
+    [npmCliPath(), 'pack', '--json', '--ignore-scripts', '--dry-run=false', '--cache', npmCacheDir],
     { cwd: ROOT_DIR, encoding: 'utf8' }
   );
 
@@ -26,8 +33,8 @@ function prepareFixtureDependency() {
 
   try {
     execFileSync(
-      'npm',
-      ['install', '--no-save', tarballPath],
+      process.execPath,
+      [npmCliPath(), 'install', '--no-save', tarballPath],
       { cwd: FIXTURE_DIR, stdio: 'pipe', encoding: 'utf8' }
     );
   } finally {
