@@ -1,4 +1,5 @@
 import Pancake, { PancakeError, PANCAKE_ERROR_CODES } from 'pancake-wasm';
+import * as encoder from './encoder.js';
 import ARTIFACT_ASSET from './assets/index.pancake-range';
 import CORPUS_ASSET from './assets/corpus.json';
 import MANIFEST_ASSET from './assets/manifest.json';
@@ -173,9 +174,7 @@ function createBundledRangeSource(asset, label) {
 }
 
 function assertManifestMatches(loaded) {
-  if (loaded.workersAiModel !== '@cf/baai/bge-small-en-v1.5') {
-    throw Object.assign(new Error('Manifest Workers AI model mismatch'), { code: 'MANIFEST_MISMATCH' });
-  }
+  encoder.assertEncoderManifest(loaded);
   if (loaded.dims !== 384 && loaded.dim !== 384) {
     throw Object.assign(new Error('Manifest dimension mismatch'), { code: 'MANIFEST_MISMATCH' });
   }
@@ -187,7 +186,7 @@ function assertManifestMatches(loaded) {
   }
 }
 
-async function loadAssets() {
+async function loadAssets(env) {
   const t0 = performance.now();
   const loadedManifest = MANIFEST_ASSET;
   assertManifestMatches(loadedManifest);
@@ -209,11 +208,11 @@ async function loadAssets() {
   state.lastLoadMs = performance.now() - t0;
 }
 
-async function ensureLoaded() {
+async function ensureLoaded(env) {
   if (artifact && manifest) return { cold: false, loadMs: 0 };
   const cold = !loadPromise;
   if (!loadPromise) {
-    loadPromise = loadAssets().finally(() => {
+    loadPromise = loadAssets(env).finally(() => {
       loadPromise = null;
     });
   }
@@ -230,47 +229,6 @@ function parseSearchParams(request) {
     rangeGap: Number.parseInt(url.searchParams.get('rangeGap') || url.searchParams.get('gap') || '', 10),
     expansionBatch: Number.parseInt(url.searchParams.get('expansionBatch') || url.searchParams.get('batch') || '', 10),
   };
-}
-
-async function embedQuery(query, env) {
-  const prefixed = `${manifest.prefixPolicy.query}${query}`;
-  if (isLocalStubAi(env)) return hashEmbedding(prefixed, manifest.dims);
-  const response = await env.AI.run(manifest.workersAiModel, {
-    text: [prefixed],
-    pooling: manifest.pooling || 'mean',
-  }).catch((error) => {
-    throw Object.assign(new Error(`Workers AI embedding failed: ${error.message || String(error)}`), { code: 'EMBED_UNAVAILABLE' });
-  });
-  const raw = response?.data?.[0] || response?.data || response?.embeddings?.[0] || response?.embedding;
-  if (!raw || raw.length !== manifest.dims) {
-    throw Object.assign(new Error('Workers AI returned an unexpected embedding shape'), { code: 'EMBED_UNAVAILABLE' });
-  }
-  return Float32Array.from(raw);
-}
-
-function isLocalStubAi(env) {
-  const value = String(env?.LOCAL_STUB_AI || '').trim().toLowerCase();
-  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
-}
-
-async function sha256Bytes(text) {
-  const bytes = new TextEncoder().encode(text);
-  return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
-}
-
-async function hashEmbedding(text, dims) {
-  const vector = new Float32Array(dims);
-  const words = String(text || '').toLowerCase().match(/[a-z0-9_'-]+/g) || [];
-  for (const word of words) {
-    const hash = await sha256Bytes(word);
-    const index = ((hash[0] | (hash[1] << 8) | (hash[2] << 16) | (hash[3] << 24)) >>> 0) % dims;
-    vector[index] += (hash[4] / 255) * 2 - 1;
-  }
-  let norm = 0;
-  for (let i = 0; i < dims; i++) norm += vector[i] * vector[i];
-  norm = Math.sqrt(norm) || 1;
-  for (let i = 0; i < dims; i++) vector[i] /= norm;
-  return vector;
 }
 
 function buildResult(hit) {
@@ -314,19 +272,21 @@ async function handleSearch(request, env) {
   k = Math.min(k, MAX_RESULTS);
   efSearch = Math.min(efSearch, MAX_EF_SEARCH);
 
-  const load = await ensureLoaded();
+  const load = await ensureLoaded(env);
   const embedStart = performance.now();
-  const queryVector = await embedQuery(query, env);
+  const { vector: queryVector, embedded } = await encoder.embedQuery(query, manifest, env);
   const embeddingMs = performance.now() - embedStart;
   const searchStart = performance.now();
   const beforeArtifactStats = artifact.stats();
   const artifactResult = await artifact.search(queryVector, k, { efSearch, gap: rangeGap, expansionBatch });
-  const hits = artifactResult.results;
   const searchMs = performance.now() - searchStart;
   const artifactStats = artifact.stats();
+  const quality = encoder.scoreHits(artifactResult.results, embedded);
+  const hits = quality?.match_quality === 'none' ? [] : artifactResult.results;
   return jsonResponse({
     query,
     result_count: hits.length,
+    ...(quality ? { match_quality: quality.match_quality, match_confidence: quality.confidence ?? null } : {}),
     cache_state: load.cold ? 'cold-loaded-artifact' : 'warm-artifact',
     load_ms: load.loadMs,
     embedding_ms: embeddingMs,
@@ -360,11 +320,10 @@ function healthBody(env) {
     dim: manifest?.dims || null,
     read_only: isReadOnly(env),
     load_count: state.loadCount,
-    local_stub_ai: isLocalStubAi(env),
     loaded_at: state.loadedAt,
     last_load_ms: state.lastLoadMs,
     runtime_mode: 'artifact',
-    model: manifest?.workersAiModel || null,
+    ...encoder.encoderInfo(env, manifest),
   };
 }
 

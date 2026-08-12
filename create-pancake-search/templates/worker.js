@@ -1,4 +1,5 @@
 import Pancake, { PancakeError, PANCAKE_ERROR_CODES } from 'pancake-wasm';
+import * as encoder from './encoder.js';
 import SNAPSHOT_ASSET from './assets/snapshot.pnck';
 import CORPUS_ASSET from './assets/corpus.json';
 import MANIFEST_ASSET from './assets/manifest.json';
@@ -150,9 +151,7 @@ function assetBytes(asset, label) {
 }
 
 function assertManifestMatches(loaded) {
-  if (loaded.workersAiModel !== '@cf/baai/bge-small-en-v1.5') {
-    throw Object.assign(new Error('Manifest Workers AI model mismatch'), { code: 'MANIFEST_MISMATCH' });
-  }
+  encoder.assertEncoderManifest(loaded);
   if (loaded.dims !== 384 && loaded.dim !== 384) {
     throw Object.assign(new Error('Manifest dimension mismatch'), { code: 'MANIFEST_MISMATCH' });
   }
@@ -203,47 +202,6 @@ function parseSearchParams(request) {
   };
 }
 
-async function embedQuery(query, env) {
-  const prefixed = `${manifest.prefixPolicy.query}${query}`;
-  if (isLocalStubAi(env)) return hashEmbedding(prefixed, manifest.dims);
-  const response = await env.AI.run(manifest.workersAiModel, {
-    text: [prefixed],
-    pooling: manifest.pooling || 'mean',
-  }).catch((error) => {
-    throw Object.assign(new Error(`Workers AI embedding failed: ${error.message || String(error)}`), { code: 'EMBED_UNAVAILABLE' });
-  });
-  const raw = response?.data?.[0] || response?.data || response?.embeddings?.[0] || response?.embedding;
-  if (!raw || raw.length !== manifest.dims) {
-    throw Object.assign(new Error('Workers AI returned an unexpected embedding shape'), { code: 'EMBED_UNAVAILABLE' });
-  }
-  return Float32Array.from(raw);
-}
-
-function isLocalStubAi(env) {
-  const value = String(env?.LOCAL_STUB_AI || '').trim().toLowerCase();
-  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
-}
-
-async function sha256Bytes(text) {
-  const bytes = new TextEncoder().encode(text);
-  return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
-}
-
-async function hashEmbedding(text, dims) {
-  const vector = new Float32Array(dims);
-  const words = String(text || '').toLowerCase().match(/[a-z0-9_'-]+/g) || [];
-  for (const word of words) {
-    const hash = await sha256Bytes(word);
-    const index = ((hash[0] | (hash[1] << 8) | (hash[2] << 16) | (hash[3] << 24)) >>> 0) % dims;
-    vector[index] += (hash[4] / 255) * 2 - 1;
-  }
-  let norm = 0;
-  for (let i = 0; i < dims; i++) norm += vector[i] * vector[i];
-  norm = Math.sqrt(norm) || 1;
-  for (let i = 0; i < dims; i++) vector[i] /= norm;
-  return vector;
-}
-
 function buildResult(hit) {
   const chunk = corpusById.get(hit.id);
   return {
@@ -283,14 +241,17 @@ async function handleSearch(request, env) {
 
   const load = await ensureLoaded();
   const embedStart = performance.now();
-  const queryVector = await embedQuery(query, env);
+  const { vector: queryVector, embedded } = await encoder.embedQuery(query, manifest, env);
   const embeddingMs = performance.now() - embedStart;
   const searchStart = performance.now();
-  const hits = index.search(queryVector, k, { efSearch });
+  const rawHits = index.search(queryVector, k, { efSearch });
   const searchMs = performance.now() - searchStart;
+  const quality = encoder.scoreHits(rawHits, embedded);
+  const hits = quality?.match_quality === 'none' ? [] : rawHits;
   return jsonResponse({
     query,
     result_count: hits.length,
+    ...(quality ? { match_quality: quality.match_quality, match_confidence: quality.confidence ?? null } : {}),
     cache_state: load.cold ? 'cold-restored' : 'warm-cache',
     restore_ms: load.restoreMs,
     embedding_ms: embeddingMs,
@@ -311,10 +272,10 @@ function healthBody(env) {
     dim: manifest?.dims || null,
     read_only: isReadOnly(env),
     restore_count: state.restoreCount,
-    local_stub_ai: isLocalStubAi(env),
     restored_at: state.restoredAt,
     last_restore_ms: state.lastRestoreMs,
-    model: manifest?.workersAiModel || null,
+    runtime_mode: 'snapshot',
+    ...encoder.encoderInfo(env, manifest),
   };
 }
 

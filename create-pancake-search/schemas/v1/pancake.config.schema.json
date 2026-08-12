@@ -82,7 +82,8 @@
                 "batchSize": { "type": "integer", "minimum": 1 },
                 "learningRate": { "type": "number", "exclusiveMinimum": 0 },
                 "maxFeatures": { "type": "integer", "minimum": 1 },
-                "seed": { "type": "integer" }
+                "seed": { "type": "integer" },
+                "skipAbstention": { "type": "boolean" }
               },
               "additionalProperties": false
             },

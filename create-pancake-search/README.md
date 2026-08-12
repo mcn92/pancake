@@ -1,6 +1,12 @@
 # create-pancake-search
 
-Scaffold a Pancake-backed Cloudflare Worker search app.
+Scaffold the product version of the Pancake demo path: ingest docs, build the
+search assets offline, ship them with a Worker/UI shell, and serve retrieval at
+the edge. The lower-level `/examples` directory shows the same lifecycle piece
+by piece; this package is the fast path when you want the story to become a
+deployable app.
+
+The 15-second version:
 
 ```bash
 npm create pancake-search -- --name my-docs-search --source ./docs --no-deploy --yes
@@ -8,16 +14,51 @@ cd my-docs-search
 npm run dev
 ```
 
-The generated project contains a bundled Pancake snapshot, corpus metadata, a Workers AI search worker, and a static UI.
-
-Experimental Search Artifact runtime scaffolding is available with:
+The generated project contains a bundled Pancake snapshot, corpus metadata, a
+Workers AI search worker, and a static UI. For a pure Search Artifact demo that
+matches the artifact examples more directly, use:
 
 ```bash
 npm create pancake-search -- --name my-docs-search --source ./docs --runtime artifact --no-deploy --yes
 ```
 
+In both runtimes, the story is the same: the expensive work happens at build
+time; query-time code embeds the query, searches Pancake, and hydrates result
+metadata. Query embedding comes from Workers AI by default, or from a bundled
+corpus-distilled encoder with `--mode student` (see below), which removes the
+Cloudflare AI dependency entirely. For workers-ai projects, `LOCAL_STUB_AI=1`
+can exercise the endpoint mechanics locally without Workers AI.
+
 You can also provide a prebuilt `.pancake-range` file with `--artifact`. External
 artifacts must have dimension, count, and IDs that match the generated corpus.
+
+## Self-contained query embedding (`--mode student`)
+
+`--mode student` removes the Workers AI dependency entirely. At build time the
+CLI distills a corpus-specific teacher-student (PSTU) query encoder — the same
+one the Docusaurus plugin and the edge docs-search demo use — and bundles it
+into the Worker (~1.1 MiB). Queries embed in-process in single-digit
+milliseconds, the generated `wrangler.toml` has no `[ai]` binding, and
+`wrangler dev` runs fully local with no Cloudflare account:
+
+```bash
+npm create pancake-search -- --name my-docs-search --source ./docs --runtime artifact --mode student --no-deploy --yes
+```
+
+Training requires a Python 3 environment with `torch` and `transformers`
+(`PANCAKE_SEARCH_PYTHON` selects the interpreter). The trainer also calibrates
+the abstention scorer and enforces acceptance gates; on small or noisy corpora
+those gates can fail, in which case pass `--skip-abstention` to ship the
+encoder without a match-quality scorer (responses report
+`match_quality: "unscored"`), or improve the source corpus. When calibration
+succeeds, `/search` reports `match_quality` and returns no results for
+out-of-domain queries.
+
+To reuse a previously trained encoder instead of retraining, pass
+`--student-model <model.bin> --student-vectors <docs-vectors.f32>`
+(optionally `--student-abstention <scorer.json>`). The teacher document
+vectors must come from the same training run so the index geometry matches
+the query encoder.
 
 For local endpoint testing without Cloudflare Workers AI, generated Workers
 support `LOCAL_STUB_AI=1`. It uses deterministic hash embeddings and is meant

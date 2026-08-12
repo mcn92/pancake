@@ -50,6 +50,7 @@ function normalizeOptions(options = {}) {
       learningRate: options.trainStudent?.learningRate,
       maxFeatures: options.trainStudent?.maxFeatures,
       seed: options.trainStudent?.seed,
+      ...(options.trainStudent?.skipAbstention === true ? { skipAbstention: true } : {}),
     },
     chunking: {
       targetTokens: options.chunking?.targetTokens || 256,

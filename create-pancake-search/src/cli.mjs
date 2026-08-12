@@ -14,6 +14,7 @@ const __dirname = path.dirname(__filename);
 const PACKAGE_ROOT = path.resolve(__dirname, '..');
 const REPO_ROOT = path.resolve(PACKAGE_ROOT, '..');
 const STUDENT_TRAINER = path.join(PACKAGE_ROOT, 'tools', 'train_student.py');
+const CLI_VERSION = JSON.parse(fssync.readFileSync(path.join(PACKAGE_ROOT, 'package.json'), 'utf8')).version;
 const DEFAULT_PREFIX = 'Represent this sentence for searching relevant passages: ';
 const CONFIG_SCHEMA_URL = 'https://raw.githubusercontent.com/mcn92/pancake/main/create-pancake-search/schemas/v1/pancake.config.schema.json';
 const MAX_CRAWL_BODY_BYTES = 2 * 1024 * 1024;
@@ -72,7 +73,15 @@ Usage:
 Flags:
   --name <dir>          Generated project directory
   --source <path|url>   Local folder or website URL
-  --mode workers-ai     Query embedding mode
+  --mode <mode>         Query embedding mode: workers-ai (default) or student.
+                        student distills a corpus-specific encoder at build
+                        time (needs Python with torch/transformers) and embeds
+                        queries inside the Worker with no AI binding.
+  --student-model <f>   Pre-trained PSTU model; skips training (--mode student)
+  --student-vectors <f> Teacher document vectors (.f32) matching --student-model
+  --student-abstention <f>  Calibrated abstention scorer for --student-model
+  --epochs <n>          Student training epochs (--mode student)
+  --skip-abstention     Train without the abstention scorer (--mode student)
   --model <id>          bge-small-en-v1.5
   --max-pages <n>       URL crawl cap
   --include <glob>      Folder include glob, repeatable
@@ -96,7 +105,7 @@ function parseArgs(args) {
       continue;
     }
     const name = arg.slice(2);
-    if (name === 'deploy' || name === 'yes' || name === 'force') {
+    if (name === 'deploy' || name === 'yes' || name === 'force' || name === 'skip-abstention') {
       flags[name] = true;
       continue;
     }
@@ -117,9 +126,6 @@ function parseArgs(args) {
 }
 
 async function createProject(flags) {
-  if (flags.mode && flags.mode !== 'workers-ai') {
-    throw new CliError(`--mode ${flags.mode} is coming soon. v0.1.0 supports --mode workers-ai only.`);
-  }
   const answers = await resolveCreateOptions(flags);
   const targetDir = path.resolve(process.cwd(), answers.name);
   if (fssync.existsSync(targetDir)) {
@@ -131,6 +137,7 @@ async function createProject(flags) {
   try {
     const config = makeConfig(answers);
     await writeProject(tmpDir, config);
+    await stageStudentInputs(tmpDir, answers);
     await buildAssets(tmpDir, config, { sourceBaseDir: targetDir });
     await fs.rename(tmpDir, targetDir);
     console.log(`Scaffolded ${targetDir}`);
@@ -154,10 +161,29 @@ async function resolveCreateOptions(flags) {
       ? !!flags.deploy
       : flags.yes ? false : /^y/i.test(await rl.question('Deploy to Cloudflare when done? (y/N) '));
     if (!name || !source) throw new CliError('Project name and source are required');
+    const mode = flags.mode || 'workers-ai';
+    if (!['workers-ai', 'student'].includes(mode)) {
+      throw new CliError(`--mode must be workers-ai or student, got ${mode}`);
+    }
+    if (mode !== 'student' && (flags['student-model'] || flags['student-vectors'] || flags['student-abstention'] || flags.epochs || flags['skip-abstention'])) {
+      throw new CliError('--student-model, --student-vectors, --student-abstention, --epochs and --skip-abstention require --mode student');
+    }
+    if (flags['student-model'] && !flags['student-vectors']) {
+      throw new CliError('--student-model requires --student-vectors so passage indexing uses matching teacher document vectors');
+    }
+    if (flags['student-vectors'] && !flags['student-model']) {
+      throw new CliError('--student-vectors requires --student-model');
+    }
     return {
       name,
       source,
       deploy,
+      mode,
+      studentModel: flags['student-model'] || null,
+      studentVectors: flags['student-vectors'] || null,
+      studentAbstention: flags['student-abstention'] || null,
+      epochs: flags.epochs ? parsePositiveInt(flags.epochs, '--epochs') : null,
+      skipAbstention: !!flags['skip-abstention'],
       model: flags.model || 'bge-small-en-v1.5',
       runtime: flags.runtime || (flags.artifact ? 'artifact' : 'snapshot'),
       artifact: flags.artifact || null,
@@ -171,8 +197,9 @@ async function resolveCreateOptions(flags) {
 }
 
 function makeConfig(options) {
-  const model = MODEL_MAP[options.model];
-  if (!model) throw new CliError(`Unsupported --model ${options.model}. Supported: ${Object.keys(MODEL_MAP).join(', ')}`);
+  const student = options.mode === 'student';
+  const model = student ? null : MODEL_MAP[options.model];
+  if (!student && !model) throw new CliError(`Unsupported --model ${options.model}. Supported: ${Object.keys(MODEL_MAP).join(', ')}`);
   if (!['snapshot', 'artifact'].includes(options.runtime)) {
     throw new CliError(`--runtime must be snapshot or artifact, got ${options.runtime}`);
   }
@@ -189,7 +216,27 @@ function makeConfig(options) {
       ? { type: 'url', url: options.source, maxPages: options.maxPages }
       : { type: 'folder', path: path.relative(path.resolve(process.cwd(), options.name), path.resolve(process.cwd(), options.source)) || '.', include: options.include, exclude: options.exclude },
     chunking: { ...DEFAULT_CONFIG.chunking },
-    embedding: { ...DEFAULT_CONFIG.embedding, buildModel: options.model, dims: model.dims },
+    embedding: student
+      ? {
+          mode: 'student',
+          studentModelPath: options.studentModel ? 'student-model.bin' : 'student/student-model.bin',
+          ...(options.studentVectors ? { teacherVectorsPath: 'docs-vectors.f32' } : {}),
+          ...(options.studentModel
+            ? {}
+            : {
+                trainStudent: {
+                  enabled: true,
+                  outDir: 'student',
+                  ...(options.epochs ? { epochs: options.epochs } : {}),
+                  ...(options.skipAbstention ? { skipAbstention: true } : {}),
+                },
+              }),
+          dims: 384,
+          prefixPolicy: { passage: '', query: '' },
+          pooling: 'mean',
+          normalize: true,
+        }
+      : { ...DEFAULT_CONFIG.embedding, buildModel: options.model, dims: model.dims },
     index: { ...DEFAULT_CONFIG.index },
     runtime: options.runtime === 'artifact'
       ? { mode: 'artifact', storage: 'bundled', ...(artifactPath ? { artifactPath } : {}) }
@@ -203,7 +250,7 @@ async function rebuildProject(projectDir, flags = {}) {
   const config = JSON.parse(await fs.readFile(configPath, 'utf8'));
   applyRuntimeOverrides(config, projectDir, flags);
   validateConfig(config);
-  await copyTemplate(config.runtime?.mode === 'artifact' ? 'worker.artifact.js' : 'worker.js', path.join(projectDir, 'worker.js'));
+  await writeRuntimeModules(projectDir, config);
   await fs.writeFile(path.join(projectDir, 'wrangler.toml'), wranglerToml(config));
   await buildAssets(projectDir, config, { verbose: !!flags.verbose });
   await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
@@ -234,7 +281,7 @@ async function writeProject(projectDir, config) {
   await fs.mkdir(path.join(projectDir, 'assets'), { recursive: true });
   await fs.mkdir(path.join(projectDir, '.github', 'workflows'), { recursive: true });
   await fs.writeFile(path.join(projectDir, 'pancake.config.json'), `${JSON.stringify(config, null, 2)}\n`);
-  await copyTemplate(config.runtime?.mode === 'artifact' ? 'worker.artifact.js' : 'worker.js', path.join(projectDir, 'worker.js'));
+  await writeRuntimeModules(projectDir, config);
   await copyTemplate('ui.html', path.join(projectDir, 'ui.html'));
   await copyTemplate('README.generated.md', path.join(projectDir, 'README.md'));
   await copyTemplate('reindex.yml', path.join(projectDir, '.github', 'workflows', 'reindex.yml'));
@@ -247,25 +294,49 @@ async function copyTemplate(name, dest) {
   await fs.copyFile(path.join(PACKAGE_ROOT, 'templates', name), dest);
 }
 
+async function writeRuntimeModules(projectDir, config) {
+  const student = config.embedding?.mode === 'student';
+  await copyTemplate(config.runtime?.mode === 'artifact' ? 'worker.artifact.js' : 'worker.js', path.join(projectDir, 'worker.js'));
+  await copyTemplate(student ? 'encoder.student.js' : 'encoder.workers-ai.js', path.join(projectDir, 'encoder.js'));
+  if (student) {
+    await fs.copyFile(path.join(PACKAGE_ROOT, 'src', 'student-embedder.mjs'), path.join(projectDir, 'student-embedder.mjs'));
+  }
+}
+
+async function stageStudentInputs(projectDir, options) {
+  if (options.mode !== 'student' || !options.studentModel) return;
+  const modelPath = path.resolve(process.cwd(), options.studentModel);
+  if (!fssync.existsSync(modelPath)) throw new CliError(`Student model not found: ${modelPath}`);
+  await fs.copyFile(modelPath, path.join(projectDir, 'student-model.bin'));
+  const vectorsPath = path.resolve(process.cwd(), options.studentVectors);
+  if (!fssync.existsSync(vectorsPath)) throw new CliError(`Teacher vectors not found: ${vectorsPath}`);
+  await fs.copyFile(vectorsPath, path.join(projectDir, 'docs-vectors.f32'));
+  if (options.studentAbstention) {
+    const abstentionPath = path.resolve(process.cwd(), options.studentAbstention);
+    if (!fssync.existsSync(abstentionPath)) throw new CliError(`Abstention model not found: ${abstentionPath}`);
+    await fs.copyFile(abstentionPath, path.join(projectDir, 'student-abstention.json'));
+  }
+}
+
 function wranglerToml(config) {
+  const student = config.embedding?.mode === 'student';
   return `name = "${tomlString(config.name)}"
 main = "worker.js"
 compatibility_date = "2025-04-09"
 compatibility_flags = ["nodejs_compat"]
-
+${student ? '' : `
 [ai]
 binding = "AI"
-
+`}
 [vars]
 READ_ONLY = "1"
 RATE_LIMIT_RPM = "120"
 MAX_JSON_BYTES = "262144"
 MAX_QUERY_CHARS = "4096"
-LOCAL_STUB_AI = "0"
-
+${student ? '' : 'LOCAL_STUB_AI = "0"\n'}
 [[rules]]
 type = "Data"
-globs = ["**/*.pnck", "**/*.pancake-range"]
+globs = ["**/*.pnck", "**/*.pancake-range", "**/*.bin"]
 fallthrough = true
 
 [[rules]]
@@ -290,7 +361,7 @@ function generatedPackageJson(config) {
       'pancake-wasm': '^0.2.0',
     },
     devDependencies: {
-      'create-pancake-search': '0.1.0',
+      'create-pancake-search': CLI_VERSION,
       wrangler: '^4.81.1',
     },
   }, null, 2)}\n`;
@@ -388,6 +459,9 @@ async function buildAssets(projectDir, config, options = {}) {
     manifest.artifact = artifactInfo;
   } else {
     await fs.writeFile(path.join(assetsDir, 'snapshot.pnck'), snapshot);
+  }
+  if (config.embedding.mode === 'student') {
+    await publishStudentAssets(projectDir, config, assetsDir, manifest, log);
   }
   await fs.writeFile(path.join(assetsDir, 'corpus.json'), `${JSON.stringify(chunks.map(publicChunk), null, 2)}\n`);
   await fs.writeFile(path.join(assetsDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
@@ -706,6 +780,7 @@ async function trainStudentVectors(chunks, embeddingConfig, log, projectDir) {
   if (trainConfig.learningRate) args.push('--learning-rate', String(trainConfig.learningRate));
   if (trainConfig.maxFeatures) args.push('--max-features', String(trainConfig.maxFeatures));
   if (trainConfig.seed) args.push('--seed', String(trainConfig.seed));
+  if (trainConfig.skipAbstention) args.push('--skip-abstention');
 
   log(`Training corpus-specific student encoder with ${python}`);
   const result = spawnSync(python, args, { cwd: projectDir, stdio: 'inherit' });
@@ -713,7 +788,7 @@ async function trainStudentVectors(chunks, embeddingConfig, log, projectDir) {
     throw new CliError(`Failed to start student trainer: ${result.error.message}`, 2);
   }
   if (result.status !== 0) {
-    throw new CliError(`Student trainer failed with exit code ${result.status}. Next: install torch/transformers or provide a corpus-specific studentModel.`, 2);
+    throw new CliError(`Student trainer failed with exit code ${result.status}. Next: if Python lacks torch/transformers install them; if abstention acceptance failed, rerun with --skip-abstention or improve the source corpus; or provide a corpus-specific --student-model.`, 2);
   }
 
   const manifestPath = path.join(outDir, 'student-manifest.json');
@@ -826,6 +901,38 @@ function inspectRangeArtifactHeader(bytes, label = 'Search Artifact') {
   return { version, kind, dim, count, entryPoint, maxLevel, M, M0, metric, recordBytes, parts, routerCount, baseCount };
 }
 
+async function publishStudentAssets(projectDir, config, assetsDir, manifest, log) {
+  const modelPath = path.resolve(projectDir, config.embedding.studentModelPath);
+  if (!fssync.existsSync(modelPath)) {
+    throw new CliError(`Student model was not produced: ${modelPath}. Next: rerun training or pass --student-model.`, 2);
+  }
+  const modelBytes = await fs.readFile(modelPath);
+  await fs.writeFile(path.join(assetsDir, 'student-model.bin'), modelBytes);
+  // The abstention scorer travels beside the model both in the trainer's out
+  // dir and when staged externally. A `null` placeholder keeps the Worker's
+  // static asset import valid when no calibrated scorer exists.
+  const abstentionPath = path.join(path.dirname(modelPath), 'student-abstention.json');
+  let abstention = null;
+  if (fssync.existsSync(abstentionPath)) {
+    const abstentionBytes = await fs.readFile(abstentionPath);
+    await fs.writeFile(path.join(assetsDir, 'student-abstention.json'), abstentionBytes);
+    abstention = {
+      bytes: abstentionBytes.byteLength,
+      sha256: crypto.createHash('sha256').update(abstentionBytes).digest('hex'),
+    };
+  } else {
+    await fs.writeFile(path.join(assetsDir, 'student-abstention.json'), 'null\n');
+  }
+  manifest.encoder = {
+    ...manifest.encoder,
+    studentModelBytes: modelBytes.byteLength,
+    studentModelSha256: crypto.createHash('sha256').update(modelBytes).digest('hex'),
+    abstentionBytes: abstention?.bytes || null,
+    abstentionSha256: abstention?.sha256 || null,
+  };
+  log(`Bundled student encoder (${(modelBytes.byteLength / 1024).toFixed(1)} KiB${abstention ? ', calibrated abstention' : ', no abstention scorer'})`);
+}
+
 function makeManifest(config, chunks, snapshot, vectors, artifact = null, artifactInfo = null) {
   const model = config.embedding.mode === 'student'
     ? null
@@ -836,7 +943,7 @@ function makeManifest(config, chunks, snapshot, vectors, artifact = null, artifa
   return {
     version: 1,
     generatedAt: new Date().toISOString(),
-    cliVersion: '0.1.0',
+    cliVersion: CLI_VERSION,
     name: config.name,
     model: config.embedding.mode === 'student'
       ? 'pancake-distilled-student'
@@ -881,27 +988,42 @@ function makeManifest(config, chunks, snapshot, vectors, artifact = null, artifa
 async function projectedGzipBytes(projectDir) {
   const files = [
     'worker.js',
+    'encoder.js',
     'ui.html',
     'assets/corpus.json',
     'assets/manifest.json',
   ];
   const artifactPath = path.join(projectDir, 'assets', 'index.pancake-range');
   files.push(fssync.existsSync(artifactPath) ? 'assets/index.pancake-range' : 'assets/snapshot.pnck');
+  for (const studentFile of ['student-embedder.mjs', 'assets/student-model.bin', 'assets/student-abstention.json']) {
+    if (fssync.existsSync(path.join(projectDir, studentFile))) files.push(studentFile);
+  }
   const buffers = [];
   for (const file of files) buffers.push(await fs.readFile(path.join(projectDir, file)));
   return zlib.gzipSync(Buffer.concat(buffers)).byteLength;
 }
 
 async function deployProject(projectDir) {
-  const who = spawnSync('npx', ['wrangler', 'whoami'], { cwd: projectDir, encoding: 'utf8' });
+  const who = runNpmSync(['exec', '--', 'wrangler', 'whoami'], { cwd: projectDir, encoding: 'utf8' });
   if (who.status !== 0) {
     throw new CliError(`Cloudflare auth required. Next: cd ${projectDir} && npx wrangler login && npm run deploy`, 3);
   }
-  const deploy = spawnSync('npx', ['wrangler', 'deploy'], { cwd: projectDir, encoding: 'utf8' });
+  const deploy = runNpmSync(['exec', '--', 'wrangler', 'deploy'], { cwd: projectDir, encoding: 'utf8' });
   if (deploy.status !== 0) {
     throw new CliError(`Deploy failed.\n${deploy.stderr || deploy.stdout}\nNext: cd ${projectDir} && npm run deploy`, 3);
   }
   process.stdout.write(deploy.stdout);
+}
+
+function npmCliPath() {
+  if (process.env.npm_execpath && process.env.npm_execpath.endsWith('.js')) {
+    return process.env.npm_execpath;
+  }
+  return path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+}
+
+function runNpmSync(args, options) {
+  return spawnSync(process.execPath, [npmCliPath(), ...args], options);
 }
 
 function parsePositiveInt(value, name) {
