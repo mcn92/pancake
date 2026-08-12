@@ -1,6 +1,6 @@
-# Running the demos
+# Pancake Quickstart
 
-Every command here assumes a fresh clone with dev dependencies installed:
+Run every command from the repo root unless noted otherwise.
 
 ```bash
 git clone https://github.com/mcn92/pancake.git
@@ -8,93 +8,96 @@ cd pancake
 npm install
 ```
 
-No engine build is needed — the checkout ships prebuilt WASM in `dist/`.
-Rebuild only if you are changing the C++ under `src/` (see the README's
-"Building from source").
+No engine build needed — the checkout ships prebuilt WASM in `dist/`.
 
-The demos below are grouped by what they need. Start with the first group.
+---
 
-## Works immediately
+## 1. Prove the engine
 
-### Technical proof suite (local engine)
-
-Runs eight falsifiable checks — determinism, deletion exclusion, compaction,
-export/import round-trip, self-recall, recall vs brute force, stability:
+Builds a synthetic index and runs 8 validation checks (determinism, deletion,
+compaction, export/import, self-recall, recall, stability):
 
 ```bash
 npm run demo
 ```
 
-`npm run demo` generates synthetic vectors, builds an index, and runs the full
-validation suite non-interactively (about 8/8 checks, ~99% recall@10). To use
-the interactive REPL instead, run it in a terminal (a TTY):
+Expected: `Validation summary: 8/8 checks passed.`
 
-```bash
-npm run demo:data
-node examples/legacy/technical-demo/technical_demo_cli.js   # then type: build, then: validate all
-```
+---
 
-Any single command also works one-shot (it builds an index first):
+## 2. Search a packaged artifact
 
-```bash
-node examples/legacy/technical-demo/technical_demo_cli.js validate all
-node examples/legacy/technical-demo/technical_demo_cli.js search 1000
-```
-
-### Hello pack (smallest browser consumer)
-
-`examples/01-hello-pack/` is the minimal bundled-browser fixture for
-`pancake-wasm/web` — the starting point for "can my app load and search a
-packaged index?". It runs as part of `npm run test:browser`; see its README
-to serve it standalone.
-
-### Browser Search Artifact demo (client-side semantic docs search)
-
-Semantic search over the Pancake docs, entirely in the browser — a distilled
-encoder, a `.pancake-range` index read over HTTP byte ranges, calibrated
-abstention, no backend:
-
-```bash
-npm run demo:artifact:browser:build
-npm run demo:artifact:browser        # serves at http://127.0.0.1:4173
-```
-
-Open the printed URL. Try a sample chip, then watch the browser's Network
-panel: the range requests on the first query drop toward zero on the next as
-the artifact warms into cache. Try `banana pancake recipe` to see abstention
-return no results. See `examples/legacy/range-artifact-demo/static/README.md`
-for the measured warm-cache and static-host findings.
-
-### Node Search Artifact demo (in-process, from a file)
-
-Opens a `.pancake-range` artifact from disk and searches it lazily, printing
-per-query range-read stats. Runs on a fresh clone against the committed docs
-artifact, synthesizing queries at the artifact's dimension:
+Opens the committed docs artifact from disk and searches it with lazy range
+reads:
 
 ```bash
 npm run demo:artifact
 ```
 
-Point it at a larger artifact to exercise scale (queries come from a matching
-`.fvecs` file when supplied, otherwise synthetic):
+Expected: per-query IO stats and sample top-3 IDs.
+
+---
+
+## 3. Hello pack (browser)
+
+The smallest browser test — creates, snapshots, restores, and searches an
+index in Chromium via Vite + Playwright:
 
 ```bash
-node examples/legacy/range-artifact-demo/demo.js \
-  --artifact path/to/sift1m.pancake-range \
-  --query-file sift/sift_query.fvecs --queries 5
+npx playwright install chromium   # one-time
+npm run test:browser
 ```
 
-Build your own artifact from a uint8 snapshot with
-`Pancake.buildRangeArtifactFile(snapshotPath, outPath)`, or a sketch artifact
-with `Pancake.buildSketchArtifactFile(...)`.
+Expected: `chromium: passed`.
 
-## Needs one setup step
+---
 
-### Edge docs-search integration test
+## 4. Catalog hydration (search + live data)
 
-The distilled docs-search Worker (bundled snapshot + int8 encoder + abstention,
-zero outbound requests). The test drives it through Miniflare, so bundle the
-Worker first with a Wrangler dry-run:
+Shows Pancake as the retrieval layer while a separate catalog owns live
+product data. Needs three terminals:
+
+**Terminal A** — mock catalog API:
+```bash
+node examples/02-catalog-hydration/mock_catalog_server.mjs
+```
+
+**Terminal B** — reference Worker (admin routes open for demo):
+```bash
+cd examples/reference-worker
+npx wrangler dev --port 8787 --log-level error \
+  --var ALLOW_INSECURE_ADMIN:1 --var READ_ONLY:0 --var API_KEY:""
+```
+
+**Terminal C** — build, import, query:
+```bash
+node examples/02-catalog-hydration/build_snapshot.mjs
+node examples/02-catalog-hydration/worker_import_snapshot.mjs
+node examples/02-catalog-hydration/demo_client.mjs "lightweight waterproof hiking jacket"
+```
+
+Then mark the top jacket out of stock and re-query:
+```bash
+curl -X POST http://127.0.0.1:9090/admin/update \
+  -H 'Content-Type: application/json' \
+  -d '{"id":"jacket-rain-shell","inventory":0}'
+node examples/02-catalog-hydration/demo_client.mjs "lightweight waterproof hiking jacket"
+```
+
+Expected: same search ranking, but the rain shell now shows `inventory=0`.
+
+Stop servers with Ctrl-C in terminals A and B when done.
+
+> **Troubleshooting:** if you see `401 Unauthorized` or read-only rejection,
+> check for a `.dev.vars` file in `examples/reference-worker/` — the `--var`
+> overrides above take precedence, but a stale file can interfere.
+
+---
+
+## 5. Edge docs-search Worker
+
+A self-contained Worker with a bundled snapshot, int8 distilled encoder,
+and calibrated abstention. No outbound requests at query time.
 
 ```bash
 cd examples/03-edge-docs-search
@@ -103,76 +106,72 @@ cd ../..
 node examples/03-edge-docs-search/test_worker.mjs
 ```
 
-(The test prints these exact commands if the bundle is missing.)
+Expected: `Distilled Worker demo checks passed.`
 
-### Reference Worker + catalog demo (live dev server)
+---
 
-Pancake as a retrieval layer next to a live catalog source of truth. Three
-terminals:
+## 6. Wiki knowledge pack (sample corpus)
 
-```bash
-# terminal A — mock catalog API
-node examples/02-catalog-hydration/mock_catalog_server.mjs
-
-# terminal B — the reference Worker, with admin routes open for the demo
-cd examples/reference-worker
-npx wrangler dev --port 8787 --log-level error \
-  --var ALLOW_INSECURE_ADMIN:1 --var READ_ONLY:0 --var API_KEY:""
-
-# terminal C — build the snapshot, import it, query, then change inventory live
-node examples/02-catalog-hydration/build_snapshot.mjs
-node examples/02-catalog-hydration/worker_import_snapshot.mjs
-node examples/02-catalog-hydration/demo_client.mjs "lightweight waterproof hiking jacket"
-curl -X POST http://127.0.0.1:9090/admin/update \
-  -H 'Content-Type: application/json' \
-  -d '{"id":"jacket-rain-shell","inventory":0}'
-node examples/02-catalog-hydration/demo_client.mjs "lightweight waterproof hiking jacket"
-```
-
-To see the live index mutate too (remove the rain shell, add a boot via
-`/add`, then search for it), follow "Show Live Search Mutation" in
-`examples/02-catalog-hydration/README.md`:
-
-```bash
-PANCAKE_API_KEY=local-demo-key node examples/02-catalog-hydration/live_update.mjs
-node examples/02-catalog-hydration/demo_client.mjs "leather hiking boots"
-```
-
-The `--var` flags open admin routes and enable writes for the local demo. If
-you left a `.dev.vars` in `examples/reference-worker/` from earlier work, a
-committed `API_KEY`/`READ_ONLY` there can cause a `401 Unauthorized` or
-read-only rejection; the `--var` overrides above take precedence, or move the
-file aside.
-
-When done, stop the dev servers (Ctrl-C in terminals A and B).
-
-### Wiki knowledge pack (all of Simple English Wikipedia, client-side)
-
-The flagship demonstrator: ~242k articles compiled into one range-readable
-sketch artifact, searched entirely in the browser — self-hosted MiniLM
-encoder, WASM sketch scan, exact rerank over ~66 coalesced range reads, and
-calibrated abstention. The pack data is generated, not committed (~1.3 GB of
-build outputs; ~2 h of GPU embedding on the full corpus). The committed
-5-doc sample corpus exercises the whole pipeline in a couple of minutes:
+The full pipeline from documents to a searchable pack. Requires Python with
+`torch` and `transformers`.
 
 ```bash
 cd examples/04-static-wiki-pack
 ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm install
-python3 embed_corpus.py --input sample-corpus.jsonl --out data-sample
-python3 permute_corpus.py --src data-sample --out data-sample-perm
-node build_pack.mjs data-sample-perm
-node query_pack.mjs data-sample-perm "how is abstention calibrated"   # CLI smoke test
 ```
 
-`examples/04-static-wiki-pack/README.md` has the full-corpus pipeline, the
-measured recall/latency numbers, and the design notes; `DEPLOY.md` beside it
-covers the Pages/R2 deployment.
-
-## Verification suites
+Then run each step:
 
 ```bash
-npm test                 # core (1211) + model loader + sketch conformance (62 + 13 staged)
-npm run test:browser     # Chromium/Firefox/WebKit consumer smoke (Playwright)
+# Chunk and embed the sample documents
+python embed_corpus.py --input sample-corpus.jsonl --out data-sample
+
+# Generate eval queries and cluster layout
+python eval_queries.py --data data-sample --sampled 5 --no-hand
+python layout_sim.py --data data-sample --k 5
+
+# Reorder corpus by cluster
+python permute_corpus.py --src data-sample --out data-sample-perm
+
+# Build the pack and query it
+node build_pack.mjs data-sample-perm
+node query_pack.mjs data-sample-perm "how is abstention calibrated"
+```
+
+Expected: encoder parity check passes, top result is the abstention
+calibration chunk.
+
+See `examples/04-static-wiki-pack/README.md` for the full Wikipedia pipeline
+and `DEPLOY.md` for Pages/R2 deployment.
+
+---
+
+## 7. Scaffold a search app (`create-pancake-search`)
+
+Generates a complete Cloudflare Worker project from a docs folder:
+
+```bash
+npm create pancake-search -- \
+  --name my-docs-search --source ./docs \
+  --runtime artifact --no-deploy --yes
+cd my-docs-search
+npm install
+npm run dev
+```
+
+Add `--mode student` to bundle a distilled encoder (needs Python with
+torch/transformers) so `wrangler dev` runs fully local. Without it, the
+default `--mode workers-ai` uses Cloudflare Workers AI; pass
+`--var LOCAL_STUB_AI:1` to `npm run dev` to exercise the endpoint mechanics
+without a Cloudflare account.
+
+---
+
+## Test suites
+
+```bash
+npm test                 # core + model loader + sketch conformance
+npm run test:browser     # Chromium/Firefox/WebKit browser smoke
 npm run test:worker-web  # workerd entrypoint smoke
 npm run test:simd        # SIMD vs scalar output parity
 npm run test:fuzz        # malformed-snapshot import fuzzing
@@ -180,10 +179,8 @@ npm run test:fuzz        # malformed-snapshot import fuzzing
 
 ## Notes
 
-- **npm audit warnings on install** are all in dev-only transitive
-  dependencies (the Wrangler and Vite toolchains). The published
-  `pancake-wasm` package has zero runtime dependencies, so consumers inherit
-  none of them. Running the demos does not require `npm audit fix`.
-- **Leftover wrangler processes:** the worker feature suite starts a dev
-  server per test and can leave some running. If ports are stuck, clear them
-  with `pkill -f "wrangler dev"` (and `pkill -f workerd`).
+- **npm audit warnings** are all in dev-only transitive dependencies
+  (Wrangler, Vite). The published `pancake-wasm` package has zero runtime
+  dependencies.
+- **Leftover wrangler processes:** if ports are stuck after tests, clear
+  them with `pkill -f "wrangler dev"` and `pkill -f workerd`.

@@ -48,7 +48,10 @@ The root `pancake.js` / `pancake.node.mjs` / `pancake.web.mjs` entry points are
 the same files that ship in the npm package, so code written against the repo
 checkout works unchanged against the installed package.
 
-See [`DEMOS.md`](DEMOS.md) for copy-paste commands to run each demo.
+See [`DEMOS.md`](DEMOS.md) for the unified demo path. The short version:
+Pancake turns documents into a shippable search artifact; `create-pancake-search`
+wraps that into a generated Worker app, while `/examples` opens up the same
+path layer by layer.
 
 The native addon under `native/` is not part of the npm package. It is an
 opt-in benchmarking tool used in this repo to separate runtime overhead from
@@ -584,13 +587,23 @@ external-ID translation inside that isolated instance.
 
 ## Examples
 
-- [`examples/legacy/cli/build_index.js`](https://github.com/mcn92/pancake/blob/main/examples/legacy/cli/build_index.js) -- build an HNSW index from precomputed embeddings
-- [`examples/legacy/technical-demo/technical_demo_cli.js`](https://github.com/mcn92/pancake/blob/main/examples/legacy/technical-demo/technical_demo_cli.js) -- interactive local REPL
-- [`examples/legacy/technical-demo/technical_demo_worker.js`](https://github.com/mcn92/pancake/blob/main/examples/legacy/technical-demo/technical_demo_worker.js) -- interactive Worker-targeted REPL
-- [`dist/technical-demo.html`](https://github.com/mcn92/pancake/blob/main/dist/technical-demo.html) -- browser demo page with latency and stress views
-- [`examples/01-hello-pack/`](https://github.com/mcn92/pancake/tree/main/examples/01-hello-pack) -- minimal bundled browser consumer fixture used by `npm run test:browser`
-- [`examples/reference-worker/`](https://github.com/mcn92/pancake/tree/main/examples/reference-worker) -- reference Cloudflare Worker deployment built on top of Pancake
-- [`examples/03-edge-docs-search/`](https://github.com/mcn92/pancake/tree/main/examples/03-edge-docs-search) -- zero-runtime-dependency distilled docs search webpage bundled into one Worker
+The examples follow the same product path as `create-pancake-search`: build
+search offline, ship it as application data, run retrieval near the user, and
+hydrate IDs from the system of record.
+
+- [`create-pancake-search/`](create-pancake-search/) -- scaffold the deployable
+  Worker/UI version from a folder or URL.
+- [`examples/01-hello-pack/`](examples/01-hello-pack/) -- smallest bundled
+  browser consumer fixture.
+- [`examples/02-catalog-hydration/`](examples/02-catalog-hydration/) -- show
+  why search ranking and live catalog state stay separate.
+- [`examples/03-edge-docs-search/`](examples/03-edge-docs-search/) -- complete
+  edge docs-search product with bundled encoder, snapshot, metadata, and
+  abstention.
+- [`examples/04-static-wiki-pack/`](examples/04-static-wiki-pack/) -- scale the
+  same artifact model to a static browser-searched knowledge pack.
+- [`examples/README.md`](examples/README.md) and [`DEMOS.md`](DEMOS.md) -- the
+  guided demo path and copy-paste commands.
 
 ## Architecture
 
