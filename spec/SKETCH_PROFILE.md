@@ -72,7 +72,8 @@ resident prefix after loading it and the vectors segment after a full
 download. The reference reader verifies `residentSha256` at open (default
 on, fail-closed when verification is requested but no crypto backend
 exists) and exposes `verifyVectors()` to check the vectors segment on
-demand in one full-segment read. The hashes do **not** make individual
+demand, streamed in bounded chunks where the runtime provides a streaming
+hash. The hashes do **not** make individual
 range reads verifiable; per-chunk commitments arrive with the contract's
 complete-profile manifest and are out of scope for v1. This is the same
 transitional stance as the snapshot and range profiles.

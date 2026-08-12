@@ -191,25 +191,35 @@ uint32_t pancake_init(int dim, int max_elem, int quantized, int metric,
     g_handles[h].dim = static_cast<size_t>(dim);
     bool use_cosine = (metric == 1);
 
-    if (quantized) {
-        Uint8FloatHNSWConfig u8cfg;
-        u8cfg.max_elements = static_cast<size_t>(max_elem);
-        u8cfg.M = (M > 0) ? static_cast<size_t>(M) : DEFAULT_M;
-        u8cfg.ef_construction = (ef_c > 0) ? static_cast<size_t>(ef_c) : DEFAULT_EF_CONSTRUCTION;
-        u8cfg.ef_search = (ef_s > 0) ? static_cast<size_t>(ef_s) : DEFAULT_EF_SEARCH;
-        u8cfg.seed = (seed > 0) ? static_cast<uint32_t>(seed) : DEFAULT_SEED;
-        u8cfg.metric = use_cosine ? DistanceMetric::Cosine : DistanceMetric::L2;
-        u8cfg.use_heuristic = true;
-        g_handles[h].index = new Uint8FloatHNSWWrapper(dim, u8cfg);
-    } else {
-        FloatHNSWConfig cfg;
-        cfg.max_elements = static_cast<size_t>(max_elem);
-        cfg.M = (M > 0) ? static_cast<size_t>(M) : DEFAULT_M;
-        cfg.ef_construction = (ef_c > 0) ? static_cast<size_t>(ef_c) : DEFAULT_EF_CONSTRUCTION;
-        cfg.ef_search = (ef_s > 0) ? static_cast<size_t>(ef_s) : DEFAULT_EF_SEARCH;
-        cfg.seed = (seed > 0) ? static_cast<uint32_t>(seed) : DEFAULT_SEED;
-        cfg.metric = use_cosine ? DistanceMetric::Cosine : DistanceMetric::L2;
-        g_handles[h].index = new FloatHNSWWrapper(dim, cfg);
+    // The constructors allocate the whole index arena eagerly; a request the
+    // heap cannot satisfy throws std::bad_alloc. Catch it and hand back the
+    // sentinel so one oversized create fails cleanly instead of aborting the
+    // WASM instance under every other live handle (mirrors pancake_import).
+    try {
+        if (quantized) {
+            Uint8FloatHNSWConfig u8cfg;
+            u8cfg.max_elements = static_cast<size_t>(max_elem);
+            u8cfg.M = (M > 0) ? static_cast<size_t>(M) : DEFAULT_M;
+            u8cfg.ef_construction = (ef_c > 0) ? static_cast<size_t>(ef_c) : DEFAULT_EF_CONSTRUCTION;
+            u8cfg.ef_search = (ef_s > 0) ? static_cast<size_t>(ef_s) : DEFAULT_EF_SEARCH;
+            u8cfg.seed = (seed > 0) ? static_cast<uint32_t>(seed) : DEFAULT_SEED;
+            u8cfg.metric = use_cosine ? DistanceMetric::Cosine : DistanceMetric::L2;
+            u8cfg.use_heuristic = true;
+            g_handles[h].index = new Uint8FloatHNSWWrapper(dim, u8cfg);
+        } else {
+            FloatHNSWConfig cfg;
+            cfg.max_elements = static_cast<size_t>(max_elem);
+            cfg.M = (M > 0) ? static_cast<size_t>(M) : DEFAULT_M;
+            cfg.ef_construction = (ef_c > 0) ? static_cast<size_t>(ef_c) : DEFAULT_EF_CONSTRUCTION;
+            cfg.ef_search = (ef_s > 0) ? static_cast<size_t>(ef_s) : DEFAULT_EF_SEARCH;
+            cfg.seed = (seed > 0) ? static_cast<uint32_t>(seed) : DEFAULT_SEED;
+            cfg.metric = use_cosine ? DistanceMetric::Cosine : DistanceMetric::L2;
+            g_handles[h].index = new FloatHNSWWrapper(dim, cfg);
+        }
+    } catch (...) {
+        g_handles[h].index = nullptr;
+        g_handles[h].dim = 0;
+        return INVALID_HANDLE;
     }
 
     return h;

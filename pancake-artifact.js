@@ -11,26 +11,40 @@ const UINT8_HNSW_MAGIC_V1 = 0x49384831;
 const RANGE_MAGIC = 0x31415250; // PRA1
 const HEADER_BYTES = 128;
 
-// Hard ceiling on any single artifact-driven read. Header fields are
-// untrusted: a hostile count/offset must not turn into a multi-GB read or
-// allocation before the truncation checks run. 2 GiB comfortably clears any
-// legitimate single region (the largest is a full resident sketch tier) while
-// blocking the 32-bit-overflow class of pathological requests.
+// Read limits are layered, because header fields are untrusted and a hostile
+// count/offset must not turn into a multi-GB read or allocation before the
+// truncation checks run:
+// - MAX_ARTIFACT_READ_BYTES is the absolute backstop on any single read,
+//   blocking the 32-bit-overflow class of pathological requests. It is also
+//   enforced independently inside NodeFileRangeSource.
+// - Open-path reads (id map, router, resident sketch tier) default to the
+//   much tighter DEFAULT_OPEN_READ_BYTES, configurable per open() via
+//   options.maxReadBytes — resident segments are small by design, so a read
+//   near this limit means a hostile or misconfigured header.
+// - Query-path coalesced ranges are split at MAX_COALESCED_RANGE_BYTES so no
+//   gap/parallelism combination can drive one giant fetch.
+// - Whole-segment verification streams in VERIFY_CHUNK_BYTES chunks where a
+//   streaming hash exists (Node); WebCrypto cannot stream SHA-256, so other
+//   runtimes fall back to a single read bounded by the open budget.
 const MAX_ARTIFACT_READ_BYTES = 2 * 1024 * 1024 * 1024;
+const DEFAULT_OPEN_READ_BYTES = 256 * 1024 * 1024;
+const MAX_COALESCED_RANGE_BYTES = 16 * 1024 * 1024;
+const VERIFY_CHUNK_BYTES = 64 * 1024 * 1024;
 
 // Validate an artifact-derived (offset, length) before issuing source.read.
 // Rejects non-integer/negative/overflowing ranges, anything past the cap, and
 // — when the source reports a numeric size — anything past the source end, so
 // the read is refused instead of attempted. Returns the length for convenience.
-function checkArtifactRange(source, offset, length, label) {
+function checkArtifactRange(source, offset, length, label, limit = MAX_ARTIFACT_READ_BYTES) {
     if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(length)
         || offset < 0 || length < 0 || !Number.isSafeInteger(offset + length)) {
         throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
             `Artifact ${label} range is out of bounds`, { offset, length });
     }
-    if (length > MAX_ARTIFACT_READ_BYTES) {
+    const max = Math.min(limit, MAX_ARTIFACT_READ_BYTES);
+    if (length > max) {
         throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
-            `Artifact ${label} range exceeds the maximum read size`, { length, max: MAX_ARTIFACT_READ_BYTES });
+            `Artifact ${label} range exceeds the maximum read size`, { length, max });
     }
     if (source && Number.isSafeInteger(source.size) && offset + length > source.size) {
         throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
@@ -41,9 +55,23 @@ function checkArtifactRange(source, offset, length, label) {
 
 // Read a checked artifact region: validate (offset, length) before touching
 // the source so a hostile header cannot drive a giant read or allocation.
-async function readChecked(source, offset, length, label) {
-    checkArtifactRange(source, offset, length, label);
+async function readChecked(source, offset, length, label, limit) {
+    checkArtifactRange(source, offset, length, label, limit);
     return asUint8Array(await source.read(offset, length));
+}
+
+// Per-open read budget: undefined keeps the default, Infinity defers to the
+// absolute backstop, anything else must be a positive finite number and is
+// honored strictly — a budget too small for the artifact's resident segments
+// fails the open with a coded error rather than being silently raised.
+function resolveMaxReadBytes(value) {
+    if (value === undefined) return DEFAULT_OPEN_READ_BYTES;
+    if (value === Infinity) return MAX_ARTIFACT_READ_BYTES;
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+        throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+            'maxReadBytes must be a positive number or Infinity', { maxReadBytes: value });
+    }
+    return value;
 }
 const HEADER_BYTES_V2 = 256;
 const RANGE_KIND_U8 = 1;
@@ -230,6 +258,7 @@ class PancakeRangeArtifact {
         this.rangeBytes = 0;
         this.rangeNodesDecoded = 0;
         this.loadRouter = options.loadRouter !== false;
+        this.maxReadBytes = resolveMaxReadBytes(options.maxReadBytes);
         this.verify = options.verify !== false;
         // v3 artifacts carry whole-segment digests; older versions have none.
         this.digests = null;
@@ -245,6 +274,9 @@ class PancakeRangeArtifact {
             throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Range artifact header is truncated');
         }
         const header = parseHeader(headerBytes);
+        // Resolved before construction: the id-map read below is driven by an
+        // untrusted header count and must respect the caller's budget.
+        const maxReadBytes = resolveMaxReadBytes(options.maxReadBytes);
         let digests = null;
         if (header.version >= 3) {
             const digestBytes = await readChecked(source, RANGE_DIGESTS_OFFSET, RANGE_DIGEST_BYTES * 3, 'header digests');
@@ -257,7 +289,7 @@ class PancakeRangeArtifact {
                 base: new Uint8Array(digestBytes.subarray(RANGE_DIGEST_BYTES * 2, RANGE_DIGEST_BYTES * 3)),
             };
         }
-        const idMapBytes = await readChecked(source, header.idMapOffset, header.count * 4, 'id map');
+        const idMapBytes = await readChecked(source, header.idMapOffset, header.count * 4, 'id map', maxReadBytes);
         if (idMapBytes.byteLength !== header.count * 4) {
             throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Range artifact id map is truncated');
         }
@@ -321,21 +353,20 @@ class PancakeRangeArtifact {
     }
 
     // Verify the lazily-read base segment against the header's whole-segment
-    // digest (v3+). This is one full-segment read — intended for producers,
-    // CI, and hosts that materialize artifacts, not the query path. Verifying
-    // individual lazy ranges needs per-chunk commitments, which arrive with
-    // the contract's complete-profile manifest.
-    async verifyBaseSegment() {
+    // digest (v3+). Reads the segment in bounded chunks with a streaming hash
+    // (Node); runtimes without one fall back to a single read bounded by the
+    // open budget. Intended for producers, CI, and hosts that materialize
+    // artifacts, not the query path. Verifying individual lazy ranges needs
+    // per-chunk commitments, which arrive with the contract's
+    // complete-profile manifest.
+    async verifyBaseSegment(options = {}) {
         if (!this.digests) {
             throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
                 'Range artifact predates segment digests (format v3); nothing to verify against', { version: this.version });
         }
         const bytes = this.baseCount * this.recordBytes;
-        const buffer = await readChecked(this.source, this.baseRecordsOffset, bytes, 'base segment');
-        if (buffer.byteLength !== bytes) {
-            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Range artifact base segment is truncated');
-        }
-        await verifySha256(buffer, this.digests.base, 'Range artifact base segment');
+        await verifySegmentSha256(this.source, this.baseRecordsOffset, bytes, this.digests.base,
+            'Range artifact base segment', { chunkBytes: options.chunkBytes, oneShotLimit: this.maxReadBytes });
         this.segmentVerified.base = true;
         return true;
     }
@@ -415,11 +446,18 @@ class PancakeRangeArtifact {
         const gap = Math.max(0, options.gap || 0);
         const gapBytes = this.version >= 2 ? gap : gap * this.recordBytes;
         const rangeParallelism = Math.max(1, Math.trunc(options.parallelism || 1));
+        // Coalesced runs are split at maxRangeBytes (record-aligned) so no
+        // gap/parallelism combination — or a bulk prefetch of the whole base
+        // segment — turns into one unbounded read and allocation.
+        const maxRangeBytes = Math.max(this.recordBytes,
+            Math.floor(Math.trunc(options.maxRangeBytes || MAX_COALESCED_RANGE_BYTES) / this.recordBytes) * this.recordBytes);
         const ranges = [];
         let runStart = addresses[0];
         let runEnd = addresses[0] + this.recordBytes;
         const flush = () => {
-            ranges.push([runStart, runEnd]);
+            for (let piece = runStart; piece < runEnd; piece += maxRangeBytes) {
+                ranges.push([piece, Math.min(piece + maxRangeBytes, runEnd)]);
+            }
         };
         const readRange = async ([start, end]) => {
             const bytes = end - start;
@@ -473,7 +511,7 @@ class PancakeRangeArtifact {
     async loadRouterSegment() {
         if (this.version < 2 || this.routerCount === 0) return { records: 0, bytes: 0 };
         const bytes = this.routerCount * this.recordBytes;
-        const buffer = await readChecked(this.source, this.routerRecordsOffset, bytes, 'router segment');
+        const buffer = await readChecked(this.source, this.routerRecordsOffset, bytes, 'router segment', this.maxReadBytes);
         if (buffer.byteLength !== bytes) {
             throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Range artifact router segment is truncated');
         }
@@ -579,7 +617,7 @@ class PancakeRangeArtifact {
             const beforeRequests = this.rangeRequests;
             const beforeBytes = this.rangeBytes;
             const beforeRanges = this.markRanges();
-            await this.prefetch(ids, { gap: options.gap || 0, parallelism: options.rangeParallelism || options.parallelism || 1 });
+            await this.prefetch(ids, { gap: options.gap || 0, parallelism: options.rangeParallelism || options.parallelism || 1, maxRangeBytes: options.maxRangeBytes });
             const ranges = this.rangesSince(beforeRanges);
             rounds.push({
                 ids: ids.length,
@@ -1119,6 +1157,54 @@ async function verifySha256(bytes, expected, label) {
     }
 }
 
+// Verify a whole segment against its digest without buffering it entirely.
+// With a streaming hash backend (Node crypto) the segment is read and hashed
+// in bounded chunks, so peak memory stays at chunkBytes no matter how large
+// the segment. WebCrypto has no incremental SHA-256, so without a streaming
+// backend the verify falls back to one bounded read — and refuses segments
+// larger than the one-shot limit rather than buffering them.
+async function verifySegmentSha256(source, offset, totalBytes, expected, label, options = {}) {
+    const chunkBytes = Math.max(4096, Math.trunc(options.chunkBytes || VERIFY_CHUNK_BYTES));
+    let hash = null;
+    try {
+        hash = require('crypto').createHash('sha256');
+    } catch {
+        hash = null;
+    }
+    if (hash) {
+        let done = 0;
+        while (done < totalBytes) {
+            const len = Math.min(chunkBytes, totalBytes - done);
+            const bytes = await readChecked(source, offset + done, len, label);
+            if (bytes.byteLength !== len) {
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                    `Artifact ${label} is truncated`, { offset: offset + done, expected: len, actual: bytes.byteLength });
+            }
+            hash.update(bytes);
+            done += len;
+        }
+        const digest = new Uint8Array(hash.digest());
+        for (let b = 0; b < 32; b++) {
+            if (digest[b] !== expected[b]) {
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, `${label} failed hash verification`);
+            }
+        }
+        return;
+    }
+    const oneShotLimit = options.oneShotLimit || DEFAULT_OPEN_READ_BYTES;
+    if (totalBytes > oneShotLimit) {
+        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+            `Artifact ${label} is too large to verify without a streaming crypto backend`,
+            { totalBytes, oneShotLimit });
+    }
+    const bytes = await readChecked(source, offset, totalBytes, label, oneShotLimit);
+    if (bytes.byteLength !== totalBytes) {
+        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+            `Artifact ${label} is truncated`, { offset, expected: totalBytes, actual: bytes.byteLength });
+    }
+    await verifySha256(bytes, expected, label);
+}
+
 function buildSketchArtifact(snapshotBytes, outPath, options = {}) {
     if (typeof outPath !== 'string' || outPath.length === 0) {
         throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'buildSketchArtifact() requires an output path');
@@ -1281,6 +1367,7 @@ class PancakeSketchArtifact {
         this.maxCacheBytes = 64 * 1024 * 1024;
         this.rangeRequests = 0;
         this.rangeBytes = 0;
+        this.maxReadBytes = DEFAULT_OPEN_READ_BYTES;
         this.residentVerified = false;
         this.vectorsVerified = false;
     }
@@ -1310,6 +1397,7 @@ class PancakeSketchArtifact {
             throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'SketchArtifact.open() requires a range source with read(offset, length)');
         }
         const artifact = new PancakeSketchArtifact(source);
+        artifact.maxReadBytes = resolveMaxReadBytes(options.maxReadBytes);
         const header = await readChecked(source, 0, SKETCH_HEADER_BYTES, 'header');
         if (header.byteLength !== SKETCH_HEADER_BYTES) {
             throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact header is truncated');
@@ -1383,7 +1471,7 @@ class PancakeSketchArtifact {
         artifact.fullyResident = Promise.resolve(artifact);
 
         if (!staged) {
-            const resident = await readChecked(source, SKETCH_HEADER_BYTES, vectorsOffset - SKETCH_HEADER_BYTES, 'resident prefix');
+            const resident = await readChecked(source, SKETCH_HEADER_BYTES, vectorsOffset - SKETCH_HEADER_BYTES, 'resident prefix', artifact.maxReadBytes);
             if (resident.byteLength !== vectorsOffset - SKETCH_HEADER_BYTES) {
                 throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact resident prefix is truncated');
             }
@@ -1405,8 +1493,8 @@ class PancakeSketchArtifact {
         // tier is reported on every search result rather than hidden.
         artifact.tier = 'micro';
         const [affineBytes, microBytes] = await Promise.all([
-            readChecked(source, SKETCH_HEADER_BYTES, sketchesOffset - SKETCH_HEADER_BYTES, 'stage-1 affine'),
-            readChecked(source, microOffset, count * microRowBytes, 'stage-1 micro'),
+            readChecked(source, SKETCH_HEADER_BYTES, sketchesOffset - SKETCH_HEADER_BYTES, 'stage-1 affine', artifact.maxReadBytes),
+            readChecked(source, microOffset, count * microRowBytes, 'stage-1 micro', artifact.maxReadBytes),
         ]);
         if (affineBytes.byteLength !== sketchesOffset - SKETCH_HEADER_BYTES || microBytes.byteLength !== count * microRowBytes) {
             throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact stage-1 read is truncated');
@@ -1442,7 +1530,7 @@ class PancakeSketchArtifact {
         const onStage = typeof options.onStage === 'function' ? options.onStage : null;
         if (onStage) onStage({ tier: 'micro', residentBytes: artifact.residentBytes });
         artifact.fullyResident = (async () => {
-            const rest = await readChecked(source, sketchesOffset, vectorsOffset - sketchesOffset, 'stage-2 sketches');
+            const rest = await readChecked(source, sketchesOffset, vectorsOffset - sketchesOffset, 'stage-2 sketches', artifact.maxReadBytes);
             if (rest.byteLength !== vectorsOffset - sketchesOffset) {
                 throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact stage-2 read is truncated');
             }
@@ -1506,17 +1594,16 @@ class PancakeSketchArtifact {
     }
 
     // Verify the lazy vectors segment against the header's whole-segment
-    // hash. This is one full-segment read — intended for producers, CI, and
-    // hosts that materialize artifacts, not the query path. Verifying
-    // individual row ranges needs per-chunk commitments, which arrive with
-    // the contract's complete-profile manifest.
-    async verifyVectors() {
+    // hash. Reads the segment in bounded chunks with a streaming hash (Node);
+    // runtimes without one fall back to a single read bounded by the open
+    // budget. Intended for producers, CI, and hosts that materialize
+    // artifacts, not the query path. Verifying individual row ranges needs
+    // per-chunk commitments, which arrive with the contract's
+    // complete-profile manifest.
+    async verifyVectors(options = {}) {
         const bytes = this.count * this.dim;
-        const buffer = await readChecked(this.source, this.vectorsOffset, bytes, 'vectors segment');
-        if (buffer.byteLength !== bytes) {
-            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact vectors segment is truncated');
-        }
-        await verifySha256(buffer, this.vectorsSha256, 'Sketch artifact vectors segment');
+        await verifySegmentSha256(this.source, this.vectorsOffset, bytes, this.vectorsSha256,
+            'Sketch artifact vectors segment', { chunkBytes: options.chunkBytes, oneShotLimit: this.maxReadBytes });
         this.vectorsVerified = true;
         return true;
     }
@@ -1563,7 +1650,16 @@ class PancakeSketchArtifact {
         if (!missing.length) return rows;
         missing.sort((a, b) => a - b);
         const dim = this.dim;
+        // Coalesced runs are split at maxRangeBytes (row-aligned) so no gap
+        // setting — or a bulk fetch of every row — turns into one unbounded
+        // read and allocation.
+        const maxRunRows = Math.max(1, Math.floor(Math.trunc(options.maxRangeBytes || MAX_COALESCED_RANGE_BYTES) / dim));
         const ranges = [];
+        const pushRun = (startId, endId) => {
+            for (let piece = startId; piece < endId; piece += maxRunRows) {
+                ranges.push([piece, Math.min(piece + maxRunRows, endId)]);
+            }
+        };
         let runStartId = missing[0];
         let runEndId = missing[0] + 1;
         for (let i = 1; i < missing.length; i++) {
@@ -1571,12 +1667,12 @@ class PancakeSketchArtifact {
             if (id * dim <= runEndId * dim + gap) {
                 runEndId = id + 1;
             } else {
-                ranges.push([runStartId, runEndId]);
+                pushRun(runStartId, runEndId);
                 runStartId = id;
                 runEndId = id + 1;
             }
         }
-        ranges.push([runStartId, runEndId]);
+        pushRun(runStartId, runEndId);
         for (let i = 0; i < ranges.length; i += parallelism) {
             const batch = ranges.slice(i, i + parallelism);
             const buffers = await Promise.all(batch.map(async ([startId, endId]) => {

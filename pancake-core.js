@@ -18,6 +18,11 @@ const FLOAT_HNSW_MAGIC_V1 = 0x464C4831; // "FLH1"
 const UINT8_HNSW_MAGIC_V0 = 0x49384857; // "I8HW"
 const UINT8_HNSW_MAGIC_V1 = 0x49384831; // "I8H1"
 const MAX_EF = 4096;
+// The wasm32 heap tops out at 2 GiB (no MAXIMUM_MEMORY override, no
+// MEMORY64). The index arena gets 1.5 GiB of that; the rest is headroom for
+// the 16 MiB initial heap, query scratch, export buffers, and envelope
+// copies during import.
+const MAX_INDEX_ARENA_BYTES = 1536 * 1024 * 1024;
 const DEFAULT_MAX_ELEMENTS = 100000;
 const DEFAULT_M = 12;
 const DEFAULT_EF_CONSTRUCTION = 75;
@@ -878,6 +883,24 @@ function createPancakeApi(loadEngineImpl) {
         const efConstruction = opts.efConstruction ?? DEFAULT_EF_CONSTRUCTION;
         const efSearch = opts.efSearch ?? DEFAULT_EF_SEARCH;
         const seed = opts.seed ?? DEFAULT_SEED;
+
+        // Capacity guard: the backend allocates its arena eagerly at
+        // construction, and a request the wasm32 heap cannot satisfy throws
+        // std::bad_alloc inside pancake_init — reject it here with the
+        // estimate instead. Per-element cost mirrors the constructor
+        // allocations (uint8_float_hnsw.hpp / float_hnsw.hpp): quantized rows
+        // cost dim bytes plus 16*M edge bytes plus ~39 bytes of bookkeeping;
+        // float rows cost 4*dim plus 8*M plus ~23.
+        const bytesPerElement = isQuantized ? dim + 16 * M + 39 : 4 * dim + 8 * M + 23;
+        const estimatedBytes = maxElements * bytesPerElement;
+        if (estimatedBytes > MAX_INDEX_ARENA_BYTES) {
+            throw pancakeError(PANCAKE_ERROR_CODES.WASM_ALLOCATION_FAILED,
+                `Index configuration needs ~${Math.ceil(estimatedBytes / (1024 * 1024))} MiB `
+                + `(${isQuantized ? 'quantized' : 'float32'} backend: maxElements ${maxElements} × ~${bytesPerElement} B/element), `
+                + `above the ${Math.floor(MAX_INDEX_ARENA_BYTES / (1024 * 1024))} MiB wasm32 index budget; `
+                + 'lower maxElements or dim, or shard across indexes',
+                { estimatedBytes, budgetBytes: MAX_INDEX_ARENA_BYTES, dim, maxElements, M, quantized: isQuantized });
+        }
 
         const resolvedOpts = {
             ...opts,

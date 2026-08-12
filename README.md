@@ -8,6 +8,31 @@ Pancake ships two backends in the WASM engine: a uint8 quantized backend that cu
 
 Pancake is an ANN library -- it doesn't ship an embedding model. Use any embedder (sentence-transformers, OpenAI, Cohere, etc.) and feed the resulting vectors to Pancake.
 
+## The three layers
+
+This repository ships three things with distinct boundaries; each has its own
+documentation:
+
+1. **The ANN engine** (`pancake-wasm` core: `Pancake.create` / `search` /
+   `export`) -- an in-memory HNSW index behind a small JS API. It knows
+   nothing about documents, encoders, or deployment. Documented in this
+   README and [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md).
+2. **Search Artifacts** (also in `pancake-wasm`: `Pancake.RangeArtifact`,
+   `Pancake.SketchArtifact`, the builders) -- immutable, integrity-checked
+   packages that make a built index shippable and range-readable from static
+   storage. The behavioral contract lives in
+   [spec/SEARCH_ARTIFACT_CONTRACT.md](spec/SEARCH_ARTIFACT_CONTRACT.md); see
+   [Search artifacts](#search-artifacts) below for the API.
+3. **The generated product**
+   ([`create-pancake-search`](create-pancake-search/)) -- a scaffolding CLI
+   that consumes the two layers above and emits a deployable Worker/UI
+   project from a docs folder. The generated project is application code you
+   own; the engine and artifact layers are its dependencies.
+
+Throughout this README, "Search Artifact" (capitalized) means layer 2;
+lowercase "artifact" in build and benchmark contexts means ordinary output
+files.
+
 ## Install
 
 Install from npm:
@@ -543,6 +568,49 @@ See [`examples/reference-worker/README.md`](examples/reference-worker/README.md)
 - local development and deployment steps
 - environment variables and Wrangler configuration
 - memory, cold-start, and persistence tradeoffs
+
+## Search artifacts
+
+A Search Artifact packages a built index as an immutable file that a reader
+can execute searches against without the indexing pipeline — including
+lazily, over HTTP range reads, without downloading the whole file. Three
+profiles exist today:
+
+| Profile | Extension | Execution model | Best regime |
+| --- | --- | --- | --- |
+| Snapshot | `.pnck` | full restore into memory (`Pancake.restore`) | corpus fits in memory |
+| Range | `.pancake-range` | resident router + lazy graph traversal | warm caches, small corpora |
+| Sketch | `.pancake-sketch` | resident scan + one parallel fetch round | cold/remote storage, large corpora |
+
+Build either lazy profile from an exported snapshot — no re-embedding or
+retraining:
+
+```js
+const Pancake = require('pancake-wasm');
+
+Pancake.buildRangeArtifactFile('index.pnck', 'index.pancake-range');
+Pancake.buildSketchArtifactFile('index.pnck', 'index.pancake-sketch', {
+  sketchDims: 192, recommendedRerank: 300,
+});
+
+// Open and search without loading the whole file:
+const artifact = await Pancake.openSketchArtifactFile('index.pancake-sketch');
+const { results } = await artifact.search(queryVector, 10);
+```
+
+Readers accept any `{ read(offset, length) }` range source, so the same
+artifact serves from local disk, R2/S3, or a CDN. Artifacts carry whole-segment
+SHA-256 digests: resident segments are verified at open (default on,
+fail-closed), lazy segments on demand via `verifyBaseSegment()` /
+`verifyVectors()`. Every artifact-driven read is bounded — open-path reads
+default to a 256 MiB budget (`maxReadBytes`), coalesced query fetches split at
+16 MiB, and whole-segment verification streams in chunks on Node.
+
+The behavioral contract — identity, immutability, corpus binding, query
+interpretation, conformance — is
+[spec/SEARCH_ARTIFACT_CONTRACT.md](spec/SEARCH_ARTIFACT_CONTRACT.md); the
+sketch byte layout is [spec/SKETCH_PROFILE.md](spec/SKETCH_PROFILE.md). The
+conformance fixtures run in `npm test` (`test/sketch_profile.js`).
 
 ## When to use Pancake
 

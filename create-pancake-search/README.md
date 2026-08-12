@@ -32,6 +32,29 @@ can exercise the endpoint mechanics locally without Workers AI.
 You can also provide a prebuilt `.pancake-range` file with `--artifact`. External
 artifacts must have dimension, count, and IDs that match the generated corpus.
 
+## Where this sits
+
+This package is the **product layer** of the Pancake stack. It consumes the
+two layers below it — the `pancake-wasm` ANN engine and the Search Artifact
+readers/builders (`spec/SEARCH_ARTIFACT_CONTRACT.md` in the main repo) — and
+emits a project that is *yours*: the generated Worker, UI, and config are
+application code with `pancake-wasm` as a dependency, not part of this
+package. Engine and artifact behavior are documented in the main repo;
+this README covers only scaffolding, generation options, and the generated
+project's layout.
+
+### URL ingestion trust boundary
+
+`--source <url>` crawls a website from your machine at build time. The
+crawler runs locally under your account, follows the URL *you* typed, keeps
+the crawl frontier on that URL's origin, skips redirects, enforces timeouts
+and per-page/body caps, and never runs at query time — the deployed Worker
+makes no outbound fetches at all. It deliberately does not block
+private-network addresses: it is a local developer tool, and pointing it at
+your own intranet docs is a supported use. Do not lift the crawl code into a
+deployed service without adding SSRF protections (scheme allowlist,
+private/link-local IP rejection, redirect pinning).
+
 ## Self-contained query embedding (`--mode student`)
 
 `--mode student` removes the Workers AI dependency entirely. At build time the

@@ -38,7 +38,14 @@ export interface VectorRecord<Id = unknown> {
 export interface CreateOptions {
   /** Input vector dimension (required). */
   dim: number;
-  /** Maximum index capacity (default: 100000). */
+  /**
+   * Maximum index capacity (default: 100000). The backend allocates its
+   * arena eagerly at ~(dim + 16*M + 39) bytes per element quantized, or
+   * ~(4*dim + 8*M + 23) float32; configurations estimated above the 1.5 GiB
+   * wasm32 index budget are rejected with WASM_ALLOCATION_FAILED at
+   * create() rather than aborting inside the engine. Hard ABI ceiling:
+   * 2147483647.
+   */
   maxElements?: number;
   /** Distance metric (default: 'cosine'). */
   metric?: Metric;
@@ -127,6 +134,11 @@ export interface RangeArtifactSearchOptions {
   parallelism?: number;
   /** Overrides `parallelism` for range reads when both are set. */
   rangeParallelism?: number;
+  /**
+   * Split coalesced record runs at this many bytes (record-aligned, floor
+   * one record) so no single range read grows unbounded. Default: 16 MiB.
+   */
+  maxRangeBytes?: number;
 }
 
 /** A decoded graph record, as returned by {@link PancakeRangeArtifact.readNode}. */
@@ -184,6 +196,14 @@ export interface RangeArtifactOpenOptions {
    * unverified either way). Default: true.
    */
   verify?: boolean;
+  /**
+   * Budget for any single open-path read (id map, router segment), honored
+   * strictly: a budget below what the artifact's resident segments need
+   * fails the open with SNAPSHOT_INVALID. Default: 256 MiB; Infinity defers
+   * to the 2 GiB absolute backstop. Other non-positive or non-numeric
+   * values throw INVALID_ARGUMENT.
+   */
+  maxReadBytes?: number;
   /**
    * Byte budget for the lazily-fetched record cache (LRU eviction; the
    * resident router segment is not counted). Default: 64 MiB. Pass Infinity
@@ -256,16 +276,18 @@ export interface PancakeRangeArtifact {
   search(query: VectorInput, k: number, options?: RangeArtifactSearchOptions): Promise<RangeArtifactSearchResult>;
   stats(): RangeArtifactStats;
   /**
-   * Verify the lazily-read base segment against the v3 header digest in one
-   * full-segment read (not a query-path operation). Resolves true on match;
-   * throws SNAPSHOT_INVALID on mismatch, INVALID_ARGUMENT for pre-v3
-   * artifacts, which carry no digests.
+   * Verify the lazily-read base segment against the v3 header digest (not a
+   * query-path operation). Streams the segment in bounded chunks where a
+   * streaming hash exists (Node); other runtimes fall back to one read
+   * bounded by maxReadBytes. Resolves true on match; throws
+   * SNAPSHOT_INVALID on mismatch, INVALID_ARGUMENT for pre-v3 artifacts,
+   * which carry no digests.
    */
-  verifyBaseSegment(): Promise<true>;
+  verifyBaseSegment(options?: { chunkBytes?: number }): Promise<true>;
   resetStats(): void;
   clearCache(options?: { reloadRouter?: boolean }): Promise<{ records: number; bytes: number }>;
   /** Fetch (and cache) the given node ids in coalesced ranges. Returns the number of range reads issued. */
-  prefetch(ids: readonly number[], options?: { gap?: number; parallelism?: number }): Promise<number>;
+  prefetch(ids: readonly number[], options?: { gap?: number; parallelism?: number; maxRangeBytes?: number }): Promise<number>;
   /** Read a single node, fetching it if not cached. */
   readNode(id: number): Promise<RangeArtifactNode>;
   /** Byte offset of a node's record within the artifact. */
@@ -295,6 +317,14 @@ export interface SketchStageEvent {
 export interface SketchArtifactOpenOptions {
   /** Verify the resident prefix hash when a crypto backend exists. Default: true. */
   verify?: boolean;
+  /**
+   * Budget for any single open-path read (resident prefix, staged tiers),
+   * honored strictly: a budget below what the artifact's resident tier
+   * needs fails the open with SNAPSHOT_INVALID. Default: 256 MiB; Infinity
+   * defers to the 2 GiB absolute backstop. Other non-positive or
+   * non-numeric values throw INVALID_ARGUMENT.
+   */
+  maxReadBytes?: number;
   /**
    * Byte budget for the fetched-row cache (LRU eviction; the resident sketch
    * tier is not counted). Default: 64 MiB. Pass Infinity to disable eviction.
@@ -351,6 +381,11 @@ export interface SketchArtifactSearchOptions {
   gap?: number;
   /** Concurrent range reads per fetch round. Default: 8. */
   parallelism?: number;
+  /**
+   * Split coalesced row runs at this many bytes (row-aligned, floor one
+   * row) so no single range read grows unbounded. Default: 16 MiB.
+   */
+  maxRangeBytes?: number;
   /**
    * External top-C scanner (e.g. from createSketchScanner). Must implement
    * the artifact's metric: cosine artifacts require `metric === 1`, and a
@@ -458,11 +493,13 @@ export interface PancakeSketchArtifact {
   stats(): SketchArtifactStats;
   /**
    * Verify the lazy vectors segment against the header's whole-segment hash
-   * in one full-segment read (not a query-path operation). Resolves true on
-   * match; throws SNAPSHOT_INVALID on mismatch or when verification is
-   * impossible (no crypto backend).
+   * (not a query-path operation). Streams the segment in bounded chunks
+   * where a streaming hash exists (Node); other runtimes fall back to one
+   * read bounded by maxReadBytes. Resolves true on match; throws
+   * SNAPSHOT_INVALID on mismatch or when verification is impossible (no
+   * crypto backend).
    */
-  verifyVectors(): Promise<true>;
+  verifyVectors(options?: { chunkBytes?: number }): Promise<true>;
   close(): Promise<void>;
 }
 

@@ -419,8 +419,9 @@ Integrity stance: format v3 stamps whole-segment SHA-256 digests for the id
 map, router segment, and base segment into the header. The reference reader
 verifies the id map and resident router at open (default on, fail-closed
 when verification is requested but no crypto backend exists) and exposes
-`verifyBaseSegment()` to check the lazy base segment on demand in one
-full-segment read. Individual lazy range reads remain unverifiable until
+`verifyBaseSegment()` to check the lazy base segment on demand — streamed
+in bounded chunks where the runtime provides a streaming hash, one bounded
+read otherwise. Individual lazy range reads remain unverifiable until
 per-chunk commitments arrive with the complete profile's manifest — the same
 transitional stance as the sketch profile. Pre-v3 range artifacts carry no
 digests at all and open structurally validated but unverified.

@@ -416,6 +416,38 @@ async function testCreation() {
             `create() rejects maxElements=${bad} with INVALID_ARGUMENT`);
     }
 
+    // Capacity guard: configurations whose eager arena allocation cannot fit
+    // the wasm32 heap must be rejected with a coded error at create(), before
+    // the engine is even loaded — an uncaught std::bad_alloc inside
+    // pancake_init would otherwise abort the whole WASM instance.
+    {
+        const big = { dim: 4096, maxElements: 50_000_000, metric: 'l2', M: 12 };
+        let err = null;
+        try { await Pancake.create(big); } catch (e) { err = e; }
+        assert(err && err.code === 'WASM_ALLOCATION_FAILED'
+            && err.details && err.details.estimatedBytes > err.details.budgetBytes
+            && err.details.estimatedBytes === big.maxElements * (big.dim + 16 * big.M + 39)
+            && err.details.quantized === true,
+            'create() rejects an over-budget config using the quantized formula');
+
+        // The two backends have different per-element costs (quantized rows
+        // are 4x smaller but their edges are 2x larger); the guard must apply
+        // the formula for the backend actually requested.
+        err = null;
+        try { await Pancake.create({ ...big, quantized: false }); } catch (e) { err = e; }
+        assert(err && err.code === 'WASM_ALLOCATION_FAILED'
+            && err.details.estimatedBytes === big.maxElements * (4 * big.dim + 8 * big.M + 23)
+            && err.details.quantized === false,
+            'create() rejects the same config using the float formula');
+
+        // A rejected create must not poison the engine for later indexes.
+        const after = await Pancake.create({ ...DEFAULT_CONFIG });
+        after.add(normalizedVec(DIM));
+        assert(after.search(normalizedVec(DIM), 1).length === 1,
+            'engine remains usable after a capacity rejection');
+        after.dispose();
+    }
+
     // Engine init failure surfaces as a coded error. The engine returns
     // uint32_t INVALID_HANDLE (0xFFFFFFFF), which the i32 ABI delivers to JS
     // as -1; create() must detect it and free its scratch allocations.
@@ -3102,6 +3134,223 @@ async function testSnapshotInspectionAndRestore() {
     source.dispose();
 }
 
+// ─── Float vs uint8 backend parity ────────────────────────────────────────────
+//
+// The two backends duplicate the HNSW graph algorithms (float_hnsw.hpp /
+// uint8_float_hnsw.hpp) and share a byte-identical seeded level RNG, so for
+// the same insert order the graph SKELETON — level sequence, entry point, max
+// level — must match exactly. Neighbor SELECTION legitimately differs
+// (quantized distances vs exact), so edges are compared with tolerances.
+// These tests exist to catch the duplicated algorithms drifting apart as they
+// evolve independently.
+
+function seededParityVectors(count, dim, seed) {
+    let state = seed >>> 0;
+    const next = () => {
+        state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+        return state / 0xffffffff;
+    };
+    const rows = [];
+    for (let i = 0; i < count; i++) {
+        const v = new Float32Array(dim);
+        let prev = next() * 2 - 1;
+        for (let d = 0; d < dim; d++) {
+            prev = 0.75 * prev + 0.25 * (next() * 2 - 1);
+            v[d] = prev;
+        }
+        rows.push(v);
+    }
+    return rows;
+}
+
+// Parse a raw engine snapshot's graph section into { levels, degrees }. The
+// payload stride differs per backend (float: 4-byte neighbor ids; uint8:
+// 8-byte {neighbor, dist} edges), but the framing is identical.
+function parseGraphSkeleton(raw, quantized) {
+    const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+    const dim = view.getUint32(4, true);
+    const count = view.getUint32(12, true);
+    const entryPoint = view.getUint32(16, true);
+    const maxLevel = view.getUint32(20, true);
+    let offset = quantized ? 40 + count * 8 + count * dim : 40 + count * dim * 4;
+    const edgeStride = quantized ? 8 : 4;
+    const levels = new Array(count);
+    const degrees = new Array(count);
+    for (let id = 0; id < count; id++) {
+        const level = view.getUint32(offset, true); offset += 4;
+        levels[id] = level;
+        const perLevel = new Array(level + 1);
+        for (let l = 0; l <= level; l++) {
+            const size = view.getUint32(offset, true); offset += 4;
+            perLevel[l] = size;
+            offset += size * edgeStride;
+        }
+        degrees[id] = perLevel;
+    }
+    return { count, entryPoint, maxLevel, levels, degrees };
+}
+
+async function buildParityPair(vectors, cfg) {
+    const pair = {};
+    for (const quantized of [false, true]) {
+        const index = await Pancake.create({ ...cfg, quantized });
+        index.addBatch(vectors);
+        pair[quantized ? 'uint8' : 'float'] = index;
+    }
+    return pair;
+}
+
+function paritySkeletons(pair) {
+    return {
+        float: parseGraphSkeleton(extractRawEngineBytes(pair.float.export()), false),
+        uint8: parseGraphSkeleton(extractRawEngineBytes(pair.uint8.export()), true),
+    };
+}
+
+function assertSkeletonParity(skel, label) {
+    assert(JSON.stringify(skel.float.levels) === JSON.stringify(skel.uint8.levels),
+        `${label}: identical level sequence (shared seeded RNG)`);
+    assert(skel.float.entryPoint === skel.uint8.entryPoint,
+        `${label}: identical entry point`);
+    assert(skel.float.maxLevel === skel.uint8.maxLevel,
+        `${label}: identical max level`);
+    // Neighbor counts are distance-driven, so they may differ per node — but
+    // aggregate degree should stay close. A systematic gap points at the
+    // dist-provenance divergence between the two prune implementations.
+    let floatBase = 0;
+    let uint8Base = 0;
+    for (let id = 0; id < skel.float.count; id++) {
+        floatBase += skel.float.degrees[id][0];
+        uint8Base += skel.uint8.degrees[id][0];
+    }
+    const ratio = Math.min(floatBase, uint8Base) / Math.max(floatBase, uint8Base);
+    assert(ratio >= 0.9,
+        `${label}: aggregate base degree within 10% (float ${floatBase} vs uint8 ${uint8Base})`);
+}
+
+function parityOverlap(pair, queries, k, efSearch) {
+    let top1 = 0;
+    let overlap = 0;
+    for (const q of queries) {
+        const a = pair.float.search(q, k, { efSearch }).map((r) => r.id);
+        const b = pair.uint8.search(q, k, { efSearch }).map((r) => r.id);
+        if (a[0] === b[0]) top1++;
+        const bSet = new Set(b);
+        overlap += a.filter((id) => bSet.has(id)).length / k;
+    }
+    return { top1: top1 / queries.length, overlap: overlap / queries.length };
+}
+
+async function testFloatUint8GraphParity() {
+    section('Float vs uint8 graph parity — build');
+
+    const cfg = { dim: 32, maxElements: 400, metric: 'l2', M: 8, efConstruction: 60, seed: 7 };
+    const vectors = seededParityVectors(400, cfg.dim, 20260812);
+    const pair = await buildParityPair(vectors, cfg);
+
+    assertSkeletonParity(paritySkeletons(pair), 'build');
+
+    const queries = seededParityVectors(25, cfg.dim, 424242);
+    const agreement = parityOverlap(pair, queries, 10, 150);
+    assert(agreement.top1 >= 0.85,
+        `top-1 agreement across backends >= 85% (got ${(agreement.top1 * 100).toFixed(0)}%)`);
+    assert(agreement.overlap >= 0.8,
+        `mean top-10 overlap across backends >= 80% (got ${(agreement.overlap * 100).toFixed(0)}%)`);
+
+    // Recall gap against one shared exact ground truth (float brute force):
+    // quantization costs a bounded amount of recall, and a widening gap means
+    // one backend's graph quality regressed relative to the other.
+    let floatHits = 0;
+    let uint8Hits = 0;
+    for (const q of queries) {
+        const truth = vectors
+            .map((v, id) => {
+                let s = 0;
+                for (let d = 0; d < cfg.dim; d++) s += (q[d] - v[d]) ** 2;
+                return [s, id];
+            })
+            .sort((x, y) => x[0] - y[0] || x[1] - y[1])
+            .slice(0, 10)
+            .map((e) => e[1]);
+        const truthSet = new Set(truth);
+        floatHits += pair.float.search(q, 10, { efSearch: 150 }).filter((r) => truthSet.has(r.id)).length;
+        uint8Hits += pair.uint8.search(q, 10, { efSearch: 150 }).filter((r) => truthSet.has(r.id)).length;
+    }
+    const floatRecall = floatHits / (queries.length * 10);
+    const uint8Recall = uint8Hits / (queries.length * 10);
+    assert(Math.abs(floatRecall - uint8Recall) <= 0.05,
+        `recall gap vs shared ground truth <= 5 points (float ${(floatRecall * 100).toFixed(1)} vs uint8 ${(uint8Recall * 100).toFixed(1)})`);
+
+    pair.float.dispose();
+    pair.uint8.dispose();
+}
+
+async function testFloatUint8DeleteCompactParity() {
+    section('Float vs uint8 graph parity — delete/compact/heal');
+
+    const cfg = { dim: 32, maxElements: 300, metric: 'l2', M: 8, efConstruction: 60, seed: 11 };
+    const vectors = seededParityVectors(300, cfg.dim, 77);
+    const queries = seededParityVectors(20, cfg.dim, 88);
+
+    // Heavy deletion (>= half) drives the rebuild path in compact(): a fresh
+    // graph is constructed with the same seed, so the post-compact skeleton
+    // must again match exactly across backends.
+    {
+        const pair = await buildParityPair(vectors, cfg);
+        for (let id = 0; id < 300; id++) {
+            if (id % 5 !== 0) {
+                pair.float.delete(id);
+                pair.uint8.delete(id);
+            }
+        }
+        assert(pair.float.ghostCount === pair.uint8.ghostCount && pair.float.ghostCount === 240,
+            'heavy delete: identical ghost counts');
+        const ghostAgreement = parityOverlap(pair, queries, 5, 150);
+        assert(ghostAgreement.overlap >= 0.8,
+            `heavy delete: top-5 overlap on the ghosted graph >= 80% (got ${(ghostAgreement.overlap * 100).toFixed(0)}%)`);
+
+        pair.float.compact();
+        pair.uint8.compact();
+        assert(pair.float.count === pair.uint8.count && pair.float.count === 60,
+            'heavy compact: identical survivor counts');
+        assertSkeletonParity(paritySkeletons(pair), 'rebuild compact');
+
+        // Both backends must resolve every survivor to itself at rank 1.
+        let floatSelf = 0;
+        let uint8Self = 0;
+        for (let id = 0; id < 300; id += 5) {
+            if (pair.float.search(vectors[id], 1, { efSearch: 100 })[0].id === id) floatSelf++;
+            if (pair.uint8.search(vectors[id], 1, { efSearch: 100 })[0].id === id) uint8Self++;
+        }
+        assert(floatSelf === 60 && uint8Self === 60,
+            `post-compact self-recall 60/60 on both backends (float ${floatSelf}, uint8 ${uint8Self})`);
+        pair.float.dispose();
+        pair.uint8.dispose();
+    }
+
+    // Light deletion (< half) drives the in-place path: remap, ghost-ref
+    // stripping, backfill, and the heal loop — where the two implementations
+    // have genuinely different control flow. Levels are survivor-preserved so
+    // the skeleton must still match; degrees get the aggregate tolerance.
+    {
+        const pair = await buildParityPair(vectors, cfg);
+        for (let id = 0; id < 90; id++) {
+            pair.float.delete(id);
+            pair.uint8.delete(id);
+        }
+        pair.float.compact();
+        pair.uint8.compact();
+        assert(pair.float.count === pair.uint8.count && pair.float.count === 210,
+            'in-place compact: identical survivor counts');
+        assertSkeletonParity(paritySkeletons(pair), 'in-place compact');
+        const agreement = parityOverlap(pair, queries, 10, 150);
+        assert(agreement.overlap >= 0.8,
+            `in-place compact: top-10 overlap >= 80% (got ${(agreement.overlap * 100).toFixed(0)}%)`);
+        pair.float.dispose();
+        pair.uint8.dispose();
+    }
+}
+
 // ─── Runner ───────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -3158,6 +3407,8 @@ async function main() {
         testFilteredHeldOutRecallOracle,
         testSearchOutputGoldenOracle,
         testSearchAndSerializationDeterminismOracle,
+        testFloatUint8GraphParity,
+        testFloatUint8DeleteCompactParity,
     ];
 
     for (const suite of suites) {

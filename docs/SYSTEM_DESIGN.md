@@ -88,6 +88,16 @@ the caller's responsibility.
 └──────────────────────────────────────────────────────────────────┘
 ```
 
+One sibling of `pancake-core.js` is deliberately absent from the diagram
+above: `pancake-artifact.js`, the Search Artifact layer. It implements the
+range-readable (`.pancake-range`) and sketch (`.pancake-sketch`) readers and
+builders in pure JS on top of a `read(offset, length)` source abstraction —
+it uses the WASM engine only optionally (the sketch scan kernel). Its
+behavioral contract is `spec/SEARCH_ARTIFACT_CONTRACT.md`, its sketch byte
+layout `spec/SKETCH_PROFILE.md`, and every entrypoint bundles it
+(`Pancake.RangeArtifact` / `Pancake.SketchArtifact`). This document covers
+the engine below that line; the artifact layer is specified in `spec/`.
+
 The native addon (`native/pancake_napi.cpp`) replaces the *C ABI* layer with an
 N-API binding but reuses the identical backend layer — it `#include`s
 `float_hnsw.hpp` and `uint8_float_hnsw.hpp` directly.
@@ -637,6 +647,19 @@ Two reference Workers live under `examples/`. The first (`examples/reference-wor
 full read/write reference; the second (`examples/03-edge-docs-search/`) is a
 hardened snapshot-first demo. The mental model for both is **snapshot search at
 the edge**, not a durable mutable database inside one isolate.
+
+**Ingress trust boundary (SSRF by construction):** deployed Workers never
+fetch caller-supplied URLs. Snapshot import accepts size-capped *bytes* in
+the request body; artifact and index data arrive as build-time bundled
+assets or Cloudflare bindings (`env.ASSETS`, R2) whose targets are fixed at
+deploy time. URL ingestion exists only in local, operator-driven tooling
+(the `create-pancake-search --source <url>` crawler, benchmarks) where the
+operator controls both the URL and the machine. Keep it that way: a future
+"restore from URL" route on a deployed Worker is the moment scheme
+allowlisting, private/link-local IP rejection, redirect pinning, and
+response size caps become mandatory — the crawler in
+`create-pancake-search/src/cli.mjs` already implements most of that list
+and is the model to copy.
 
 ### 11.1 Request lifecycle
 

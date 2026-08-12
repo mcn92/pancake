@@ -398,8 +398,10 @@ async function run() {
             const src = makeSource(reportSize);
             let threw = false;
             try { await Pancake.RangeArtifact.open(src); } catch { threw = true; }
-            const giant = src.calls.some(([, l]) => l > 2 * 1024 * 1024 * 1024);
-            check(`open never issues a >2GiB read (size ${reportSize ? 'known' : 'unknown'})`, !giant && threw,
+            // Open-path reads default to the 256 MiB budget, well under the
+            // 2 GiB absolute backstop.
+            const giant = src.calls.some(([, l]) => l > 256 * 1024 * 1024);
+            check(`open never issues a >256MiB read (size ${reportSize ? 'known' : 'unknown'})`, !giant && threw,
                 `calls=${JSON.stringify(src.calls)}`);
         }
 
@@ -607,6 +609,123 @@ async function run() {
             detail = String(err && err.message);
         }
         check('unknown raw snapshot version rejected at import', rejected, detail);
+    }
+
+    // Per-open read budgets, chunked verification, and coalesced-run
+    // splitting: no single read may exceed its budget, verification must
+    // detect tampering regardless of chunk size, and splitting ranges must
+    // never change results.
+    console.log('\nread budgets and chunked processing');
+    {
+        const rows = seededVectors(COUNT, DIM, 91);
+        const index = await Pancake.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
+        index.addBatch(rows);
+        const snapshotPath = path.join(tmp, 'budget-snap.pnck');
+        fs.writeFileSync(snapshotPath, index.export());
+        index.dispose();
+        const rangePath = path.join(tmp, 'budget.pancake-range');
+        Pancake.buildRangeArtifactFile(snapshotPath, rangePath);
+        const sketchPath = path.join(tmp, 'budget.pancake-sketch');
+        Pancake.buildSketchArtifactFile(snapshotPath, sketchPath, { sketchDims: 16, sketchBits: 8 });
+        const queries = seededVectors(10, DIM, 92);
+
+        // A budget below the artifact's resident needs fails the open with a
+        // coded error instead of being silently raised.
+        let coded = false, detail = 'no error thrown';
+        try { await Pancake.openRangeArtifactFile(rangePath, { maxReadBytes: 1024 }); }
+        catch (err) {
+            coded = err instanceof Pancake.PancakeError && err.code === 'SNAPSHOT_INVALID' && /maximum read size/.test(err.message);
+            detail = String(err && err.message);
+        }
+        check('range open under a too-small read budget fails closed', coded, detail);
+        coded = false;
+        try { await Pancake.openSketchArtifactFile(sketchPath, { maxReadBytes: 1024 }); }
+        catch (err) { coded = err instanceof Pancake.PancakeError && err.code === 'SNAPSHOT_INVALID'; }
+        check('sketch open under a too-small read budget fails closed', coded);
+        let invalid = false;
+        try { await Pancake.openRangeArtifactFile(rangePath, { maxReadBytes: -5 }); }
+        catch (err) { invalid = err instanceof Pancake.PancakeError && err.code === 'INVALID_ARGUMENT'; }
+        check('invalid maxReadBytes rejected with INVALID_ARGUMENT', invalid);
+
+        // Chunked verification: multiple small chunks must accept a clean
+        // segment and reject a tampered one, same as the one-shot path.
+        const cleanRange = await Pancake.openRangeArtifactFile(rangePath);
+        check('chunked base verification accepts a clean segment',
+            (await cleanRange.verifyBaseSegment({ chunkBytes: 4096 })) === true);
+        const baseRecordsOffset = cleanRange.baseRecordsOffset;
+        const recordBytes = cleanRange.recordBytes;
+        const defaultResults = [];
+        for (const q of queries) defaultResults.push((await cleanRange.search(q, K, { efSearch: 80 })).results.map((r) => r.id));
+        await cleanRange.close();
+
+        const tamperedBytes = Buffer.from(fs.readFileSync(rangePath));
+        // Tamper the LAST base record so detection requires hashing every chunk.
+        tamperedBytes[tamperedBytes.length - 4] ^= 0xff;
+        const tamperedPath = `${rangePath}.chunktamper`;
+        fs.writeFileSync(tamperedPath, tamperedBytes);
+        const tamperedRange = await Pancake.openRangeArtifactFile(tamperedPath);
+        let rejected = false;
+        try { await tamperedRange.verifyBaseSegment({ chunkBytes: 4096 }); }
+        catch (err) { rejected = /hash verification/.test(String(err && err.message)); }
+        check('chunked base verification rejects a tail-tampered segment', rejected);
+        await tamperedRange.close();
+
+        const cleanSketch = await Pancake.openSketchArtifactFile(sketchPath);
+        check('chunked vectors verification accepts a clean segment',
+            (await cleanSketch.verifyVectors({ chunkBytes: 4096 })) === true);
+
+        // Splitting coalesced runs must change request counts, never results.
+        const splitRange = await Pancake.openRangeArtifactFile(rangePath);
+        let splitMatch = true;
+        for (let i = 0; i < queries.length; i++) {
+            const got = (await splitRange.search(queries[i], K, { efSearch: 80, maxRangeBytes: recordBytes })).results.map((r) => r.id);
+            if (JSON.stringify(got) !== JSON.stringify(defaultResults[i])) splitMatch = false;
+        }
+        check('range search identical with single-record range splitting', splitMatch);
+        // A bulk prefetch of every id must arrive as bounded pieces.
+        splitRange.resetStats();
+        await splitRange.clearCache({ reloadRouter: false });
+        const allIds = Array.from({ length: COUNT }, (_, i) => i);
+        await splitRange.prefetch(allIds, { gap: 0, maxRangeBytes: recordBytes * 8 });
+        const pieces = splitRange.rangesSince(0);
+        const oversize = pieces.some(([s, e]) => e - s > recordBytes * 8);
+        check('bulk prefetch splits into bounded ranges', pieces.length >= Math.floor(COUNT / 8) / 2 && !oversize,
+            `pieces=${pieces.length}`);
+        await splitRange.close();
+
+        let sketchSplitMatch = true;
+        for (const q of queries) {
+            const a = (await cleanSketch.search(q, K, { rerank: 200 })).results.map((r) => r.id);
+            const b = (await cleanSketch.search(q, K, { rerank: 200, maxRangeBytes: DIM })).results.map((r) => r.id);
+            if (JSON.stringify(a) !== JSON.stringify(b)) sketchSplitMatch = false;
+        }
+        check('sketch search identical with single-row range splitting', sketchSplitMatch);
+        await cleanSketch.close();
+
+        // Verification without a streaming hash backend falls back to one
+        // bounded read — and refuses segments beyond the budget instead of
+        // buffering them.
+        const Module = require('module');
+        const origModuleRequire = Module.prototype.require;
+        Module.prototype.require = function (id) {
+            if (id === 'crypto' || id === 'node:crypto') throw new Error('crypto unavailable');
+            return origModuleRequire.apply(this, arguments);
+        };
+        try {
+            // Budget sits between the resident prefix (~14.4 KB, must load)
+            // and the vectors segment (19.2 KB, must be refused one-shot).
+            const noStream = await Pancake.openSketchArtifactFile(sketchPath, { verify: false, maxReadBytes: 16384 });
+            let refused = false, rdetail = 'no error thrown';
+            try { await noStream.verifyVectors(); }
+            catch (err) {
+                refused = err instanceof Pancake.PancakeError && /too large to verify/.test(err.message);
+                rdetail = String(err && err.message);
+            }
+            check('one-shot fallback refuses segments beyond the read budget', refused, rdetail);
+            await noStream.close();
+        } finally {
+            Module.prototype.require = origModuleRequire;
+        }
     }
 
     // The sketch vectors segment (the lazy tier that decides final ranking)
