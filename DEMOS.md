@@ -36,6 +36,19 @@ npm run demo:artifact
 
 Expected: per-query IO stats and sample top-3 IDs.
 
+Then the head-to-head that motivates the sketch profile — the same corpus and
+queries served by graph traversal vs a resident sketch scan, cold per query:
+
+```bash
+npm run demo:sketch
+```
+
+Expected: the sketch artifact is derived from the range artifact in-process
+(no re-embedding), both profiles fetch a similar number of bytes, and the
+sequential fetch depth drops from ~11 rounds to exactly 1 — the property that
+makes remote storage (R2/S3/CDN) practical, where each round is a network
+round trip.
+
 ---
 
 ## 3. Hello pack (browser)

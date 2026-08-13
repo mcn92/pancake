@@ -491,6 +491,8 @@ export interface PancakeSketchArtifact {
   readonly vectorsVerified: boolean;
   search(query: VectorInput, k: number, options?: SketchArtifactSearchOptions): Promise<SketchArtifactSearchResult>;
   stats(): SketchArtifactStats;
+  /** Drop all cached rows; subsequent searches fetch cold. Never affects result semantics. */
+  clearCache(): void;
   /**
    * Verify the lazy vectors segment against the header's whole-segment hash
    * (not a query-path operation). Streams the segment in bounded chunks

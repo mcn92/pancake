@@ -92,6 +92,7 @@
     "demo:data": "node scripts/make-demo-vectors.mjs",
     "demo": "npm run demo:data && node examples/legacy/technical-demo/technical_demo_cli.js",
     "demo:artifact": "node examples/legacy/range-artifact-demo/demo.js --compact",
+    "demo:sketch": "node examples/legacy/range-artifact-demo/sketch_demo.js --compact",
     "demo:artifact:browser:build": "vite build examples/legacy/range-artifact-demo/static",
     "demo:artifact:browser": "vite preview examples/legacy/range-artifact-demo/static --host 127.0.0.1",
     "build:pages-demo": "node examples/03-edge-docs-search/pages-ui/build.mjs",

@@ -1381,6 +1381,13 @@ class PancakeSketchArtifact {
         return row;
     }
 
+    // Drop all cached rows. Cache state never affects result semantics, so
+    // this only changes fetch behavior (every subsequent search starts cold).
+    clearCache() {
+        this.cache.clear();
+        this.cacheBytes = 0;
+    }
+
     cacheRow(id, row) {
         if (this.cache.has(id)) return;
         this.cache.set(id, row);
