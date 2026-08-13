@@ -16,7 +16,9 @@
  *   pancake-native u8 / fp32   (native.pancake_*, pancake_set_ef per ef)
  *   usearch-native i8 / f16 / f32 (build-once-save-view per ef —
  *                                  expansion_search is fixed at construction)
- *   usearch-wasm   i8 / f16 / f32 (C ABI directly against the WASM artifact)
+ *   usearch-wasm   i8 / f32      (C ABI directly against the WASM artifact;
+ *                                  f16 is opt-in via --configs — software
+ *                                  fp16 makes it ~10x slower, see below)
  *   hnswlib        f32           (HierarchicalNSW.setEf per ef)
  *
  * All libraries use the same M and ef_construction, and every config is swept
@@ -225,9 +227,17 @@ if (usearch) {
 }
 for (const config of [
   { label: 'usearch-wasm-int8', dtype: 'i8' },
-  { label: 'usearch-wasm-f16', dtype: 'f16' },
+  // f16 is opt-in, not part of the default sweep: WASM has no hardware fp16
+  // path, so every distance pays a per-element software conversion. Measured
+  // 2026-08-12 (dbpedia 1536D, count=2000): build 16.1s vs i8's 1.7s, and
+  // 465 vs 4455 qps at ef=10 — ~10x slower across the board and dominated by
+  // both i8 and fp32 on the frontier. At default counts the silent build
+  // phase looks like a hang. Request it explicitly with
+  // --configs usearch-wasm-f16 when the software-fp16 datapoint is wanted.
+  { label: 'usearch-wasm-f16', dtype: 'f16', optIn: true },
   { label: 'usearch-wasm-fp32', dtype: 'f32' },
 ]) {
+  if (config.optIn && !CONFIG_FILTER_LABELS.has(config.label)) continue;
   const wasmPath = getUsearchWasmPath(config.dtype);
   if (fs.existsSync(wasmPath)) {
     CONFIGS.push({ label: config.label, library: 'usearch-wasm', runtime: 'wasm', dtype: config.dtype, wasmPath, sweep: true });
