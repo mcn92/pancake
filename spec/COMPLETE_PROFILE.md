@@ -33,9 +33,15 @@ missing between the components.
    the existing sketch reader at `indexOffset`. Depth-1 execution, staged
    boot, and resident-hash verification are inherited, not re-specified.
 3. **One query-interpretation unit.** Encoder and calibration share a
-   segment and a version, because calibration consumes the encoder's
+   segment and a version, because calibration may consume the encoder's
    feature stream and hidden state, not only its output vector. They cannot
    version independently.
+4. **Two query-interpretation kinds** (added 2026-08-14 for the wiki-scale
+   compile): inline student encoders (kind 1) and pinned external encoders
+   with verification vectors (kind 2, contract section 4.4 mode 2). The
+   product direction favors kind 1; kind 2 exists because real corpora
+   (the wiki pack) currently interpret queries with a full teacher model
+   the host executes.
 
 ## 3. File layout
 
@@ -140,16 +146,32 @@ cache state MUST NOT change results.
 
 ```
 [0, 4)    u32 version          shared encoder+calibration version
-[4, 8)    u32 encoderBytes
-[8, 12)   u32 calibrationBytes
-[12, ...) encoder              student model bytes (loadStudentModel format)
-[...]     calibration          UTF-8 JSON (abstention model format)
+[4, 8)    u32 kind             1 = student-inline-v1, 2 = external-transformers-v1
+[8, 12)   u32 encoderBytes
+[12, 16)  u32 calibrationBytes
+[16, ...) encoder              per kind, below
+[...]     calibration          UTF-8 JSON, per kind
 ```
 
-Encoder and calibration are loaded together and verified together. A reader
-that cannot execute the declared encoder format MUST surface the artifact
-as unsupported, not fall back to host embedding (contract section 4.4:
-encoder/index skew is a contract violation). A reader that cannot evaluate
+**kind 1 — student-inline-v1:** encoder bytes are a distilled student model
+(loadStudentModel format); calibration is the student abstention model,
+which consumes the encoder's feature stream. Fully self-contained, pure-JS
+execution.
+
+**kind 2 — external-transformers-v1:** the contract's section 4.4 mode 2
+(pinned external encoder). The encoder bytes are a UTF-8 JSON *declaration*
+pinning the model (id, pooling, normalization policy, max tokens) and
+carrying verification test vectors — query texts with their expected
+embeddings at a declared tolerance — so a host-supplied encoder can be
+checked against the artifact before serving. Calibration is a
+retrieval-signal abstention model (distance signals plus a corpus-vocabulary
+bloom filter, base64-embedded) that scores query text and hits without
+touching the encoder internals. A reader without a host encoder for the
+declared model MUST surface the artifact as requiring one, not fall back
+silently.
+
+In both kinds, encoder and calibration are loaded together and verified
+together under the shared version. A reader that cannot evaluate the
 calibration MUST report results as uncalibrated rather than inventing
 confidence (contract section 4.7).
 

@@ -23,6 +23,26 @@ const out = await search.query('how do workers restore snapshots');
 // { matchQuality: 'strong', confidence: 0.94, results: [{ title, text, sourcePath, ... }] }
 ```
 
+## Wiki scale
+
+The same container compiles the Simple English Wikipedia pack (456,153
+chunks, `examples/04-static-wiki-pack/data-full`) into a 512 MiB
+`pancake-wiki.pancake` — the profile's first kind-2 artifact: the MiniLM
+encoder is *declared* with verification vectors (contract section 4.4
+mode 2) rather than embedded, and calibration is the pack's
+retrieval-signal abstention model, bloom vocabulary included.
+
+```bash
+node compile-wiki.mjs                 # data-full -> pancake-wiki.pancake (512 MiB)
+node compile.mjs --inspect pancake-wiki.pancake
+node test-wiki.mjs                    # 200 eval queries vs exact ground truth
+```
+
+Measured 2026-08-14: open 0.3 s with 27.8 MiB resident; recall@10 82.8%
+at the recommended rerank vs the pack manifest's published 82.9%; mean
+273 ms/query on the pure-JS scan (the WASM sketch scanner is the known
+~5x cut when latency matters).
+
 ## Files
 
 - `compile.mjs` — assembles a `.pancake` per the spec: 64 B header,
@@ -45,6 +65,10 @@ const out = await search.query('how do workers restore snapshots');
   one-file reader is tested against.
 - `abstention.mjs` — calibration scoring shared by both readers (extracted
   from 03's worker.js).
+- `container.mjs` — shared container assembly (canonical JSON, header +
+  table layout, streamed writes) used by both compilers.
+- `compile-wiki.mjs` / `test-wiki.mjs` — the wiki-scale compiler and its
+  acceptance gate (see "Wiki scale" above).
 
 ## What the acceptance tests establish
 

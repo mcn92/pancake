@@ -11,6 +11,7 @@
 
 import { loadStudentModel, embedTextWithStudent } from '../03-edge-docs-search/student-embedder.mjs';
 import { computeMatchQuality, computePreSearchAbstention } from './abstention.mjs';
+import { createAbstentionScorer } from '../04-static-wiki-pack/web/src/abstention.js';
 import { PancakeSketchArtifact } from '../../pancake-artifact.js';
 
 const MAGIC = 0x31465350; // "PSF1"
@@ -69,7 +70,7 @@ const viewOf = (bytes) => new DataView(bytes.buffer, bytes.byteOffset, bytes.byt
  * { read(offset, length), size? } range source (any runtime).
  * Returns { query(text, {k}), info(), evaluation(), close() }.
  */
-export async function openPancakeFile(input) {
+export async function openPancakeFile(input, options = {}) {
     const source = typeof input === 'string' ? await fileSource(input) : input;
     const owned = typeof input === 'string';
     try {
@@ -117,20 +118,65 @@ export async function openPancakeFile(input) {
         }
 
         // Query interpretation: one eager read, digest-verified, then split
-        // into encoder + calibration (one unit, shared version).
+        // into encoder + calibration (one unit, shared version + kind).
         const qi = segments.get('query-interp');
         const qiBytes = new Uint8Array(await source.read(qi.offset, qi.length));
         if (await sha256hex(qiBytes) !== qi.sha256) {
             throw new Error('.pancake query-interp segment failed hash verification');
         }
         const qiView = viewOf(qiBytes);
-        const encoderLen = qiView.getUint32(4, true);
-        const calibrationLen = qiView.getUint32(8, true);
-        if (12 + encoderLen + calibrationLen !== qi.length) {
+        const qiKind = qiView.getUint32(4, true);
+        const encoderLen = qiView.getUint32(8, true);
+        const calibrationLen = qiView.getUint32(12, true);
+        if (16 + encoderLen + calibrationLen !== qi.length) {
             throw new Error('.pancake query-interp segment layout is inconsistent');
         }
-        const student = loadStudentModel(qiBytes.subarray(12, 12 + encoderLen));
-        const abstention = JSON.parse(decoder.decode(qiBytes.subarray(12 + encoderLen)));
+        const encoderBytes = qiBytes.subarray(16, 16 + encoderLen);
+        const calibrationJson = JSON.parse(decoder.decode(qiBytes.subarray(16 + encoderLen)));
+
+        // kind 1 (student-inline-v1): pure-JS inline encoder + feature-stream
+        // abstention. kind 2 (external-transformers-v1): the encoder is a
+        // pinned declaration the HOST must satisfy via options.encodeQuery;
+        // calibration scores retrieval signals + query text.
+        let embed;
+        let scoreQuality;
+        let encoderInfo;
+        if (qiKind === 1) {
+            const student = loadStudentModel(encoderBytes);
+            encoderInfo = { kind: 'student-inline-v1' };
+            embed = (text) => {
+                const embedded = embedTextWithStudent(text, student);
+                return { vector: embedded.vector, embedded };
+            };
+            // Pre-search abstention skips the index entirely when it fires,
+            // exactly as the Worker does.
+            var preScore = (context) => computePreSearchAbstention(context.embedded, calibrationJson);
+            scoreQuality = (hits, context) => computeMatchQuality(hits, context.embedded, calibrationJson);
+        } else if (qiKind === 2) {
+            const declaration = JSON.parse(decoder.decode(encoderBytes));
+            encoderInfo = declaration;
+            const encodeQuery = options.encodeQuery;
+            embed = async (text) => {
+                if (!encodeQuery) {
+                    throw new Error(`.pancake declares an external encoder (${declaration.model}); `
+                        + 'pass options.encodeQuery to openPancakeFile');
+                }
+                return { vector: await encodeQuery(text), text };
+            };
+            const bloomBytes = typeof Buffer !== 'undefined'
+                ? Buffer.from(calibrationJson.vocabBloomBase64, 'base64')
+                : Uint8Array.from(atob(calibrationJson.vocabBloomBase64), (c) => c.charCodeAt(0));
+            const scorer = createAbstentionScorer(calibrationJson.asset, bloomBytes);
+            const VERDICTS = { answer: 'strong', weak: 'weak', abstain: 'none' };
+            preScore = () => null;
+            scoreQuality = (hits, context) => {
+                if (!scorer) return { match_quality: 'unscored' };
+                const scored = scorer.score(context.text, hits);
+                return { match_quality: VERDICTS[scored.verdict] || scored.verdict, confidence: scored.p };
+            };
+        } else {
+            throw new Error(`unsupported query-interpretation kind ${qiKind}`);
+        }
 
         // Index: the embedded sketch artifact, opened by the existing reader
         // against a segment-windowed source (resident hash verified there).
@@ -171,6 +217,7 @@ export async function openPancakeFile(input) {
                     records: recordCount,
                     dim: manifest.dim,
                     metric: manifest.metric,
+                    encoder: encoderInfo,
                     fileBytes,
                     residentBytes: sketch.residentBytes + 8 * (recordCount + 1),
                     residentVerified: sketch.stats().residentVerified,
@@ -178,15 +225,17 @@ export async function openPancakeFile(input) {
                 };
             },
 
-            async query(text, options = {}) {
-                const k = Number.isInteger(options.k) && options.k > 0 ? options.k : 5;
+            async query(text, queryOptions = {}) {
+                const k = Number.isInteger(queryOptions.k) && queryOptions.k > 0 ? queryOptions.k : 5;
                 const trimmed = String(text || '').trim();
                 if (!trimmed) throw new Error('query text is required');
-                const embedded = embedTextWithStudent(trimmed, student);
-                const pre = computePreSearchAbstention(embedded, abstention);
+                const context = await embed(trimmed);
+                const pre = preScore(context);
                 let hits = [];
-                if (!pre) hits = (await sketch.search(embedded.vector, k)).results;
-                const quality = pre || computeMatchQuality(hits, embedded, abstention);
+                if (!pre) {
+                    hits = (await sketch.search(context.vector, k, { rerank: queryOptions.rerank })).results;
+                }
+                const quality = pre || scoreQuality(hits, context);
                 const returned = quality.match_quality === 'none' ? [] : hits;
                 const results = [];
                 for (const hit of returned) {
