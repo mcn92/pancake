@@ -1336,12 +1336,9 @@ function exportSketchArtifact(index, outPath, options = {}) {
         sha256Bytes(stage1).copy(out, 136);
     }
 
-    const fs = require('fs');
-    fs.writeFileSync(outPath, out);
-    return {
+    const manifest = {
         format: 'pancake-sketch-artifact',
         formatVersion: 1,
-        file: outPath,
         sizeBytes: fileBytes,
         metric: index.metric === 1 ? 'cosine' : 'l2',
         graph: { count, dim },
@@ -1350,6 +1347,19 @@ function exportSketchArtifact(index, outPath, options = {}) {
         addressing: { scalesOffset, offsetsOffset, sketchesOffset, vectorsOffset },
         recommendedRerank,
     };
+
+    if (outPath === null) return { bytes: out, manifest };
+
+    const fs = require('fs');
+    fs.writeFileSync(outPath, out);
+    return { ...manifest, file: outPath };
+}
+
+// Bytes-in/bytes-out variant for producers that assemble segments in memory
+// (e.g. the complete-profile compiler): identical output to
+// buildSketchArtifact, no filesystem involved. Returns { bytes, manifest }.
+function buildSketchArtifactBytes(snapshotBytes, options = {}) {
+    return exportSketchArtifact(parseUint8Snapshot(snapshotBytes), null, options);
 }
 
 function buildSketchArtifactFile(snapshotPath, outPath, options = {}) {
@@ -1932,6 +1942,7 @@ module.exports = {
     buildRangeArtifact,
     buildRangeArtifactFile,
     buildSketchArtifact,
+    buildSketchArtifactBytes,
     buildSketchArtifactFile,
     exportSketchArtifact,
     parseUint8Snapshot,

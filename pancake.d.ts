@@ -445,7 +445,8 @@ export interface SketchArtifactBuildOptions {
 export interface SketchArtifactBuildManifest {
   readonly format: 'pancake-sketch-artifact';
   readonly formatVersion: number;
-  readonly file: string;
+  /** Output path; absent on the bytes-in/bytes-out builder. */
+  readonly file?: string;
   readonly sizeBytes: number;
   readonly metric: Metric;
   readonly graph: Readonly<Record<string, number>>;
@@ -632,6 +633,12 @@ export interface NodePancakeApi extends PancakeApi {
   buildSketchArtifact(snapshot: Uint8Array | ArrayBufferLike, outPath: string, opts?: SketchArtifactBuildOptions): SketchArtifactBuildManifest;
   /** Build a sketch Search Artifact from a uint8 Pancake snapshot file. */
   buildSketchArtifactFile(snapshotPath: string, outPath: string, opts?: SketchArtifactBuildOptions): SketchArtifactBuildManifest;
+  /**
+   * Bytes-in/bytes-out sketch build for producers assembling segments in
+   * memory (e.g. a complete-artifact compiler); output identical to
+   * buildSketchArtifact, no filesystem involved.
+   */
+  buildSketchArtifactBytes(snapshot: Uint8Array | ArrayBufferLike, opts?: SketchArtifactBuildOptions): { bytes: Uint8Array; manifest: SketchArtifactBuildManifest };
   /** Open a sketch Search Artifact from a local file. */
   openSketchArtifactFile(filePath: string, opts?: SketchArtifactOpenOptions): Promise<PancakeSketchArtifact>;
   /** Load vectors from a JSON/JSONL file and build an index. */

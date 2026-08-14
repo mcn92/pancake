@@ -4,7 +4,7 @@ const loadEngine = require('./dist/engine.js');
 const loadScalarEngine = require('./dist/engine.scalar.js');
 const createPancakeApi = require('./pancake-core.js');
 const { PancakeError, PANCAKE_ERROR_CODES, pancakeError } = require('./pancake-errors.js');
-const { PancakeRangeArtifact, PancakeSketchArtifact, createSketchScanner, NodeFileRangeSource, buildRangeArtifact, buildRangeArtifactFile, buildSketchArtifact, buildSketchArtifactFile } = require('./pancake-artifact.js');
+const { PancakeRangeArtifact, PancakeSketchArtifact, createSketchScanner, NodeFileRangeSource, buildRangeArtifact, buildRangeArtifactFile, buildSketchArtifact, buildSketchArtifactBytes, buildSketchArtifactFile } = require('./pancake-artifact.js');
 const { createCachedModuleLoader } = require('./pancake-loader.js');
 const _path = require('path');
 const _fs = require('fs');
@@ -203,6 +203,7 @@ Pancake.openRangeArtifactFile = async function openRangeArtifactFile(filePath, o
 Pancake.SketchArtifact = PancakeSketchArtifact;
 Pancake.createSketchScanner = (artifact, options) => createSketchScanner(loadNodeEngine, artifact, options);
 Pancake.buildSketchArtifact = buildSketchArtifact;
+Pancake.buildSketchArtifactBytes = buildSketchArtifactBytes;
 Pancake.buildSketchArtifactFile = buildSketchArtifactFile;
 
 Pancake.openSketchArtifactFile = async function openSketchArtifactFile(filePath, opts) {

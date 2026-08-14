@@ -83,10 +83,16 @@ async function run() {
             check('open + header', artifact.count === COUNT && artifact.dim === DIM
                 && artifact.recommendedRerank === 60 && artifact.residentVerified === true);
 
-            // Determinism: rebuilding produces byte-identical output.
+            // Determinism: rebuilding produces byte-identical output, and
+            // the bytes-in/bytes-out builder matches the file builder.
             const artifact2Path = artifactPath + '.rebuild';
             Pancake.buildSketchArtifactFile(snapshotPath, artifact2Path, { sketchDims: 16, sketchBits, recommendedRerank: 60 });
             check('builder determinism', fs.readFileSync(artifactPath).equals(fs.readFileSync(artifact2Path)));
+            const { bytes: builtBytes, manifest: bytesManifest } = Pancake.buildSketchArtifactBytes(
+                fs.readFileSync(snapshotPath), { sketchDims: 16, sketchBits, recommendedRerank: 60 });
+            check('bytes builder matches file builder',
+                fs.readFileSync(artifactPath).equals(Buffer.from(builtBytes))
+                && bytesManifest.sizeBytes === manifest.sizeBytes && bytesManifest.file === undefined);
 
             const queries = seededVectors(20, DIM, 7);
 
