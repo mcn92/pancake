@@ -1,0 +1,6 @@
+# Generated: node compile.mjs / npx vite build web. Whether a compiled
+# .pancake gets committed as the golden conformance fixture is an open
+# decision (spec/COMPLETE_PROFILE.md section 5).
+pancake-docs.pancake
+*.tampered
+web/dist/

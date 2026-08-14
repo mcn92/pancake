@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>pancake — a search engine in a file</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, sans-serif; max-width: 44rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.45; }
+    h1 { font-size: 1.3rem; } h1 code { font-size: 1.1rem; }
+    #status { color: gray; font-size: .85rem; min-height: 1.2em; }
+    #q { width: 100%; font-size: 1.05rem; padding: .5rem .6rem; box-sizing: border-box; margin: .6rem 0; }
+    .badge { display: inline-block; padding: .05rem .5rem; border-radius: 1rem; font-size: .8rem; color: white; }
+    .strong { background: #2c7a3f; } .weak { background: #b58a1d; } .none { background: #a33; }
+    .hit { margin: .9rem 0; }
+    .hit .t { font-weight: 600; }
+    .hit .p { color: gray; font-size: .85rem; }
+    .hit .x { font-size: .92rem; margin-top: .15rem; }
+    footer { margin-top: 2.5rem; color: gray; font-size: .8rem; }
+  </style>
+</head>
+<body>
+  <h1>One corpus, one <code>.pancake</code> file, no backend</h1>
+  <p id="status">loading…</p>
+  <input id="q" type="search" placeholder="ask the Pancake docs anything…" autofocus disabled />
+  <p id="verdict"></p>
+  <div id="results"></div>
+  <footer>
+    Everything on this page — index, corpus text, query encoder, confidence
+    calibration — is served by HTTP range requests against a single static
+    file. Open devtools → Network and watch the byte ranges.
+  </footer>
+  <script type="module" src="./main.mjs"></script>
+</body>
+</html>
