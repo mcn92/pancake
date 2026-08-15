@@ -9,5 +9,3 @@ student-pilot/
 encoder-spike/spike.mjs
 encoder-spike/spike.wasm
 encoder-spike/real/
-encoder-spike/encoder.mjs
-encoder-spike/encoder.wasm

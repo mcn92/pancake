@@ -2,8 +2,8 @@
 // it. Environment-neutral — the same module runs in Node (file path or
 // range source) and the browser (HTTP range source, via a bundler for the
 // CJS sketch-reader dependency). The query path is pure JS: encoder, sketch
-// reference scan, hydration, and calibration all run without the WASM
-// engine, which is a compile-time dependency only.
+// reference scan, hydration, and calibration all run without the core HNSW
+// engine; kind-3 artifacts load the reader-owned transformer WASM kernels.
 //
 //   const search = await openPancakeFile('pancake-docs.pancake');   // Node
 //   const search = await openPancakeFile(httpRangeSource(url));     // browser
@@ -190,8 +190,17 @@ export async function openPancakeFile(input, options = {}) {
             const vocabText = decoder.decode(encoderBytes.subarray(12 + declLen, 12 + declLen + vocabLen));
             const blob = encoderBytes.subarray(12 + declLen + vocabLen);
 
-            const { createWordPiece } = await import('./encoder-spike/wordpiece.mjs');
-            const createEncoder = (await import('./encoder-spike/encoder.mjs')).default;
+            let createWordPiece;
+            let createEncoder;
+            try {
+                ({ createWordPiece } = await import('./encoder-spike/wordpiece.mjs'));
+                createEncoder = (await import('./encoder-spike/encoder.mjs')).default;
+            } catch (err) {
+                throw new Error('kind-3 artifact requires the reader encoder kernels at '
+                    + 'examples/05-one-file-search/encoder-spike/encoder.mjs and encoder.wasm; '
+                    + 'run examples/05-one-file-search/encoder-spike/build-encoder.sh to rebuild them',
+                { cause: err });
+            }
             const tokenizer = createWordPiece(vocabText);
             const EM = await createEncoder();
             const dim = declaration.dim;

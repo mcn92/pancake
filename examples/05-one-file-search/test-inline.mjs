@@ -16,6 +16,7 @@ const pancakePath = path.join(here, 'pancake-wiki-inline.pancake');
 const artifactUrl = 'https://github.com/mcn92/pancake/releases/download/artifact-wiki-inline-v1/pancake-wiki-inline.pancake';
 const expectedIdentity = '77a08937d1414409d55e28b17bccf43a4ef374e76223eaefec590451ad9afba1';
 const expectedBytes = 562725721;
+const HEADER_BYTES = 64;
 
 let passed = 0;
 let failed = 0;
@@ -93,6 +94,23 @@ async function ensureArtifact() {
 
 await ensureArtifact();
 
+function readIdentity(filePath) {
+    const fd = fs.openSync(filePath, 'r');
+    try {
+        const header = Buffer.alloc(HEADER_BYTES);
+        const bytesRead = fs.readSync(fd, header, 0, HEADER_BYTES, 0);
+        if (bytesRead !== HEADER_BYTES || header.readUInt32LE(0) !== 0x31465350) {
+            throw new Error('not a .pancake file (bad magic)');
+        }
+        return header.subarray(24, 56).toString('hex');
+    } finally {
+        fs.closeSync(fd);
+    }
+}
+
+const identity = readIdentity(pancakePath);
+check('manifest identity matches release notes', identity === expectedIdentity, identity);
+
 const openStart = performance.now();
 const search = await openPancakeFile(pancakePath);
 const openMs = performance.now() - openStart;
@@ -100,7 +118,7 @@ const info = search.info();
 console.log(`opened ${path.basename(pancakePath)} in ${(openMs / 1000).toFixed(1)}s: `
     + `${(info.fileBytes / 1048576).toFixed(0)} MiB, encoder ${info.encoder.kind}`);
 
-check('manifest identity matches release notes', info.identity === expectedIdentity, info.identity);
+check('reader reports the same identity', info.identity === expectedIdentity, info.identity);
 check('opens with zero options (self-contained)', info.encoder.kind === 'inline-transformer-v1');
 check('declaration carries provenance', info.encoder.model === 'sentence-transformers/all-MiniLM-L6-v2'
     && info.encoder.license === 'apache-2.0' && !!info.encoder.attribution);
