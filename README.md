@@ -121,10 +121,12 @@ recall@10: 82.4% over the 200-query pre-registered eval set, against brute-force
 natural-language query served with no host encoder option, ~228 ms/query end to end locally
 ```
 
-The next release should publish `pancake-wiki-inline.pancake` as a release
-asset or R2 object and link it here. That turns the numbers above from a local
-acceptance result into a downloadable artifact anyone can inspect and run with
-`node test-inline.mjs`.
+Release asset:
+`https://github.com/mcn92/pancake/releases/download/artifact-wiki-inline-v1/pancake-wiki-inline.pancake`
+
+`node test-inline.mjs` downloads that file automatically when it is missing
+locally, then verifies the manifest identity before running the acceptance
+checks.
 
 See [examples/05-one-file-search/README.md](examples/05-one-file-search/README.md)
 for the full one-file walkthrough.
@@ -418,8 +420,8 @@ node examples/05-one-file-search/test-wiki.mjs
 node examples/05-one-file-search/test-inline.mjs
 ```
 
-The inline wiki acceptance test expects the large local wiki artifact and
-encoder assets to exist under `examples/05-one-file-search/`.
+The inline wiki acceptance test downloads the large release artifact on demand
+when `examples/05-one-file-search/pancake-wiki-inline.pancake` is missing.
 
 ## Performance Notes
 

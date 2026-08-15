@@ -5,7 +5,7 @@ Search Artifact components — corpus, index, encoder, evaluation,
 calibration — into one content-addressed `.pancake`
 (`spec/COMPLETE_PROFILE.md`), and serves natural-language queries from it
 in Node and in the browser over HTTP range requests, with no backend and
-no WASM in the query path.
+no separate search service.
 
 ```bash
 node compile.mjs                      # 03's assets -> pancake-docs.pancake (1.4 MiB)
@@ -43,6 +43,27 @@ at the recommended rerank vs the pack manifest's published 82.9%; mean
 273 ms/query on the pure-JS scan (the WASM sketch scanner is the known
 ~5x cut when latency matters).
 
+## Inline wiki artifact
+
+The kind-3 inline transformer artifact is published as a GitHub release asset,
+not committed to git. Run one command; if the 537 MiB file is missing locally,
+the test downloads it into this ignored directory, verifies the manifest
+identity, and runs the self-contained query path:
+
+```bash
+node test-inline.mjs
+```
+
+Expected manifest identity:
+
+```text
+77a08937d1414409d55e28b17bccf43a4ef374e76223eaefec590451ad9afba1
+```
+
+If the local `data-full` eval query files are present, the same command also
+runs the full 200-query recall sweep. Otherwise it runs the release-artifact
+smoke, provenance, identity, abstention, and embedded-evaluation checks.
+
 ## Files
 
 - `compile.mjs` — assembles a `.pancake` per the spec: 64 B header,
@@ -55,8 +76,8 @@ at the recommended rerank vs the pack manifest's published 82.9%; mean
 - `pancake-file-reader.mjs` — the one-file reader. Environment-neutral:
   Node opens a path, the browser passes an HTTP range source. Verifies the
   manifest identity and eager segments at open; the sketch tier and corpus
-  records stay lazy. Pure JS query path (the WASM engine is compile-time
-  only).
+  records stay lazy. Kind-1 files use a pure-JS query path; kind-3 files load
+  the reader's transformer WASM kernels.
 - `web/` — the browser host: an input box over the reader, showing per-query
   range requests and bytes. `serve.mjs` is the entire hosting requirement:
   static files + `Range` support.
@@ -69,6 +90,9 @@ at the recommended rerank vs the pack manifest's published 82.9%; mean
   table layout, streamed writes) used by both compilers.
 - `compile-wiki.mjs` / `test-wiki.mjs` — the wiki-scale compiler and its
   acceptance gate (see "Wiki scale" above).
+
+- `test-inline.mjs` - downloads the published kind-3 inline wiki artifact
+  when needed and verifies the zero-option natural-language query path.
 
 ## What the acceptance tests establish
 
