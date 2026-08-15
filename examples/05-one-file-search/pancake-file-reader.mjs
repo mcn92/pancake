@@ -174,6 +174,64 @@ export async function openPancakeFile(input, options = {}) {
                 const scored = scorer.score(context.text, hits);
                 return { match_quality: VERDICTS[scored.verdict] || scored.verdict, confidence: scored.p };
             };
+        } else if (qiKind === 3) {
+            // inline-transformer-v1: declaration + vocab + weight blob as
+            // segment data; the kernels ship with this reader (dynamic
+            // imports so kind-1/2 files never load them).
+            const qiv = viewOf(encoderBytes);
+            const declLen = qiv.getUint32(0, true);
+            const vocabLen = qiv.getUint32(4, true);
+            const blobLen = qiv.getUint32(8, true);
+            if (12 + declLen + vocabLen + blobLen !== encoderBytes.length) {
+                throw new Error('.pancake inline-encoder layout is inconsistent');
+            }
+            const declaration = JSON.parse(decoder.decode(encoderBytes.subarray(12, 12 + declLen)));
+            encoderInfo = declaration;
+            const vocabText = decoder.decode(encoderBytes.subarray(12 + declLen, 12 + declLen + vocabLen));
+            const blob = encoderBytes.subarray(12 + declLen + vocabLen);
+
+            const { createWordPiece } = await import('./encoder-spike/wordpiece.mjs');
+            const createEncoder = (await import('./encoder-spike/encoder.mjs')).default;
+            const tokenizer = createWordPiece(vocabText);
+            const EM = await createEncoder();
+            const dim = declaration.dim;
+            const maxSeq = 128;
+            const blobPtr = EM._malloc(blob.length);
+            EM.HEAPU8.set(blob, blobPtr);
+            const idsPtr = EM._malloc(maxSeq * 4);
+            const hiddenPtr = EM._malloc(maxSeq * dim * 4);
+
+            embed = async (text) => {
+                let tokenIds = tokenizer.encode(text);
+                if (tokenIds.length > maxSeq) {
+                    tokenIds = [...tokenIds.slice(0, maxSeq - 1), tokenIds[tokenIds.length - 1]];
+                }
+                new Int32Array(EM.HEAP32.buffer, idsPtr, tokenIds.length).set(tokenIds);
+                const rc = EM._encoder_forward(blobPtr, idsPtr, tokenIds.length, hiddenPtr, 0);
+                if (rc !== tokenIds.length) throw new Error(`inline encoder failed: ${rc}`);
+                const hidden = new Float32Array(EM.HEAPF32.buffer, hiddenPtr, tokenIds.length * dim);
+                const pooled = new Float32Array(dim);
+                for (let t = 0; t < tokenIds.length; t++) {
+                    for (let d = 0; d < dim; d++) pooled[d] += hidden[t * dim + d];
+                }
+                let norm = 0;
+                for (let d = 0; d < dim; d++) { pooled[d] /= tokenIds.length; norm += pooled[d] ** 2; }
+                norm = Math.sqrt(norm);
+                for (let d = 0; d < dim; d++) pooled[d] /= norm;
+                return { vector: pooled, text };
+            };
+            const bloomBytes = typeof Buffer !== 'undefined'
+                ? Buffer.from(calibrationJson.vocabBloomBase64, 'base64')
+                : Uint8Array.from(atob(calibrationJson.vocabBloomBase64), (c) => c.charCodeAt(0));
+            const { createAbstentionScorer: makeScorer } = await import('../04-static-wiki-pack/web/src/abstention.js');
+            const scorer3 = makeScorer(calibrationJson.asset, bloomBytes);
+            const VERDICTS3 = { answer: 'strong', weak: 'weak', abstain: 'none' };
+            preScore = () => null;
+            scoreQuality = (hits, context) => {
+                if (!scorer3) return { match_quality: 'unscored' };
+                const scored = scorer3.score(context.text, hits);
+                return { match_quality: VERDICTS3[scored.verdict] || scored.verdict, confidence: scored.p };
+            };
         } else {
             throw new Error(`unsupported query-interpretation kind ${qiKind}`);
         }

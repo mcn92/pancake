@@ -146,7 +146,8 @@ cache state MUST NOT change results.
 
 ```
 [0, 4)    u32 version          shared encoder+calibration version
-[4, 8)    u32 kind             1 = student-inline-v1, 2 = external-transformers-v1
+[4, 8)    u32 kind             1 = student-inline-v1, 2 = external-transformers-v1,
+                               3 = inline-transformer-v1
 [8, 12)   u32 encoderBytes
 [12, 16)  u32 calibrationBytes
 [16, ...) encoder              per kind, below
@@ -170,7 +171,31 @@ touching the encoder internals. A reader without a host encoder for the
 declared model MUST surface the artifact as requiring one, not fall back
 silently.
 
-In both kinds, encoder and calibration are loaded together and verified
+**kind 3 — inline-transformer-v1:** the pinned teacher compiled into the
+artifact as data. The encoder bytes are three length-prefixed regions:
+
+```
+[0, 4)   u32 declBytes      [4, 8)  u32 vocabBytes   [8, 12) u32 blobBytes
+[12, ..) declaration        UTF-8 JSON: model identity, revision, license
+                            and attribution (the corpus-provenance rule of
+                            contract 4.3 applied to weights), pooling,
+                            normalization, max tokens, and the blob layout
+                            constants (V, P, D, F, L, B, H)
+[...]    vocab              UTF-8, one WordPiece token per line
+[...]    weight blob        block-affine u8 matrices + f32 norm params in
+                            the declared deterministic layout
+```
+
+Weights are data; the kernels that execute them ship with the READER, never
+inside the artifact (a reader MUST NOT execute code from artifact bytes —
+contract section 7). Calibration is the same retrieval-signal model as
+kind 2. A reader without transformer kernels for the declared layout MUST
+surface the artifact as unsupported. The token-embedding table occupies a
+contiguous region of the blob; a future revision of this kind will declare
+its offsets so readers can leave it lazy (range-read per token id,
+sketch-style) instead of resident — v1 readers load the blob whole.
+
+In all kinds, encoder and calibration are loaded together and verified
 together under the shared version. A reader that cannot evaluate the
 calibration MUST report results as uncalibrated rather than inventing
 confidence (contract section 4.7).

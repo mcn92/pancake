@@ -37,6 +37,44 @@ function buildWikiCorpusSegment() {
     return { segment: out, count };
 }
 
+// kind 3: the teacher compiled in — declaration + vocab + weight blob as
+// segment data (kernels live in the reader, per spec 3.6).
+function buildInlineQueryInterp(packManifest) {
+    const SPIKE = path.join(here, 'encoder-spike', 'real');
+    const blobPath = path.join(SPIKE, 'encoder-weights.bin');
+    const vocabPath = path.join(SPIKE, 'vocab.txt');
+    if (!fs.existsSync(blobPath) || !fs.existsSync(vocabPath)) {
+        throw new Error('inline encoder assets missing — run encoder-spike/export_encoder_blob.py first');
+    }
+    const declaration = Buffer.from(JSON.stringify({
+        kind: 'inline-transformer-v1',
+        model: packManifest.model,
+        license: 'apache-2.0',
+        attribution: 'sentence-transformers/all-MiniLM-L6-v2 (quantized derivative)',
+        dim: packManifest.dim,
+        pooling: packManifest.pooling,
+        normalized: packManifest.normalized,
+        maxTokens: packManifest.maxTokens,
+        layout: { V: 30522, P: 512, T: 2, D: 384, F: 1536, L: 6, B: 64, H: 12 },
+    }), 'utf8');
+    const vocab = fs.readFileSync(vocabPath);
+    const blob = fs.readFileSync(blobPath);
+    const encoder = Buffer.alloc(12 + declaration.length + vocab.length + blob.length);
+    encoder.writeUInt32LE(declaration.length, 0);
+    encoder.writeUInt32LE(vocab.length, 4);
+    encoder.writeUInt32LE(blob.length, 8);
+    declaration.copy(encoder, 12);
+    vocab.copy(encoder, 12 + declaration.length);
+    blob.copy(encoder, 12 + declaration.length + vocab.length);
+
+    const calibration = Buffer.from(JSON.stringify({
+        kind: 'retrieval-signals-v1',
+        asset: JSON.parse(fs.readFileSync(path.join(DATA, 'wiki-abstention.json'), 'utf8')),
+        vocabBloomBase64: fs.readFileSync(path.join(DATA, 'wiki-vocab.bloom')).toString('base64'),
+    }), 'utf8');
+    return buildQueryInterpSegment(3, encoder, calibration);
+}
+
 function buildWikiQueryInterp(packManifest) {
     // Encoder declaration (kind 2): pin the external model and carry
     // verification vectors — the first hand-written eval queries with their
@@ -86,14 +124,20 @@ const evaluationSegment = Buffer.from(JSON.stringify({
     abstentionProbes: JSON.parse(fs.readFileSync(path.join(DATA, 'wiki-abstention-probes.json'), 'utf8')),
 }), 'utf8');
 
+const inline = process.argv.includes('--inline-encoder');
+const args = process.argv.slice(2).filter((a) => a !== '--inline-encoder');
+
 const segments = [
     { kind: 'index', bytes: fs.readFileSync(path.join(DATA, 'wiki.pancake-sketch')) },
     { kind: 'corpus', bytes: corpusSegment },
-    { kind: 'query-interp', bytes: buildWikiQueryInterp(packManifest) },
+    {
+        kind: 'query-interp',
+        bytes: inline ? buildInlineQueryInterp(packManifest) : buildWikiQueryInterp(packManifest),
+    },
     { kind: 'evaluation', bytes: evaluationSegment },
 ];
 
-const outPath = process.argv[2] || path.join(here, 'pancake-wiki.pancake');
+const outPath = args[0] || path.join(here, inline ? 'pancake-wiki-inline.pancake' : 'pancake-wiki.pancake');
 const result = assemblePancakeFile({
     profile: 'pancake-complete-v1',
     corpus: {
@@ -103,7 +147,7 @@ const result = assemblePancakeFile({
     dim: packManifest.dim,
     metric: packManifest.metric,
     encoder: {
-        kind: 'external-transformers-v1',
+        kind: inline ? 'inline-transformer-v1' : 'external-transformers-v1',
         model: packManifest.model,
         pooling: packManifest.pooling,
         normalized: packManifest.normalized,
