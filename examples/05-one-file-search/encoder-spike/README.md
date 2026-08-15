@@ -70,3 +70,28 @@ ML runtime. Remaining before this becomes a format kind:
 The lexicon-student findings that motivated this (generalist 14.2%,
 category specialist 60.8% vs teacher 93.8% on wiki) are recorded in
 ../README.md history and the training scripts alongside this directory.
+
+## Update 2026-08-15: full six-layer forward, verified
+
+The remaining risk items are closed. The complete inline encoder now runs:
+JS WordPiece (wordpiece.mjs, 200/200 id parity with the HF tokenizer on the
+wiki eval queries) -> six-layer fused-u8 WASM forward (encoder.cpp over the
+24.3 MiB blob from export_encoder_blob.py) -> mean-pool + normalize.
+
+- Stage parity (test-encoder-parity.mjs): cosine 1.00000000 at every stage
+  (embeddings+LN and all six layers) vs the numpy reference computed from
+  the same fake-quantized weights; max abs diff ~2e-6 (f32 accumulation
+  noise). Forward pass 26 ms at seq=12, single thread.
+- Error compounding (sim_quant_forward.py): block-64 u8 on every Linear
+  and embedding table costs one nine over 42 GEMVs — final-embedding
+  cosine mean 0.999867 / min 0.999392 vs fp32.
+- End to end (run-encoder-recall.mjs): recall@10 = 82.4% through
+  pancake-wiki.pancake vs exact ground truth — identical to the torch
+  fake-quant simulation, 0.4 points under the fp32 teacher (82.8%).
+  Mean encode 12.5 ms/query single thread, ~20x faster than the current
+  JS sketch scan (273 ms).
+
+Remaining for a kind-3 format entry is packaging, not correctness: the
+encoder segment layout (blob + vocab as segments, embedding table as a
+lazy range-read region), the reader integration, and the streamed-FFN /
+threads / relaxed-SIMD optimizations as wanted.
