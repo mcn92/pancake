@@ -4,3 +4,8 @@
 *.pancake
 *.tampered
 web/dist/
+
+student-pilot/
+encoder-spike/spike.mjs
+encoder-spike/spike.wasm
+encoder-spike/real/
