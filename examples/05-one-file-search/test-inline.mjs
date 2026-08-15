@@ -6,9 +6,10 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { openPancakeFile } from './pancake-file-reader.mjs';
 
-const here = path.dirname(new URL(import.meta.url).pathname);
+const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, '..', '04-static-wiki-pack', 'data-full');
 const pancakePath = path.join(here, 'pancake-wiki-inline.pancake');
 

@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import { assertIdentityMapping, docsAssetPaths } from './search-reader.mjs';
 import {
     MAGIC, HEADER_BYTES, TABLE_ENTRY_BYTES, KIND_NAMES,
@@ -20,6 +21,7 @@ import {
 
 const require = createRequire(import.meta.url);
 const Pancake = require('../../pancake.js');
+const here = path.dirname(fileURLToPath(import.meta.url));
 
 // The full student evaluation is per-row and large; the evaluation segment
 // carries the golden queries plus the evaluation's scalar/summary fields
@@ -121,13 +123,13 @@ export function inspect(filePath) {
     if (!manifestOk) process.exitCode = 1;
 }
 
-const invokedDirectly = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
+const invokedDirectly = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 if (invokedDirectly) {
     const args = process.argv.slice(2);
     if (args[0] === '--inspect') {
-        inspect(args[1] || path.join(path.dirname(new URL(import.meta.url).pathname), 'pancake-docs.pancake'));
+        inspect(args[1] || path.join(here, 'pancake-docs.pancake'));
     } else {
-        const outPath = args[0] || path.join(path.dirname(new URL(import.meta.url).pathname), 'pancake-docs.pancake');
+        const outPath = args[0] || path.join(here, 'pancake-docs.pancake');
         const result = compile(docsAssetPaths(), outPath);
         console.log(`compiled ${result.outPath}`);
         console.log(`  ${(result.fileBytes / 1048576).toFixed(2)} MiB, identity ${result.identity.slice(0, 16)}...`);
