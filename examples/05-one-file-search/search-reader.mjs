@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import {
     loadStudentModel,
     embedTextWithStudent,
@@ -130,7 +131,7 @@ export async function openDocsSearch({ manifestPath, indexPath, encoderPath, cal
 
 /** Convenience: open directly over 03's committed assets. */
 export function docsAssetPaths() {
-    const assets = path.join(path.dirname(new URL(import.meta.url).pathname), '..', '03-edge-docs-search', 'assets');
+    const assets = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '03-edge-docs-search', 'assets');
     return {
         manifestPath: path.join(assets, 'docs-manifest.json'),
         indexPath: path.join(assets, 'docs-index.bin'),

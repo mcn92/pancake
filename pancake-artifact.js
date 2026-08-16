@@ -31,6 +31,19 @@ const DEFAULT_OPEN_READ_BYTES = 256 * 1024 * 1024;
 const MAX_COALESCED_RANGE_BYTES = 16 * 1024 * 1024;
 const VERIFY_CHUNK_BYTES = 64 * 1024 * 1024;
 
+async function mapLimit(items, limit, fn) {
+    const n = !Number.isFinite(limit) ? items.length : Math.min(Math.max(1, Math.trunc(limit)), items.length);
+    if (n === 0) return [];
+    const out = new Array(items.length);
+    let next = 0;
+    await Promise.all(Array.from({ length: n }, async () => {
+        for (let i = next++; i < items.length; i = next++) {
+            out[i] = await fn(items[i], i);
+        }
+    }));
+    return out;
+}
+
 // Validate an artifact-derived (offset, length) before issuing source.read.
 // Rejects non-integer/negative/overflowing ranges, anything past the cap, and
 // — when the source reports a numeric size — anything past the source end, so
@@ -193,6 +206,8 @@ class NodeFileRangeSource {
         this.filePath = filePath;
         this.fd = fs.openSync(filePath, 'r');
         this.size = fs.statSync(filePath).size;
+        this.preferredParallelism = Infinity;
+        this.preferredGapBytes = 2048;
     }
 
     async read(offset, length) {
@@ -1648,8 +1663,11 @@ class PancakeSketchArtifact {
     }
 
     async fetchRows(ids, options = {}) {
-        const gap = Math.max(0, options.gap === undefined ? 2048 : options.gap);
-        const parallelism = Math.max(1, Math.trunc(options.parallelism || 8));
+        const defaultGap = this.source.preferredGapBytes === undefined ? 2048 : this.source.preferredGapBytes;
+        const gap = Math.max(0, options.gap === undefined ? defaultGap : options.gap);
+        const preferredParallelism = this.source.preferredParallelism === undefined ? 32 : this.source.preferredParallelism;
+        const requestedParallelism = options.parallelism === undefined ? preferredParallelism : options.parallelism;
+        const parallelism = requestedParallelism === 0 ? Infinity : Math.max(1, Math.trunc(requestedParallelism || 32));
         const rows = new Map();
         const missing = [];
         for (const id of ids) {
@@ -1690,30 +1708,27 @@ class PancakeSketchArtifact {
             }
         }
         pushRun(runStartId, runEndId);
-        for (let i = 0; i < ranges.length; i += parallelism) {
-            const batch = ranges.slice(i, i + parallelism);
-            const buffers = await Promise.all(batch.map(async ([startId, endId]) => {
-                const offset = this.vectorsOffset + startId * dim;
-                const length = (endId - startId) * dim;
-                const bytes = await readChecked(this.source, offset, length, 'row');
-                if (bytes.byteLength !== length) {
-                    throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact row read returned a truncated range', { offset, length });
-                }
-                this.rangeRequests++;
-                this.rangeBytes += length;
-                return { startId, endId, bytes };
-            }));
-            for (const { startId, endId, bytes } of buffers) {
-                for (let id = startId; id < endId; id++) {
+        const buffers = await mapLimit(ranges, parallelism, async ([startId, endId]) => {
+            const offset = this.vectorsOffset + startId * dim;
+            const length = (endId - startId) * dim;
+            const bytes = await readChecked(this.source, offset, length, 'row');
+            if (bytes.byteLength !== length) {
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact row read returned a truncated range', { offset, length });
+            }
+            this.rangeRequests++;
+            this.rangeBytes += length;
+            return { startId, endId, bytes };
+        });
+        for (const { startId, endId, bytes } of buffers) {
+            for (let id = startId; id < endId; id++) {
                     // Copy each row out of the coalesced fetch buffer: a view
                     // would pin the whole range in the LRU, so cacheBytes
                     // would count dim bytes while retaining the full fetch.
                     // (Explicit copy constructor — .slice() is unreliable here
                     // because Node Buffers override it with view semantics.)
                     const row = new Uint8Array(bytes.subarray((id - startId) * dim, (id - startId + 1) * dim));
-                    if (rows.has(id)) rows.set(id, row);
-                    this.cacheRow(id, row);
-                }
+                if (rows.has(id)) rows.set(id, row);
+                this.cacheRow(id, row);
             }
         }
         return rows;

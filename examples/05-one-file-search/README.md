@@ -41,7 +41,7 @@ node test-wiki.mjs                    # 200 eval queries vs exact ground truth
 Measured 2026-08-14: open 0.3 s with 27.8 MiB resident; recall@10 82.8%
 at the recommended rerank vs the pack manifest's published 82.9%; mean
 273 ms/query on the pure-JS scan (the WASM sketch scanner is the known
-~5x cut when latency matters).
+~18x cut on the wiki sketch when latency matters).
 
 ## Inline wiki artifact
 
@@ -113,8 +113,9 @@ smoke, provenance, identity, abstention, and embedded-evaluation checks.
   evaluation 4.5 KiB.
 - Open: ~23 KiB resident (sketch tier + corpus offsets) plus the encoder;
   browser cold open is a handful of range requests.
-- Query: sketch scan + one parallel rerank round + one range read per
-  hydrated result; single-digit-millisecond embeds.
+- Query: sketch scan + source-tuned parallel rerank row reads + parallel
+  hydration; single-digit-millisecond embeds for kind 1, encoder-dominated
+  latency for kind 3.
 
 ## Still out of scope
 

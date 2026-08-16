@@ -56,6 +56,34 @@ function bruteForce(rows, query, k, metric) {
     return scored.slice(0, k).map((e) => e[1]);
 }
 
+class DelayedMemorySource {
+    constructor(bytes, delayMs = 5) {
+        this.bytes = bytes;
+        this.size = bytes.length;
+        this.delayMs = delayMs;
+        this.preferredParallelism = 32;
+        this.preferredGapBytes = 0;
+        this.requests = 0;
+        this.inFlight = 0;
+        this.maxInFlight = 0;
+    }
+
+    resetStats() {
+        this.requests = 0;
+        this.inFlight = 0;
+        this.maxInFlight = 0;
+    }
+
+    async read(offset, length) {
+        this.requests++;
+        this.inFlight++;
+        this.maxInFlight = Math.max(this.maxInFlight, this.inFlight);
+        await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+        this.inFlight--;
+        return new Uint8Array(this.bytes.subarray(offset, offset + length));
+    }
+}
+
 async function run() {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pancake-sketch-'));
     const COUNT = 600;
@@ -139,6 +167,17 @@ async function run() {
             await artifact.search(queries[0], K, { rerank: 60 });
             const after = artifact.stats();
             check('repeat query fully cached', after.rangeRequests === mid.rangeRequests && mid.rangeRequests >= before);
+
+            const depthSource = new DelayedMemorySource(fs.readFileSync(artifactPath));
+            const depthArtifact = await Pancake.SketchArtifact.open(depthSource);
+            const sparseIds = Array.from({ length: 90 }, (_, i) => i * 2);
+            depthSource.resetStats();
+            await depthArtifact.fetchRows(sparseIds, { maxRangeBytes: DIM, gap: 0 });
+            const dependentRounds = Math.ceil(depthSource.requests / depthSource.maxInFlight);
+            check('rerank row fetch uses source parallelism in <= 3 dependent rounds',
+                depthSource.maxInFlight === 32 && dependentRounds <= 3,
+                `requests=${depthSource.requests} maxInFlight=${depthSource.maxInFlight} rounds=${dependentRounds}`);
+            await depthArtifact.close();
 
             // The WASM scanner must implement the artifact's metric. Compare
             // its raw candidate set against the reference sketch scan, before

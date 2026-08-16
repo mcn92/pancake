@@ -43,6 +43,8 @@ async function fileSource(filePath) {
     const size = fs.fstatSync(fd).size;
     return {
         size,
+        preferredParallelism: Infinity,
+        preferredGapBytes: 2048,
         async read(offset, length) {
             const buffer = new Uint8Array(length);
             const bytesRead = fs.readSync(fd, buffer, 0, length, offset);
@@ -58,9 +60,15 @@ async function fileSource(filePath) {
 function windowSource(source, offset, length) {
     return {
         size: length,
+        preferredParallelism: source.preferredParallelism,
+        preferredGapBytes: source.preferredGapBytes,
         async read(off, len) { return source.read(offset + off, len); },
         async close() {},
     };
+}
+
+function align16(n) {
+    return Math.ceil(n / 16) * 16;
 }
 
 const viewOf = (bytes) => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -87,6 +95,9 @@ export async function openPancakeFile(input, options = {}) {
         if (manifestBytes < 2 || manifestBytes > 16 * 1024 * 1024 || segmentCount < 1 || segmentCount > 64) {
             throw new Error('.pancake header is implausible');
         }
+        if (source.size !== undefined && source.size !== fileBytes) {
+            throw new Error(`.pancake is truncated or padded: header says ${fileBytes} bytes, source has ${source.size}`);
+        }
         const identity = toHex(header.subarray(24, 56));
 
         const manifestBuf = new Uint8Array(await source.read(HEADER_BYTES, manifestBytes));
@@ -101,6 +112,7 @@ export async function openPancakeFile(input, options = {}) {
         const table = new Uint8Array(await source.read(HEADER_BYTES + manifestBytes, segmentCount * TABLE_ENTRY_BYTES));
         const tableView = viewOf(table);
         const segments = new Map();
+        let expectedOffset = align16(HEADER_BYTES + manifestBytes + segmentCount * TABLE_ENTRY_BYTES);
         for (let i = 0; i < segmentCount; i++) {
             const entry = i * TABLE_ENTRY_BYTES;
             const kind = KIND_NAMES[tableView.getUint32(entry, true)];
@@ -108,10 +120,11 @@ export async function openPancakeFile(input, options = {}) {
             const length = Number(tableView.getBigUint64(entry + 16, true));
             const declared = manifest.segments[i];
             if (!declared || declared.kind !== kind || declared.bytes !== length
-                || offset % 16 !== 0 || offset + length > fileBytes) {
+                || offset !== expectedOffset || offset + length > fileBytes) {
                 throw new Error(`.pancake segment table disagrees with manifest at entry ${i}`);
             }
             segments.set(kind, { offset, length, sha256: declared.sha256 });
+            expectedOffset = align16(offset + length);
         }
         for (const required of ['index', 'corpus', 'query-interp']) {
             if (!segments.has(required)) throw new Error(`.pancake is missing the ${required} segment`);
@@ -270,11 +283,25 @@ export async function openPancakeFile(input, options = {}) {
             }
         }
 
+        const recordCache = new Map();
+        const cacheRecord = (id, record) => {
+            if (recordCache.has(id)) recordCache.delete(id);
+            recordCache.set(id, record);
+            if (recordCache.size > 256) recordCache.delete(recordCache.keys().next().value);
+            return record;
+        };
+
         const hydrate = async (id) => {
+            if (recordCache.has(id)) {
+                const cached = recordCache.get(id);
+                recordCache.delete(id);
+                recordCache.set(id, cached);
+                return cached;
+            }
             const start = recordOffsets[id];
             const end = recordOffsets[id + 1];
             const bytes = new Uint8Array(await source.read(corpus.offset + start, end - start));
-            return JSON.parse(decoder.decode(bytes));
+            return cacheRecord(id, JSON.parse(decoder.decode(bytes)));
         };
 
         return {
@@ -300,15 +327,19 @@ export async function openPancakeFile(input, options = {}) {
                 const pre = preScore(context);
                 let hits = [];
                 if (!pre) {
-                    hits = (await sketch.search(context.vector, k, { rerank: queryOptions.rerank })).results;
+                    hits = (await sketch.search(context.vector, k, {
+                        rerank: queryOptions.rerank,
+                        parallelism: queryOptions.parallelism ?? queryOptions.rerankParallelism ?? options.rerankParallelism,
+                        gap: queryOptions.gap ?? queryOptions.rerankGap ?? options.rerankGap,
+                        maxRangeBytes: queryOptions.maxRangeBytes ?? options.rerankMaxRangeBytes,
+                    })).results;
                 }
                 const quality = pre || scoreQuality(hits, context);
                 const returned = quality.match_quality === 'none' ? [] : hits;
-                const results = [];
-                for (const hit of returned) {
+                const results = await Promise.all(returned.map(async (hit) => {
                     const record = await hydrate(hit.id);
-                    results.push({ id: hit.id, distance: hit.distance, ...record });
-                }
+                    return { id: hit.id, distance: hit.distance, ...record };
+                }));
                 return { matchQuality: quality.match_quality, confidence: quality.confidence, results };
             },
 
