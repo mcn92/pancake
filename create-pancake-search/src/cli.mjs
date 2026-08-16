@@ -8,6 +8,13 @@ import { stdin as input, stdout as output } from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import zlib from 'node:zlib';
 import { spawnSync } from 'node:child_process';
+import {
+  assemblePancakeFile,
+  buildCorpusSegmentFromBuffers,
+  buildInlineTransformerEncoderSegment,
+  buildQueryInterpSegment,
+  sha256,
+} from './complete-profile.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -200,8 +207,8 @@ function makeConfig(options) {
   const student = options.mode === 'student';
   const model = student ? null : MODEL_MAP[options.model];
   if (!student && !model) throw new CliError(`Unsupported --model ${options.model}. Supported: ${Object.keys(MODEL_MAP).join(', ')}`);
-  if (!['snapshot', 'artifact'].includes(options.runtime)) {
-    throw new CliError(`--runtime must be snapshot or artifact, got ${options.runtime}`);
+  if (!['snapshot', 'artifact', 'complete'].includes(options.runtime)) {
+    throw new CliError(`--runtime must be snapshot, artifact, or complete, got ${options.runtime}`);
   }
   const isUrl = /^https?:\/\//i.test(options.source);
   const targetDir = path.resolve(process.cwd(), options.name);
@@ -264,8 +271,8 @@ export async function buildSearchAssets(projectDir, config, options = {}) {
 function applyRuntimeOverrides(config, projectDir, flags) {
   if (!flags.runtime && !flags.artifact) return;
   const runtime = flags.runtime || (flags.artifact ? 'artifact' : config.runtime?.mode || 'snapshot');
-  if (!['snapshot', 'artifact'].includes(runtime)) {
-    throw new CliError(`--runtime must be snapshot or artifact, got ${runtime}`);
+  if (!['snapshot', 'artifact', 'complete'].includes(runtime)) {
+    throw new CliError(`--runtime must be snapshot, artifact, or complete, got ${runtime}`);
   }
   if (runtime === 'artifact') {
     const artifactPath = flags.artifact
@@ -432,7 +439,19 @@ async function buildAssets(projectDir, config, options = {}) {
     }
   }
   const manifest = makeManifest(config, chunks, snapshot, vectors, artifact, artifactInfo);
-  if (config.runtime?.mode === 'artifact') {
+  if (config.runtime?.mode === 'complete') {
+    artifactInfo = await buildCompleteArtifact({
+      Pancake,
+      projectDir,
+      assetsDir,
+      config,
+      chunks,
+      snapshot,
+    });
+    manifest.artifactSha256 = artifactInfo.sha256;
+    manifest.artifact = artifactInfo;
+    manifest.runtime = { ...manifest.runtime, mode: 'complete', artifactUrl: 'search.pancake' };
+  } else if (config.runtime?.mode === 'artifact') {
     const outPath = path.join(assetsDir, 'index.pancake-range');
     if (artifact) {
       await fs.writeFile(outPath, artifact);
@@ -468,7 +487,9 @@ async function buildAssets(projectDir, config, options = {}) {
   await fs.mkdir(path.join(projectDir, '.pancake'), { recursive: true });
   await fs.writeFile(path.join(projectDir, '.pancake', 'last-build.log'), `${logLines.join('\n')}\n`);
   const gzipBytes = options.skipBundleSizeCheck ? null : await projectedGzipBytes(projectDir);
-  if (config.runtime?.mode === 'artifact') {
+  if (config.runtime?.mode === 'complete') {
+    log(`Built complete .pancake artifact with ${(artifactInfo.bytes / 1024 / 1024).toFixed(2)} MB`);
+  } else if (config.runtime?.mode === 'artifact') {
     log(`Built corpus assets with ${(artifact.byteLength / 1024 / 1024).toFixed(2)} MB Search Artifact`);
   } else {
     log(`Built index: ${(snapshot.byteLength / 1024 / 1024).toFixed(2)} MB snapshot`);
@@ -479,24 +500,116 @@ async function buildAssets(projectDir, config, options = {}) {
   }
 }
 
+async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, chunks, snapshot }) {
+  const artifactContract = await loadArtifactContract();
+  const runtime = config.runtime || {};
+  const encoder = runtime.inlineEncoder || {};
+  const resolveInput = (value, label) => {
+    if (!value) throw new CliError(`runtime.inlineEncoder.${label} is required for complete kind-3 artifacts`, 1);
+    return path.resolve(projectDir, value);
+  };
+  const vocabPath = resolveInput(encoder.vocabPath, 'vocabPath');
+  const weightsPath = resolveInput(encoder.weightsPath, 'weightsPath');
+  if (!fssync.existsSync(vocabPath)) throw new CliError(`Inline encoder vocab not found: ${vocabPath}`, 1);
+  if (!fssync.existsSync(weightsPath)) throw new CliError(`Inline encoder weights not found: ${weightsPath}`, 1);
+
+  const declaration = encoder.declaration || {
+    kind: 'inline-transformer-v1',
+    model: encoder.model || 'sentence-transformers/all-MiniLM-L6-v2',
+    license: encoder.license || 'apache-2.0',
+    attribution: encoder.attribution || 'sentence-transformers/all-MiniLM-L6-v2 (quantized derivative)',
+    dim: config.embedding.dims,
+    pooling: config.embedding.pooling || 'mean',
+    normalized: config.embedding.normalize !== false,
+    maxTokens: encoder.maxTokens || 128,
+    layout: encoder.layout || { V: 30522, P: 512, T: 2, D: 384, F: 1536, L: 6, B: 64, H: 12 },
+  };
+  const inlineEncoderBytes = buildInlineTransformerEncoderSegment({
+    declaration,
+    vocabBytes: await fs.readFile(vocabPath),
+    weightBytes: await fs.readFile(weightsPath),
+  });
+  const calibrationBytes = encoder.calibrationPath
+    ? await fs.readFile(path.resolve(projectDir, encoder.calibrationPath))
+    : Buffer.from(JSON.stringify({ kind: 'retrieval-signals-v1', asset: null, vocabBloomBase64: '' }), 'utf8');
+  const sketch = artifactContract.buildSketchArtifactBytes(snapshot, {
+    sketchDims: runtime.sketchDims,
+    sketchBits: runtime.sketchBits,
+    recommendedRerank: config.index.efSearch || 120,
+  });
+  const records = chunks.map((chunk) => Buffer.from(JSON.stringify(publicChunk(chunk)), 'utf8'));
+  const evaluation = Buffer.from(JSON.stringify({
+    kind: 'docs-site-build-v1',
+    generatedAt: new Date().toISOString(),
+    querySet: runtime.evaluation?.queries || [],
+  }), 'utf8');
+  const outPath = path.join(assetsDir, runtime.fileName || 'search.pancake');
+  const result = assemblePancakeFile({
+    profile: 'pancake-complete-v1',
+    corpus: { records: chunks.length, provenance: { source: config.source.type, name: config.name } },
+    dim: config.embedding.dims,
+    metric: config.index.metric,
+    encoder: {
+      kind: 'inline-transformer-v1',
+      model: declaration.model,
+      pooling: declaration.pooling,
+      normalized: declaration.normalized,
+      maxTokens: declaration.maxTokens,
+    },
+    recommendedRerank: config.index.efSearch || 120,
+    sampleQueries: runtime.sampleQueries || [],
+  }, [
+    { kind: 'index', bytes: Buffer.from(sketch.bytes) },
+    { kind: 'corpus', bytes: buildCorpusSegmentFromBuffers(records) },
+    { kind: 'query-interp', bytes: buildQueryInterpSegment(3, inlineEncoderBytes, calibrationBytes) },
+    { kind: 'evaluation', bytes: evaluation },
+  ], outPath);
+  return {
+    profile: 'pancake-complete-v1',
+    kind: 'inline-transformer-v1',
+    path: path.basename(outPath),
+    bytes: result.fileBytes,
+    sha256: sha256(fssync.readFileSync(outPath)).toString('hex'),
+    identity: result.identity,
+    segments: result.manifest.segments,
+  };
+}
+
+async function loadArtifactContract() {
+  try {
+    const mod = await import('pancake-wasm/artifact');
+    const contract = mod.default || mod;
+    if (typeof contract.buildSketchArtifactBytes === 'function') return contract;
+  } catch {}
+  const mod = await import(pathToFileURL(path.join(REPO_ROOT, 'pancake-artifact.js')).href);
+  const contract = mod.default || mod;
+  if (typeof contract.buildSketchArtifactBytes !== 'function') {
+    throw new CliError('pancake-wasm/artifact does not expose buildSketchArtifactBytes; update pancake-wasm or use the monorepo root fallback.', 2);
+  }
+  return contract;
+}
+
 function validateConfig(config) {
   if (!config || config.version !== 1) throw new CliError('pancake.config.json version must be 1', 1);
   if (!config.name) throw new CliError('pancake.config.json name is required', 1);
   if (!config.source || !['folder', 'url'].includes(config.source.type)) throw new CliError('source.type must be folder or url', 1);
   const embeddingMode = config.embedding?.mode || 'workers-ai';
-  if (!['workers-ai', 'student'].includes(embeddingMode)) throw new CliError('embedding.mode must be workers-ai or student', 1);
+  if (!['workers-ai', 'student', 'inline-transformer'].includes(embeddingMode)) throw new CliError('embedding.mode must be workers-ai, student, or inline-transformer', 1);
   if (embeddingMode === 'workers-ai') {
     const model = MODEL_MAP[config.embedding?.buildModel];
     if (!model) throw new CliError(`Unsupported embedding.buildModel ${config.embedding?.buildModel}`, 1);
     if (config.embedding.dims !== model.dims) throw new CliError(`embedding.dims must be ${model.dims}`, 1);
-  } else if (!config.embedding.studentModelPath) {
+  } else if (embeddingMode === 'student' && !config.embedding.studentModelPath) {
     throw new CliError('embedding.studentModelPath is required when embedding.mode is student', 1);
-  } else if (!config.embedding.trainStudent?.enabled && !config.embedding.teacherVectorsPath) {
+  } else if (embeddingMode === 'student' && !config.embedding.trainStudent?.enabled && !config.embedding.teacherVectorsPath) {
     throw new CliError('embedding.teacherVectorsPath is required when embedding.mode is student and trainStudent is disabled', 1);
+  } else if (embeddingMode === 'inline-transformer' && !config.embedding.teacherVectorsPath) {
+    throw new CliError('embedding.teacherVectorsPath is required for inline-transformer builds until the Node encoder path is extracted', 1);
   }
   const runtimeMode = config.runtime?.mode || 'snapshot';
-  if (!['snapshot', 'artifact'].includes(runtimeMode)) throw new CliError('runtime.mode must be snapshot or artifact', 1);
+  if (!['snapshot', 'artifact', 'complete'].includes(runtimeMode)) throw new CliError('runtime.mode must be snapshot, artifact, or complete', 1);
   if (runtimeMode === 'artifact' && config.runtime?.storage !== 'bundled') throw new CliError('runtime.storage must be bundled for artifact mode in this release', 1);
+  if (runtimeMode === 'complete' && config.runtime?.profile !== 'kind3') throw new CliError('runtime.profile must be kind3 for complete mode', 1);
 }
 
 async function ingestFolder(root, source, log) {
@@ -737,6 +850,15 @@ async function embedChunks(chunks, embeddingConfig, log, projectDir) {
     }
     throw new CliError('Student mode requires trainStudent.enabled or teacherVectorsPath; refusing to embed passages with the student query encoder.', 2);
   }
+  if (embeddingConfig.mode === 'inline-transformer') {
+    if (!embeddingConfig.teacherVectorsPath) {
+      throw new CliError('inline-transformer mode requires teacherVectorsPath until the Node encoder path is extracted.', 2);
+    }
+    const vectorPath = path.resolve(projectDir, embeddingConfig.teacherVectorsPath);
+    const vectors = await readF32Vectors(vectorPath, chunks.length, embeddingConfig.dims);
+    log(`Loaded ${vectors.length} inline-transformer document vectors from ${embeddingConfig.teacherVectorsPath}`);
+    return vectors;
+  }
   const model = MODEL_MAP[embeddingConfig.buildModel];
   let transformers;
   try {
@@ -934,7 +1056,7 @@ async function publishStudentAssets(projectDir, config, assetsDir, manifest, log
 }
 
 function makeManifest(config, chunks, snapshot, vectors, artifact = null, artifactInfo = null) {
-  const model = config.embedding.mode === 'student'
+  const model = config.embedding.mode === 'student' || config.embedding.mode === 'inline-transformer'
     ? null
     : MODEL_MAP[config.embedding.buildModel];
   const firstVectorHash = vectors[0]
@@ -947,7 +1069,9 @@ function makeManifest(config, chunks, snapshot, vectors, artifact = null, artifa
     name: config.name,
     model: config.embedding.mode === 'student'
       ? 'pancake-distilled-student'
-      : config.embedding.buildModel,
+      : config.embedding.mode === 'inline-transformer'
+        ? config.runtime?.inlineEncoder?.model || 'sentence-transformers/all-MiniLM-L6-v2'
+        : config.embedding.buildModel,
     workersAiModel: model?.workersAiModel || null,
     encoder: config.embedding.mode === 'student'
       ? {
@@ -957,6 +1081,14 @@ function makeManifest(config, chunks, snapshot, vectors, artifact = null, artifa
           teacherVectorsPath: config.embedding.teacherVectorsPath || null,
           trainedDuringBuild: config.embedding.trainStudent?.enabled === true,
         }
+      : config.embedding.mode === 'inline-transformer'
+        ? {
+            mode: 'inline-transformer',
+            kind: 'inline-transformer-v1',
+            teacherVectorsPath: config.embedding.teacherVectorsPath,
+            runtimeWeightsPath: config.runtime?.inlineEncoder?.weightsPath || null,
+            runtimeVocabPath: config.runtime?.inlineEncoder?.vocabPath || null,
+          }
       : {
           mode: 'workers-ai',
           hfModel: model.hfModel,
@@ -993,8 +1125,11 @@ async function projectedGzipBytes(projectDir) {
     'assets/corpus.json',
     'assets/manifest.json',
   ];
+  const completePath = path.join(projectDir, 'assets', 'search.pancake');
   const artifactPath = path.join(projectDir, 'assets', 'index.pancake-range');
-  files.push(fssync.existsSync(artifactPath) ? 'assets/index.pancake-range' : 'assets/snapshot.pnck');
+  files.push(fssync.existsSync(completePath)
+    ? 'assets/search.pancake'
+    : fssync.existsSync(artifactPath) ? 'assets/index.pancake-range' : 'assets/snapshot.pnck');
   for (const studentFile of ['student-embedder.mjs', 'assets/student-model.bin', 'assets/student-abstention.json']) {
     if (fssync.existsSync(path.join(projectDir, studentFile))) files.push(studentFile);
   }

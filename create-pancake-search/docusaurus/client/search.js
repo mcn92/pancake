@@ -51,7 +51,7 @@ function htmlEscape(value) {
 function renderRows(results, corpusById) {
   if (!results.length) return '<p class="pancake-search-empty">No results</p>';
   return `<ol class="pancake-search-results">${results.map((hit) => {
-    const chunk = corpusById.get(hit.id);
+    const chunk = corpusById?.get(hit.id) || hit;
     return `<li>
       <a href="${htmlEscape(resultUrl(chunk))}">${htmlEscape(chunk?.title || `Chunk ${hit.id}`)}</a>
       <p>${htmlEscape(chunk?.preview || chunk?.text || '')}</p>
@@ -148,6 +148,21 @@ class PancakeDocusaurusSearch {
       studentModelUrl: `${this.assetBase}/student-model.bin`,
       abstentionUrl: `${this.assetBase}/student-abstention.json`,
     };
+    if (urls.completeArtifactUrl) {
+      const { openCompletePancake } = await import('./complete-reader.mjs');
+      const bytes = await fetch(urls.completeArtifactUrl).then((r) => {
+        if (!r.ok) throw new Error(`Complete artifact fetch failed: ${r.status}`);
+        return r.arrayBuffer();
+      });
+      const completeSearch = await openCompletePancake(bytes);
+      this.state = {
+        manifest,
+        completeSearch,
+        completeInfo: completeSearch.info(),
+        corpusById: null,
+      };
+      return this.state;
+    }
     const { RangeArtifact } = await loadBrowserRuntime();
     const [corpus, studentBytes, abstention, artifact] = await Promise.all([
       fetch(urls.corpusUrl).then((r) => {
@@ -180,6 +195,14 @@ class PancakeDocusaurusSearch {
 
   async search(query, options = {}) {
     const state = await this.load();
+    if (state.completeSearch) {
+      const result = await state.completeSearch.query(query, { k: Number(options.k || this.k) });
+      return {
+        ...result,
+        match_quality: result.matchQuality,
+        rows: result.results,
+      };
+    }
     const prefixed = `${state.manifest.prefixPolicy?.query || ''}${query}`;
     const embedded = embedTextWithStudent(prefixed, state.studentModel);
     // The student featurizer only recognizes Latin-script tokens; a query
@@ -249,7 +272,10 @@ function mountSearch() {
   });
 
   search.load()
-    .then((state) => { status.textContent = `Ready - ${state.artifact.count.toLocaleString()} chunks`; })
+    .then((state) => {
+      const count = state.completeInfo?.records ?? state.artifact.count;
+      status.textContent = `Ready - ${count.toLocaleString()} chunks`;
+    })
     .catch((error) => { status.textContent = error.message || String(error); });
 
   form.addEventListener('submit', async (event) => {

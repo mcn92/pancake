@@ -25,6 +25,7 @@ function joinSitePath(baseUrl, ...parts) {
 }
 
 function normalizeOptions(options = {}) {
+  const completeProfile = options.completeProfile || {};
   return {
     enabled: options.enabled !== false,
     assetBase: trimSlashes(options.assetBase || 'pancake-search'),
@@ -38,8 +39,17 @@ function normalizeOptions(options = {}) {
     studentModel: options.studentModel || null,
     studentVectors: options.studentVectors || null,
     studentAbstention: options.studentAbstention || null,
+    completeProfile: {
+      enabled: completeProfile.enabled === true,
+      vectors: completeProfile.vectors || null,
+      vocab: completeProfile.vocab || null,
+      weights: completeProfile.weights || null,
+      calibration: completeProfile.calibration || null,
+      model: completeProfile.model || 'sentence-transformers/all-MiniLM-L6-v2',
+      maxTokens: completeProfile.maxTokens || 128,
+    },
     trainStudent: {
-      enabled: options.trainStudent !== false && !options.studentModel,
+      enabled: completeProfile.enabled === true ? false : options.trainStudent !== false && !options.studentModel,
       python: options.trainStudent?.python,
       teacher: options.trainStudent?.teacher,
       teacherRevision: options.trainStudent?.teacherRevision,
@@ -67,6 +77,7 @@ function normalizeOptions(options = {}) {
 }
 
 function makeConfig(context, options, workDir, outDir) {
+  const complete = options.completeProfile.enabled;
   return {
     version: 1,
     name: options.name || `${slugifyName(context.siteConfig?.title || path.basename(context.siteDir))}-search`,
@@ -78,17 +89,33 @@ function makeConfig(context, options, workDir, outDir) {
     },
     chunking: options.chunking,
     embedding: {
-      mode: 'student',
-      studentModelPath: options.studentModel ? 'student-model.bin' : 'student/student-model.bin',
-      ...(options.studentVectors ? { teacherVectorsPath: 'docs-vectors.f32' } : {}),
-      ...(options.trainStudent.enabled ? { trainStudent: { ...options.trainStudent, outDir: 'student' } } : {}),
+      mode: complete ? 'inline-transformer' : 'student',
+      ...(complete ? { teacherVectorsPath: 'docs-vectors.f32' } : {
+        studentModelPath: options.studentModel ? 'student-model.bin' : 'student/student-model.bin',
+        ...(options.studentVectors ? { teacherVectorsPath: 'docs-vectors.f32' } : {}),
+        ...(options.trainStudent.enabled ? { trainStudent: { ...options.trainStudent, outDir: 'student' } } : {}),
+      }),
       dims: 384,
       prefixPolicy: { passage: '', query: '' },
       pooling: 'mean',
       normalize: true,
     },
     index: options.index,
-    runtime: { mode: 'artifact', storage: 'bundled' },
+    runtime: complete
+      ? {
+          mode: 'complete',
+          profile: 'kind3',
+          storage: 'bundled',
+          fileName: 'search.pancake',
+          inlineEncoder: {
+            vocabPath: 'inline-encoder/vocab.txt',
+            weightsPath: 'inline-encoder/encoder-weights.bin',
+            ...(options.completeProfile.calibration ? { calibrationPath: 'inline-encoder/calibration.json' } : {}),
+            model: options.completeProfile.model,
+            maxTokens: options.completeProfile.maxTokens,
+          },
+        }
+      : { mode: 'artifact', storage: 'bundled' },
     validation: { minRecallAt10: 0.98 },
   };
 }
@@ -133,17 +160,20 @@ async function copyRuntimeManifest(assetDir, context, options, studentModelInfo)
   const assetUrlBase = joinSitePath(context.siteConfig?.baseUrl || '/', options.assetBase);
   manifest.docusaurus = {
     assetBase: options.assetBase,
-    artifactUrl: `${assetUrlBase}/index.pancake-range`,
+    artifactUrl: options.completeProfile.enabled ? `${assetUrlBase}/search.pancake` : `${assetUrlBase}/index.pancake-range`,
+    completeArtifactUrl: options.completeProfile.enabled ? `${assetUrlBase}/search.pancake` : null,
     corpusUrl: `${assetUrlBase}/corpus.json`,
     manifestUrl: `${assetUrlBase}/manifest.json`,
-    studentModelUrl: `${assetUrlBase}/student-model.bin`,
+    studentModelUrl: options.completeProfile.enabled ? null : `${assetUrlBase}/student-model.bin`,
     abstentionUrl: studentModelInfo.abstention ? `${assetUrlBase}/student-abstention.json` : null,
   };
   manifest.encoder = {
     ...(manifest.encoder || {}),
-    studentModelUrl: manifest.docusaurus.studentModelUrl,
-    studentModelSha256: studentModelInfo.sha256,
-    studentModelBytes: studentModelInfo.bytes,
+    ...(options.completeProfile.enabled ? {} : {
+      studentModelUrl: manifest.docusaurus.studentModelUrl,
+      studentModelSha256: studentModelInfo.sha256,
+      studentModelBytes: studentModelInfo.bytes,
+    }),
     abstentionUrl: manifest.docusaurus.abstentionUrl,
     abstentionSha256: studentModelInfo.abstention?.sha256 || null,
     abstentionBytes: studentModelInfo.abstention?.bytes || null,
@@ -152,6 +182,7 @@ async function copyRuntimeManifest(assetDir, context, options, studentModelInfo)
 }
 
 async function stageExternalStudentModel(options, context, workDir) {
+  if (options.completeProfile.enabled) return null;
   if (!options.studentModel) return null;
   const sourcePath = path.resolve(context.siteDir, options.studentModel);
   if (!fssync.existsSync(sourcePath)) {
@@ -172,7 +203,26 @@ async function stageExternalStudentModel(options, context, workDir) {
   }
 }
 
+async function stageCompleteProfileInputs(options, context, workDir) {
+  if (!options.completeProfile.enabled) return;
+  const copyRequired = async (source, targetRel, label) => {
+    if (!source) throw new Error(`Pancake completeProfile.${label} is required`);
+    const sourcePath = path.resolve(context.siteDir, source);
+    if (!fssync.existsSync(sourcePath)) throw new Error(`Pancake completeProfile.${label} not found: ${sourcePath}`);
+    const targetPath = path.join(workDir, targetRel);
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.copyFile(sourcePath, targetPath);
+  };
+  await copyRequired(options.completeProfile.vectors, 'docs-vectors.f32', 'vectors');
+  await copyRequired(options.completeProfile.vocab, path.join('inline-encoder', 'vocab.txt'), 'vocab');
+  await copyRequired(options.completeProfile.weights, path.join('inline-encoder', 'encoder-weights.bin'), 'weights');
+  if (options.completeProfile.calibration) {
+    await copyRequired(options.completeProfile.calibration, path.join('inline-encoder', 'calibration.json'), 'calibration');
+  }
+}
+
 async function publishStudentModel(options, context, workDir, assetDir) {
+  if (options.completeProfile.enabled) return { bytes: null, sha256: null, abstention: null };
   const sourcePath = options.studentModel
     ? path.resolve(context.siteDir, options.studentModel)
     : path.join(workDir, 'student', 'student-model.bin');
@@ -227,6 +277,7 @@ export default function pancakeDocusaurusPlugin(context, rawOptions = {}) {
       const config = makeConfig(context, options, workDir, resolvedOutDir);
       await fs.writeFile(path.join(workDir, 'pancake.config.json'), `${JSON.stringify(config, null, 2)}\n`);
       await stageExternalStudentModel(options, context, workDir);
+      await stageCompleteProfileInputs(options, context, workDir);
 
       await withOptionalStubEmbeddings(options.stubEmbeddings, () =>
         buildSearchAssets(workDir, config, {
@@ -310,6 +361,16 @@ export function validateOptions({ options }) {
   }
   if (options?.trainStudent === false && !options?.studentModel) {
     throw new Error('trainStudent: false requires studentModel to point at a corpus-specific PSTU model');
+  }
+  if (options?.completeProfile?.enabled === true) {
+    for (const key of ['vectors', 'vocab', 'weights']) {
+      if (typeof options.completeProfile[key] !== 'string' || !options.completeProfile[key]) {
+        throw new Error(`completeProfile.${key} must be a string path when completeProfile.enabled is true`);
+      }
+    }
+    if (options.completeProfile.calibration !== undefined && typeof options.completeProfile.calibration !== 'string') {
+      throw new Error('completeProfile.calibration must be a string path when provided');
+    }
   }
   return options || {};
 }
