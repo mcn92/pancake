@@ -145,13 +145,16 @@
     "pancake-wasm": "^0.2.0",
     "playwright": "^1.60.0",
     "typescript": "^7.0.2",
-    "usearch": "^2.25.1",
     "vite": "^8.0.16",
     "wrangler": "^4.81.1"
   },
   "optionalDependencies": {
     "faiss-node": "^0.5.1",
-    "hnswlib-node": "^3.0.0"
+    "hnswlib-node": "^3.0.0",
+    "@emnapi/core": "1.10.0",
+    "@emnapi/runtime": "1.10.0",
+    "@emnapi/wasi-threads": "1.2.1",
+    "usearch": "^2.25.1"
   },
   "overrides": {
     "esbuild": "^0.28.1"
