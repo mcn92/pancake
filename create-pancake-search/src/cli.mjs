@@ -294,6 +294,7 @@ async function writeProject(projectDir, config) {
   await copyTemplate('README.generated.md', path.join(projectDir, 'README.md'));
   await copyTemplate('reindex.yml', path.join(projectDir, '.github', 'workflows', 'reindex.yml'));
   await fs.writeFile(path.join(projectDir, 'wrangler.toml'), wranglerToml(config));
+  await fs.writeFile(path.join(projectDir, 'wrangler.local.toml'), wranglerToml(config, { localStubAi: true }));
   await fs.writeFile(path.join(projectDir, 'package.json'), generatedPackageJson(config));
   await fs.writeFile(path.join(projectDir, '.gitignore'), 'node_modules\n.wrangler\n.pancake/last-build.log\n');
 }
@@ -326,13 +327,14 @@ async function stageStudentInputs(projectDir, options) {
   }
 }
 
-function wranglerToml(config) {
+function wranglerToml(config, options = {}) {
   const student = config.embedding?.mode === 'student';
+  const localStubAi = options.localStubAi === true;
   return `name = "${tomlString(config.name)}"
 main = "worker.js"
 compatibility_date = "2025-04-09"
 compatibility_flags = ["nodejs_compat"]
-${student ? '' : `
+${student || localStubAi ? '' : `
 [ai]
 binding = "AI"
 `}
@@ -341,7 +343,7 @@ READ_ONLY = "1"
 RATE_LIMIT_RPM = "120"
 MAX_JSON_BYTES = "262144"
 MAX_QUERY_CHARS = "4096"
-${student ? '' : 'LOCAL_STUB_AI = "0"\n'}
+${student ? '' : `LOCAL_STUB_AI = "${localStubAi ? '1' : '0'}"\n`}
 [[rules]]
 type = "Data"
 globs = ["**/*.pnck", "**/*.pancake-range", "**/*.bin"]
@@ -361,7 +363,7 @@ function generatedPackageJson(config) {
     private: true,
     type: 'module',
     scripts: {
-      dev: 'wrangler dev',
+      dev: 'wrangler dev --config wrangler.local.toml',
       deploy: 'wrangler deploy',
       reindex: 'create-pancake-search rebuild --yes',
     },
@@ -398,8 +400,16 @@ async function buildAssets(projectDir, config, options = {}) {
       : `seed URL ${sourceRoot}; maxPages ${config.source.maxPages || 500}`;
     throw new CliError(`Ingest produced 0 documents from ${detail}. Next: check --source/include/exclude and ensure files contain enough text.`, 1);
   }
-  const chunks = dedupeChunks(chunkDocs(docs, config.chunking));
-  if (chunks.length === 0) throw new CliError('Chunking produced 0 chunks. Chunking counts whitespace-separated tokens and drops documents under 25 of them, so unsegmented scripts (e.g. CJK) are not supported. Next: use longer whitespace-delimited content or adjust source filters.', 1);
+  const chunked = chunkDocs(docs, config.chunking);
+  const chunks = dedupeChunks(chunked);
+  if (chunks.length === 0) {
+    const dropped = (chunked.dropped || [])
+      .slice(0, 8)
+      .map((doc) => `${doc.sourcePath || doc.url || doc.title || doc.id} (${doc.tokens} tokens)`)
+      .join(', ');
+    const suffix = dropped ? ` Dropped as too short: ${dropped}${chunked.dropped.length > 8 ? ', ...' : ''}.` : '';
+    throw new CliError(`Chunking produced 0 chunks. Chunking counts whitespace-separated tokens and drops documents under 25 of them.${suffix} Next: use longer whitespace-delimited content or adjust source filters.`, 1);
+  }
   log(`Ingested ${docs.length} docs -> ${chunks.length} chunks`);
 
   const vectors = await embedChunks(chunks, config, log, projectDir);
@@ -805,9 +815,19 @@ function normalizeText(text) {
 
 function chunkDocs(docs, options) {
   const chunks = [];
+  chunks.dropped = [];
   for (const doc of docs) {
     const tokens = tokenize(doc.text);
-    if (tokens.length < 25) continue;
+    if (tokens.length < 25) {
+      chunks.dropped.push({
+        id: doc.id,
+        title: doc.title,
+        sourcePath: doc.sourcePath,
+        url: doc.url,
+        tokens: tokens.length,
+      });
+      continue;
+    }
     const target = options.targetTokens || 256;
     const overlap = Math.floor(target * ((options.overlapPercent || 15) / 100));
     for (let start = 0; start < tokens.length; start += Math.max(1, target - overlap)) {
@@ -1199,13 +1219,15 @@ async function deployProject(projectDir) {
 
 function npmCliPath() {
   if (process.env.npm_execpath && process.env.npm_execpath.endsWith('.js')) {
-    return process.env.npm_execpath;
+    return { command: process.execPath, args: [process.env.npm_execpath], shell: false };
   }
-  return path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  if (process.platform === 'win32') return { command: 'cmd.exe', args: ['/d', '/s', '/c', 'npm'], shell: false };
+  return { command: 'npm', args: [], shell: false };
 }
 
 function runNpmSync(args, options) {
-  return spawnSync(process.execPath, [npmCliPath(), ...args], options);
+  const npm = npmCliPath();
+  return spawnSync(npm.command, [...npm.args, ...args], { ...options, shell: npm.shell });
 }
 
 function parsePositiveInt(value, name) {

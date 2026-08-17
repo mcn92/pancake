@@ -223,6 +223,17 @@ async function stageCompleteProfileInputs(options, context, workDir) {
 
 async function publishStudentModel(options, context, workDir, assetDir) {
   if (options.completeProfile.enabled) return { bytes: null, sha256: null, abstention: null };
+  if (options.stubEmbeddings) {
+    const { createHash } = await import('node:crypto');
+    const bytes = buildStubStudentModel();
+    await fs.writeFile(path.join(assetDir, 'student-model.bin'), bytes);
+    await fs.writeFile(path.join(assetDir, 'student-abstention.json'), 'null\n');
+    return {
+      bytes: bytes.byteLength,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      abstention: null,
+    };
+  }
   const sourcePath = options.studentModel
     ? path.resolve(context.siteDir, options.studentModel)
     : path.join(workDir, 'student', 'student-model.bin');
@@ -253,6 +264,31 @@ async function publishStudentModel(options, context, workDir, assetDir) {
     sha256: createHash('sha256').update(bytes).digest('hex'),
     abstention,
   };
+}
+
+function buildStubStudentModel() {
+  const bucketCount = 1;
+  const hiddenDim = 1;
+  const outputDim = 384;
+  const hashSeed = 0xDEC0DE;
+  const maxFeatures = 1;
+  const headerBytes = 32;
+  const align4 = (value) => (value + 3) & ~3;
+  const embeddingScalesBytes = bucketCount * 4;
+  const embeddingBytes = bucketCount * hiddenDim;
+  const projectionScalesBytes = outputDim * 4;
+  const projectionBytes = outputDim * hiddenDim;
+  const biasBytes = outputDim * 4;
+  const afterEmbedding = align4(headerBytes + embeddingScalesBytes + embeddingBytes);
+  const out = Buffer.alloc(afterEmbedding + projectionScalesBytes + projectionBytes + biasBytes);
+  out.write('PSTU', 0, 'ascii');
+  out.writeUInt32LE(1, 4);
+  out.writeUInt32LE(bucketCount, 8);
+  out.writeUInt32LE(hiddenDim, 12);
+  out.writeUInt32LE(outputDim, 16);
+  out.writeUInt32LE(hashSeed, 20);
+  out.writeUInt32LE(maxFeatures, 24);
+  return out;
 }
 
 export default function pancakeDocusaurusPlugin(context, rawOptions = {}) {
@@ -341,9 +377,6 @@ export function validateOptions({ options }) {
   const normalized = normalizeOptions(options);
   if (!normalized.assetBase) throw new Error('assetBase must not be empty');
   if (!['boolean', 'undefined'].includes(typeof options?.mount)) throw new Error('mount must be a boolean');
-  if (options?.stubEmbeddings === true) {
-    throw new Error('stubEmbeddings is not supported by the Docusaurus plugin; provide a studentModel instead');
-  }
   if (options?.studentModel !== undefined && typeof options.studentModel !== 'string') {
     throw new Error('studentModel must be a string path');
   }
@@ -359,7 +392,7 @@ export function validateOptions({ options }) {
   if (options?.trainStudent !== undefined && typeof options.trainStudent !== 'object' && options.trainStudent !== false) {
     throw new Error('trainStudent must be an object or false');
   }
-  if (options?.trainStudent === false && !options?.studentModel) {
+  if (options?.trainStudent === false && !options?.studentModel && options?.stubEmbeddings !== true) {
     throw new Error('trainStudent: false requires studentModel to point at a corpus-specific PSTU model');
   }
   if (options?.completeProfile?.enabled === true) {

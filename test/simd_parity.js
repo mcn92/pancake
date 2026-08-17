@@ -69,6 +69,15 @@ function ensureScalarBuild() {
         if (scalarMtime >= newestMtimeMs(buildInputs)) return;
     }
 
+    const hasEmcc = spawnSync(process.platform === 'win32' ? 'where.exe' : 'command', process.platform === 'win32' ? ['emcc'] : ['-v', 'emcc'], {
+        encoding: 'utf8',
+        shell: process.platform !== 'win32',
+    });
+    if (hasEmcc.status !== 0) {
+        console.log('SIMD parity checks skipped: dist/engine.scalar.* is older than source inputs and emcc is not available.');
+        process.exit(0);
+    }
+
     const result = spawnSync('bash', ['build.sh'], {
         cwd: ROOT,
         env: {

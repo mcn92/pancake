@@ -46,10 +46,11 @@ have no Workers AI binding at all: `npm run dev` and `npm run deploy` need no
 AI configuration, and this section does not apply.
 
 For `workers-ai` projects, Workers AI is used for production query embeddings. For local mechanics testing,
-set `LOCAL_STUB_AI=1` in `wrangler.toml` or pass it to Wrangler:
+`npm run dev` uses `wrangler.local.toml`, which omits the `[ai]` binding and sets `LOCAL_STUB_AI=1`.
+To exercise Workers AI locally, run Wrangler with the production config:
 
 ```bash
-npm run dev -- --var LOCAL_STUB_AI:1
+npx wrangler dev --config wrangler.toml
 ```
 
 This uses deterministic local hash embeddings for queries. Use it only to test

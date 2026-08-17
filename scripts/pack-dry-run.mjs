@@ -5,14 +5,17 @@ const cacheDir = path.join(process.cwd(), '.npm-cache');
 
 function npmCliPath() {
   if (process.env.npm_execpath && process.env.npm_execpath.endsWith('.js')) {
-    return process.env.npm_execpath;
+    return { command: process.execPath, args: [process.env.npm_execpath], shell: false };
   }
-  return path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  if (process.platform === 'win32') return { command: 'cmd.exe', args: ['/d', '/s', '/c', 'npm'], shell: false };
+  return { command: 'npm', args: [], shell: false };
 }
 
-const result = spawnSync(process.execPath, [npmCliPath(), 'pack', '--dry-run', '--cache', cacheDir], {
+const npm = npmCliPath();
+const result = spawnSync(npm.command, [...npm.args, 'pack', '--dry-run', '--cache', cacheDir], {
   stdio: 'inherit',
   env: process.env,
+  shell: npm.shell,
 });
 
 if (result.error) {
