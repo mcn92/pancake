@@ -15,6 +15,7 @@ import {
   buildQueryInterpSegment,
   sha256,
 } from './complete-profile.mjs';
+import { createInlineTransformerEmbedder } from './inline-transformer.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -401,7 +402,7 @@ async function buildAssets(projectDir, config, options = {}) {
   if (chunks.length === 0) throw new CliError('Chunking produced 0 chunks. Chunking counts whitespace-separated tokens and drops documents under 25 of them, so unsegmented scripts (e.g. CJK) are not supported. Next: use longer whitespace-delimited content or adjust source filters.', 1);
   log(`Ingested ${docs.length} docs -> ${chunks.length} chunks`);
 
-  const vectors = await embedChunks(chunks, config.embedding, log, projectDir);
+  const vectors = await embedChunks(chunks, config, log, projectDir);
   const Pancake = await loadPancake();
   const maxElements = Math.max(chunks.length, Math.ceil(chunks.length * 1.25));
   const index = await Pancake.create({ ...config.index, dim: config.embedding.dims, maxElements });
@@ -503,27 +504,9 @@ async function buildAssets(projectDir, config, options = {}) {
 async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, chunks, snapshot }) {
   const artifactContract = await loadArtifactContract();
   const runtime = config.runtime || {};
-  const encoder = runtime.inlineEncoder || {};
-  const resolveInput = (value, label) => {
-    if (!value) throw new CliError(`runtime.inlineEncoder.${label} is required for complete kind-3 artifacts`, 1);
-    return path.resolve(projectDir, value);
-  };
-  const vocabPath = resolveInput(encoder.vocabPath, 'vocabPath');
-  const weightsPath = resolveInput(encoder.weightsPath, 'weightsPath');
-  if (!fssync.existsSync(vocabPath)) throw new CliError(`Inline encoder vocab not found: ${vocabPath}`, 1);
-  if (!fssync.existsSync(weightsPath)) throw new CliError(`Inline encoder weights not found: ${weightsPath}`, 1);
+  const { encoder, vocabPath, weightsPath } = resolveInlineEncoderInputs(config, projectDir);
 
-  const declaration = encoder.declaration || {
-    kind: 'inline-transformer-v1',
-    model: encoder.model || 'sentence-transformers/all-MiniLM-L6-v2',
-    license: encoder.license || 'apache-2.0',
-    attribution: encoder.attribution || 'sentence-transformers/all-MiniLM-L6-v2 (quantized derivative)',
-    dim: config.embedding.dims,
-    pooling: config.embedding.pooling || 'mean',
-    normalized: config.embedding.normalize !== false,
-    maxTokens: encoder.maxTokens || 128,
-    layout: encoder.layout || { V: 30522, P: 512, T: 2, D: 384, F: 1536, L: 6, B: 64, H: 12 },
-  };
+  const declaration = inlineEncoderDeclaration(config, encoder);
   const inlineEncoderBytes = buildInlineTransformerEncoderSegment({
     declaration,
     vocabBytes: await fs.readFile(vocabPath),
@@ -575,6 +558,37 @@ async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, c
   };
 }
 
+function inlineEncoderDeclaration(config, encoder = {}) {
+  return encoder.declaration || {
+    kind: 'inline-transformer-v1',
+    model: encoder.model || 'sentence-transformers/all-MiniLM-L6-v2',
+    license: encoder.license || 'apache-2.0',
+    attribution: encoder.attribution || 'sentence-transformers/all-MiniLM-L6-v2 (quantized derivative)',
+    dim: config.embedding.dims,
+    pooling: config.embedding.pooling || 'mean',
+    normalized: config.embedding.normalize !== false,
+    maxTokens: encoder.maxTokens || 128,
+    prefixPolicy: {
+      passage: config.embedding.prefixPolicy?.passage || '',
+      query: config.embedding.prefixPolicy?.query || '',
+    },
+    layout: encoder.layout || { V: 30522, P: 512, T: 2, D: 384, F: 1536, L: 6, B: 64, H: 12 },
+  };
+}
+
+function resolveInlineEncoderInputs(config, projectDir) {
+  const encoder = config.runtime?.inlineEncoder || {};
+  const resolveInput = (value, label) => {
+    if (!value) throw new CliError(`runtime.inlineEncoder.${label} is required for complete kind-3 artifacts`, 1);
+    return path.resolve(projectDir, value);
+  };
+  const vocabPath = resolveInput(encoder.vocabPath, 'vocabPath');
+  const weightsPath = resolveInput(encoder.weightsPath, 'weightsPath');
+  if (!fssync.existsSync(vocabPath)) throw new CliError(`Inline encoder vocab not found: ${vocabPath}`, 1);
+  if (!fssync.existsSync(weightsPath)) throw new CliError(`Inline encoder weights not found: ${weightsPath}`, 1);
+  return { encoder, vocabPath, weightsPath };
+}
+
 async function loadArtifactContract() {
   try {
     const mod = await import('pancake-wasm/artifact');
@@ -603,11 +617,12 @@ function validateConfig(config) {
     throw new CliError('embedding.studentModelPath is required when embedding.mode is student', 1);
   } else if (embeddingMode === 'student' && !config.embedding.trainStudent?.enabled && !config.embedding.teacherVectorsPath) {
     throw new CliError('embedding.teacherVectorsPath is required when embedding.mode is student and trainStudent is disabled', 1);
-  } else if (embeddingMode === 'inline-transformer' && !config.embedding.teacherVectorsPath) {
-    throw new CliError('embedding.teacherVectorsPath is required for inline-transformer builds until the Node encoder path is extracted', 1);
   }
   const runtimeMode = config.runtime?.mode || 'snapshot';
   if (!['snapshot', 'artifact', 'complete'].includes(runtimeMode)) throw new CliError('runtime.mode must be snapshot, artifact, or complete', 1);
+  if (embeddingMode === 'inline-transformer' && runtimeMode !== 'complete') {
+    throw new CliError('embedding.mode inline-transformer requires runtime.mode complete: snapshot/artifact runtimes deploy the Workers AI query encoder, which cannot serve inline-transformer builds', 1);
+  }
   if (runtimeMode === 'artifact' && config.runtime?.storage !== 'bundled') throw new CliError('runtime.storage must be bundled for artifact mode in this release', 1);
   if (runtimeMode === 'complete' && config.runtime?.profile !== 'kind3') throw new CliError('runtime.profile must be kind3 for complete mode', 1);
 }
@@ -833,7 +848,8 @@ function dedupeChunks(chunks) {
   return out;
 }
 
-async function embedChunks(chunks, embeddingConfig, log, projectDir) {
+async function embedChunks(chunks, config, log, projectDir) {
+  const embeddingConfig = config.embedding;
   if (process.env.PANCAKE_SEARCH_STUB_EMBEDDINGS === '1') {
     log('Embedding with deterministic local stub (PANCAKE_SEARCH_STUB_EMBEDDINGS=1)');
     return chunks.map((chunk) => hashEmbedding(chunk.text, embeddingConfig.dims));
@@ -851,13 +867,13 @@ async function embedChunks(chunks, embeddingConfig, log, projectDir) {
     throw new CliError('Student mode requires trainStudent.enabled or teacherVectorsPath; refusing to embed passages with the student query encoder.', 2);
   }
   if (embeddingConfig.mode === 'inline-transformer') {
-    if (!embeddingConfig.teacherVectorsPath) {
-      throw new CliError('inline-transformer mode requires teacherVectorsPath until the Node encoder path is extracted.', 2);
+    if (embeddingConfig.teacherVectorsPath) {
+      const vectorPath = path.resolve(projectDir, embeddingConfig.teacherVectorsPath);
+      const vectors = await readF32Vectors(vectorPath, chunks.length, embeddingConfig.dims);
+      log(`Loaded ${vectors.length} inline-transformer document vectors from ${embeddingConfig.teacherVectorsPath}`);
+      return vectors;
     }
-    const vectorPath = path.resolve(projectDir, embeddingConfig.teacherVectorsPath);
-    const vectors = await readF32Vectors(vectorPath, chunks.length, embeddingConfig.dims);
-    log(`Loaded ${vectors.length} inline-transformer document vectors from ${embeddingConfig.teacherVectorsPath}`);
-    return vectors;
+    return embedChunksWithInlineTransformer(chunks, config, log, projectDir);
   }
   const model = MODEL_MAP[embeddingConfig.buildModel];
   let transformers;
@@ -921,6 +937,37 @@ async function trainStudentVectors(chunks, embeddingConfig, log, projectDir) {
   const vectorPath = path.join(outDir, 'docs-vectors.f32');
   const vectors = await readF32Vectors(vectorPath, chunks.length, embeddingConfig.dims);
   log(`Loaded ${vectors.length} teacher document vectors from student trainer`);
+  return vectors;
+}
+
+async function embedChunksWithInlineTransformer(chunks, config, log, projectDir) {
+  const { encoder, vocabPath, weightsPath } = resolveInlineEncoderInputs(config, projectDir);
+  const { default: createEncoder } = await import('./encoder-kernels/encoder.node.mjs');
+  const declaration = inlineEncoderDeclaration(config, encoder);
+  const embedder = await createInlineTransformerEmbedder({
+    declaration,
+    vocabText: await fs.readFile(vocabPath, 'utf8'),
+    blob: await fs.readFile(weightsPath),
+    createEncoder,
+  });
+  const vectors = [];
+  let windowed = 0;
+  try {
+    for (let i = 0; i < chunks.length; i++) {
+      const text = `${declaration.prefixPolicy?.passage || ''}${chunks[i].text}`;
+      const embedded = await embedder.embed(text);
+      if (embedded.windows > 1) windowed++;
+      vectors.push(embedded.vector);
+      if ((i + 1) % 16 === 0 || i + 1 === chunks.length) {
+        log(`Embedded ${i + 1}/${chunks.length} chunks with inline transformer`);
+      }
+    }
+  } finally {
+    embedder.dispose();
+  }
+  if (windowed > 0) {
+    log(`${windowed}/${chunks.length} chunks exceeded the ${embedder.maxSeq}-token encoder window and were mean-pooled across windows`);
+  }
   return vectors;
 }
 

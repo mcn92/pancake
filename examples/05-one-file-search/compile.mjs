@@ -7,7 +7,7 @@
 //
 // This is the kind-1 (student-inline) compiler over the docs corpus; see
 // compile-wiki.mjs for the kind-2 (pinned-external encoder) wiki-scale
-// compiler. Shared layout logic lives in container.mjs.
+// compiler. Shared layout logic lives in create-pancake-search/src/complete-profile.mjs.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -17,7 +17,7 @@ import { assertIdentityMapping, docsAssetPaths } from './search-reader.mjs';
 import {
     MAGIC, HEADER_BYTES, TABLE_ENTRY_BYTES, KIND_NAMES,
     sha256, buildQueryInterpSegment, buildCorpusSegmentFromBuffers, assemblePancakeFile,
-} from './container.mjs';
+} from '../../create-pancake-search/src/complete-profile.mjs';
 
 const require = createRequire(import.meta.url);
 const Pancake = require('../../pancake.js');

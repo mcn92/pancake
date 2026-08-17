@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildQueryInterpSegment, assemblePancakeFile } from './container.mjs';
+import { buildQueryInterpSegment, assemblePancakeFile } from '../../create-pancake-search/src/complete-profile.mjs';
 import { inspect } from './compile.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));

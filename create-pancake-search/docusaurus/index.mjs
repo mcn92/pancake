@@ -90,7 +90,7 @@ function makeConfig(context, options, workDir, outDir) {
     chunking: options.chunking,
     embedding: {
       mode: complete ? 'inline-transformer' : 'student',
-      ...(complete ? { teacherVectorsPath: 'docs-vectors.f32' } : {
+      ...(complete ? (options.completeProfile.vectors ? { teacherVectorsPath: 'docs-vectors.f32' } : {}) : {
         studentModelPath: options.studentModel ? 'student-model.bin' : 'student/student-model.bin',
         ...(options.studentVectors ? { teacherVectorsPath: 'docs-vectors.f32' } : {}),
         ...(options.trainStudent.enabled ? { trainStudent: { ...options.trainStudent, outDir: 'student' } } : {}),
@@ -213,7 +213,7 @@ async function stageCompleteProfileInputs(options, context, workDir) {
     await fs.mkdir(path.dirname(targetPath), { recursive: true });
     await fs.copyFile(sourcePath, targetPath);
   };
-  await copyRequired(options.completeProfile.vectors, 'docs-vectors.f32', 'vectors');
+  if (options.completeProfile.vectors) await copyRequired(options.completeProfile.vectors, 'docs-vectors.f32', 'vectors');
   await copyRequired(options.completeProfile.vocab, path.join('inline-encoder', 'vocab.txt'), 'vocab');
   await copyRequired(options.completeProfile.weights, path.join('inline-encoder', 'encoder-weights.bin'), 'weights');
   if (options.completeProfile.calibration) {
@@ -363,12 +363,15 @@ export function validateOptions({ options }) {
     throw new Error('trainStudent: false requires studentModel to point at a corpus-specific PSTU model');
   }
   if (options?.completeProfile?.enabled === true) {
-    for (const key of ['vectors', 'vocab', 'weights']) {
+    for (const key of ['vocab', 'weights']) {
       if (typeof options.completeProfile[key] !== 'string' || !options.completeProfile[key]) {
         throw new Error(`completeProfile.${key} must be a string path when completeProfile.enabled is true`);
       }
     }
-    if (options.completeProfile.calibration !== undefined && typeof options.completeProfile.calibration !== 'string') {
+    if (options.completeProfile.vectors != null && typeof options.completeProfile.vectors !== 'string') {
+      throw new Error('completeProfile.vectors must be a string path when provided');
+    }
+    if (options.completeProfile.calibration != null && typeof options.completeProfile.calibration !== 'string') {
       throw new Error('completeProfile.calibration must be a string path when provided');
     }
   }

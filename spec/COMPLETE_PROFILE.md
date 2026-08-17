@@ -179,8 +179,12 @@ artifact as data. The encoder bytes are three length-prefixed regions:
 [12, ..) declaration        UTF-8 JSON: model identity, revision, license
                             and attribution (the corpus-provenance rule of
                             contract 4.3 applied to weights), pooling,
-                            normalization, max tokens, and the blob layout
-                            constants (V, P, D, F, L, B, H)
+                            normalization, max tokens, an optional prefix
+                            policy ({passage, query} strings; readers MUST
+                            prepend the query prefix before embedding, so
+                            queries land in the same space as prefixed
+                            passages; absent means empty), and the blob
+                            layout constants (V, P, D, F, L, B, H)
 [...]    vocab              UTF-8, one WordPiece token per line
 [...]    weight blob        block-affine u8 matrices + f32 norm params in
                             the declared deterministic layout

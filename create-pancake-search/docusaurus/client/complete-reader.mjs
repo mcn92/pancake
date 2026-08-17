@@ -1,5 +1,5 @@
-import { createWordPiece } from './encoder-kernels/wordpiece.mjs';
-import createEncoder from './encoder-kernels/encoder.mjs';
+import { createInlineTransformerEmbedder, parseInlineTransformerEncoder } from '../../src/inline-transformer.mjs';
+import createEncoder from '../../src/encoder-kernels/encoder.mjs';
 
 const MAGIC = 0x31465350;
 const HEADER_BYTES = 64;
@@ -151,40 +151,8 @@ export async function openCompletePancake(bytes, options = {}) {
   const encoderBytes = qiBytes.subarray(16, 16 + encoderLen);
   const calibrationJson = JSON.parse(decoder.decode(qiBytes.subarray(16 + encoderLen)));
 
-  const encView = viewOf(encoderBytes);
-  const declLen = encView.getUint32(0, true);
-  const vocabLen = encView.getUint32(4, true);
-  const blobLen = encView.getUint32(8, true);
-  if (12 + declLen + vocabLen + blobLen !== encoderBytes.length) throw new Error('.pancake inline-encoder layout is inconsistent');
-  const declaration = JSON.parse(decoder.decode(encoderBytes.subarray(12, 12 + declLen)));
-  const tokenizer = createWordPiece(decoder.decode(encoderBytes.subarray(12 + declLen, 12 + declLen + vocabLen)));
-  const blob = encoderBytes.subarray(12 + declLen + vocabLen);
-
-  const EM = await createEncoder();
-  const dim = declaration.dim;
-  const maxSeq = Math.min(declaration.maxTokens || 128, 128);
-  const blobPtr = EM._malloc(blob.length);
-  EM.HEAPU8.set(blob, blobPtr);
-  const idsPtr = EM._malloc(maxSeq * 4);
-  const hiddenPtr = EM._malloc(maxSeq * dim * 4);
-
-  const embed = async (text) => {
-    let tokenIds = tokenizer.encode(text);
-    if (tokenIds.length > maxSeq) tokenIds = [...tokenIds.slice(0, maxSeq - 1), tokenIds[tokenIds.length - 1]];
-    new Int32Array(EM.HEAP32.buffer, idsPtr, tokenIds.length).set(tokenIds);
-    const rc = EM._encoder_forward(blobPtr, idsPtr, tokenIds.length, hiddenPtr, 0);
-    if (rc !== tokenIds.length) throw new Error(`inline encoder failed: ${rc}`);
-    const hidden = new Float32Array(EM.HEAPF32.buffer, hiddenPtr, tokenIds.length * dim);
-    const pooled = new Float32Array(dim);
-    for (let t = 0; t < tokenIds.length; t++) {
-      for (let d = 0; d < dim; d++) pooled[d] += hidden[t * dim + d];
-    }
-    let norm = 0;
-    for (let d = 0; d < dim; d++) { pooled[d] /= tokenIds.length; norm += pooled[d] ** 2; }
-    norm = Math.sqrt(norm);
-    for (let d = 0; d < dim; d++) pooled[d] /= norm;
-    return { vector: pooled, text };
-  };
+  const { declaration, vocabText, blob } = parseInlineTransformerEncoder(encoderBytes);
+  const embedder = await createInlineTransformerEmbedder({ declaration, vocabText, blob, createEncoder });
 
   const bloomBytes = Uint8Array.from(atob(calibrationJson.vocabBloomBase64 || ''), (c) => c.charCodeAt(0));
   const scorer = createAbstentionScorer(calibrationJson.asset, bloomBytes);
@@ -213,19 +181,21 @@ export async function openCompletePancake(bytes, options = {}) {
     },
     async query(text, queryOptions = {}) {
       const k = Number.isInteger(queryOptions.k) && queryOptions.k > 0 ? queryOptions.k : 8;
-      const context = await embed(String(text || '').trim());
+      const raw = String(text || '').trim();
+      const context = await embedder.embed(`${declaration.prefixPolicy?.query || ''}${raw}`);
       const hits = (await sketch.search(context.vector, k, {
         rerank: queryOptions.rerank ?? options.rerank,
         parallelism: queryOptions.parallelism ?? options.rerankParallelism,
         gap: queryOptions.gap ?? options.rerankGap,
       })).results;
-      const scored = scorer ? scorer.score(context.text, hits) : null;
+      const scored = scorer ? scorer.score(raw, hits) : null;
       const quality = scored ? { matchQuality: verdicts[scored.verdict] || scored.verdict, confidence: scored.p } : { matchQuality: 'unscored' };
       const returned = quality.matchQuality === 'none' ? [] : hits;
       const results = await Promise.all(returned.map(async (hit) => ({ id: hit.id, distance: hit.distance, ...await hydrate(hit.id) })));
       return { ...quality, results };
     },
     async close() {
+      embedder.dispose();
       await sketch.close();
     },
   };

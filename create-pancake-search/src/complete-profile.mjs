@@ -5,6 +5,7 @@ export const MAGIC = 0x31465350; // "PSF1"
 export const HEADER_BYTES = 64;
 export const TABLE_ENTRY_BYTES = 48;
 export const KINDS = { index: 1, corpus: 2, 'query-interp': 3, evaluation: 4 };
+export const KIND_NAMES = Object.fromEntries(Object.entries(KINDS).map(([name, kind]) => [kind, name]));
 
 export const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest();
 export const align16 = (n) => Math.ceil(n / 16) * 16;

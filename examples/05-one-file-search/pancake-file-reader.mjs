@@ -154,6 +154,7 @@ export async function openPancakeFile(input, options = {}) {
         let embed;
         let scoreQuality;
         let encoderInfo;
+        let disposeEncoder = () => {};
         if (qiKind === 1) {
             const student = loadStudentModel(encoderBytes);
             encoderInfo = { kind: 'student-inline-v1' };
@@ -189,58 +190,33 @@ export async function openPancakeFile(input, options = {}) {
             };
         } else if (qiKind === 3) {
             // inline-transformer-v1: declaration + vocab + weight blob as
-            // segment data; the kernels ship with this reader (dynamic
-            // imports so kind-1/2 files never load them).
-            const qiv = viewOf(encoderBytes);
-            const declLen = qiv.getUint32(0, true);
-            const vocabLen = qiv.getUint32(4, true);
-            const blobLen = qiv.getUint32(8, true);
-            if (12 + declLen + vocabLen + blobLen !== encoderBytes.length) {
-                throw new Error('.pancake inline-encoder layout is inconsistent');
-            }
-            const declaration = JSON.parse(decoder.decode(encoderBytes.subarray(12, 12 + declLen)));
-            encoderInfo = declaration;
-            const vocabText = decoder.decode(encoderBytes.subarray(12 + declLen, 12 + declLen + vocabLen));
-            const blob = encoderBytes.subarray(12 + declLen + vocabLen);
-
-            let createWordPiece;
+            // segment data; parsing and the embed loop live in the shared
+            // create-pancake-search module so this reader cannot drift from
+            // the packaged one (dynamic imports so kind-1/2 files never load
+            // the kernels).
+            let parseInlineTransformerEncoder;
+            let createInlineTransformerEmbedder;
             let createEncoder;
             try {
-                ({ createWordPiece } = await import('./encoder-spike/wordpiece.mjs'));
-                createEncoder = (await import('./encoder-spike/encoder.mjs')).default;
+                ({ parseInlineTransformerEncoder, createInlineTransformerEmbedder } =
+                    await import('../../create-pancake-search/src/inline-transformer.mjs'));
+                createEncoder = globalThis.process?.versions?.node
+                    ? (await import('../../create-pancake-search/src/encoder-kernels/encoder.node.mjs')).default
+                    : (await import('../../create-pancake-search/src/encoder-kernels/encoder.mjs')).default;
             } catch (err) {
-                throw new Error('kind-3 artifact requires the reader encoder kernels at '
-                    + 'examples/05-one-file-search/encoder-spike/encoder.mjs and encoder.wasm; '
-                    + 'run examples/05-one-file-search/encoder-spike/build-encoder.sh to rebuild them',
+                throw new Error('kind-3 artifact requires the shared inline-transformer reader at '
+                    + 'create-pancake-search/src/inline-transformer.mjs and its kernels at '
+                    + 'create-pancake-search/src/encoder-kernels/; run '
+                    + 'examples/05-one-file-search/encoder-spike/build-encoder.sh to rebuild the kernels',
                 { cause: err });
             }
-            const tokenizer = createWordPiece(vocabText);
-            const EM = await createEncoder();
-            const dim = declaration.dim;
-            const maxSeq = 128;
-            const blobPtr = EM._malloc(blob.length);
-            EM.HEAPU8.set(blob, blobPtr);
-            const idsPtr = EM._malloc(maxSeq * 4);
-            const hiddenPtr = EM._malloc(maxSeq * dim * 4);
-
+            const { declaration, vocabText, blob } = parseInlineTransformerEncoder(encoderBytes);
+            encoderInfo = declaration;
+            const embedder = await createInlineTransformerEmbedder({ declaration, vocabText, blob, createEncoder });
+            disposeEncoder = () => embedder.dispose();
             embed = async (text) => {
-                let tokenIds = tokenizer.encode(text);
-                if (tokenIds.length > maxSeq) {
-                    tokenIds = [...tokenIds.slice(0, maxSeq - 1), tokenIds[tokenIds.length - 1]];
-                }
-                new Int32Array(EM.HEAP32.buffer, idsPtr, tokenIds.length).set(tokenIds);
-                const rc = EM._encoder_forward(blobPtr, idsPtr, tokenIds.length, hiddenPtr, 0);
-                if (rc !== tokenIds.length) throw new Error(`inline encoder failed: ${rc}`);
-                const hidden = new Float32Array(EM.HEAPF32.buffer, hiddenPtr, tokenIds.length * dim);
-                const pooled = new Float32Array(dim);
-                for (let t = 0; t < tokenIds.length; t++) {
-                    for (let d = 0; d < dim; d++) pooled[d] += hidden[t * dim + d];
-                }
-                let norm = 0;
-                for (let d = 0; d < dim; d++) { pooled[d] /= tokenIds.length; norm += pooled[d] ** 2; }
-                norm = Math.sqrt(norm);
-                for (let d = 0; d < dim; d++) pooled[d] /= norm;
-                return { vector: pooled, text };
+                const { vector } = await embedder.embed(`${declaration.prefixPolicy?.query || ''}${text}`);
+                return { vector, text };
             };
             const bloomBytes = typeof Buffer !== 'undefined'
                 ? Buffer.from(calibrationJson.vocabBloomBase64, 'base64')
@@ -354,6 +330,7 @@ export async function openPancakeFile(input, options = {}) {
             },
 
             async close() {
+                disposeEncoder();
                 await sketch.close();
                 if (owned) await source.close();
             },

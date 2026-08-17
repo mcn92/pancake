@@ -6,7 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import createModule from './encoder.mjs';
+import createModule from './encoder.node.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const REAL = path.join(here, 'real');

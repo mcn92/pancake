@@ -1,3 +1,8 @@
+// Minimal BERT WordPiece tokenizer (uncased): lowercase, accent-strip via
+// NFD, punctuation/CJK splitting, greedy longest-match with ## pieces,
+// [CLS]/[SEP] framing. Parity-tested against the HF tokenizer on the wiki
+// eval queries; pure JS so it runs wherever the reader runs.
+
 export function createWordPiece(vocabText) {
   const vocab = new Map();
   vocabText.split('\n').forEach((token, id) => vocab.set(token, id));

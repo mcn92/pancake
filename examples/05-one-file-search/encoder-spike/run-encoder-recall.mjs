@@ -7,7 +7,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import createModule from './encoder.mjs';
+import createModule from './encoder.node.mjs';
 import { createWordPiece } from './wordpiece.mjs';
 import { openPancakeFile } from '../pancake-file-reader.mjs';
 

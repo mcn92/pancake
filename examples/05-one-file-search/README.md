@@ -77,7 +77,9 @@ smoke, provenance, identity, abstention, and embedded-evaluation checks.
   Node opens a path, the browser passes an HTTP range source. Verifies the
   manifest identity and eager segments at open; the sketch tier and corpus
   records stay lazy. Kind-1 files use a pure-JS query path; kind-3 files load
-  the reader's transformer WASM kernels.
+  the shared inline-transformer module and WASM kernels from
+  `create-pancake-search/src/` (rebuilt and synced by
+  `encoder-spike/build-encoder.sh`).
 - `web/` — the browser host: an input box over the reader, showing per-query
   range requests and bytes. `serve.mjs` is the entire hosting requirement:
   static files + `Range` support.
@@ -86,8 +88,9 @@ smoke, provenance, identity, abstention, and embedded-evaluation checks.
   one-file reader is tested against.
 - `abstention.mjs` — calibration scoring shared by both readers (extracted
   from 03's worker.js).
-- `container.mjs` — shared container assembly (canonical JSON, header +
-  table layout, streamed writes) used by both compilers.
+- `../../create-pancake-search/src/complete-profile.mjs` — shared container
+  assembly (canonical JSON, header + table layout, streamed writes) used by
+  both compilers.
 - `compile-wiki.mjs` / `test-wiki.mjs` — the wiki-scale compiler and its
   acceptance gate (see "Wiki scale" above).
 
