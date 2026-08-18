@@ -65,6 +65,8 @@ pancake_gt_snapshot_*.tar.gz
 pancake_gt_snapshot_*.tar.gz.sha256
 
 # Worker build output
+docs-site/.docusaurus/
+docs-site/build/
 examples/reference-worker/dist/
 examples/reference-worker/.dev.vars
 examples/03-edge-docs-search/.dev.vars

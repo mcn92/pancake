@@ -79,3 +79,23 @@ jobs:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '0'
       - run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run test:browser
+
+  docs-site-build:
+    name: Docusaurus docs site (kind-3 search)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+      - run: npm ci
+        working-directory: docs-site
+      - run: npm run build
+        working-directory: docs-site
+      - name: Assert kind-3 search artifact
+        run: |
+          test -f build/pancake-search/search.pancake
+          node -e "const fs=require('fs'); const p='build/pancake-search/search.pancake'; const s=fs.statSync(p).size; if (s < 20*1024*1024) throw new Error('search.pancake is unexpectedly small: '+s); console.log(p, (s/1048576).toFixed(2)+' MiB')"
+        working-directory: docs-site

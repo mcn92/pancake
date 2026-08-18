@@ -1,0 +1,23 @@
+{
+  "name": "pancake-docs-site",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "docusaurus build",
+    "clear": "docusaurus clear",
+    "serve": "docusaurus serve --host 127.0.0.1",
+    "start": "docusaurus start --host 127.0.0.1"
+  },
+  "dependencies": {
+    "@docusaurus/core": "3.10.2",
+    "@docusaurus/preset-classic": "3.10.2",
+    "create-pancake-search": "file:../create-pancake-search",
+    "pancake-wasm": "file:..",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=20 <24"
+  }
+}

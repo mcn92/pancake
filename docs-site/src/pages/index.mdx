@@ -1,0 +1,29 @@
+---
+title: Pancake
+description: Pancake packages semantic search into portable artifacts that verify themselves and run at the edge.
+---
+
+import Link from '@docusaurus/Link';
+
+# Pancake
+
+Pancake builds semantic search artifacts that can be moved, hosted, range-read, verified, and queried without rebuilding the original index. The current focus is the complete `.pancake` profile: index, corpus rows, query encoder declaration or inline encoder, calibration metadata, and evaluation data in one file.
+
+<div className="pancake-home-grid">
+  <div className="pancake-home-panel">
+    <h2>One File</h2>
+    <p>The complete profile keeps the sketch index, row corpus, query interpretation, and verification metadata together.</p>
+  </div>
+  <div className="pancake-home-panel">
+    <h2>Inline Encoder</h2>
+    <p>Kind 3 carries a quantized MiniLM encoder as data while the reader supplies small WASM kernels.</p>
+  </div>
+  <div className="pancake-home-panel">
+    <h2>Self Search</h2>
+    <p>This site is configured to compile its own documentation into a `.pancake` search artifact during build.</p>
+  </div>
+</div>
+
+<p>
+  <Link className="button button--primary" to="/docs/intro">Read the docs</Link>
+</p>

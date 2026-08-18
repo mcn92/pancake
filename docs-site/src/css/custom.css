@@ -1,0 +1,31 @@
+:root {
+  --ifm-color-primary: #26635b;
+  --ifm-color-primary-dark: #225950;
+  --ifm-color-primary-darker: #1f534b;
+  --ifm-color-primary-darkest: #19443d;
+  --ifm-color-primary-light: #2c7168;
+  --ifm-color-primary-lighter: #307a70;
+  --ifm-color-primary-lightest: #398f83;
+  --ifm-font-family-base: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.hero {
+  padding: 4rem 0 3rem;
+}
+
+.hero__title {
+  letter-spacing: 0;
+}
+
+.pancake-home-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin-top: 2rem;
+}
+
+.pancake-home-panel {
+  border: 1px solid var(--ifm-color-emphasis-200);
+  border-radius: 8px;
+  padding: 1rem;
+}
