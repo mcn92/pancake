@@ -15,7 +15,9 @@
             "type": { "const": "folder" },
             "path": { "type": "string" },
             "include": { "type": "array", "items": { "type": "string" } },
-            "exclude": { "type": "array", "items": { "type": "string" } }
+            "exclude": { "type": "array", "items": { "type": "string" } },
+            "routeBaseUrl": { "type": "string" },
+            "routePrefix": { "type": "string" }
           },
           "additionalProperties": false
         },
@@ -99,6 +101,25 @@
             "normalize": { "type": "boolean" }
           },
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["mode", "dims"],
+          "properties": {
+            "mode": { "const": "inline-transformer" },
+            "teacherVectorsPath": { "type": "string" },
+            "dims": { "const": 384 },
+            "prefixPolicy": {
+              "type": "object",
+              "properties": {
+                "passage": { "type": "string" },
+                "query": { "type": "string" }
+              }
+            },
+            "pooling": { "enum": ["mean"] },
+            "normalize": { "type": "boolean" }
+          },
+          "additionalProperties": false
         }
       ]
     },
@@ -118,9 +139,27 @@
       "type": "object",
       "required": ["mode", "storage"],
       "properties": {
-        "mode": { "enum": ["snapshot", "artifact"] },
+        "mode": { "enum": ["snapshot", "artifact", "complete"] },
         "storage": { "enum": ["bundled"] },
-        "artifactPath": { "type": "string" }
+        "artifactPath": { "type": "string" },
+        "profile": { "enum": ["kind3"] },
+        "fileName": { "type": "string" },
+        "inlineEncoder": {
+          "type": "object",
+          "required": ["vocabPath", "weightsPath"],
+          "properties": {
+            "vocabPath": { "type": "string" },
+            "weightsPath": { "type": "string" },
+            "calibrationPath": { "type": "string" },
+            "model": { "type": "string" },
+            "maxTokens": { "type": "integer", "minimum": 1 },
+            "license": { "type": "string" },
+            "attribution": { "type": "string" },
+            "layout": { "type": "object" },
+            "declaration": { "type": "object" }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },

@@ -410,6 +410,7 @@ async function buildAssets(projectDir, config, options = {}) {
     const suffix = dropped ? ` Dropped as too short: ${dropped}${chunked.dropped.length > 8 ? ', ...' : ''}.` : '';
     throw new CliError(`Chunking produced 0 chunks. Chunking counts whitespace-separated tokens and drops documents under 25 of them.${suffix} Next: use longer whitespace-delimited content or adjust source filters.`, 1);
   }
+  applySourceRoutes(chunks, config);
   log(`Ingested ${docs.length} docs -> ${chunks.length} chunks`);
 
   const vectors = await embedChunks(chunks, config, log, projectDir);
@@ -649,7 +650,7 @@ async function ingestFolder(root, source, log) {
     try {
       const text = await fs.readFile(file, 'utf8');
       const extracted = extractByExtension(text, file);
-      if (extracted.text.trim()) docs.push({ id: docs.length, sourcePath: rel, title: extracted.title || path.basename(file), text: extracted.text });
+      if (extracted.text.trim()) docs.push({ id: docs.length, sourcePath: rel, title: extracted.title || path.basename(file), slug: extracted.slug || null, text: extracted.text });
     } catch (error) {
       log(`warn: skipped unreadable file ${rel}: ${error.message}`);
     }
@@ -761,8 +762,27 @@ async function readLimitedText(response, maxBytes) {
 
 function extractByExtension(text, file) {
   if (/\.html?$/i.test(file)) return extractHtml(text);
+  if (/\.mdx?$/i.test(file)) return extractMarkdown(text);
   const title = (text.match(/^#\s+(.+)$/m) || [])[1];
   return { title, text: stripMarkdown(text) };
+}
+
+function extractMarkdown(text) {
+  let body = String(text || '').replace(/\r/g, '');
+  let slug = null;
+  let title = null;
+  const frontmatter = body.match(/^---\n([\s\S]*?)\n---(?:\n|$)/);
+  if (frontmatter) {
+    body = body.slice(frontmatter[0].length);
+    slug = (frontmatter[1].match(/^slug:\s*["']?([^"'\n]+?)["']?\s*$/m) || [])[1] || null;
+    title = (frontmatter[1].match(/^title:\s*["']?([^"'\n]+?)["']?\s*$/m) || [])[1] || null;
+  }
+  body = body
+    .replace(/^import\s[^\n]*$/gm, ' ')
+    .replace(/^export\s[^\n]*$/gm, ' ')
+    .replace(/<\/?[A-Z][A-Za-z0-9.]*(?:\s[^>]*?)?\/?>/g, ' ');
+  if (!title) title = (body.match(/^#\s+(.+)$/m) || [])[1];
+  return { title, slug, text: stripMarkdown(body) };
 }
 
 function extractHtml(html) {
@@ -844,6 +864,7 @@ function chunkDocs(docs, options) {
         url: doc.url || doc.sourcePath,
         anchor: '',
         sourcePath: doc.sourcePath || doc.url,
+        slug: doc.slug || null,
         text: slice.join(' '),
       });
       if (start + target >= tokens.length) break;
@@ -866,6 +887,37 @@ function dedupeChunks(chunks) {
     out.push({ ...chunk, id: out.length });
   }
   return out;
+}
+
+function applySourceRoutes(chunks, config) {
+  const baseUrl = config.source?.routeBaseUrl;
+  if (!baseUrl) return;
+  const routePrefix = String(config.source.routePrefix || '').replace(/^\/+|\/+$/g, '');
+  const join = (...parts) => {
+    const prefix = String(baseUrl || '/').endsWith('/') ? String(baseUrl || '/') : `${baseUrl}/`;
+    const suffix = parts
+      .map((part) => String(part || '').replace(/^\/+|\/+$/g, ''))
+      .filter(Boolean)
+      .join('/');
+    return `${prefix}${suffix}`;
+  };
+  for (const chunk of chunks) {
+    let route = String(chunk.sourcePath || chunk.url || '').replace(/\\/g, '/').replace(/^\.\//, '');
+    route = route.replace(/\.(md|mdx|html|txt)$/i, '');
+    // Docusaurus route conventions: NN- prefixes order the sidebar but are
+    // stripped from routes; index/README docs become the directory route.
+    route = route.split('/').map((segment) => segment.replace(/^\d+-/, '')).join('/');
+    route = route.replace(/(^|\/)(index|readme)$/i, '$1').replace(/\/+$/, '');
+    if (chunk.slug) {
+      // Front-matter slug: absolute replaces the whole doc path (still under
+      // routePrefix); relative replaces the last path segment.
+      const slug = String(chunk.slug).replace(/\\/g, '/');
+      route = slug.startsWith('/')
+        ? slug
+        : [route.split('/').slice(0, -1).join('/'), slug.replace(/^\.\//, '')].filter(Boolean).join('/');
+    }
+    chunk.url = join(routePrefix, route);
+  }
 }
 
 async function embedChunks(chunks, config, log, projectDir) {
@@ -962,7 +1014,14 @@ async function trainStudentVectors(chunks, embeddingConfig, log, projectDir) {
 
 async function embedChunksWithInlineTransformer(chunks, config, log, projectDir) {
   const { encoder, vocabPath, weightsPath } = resolveInlineEncoderInputs(config, projectDir);
-  const { default: createEncoder } = await import('./encoder-kernels/encoder.node.mjs');
+  // The web glue with an explicit wasmBinary, not encoder.node.mjs: when the
+  // Docusaurus plugin runs this module it is loaded through jiti's CJS
+  // transform, which breaks the node glue's createRequire bootstrap
+  // ("require is not a function"). The web glue does no filesystem access,
+  // so it works under both native ESM and jiti.
+  const { default: createEncoderModule } = await import('./encoder-kernels/encoder.mjs');
+  const encoderWasm = await fs.readFile(new URL('./encoder-kernels/encoder.wasm', import.meta.url));
+  const createEncoder = () => createEncoderModule({ wasmBinary: encoderWasm });
   const declaration = inlineEncoderDeclaration(config, encoder);
   const embedder = await createInlineTransformerEmbedder({
     declaration,

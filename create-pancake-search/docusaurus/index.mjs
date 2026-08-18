@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import fssync from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildSearchAssets } from '../src/cli.mjs';
@@ -31,8 +32,10 @@ function normalizeOptions(options = {}) {
     assetBase: trimSlashes(options.assetBase || 'pancake-search'),
     mount: options.mount !== false,
     workDir: options.workDir || path.join('.docusaurus', 'pancake-search'),
+    sourcePath: options.sourcePath || null,
+    sourceRouteBase: options.sourceRouteBase ?? 'docs',
     name: options.name,
-    include: options.include || ['**/*.html'],
+    include: options.include || (options.sourcePath ? ['**/*.md', '**/*.mdx'] : ['**/*.html']),
     // The build-output 404 page would otherwise be indexed as a document.
     exclude: options.exclude || ['404.html'],
     stubEmbeddings: options.stubEmbeddings === true,
@@ -78,14 +81,21 @@ function normalizeOptions(options = {}) {
 
 function makeConfig(context, options, workDir, outDir) {
   const complete = options.completeProfile.enabled;
+  const sourceRoot = options.sourcePath
+    ? path.resolve(context.siteDir, options.sourcePath)
+    : outDir;
   return {
     version: 1,
     name: options.name || `${slugifyName(context.siteConfig?.title || path.basename(context.siteDir))}-search`,
     source: {
       type: 'folder',
-      path: path.relative(workDir, outDir) || '.',
+      path: path.relative(workDir, sourceRoot) || '.',
       include: options.include,
       exclude: options.exclude,
+      ...(options.sourcePath ? {
+        routeBaseUrl: context.siteConfig?.baseUrl || '/',
+        routePrefix: options.sourceRouteBase,
+      } : {}),
     },
     chunking: options.chunking,
     embedding: {
@@ -144,7 +154,11 @@ function routeForBuildPath(buildPath, baseUrl) {
   return joinSitePath(baseUrl, route) || baseUrl;
 }
 
-async function rewriteCorpusUrls(assetDir, context) {
+async function rewriteCorpusUrls(assetDir, context, options) {
+  // In sourcePath mode the CLI's applySourceRoutes already wrote final site
+  // routes (baseUrl + routePrefix + slug-aware doc path) into chunk.url;
+  // rewriting again would prefix baseUrl/routePrefix a second time.
+  if (options.sourcePath) return;
   const corpusPath = path.join(assetDir, 'corpus.json');
   const corpus = JSON.parse(await fs.readFile(corpusPath, 'utf8'));
   const baseUrl = context.siteConfig?.baseUrl || '/';
@@ -291,9 +305,44 @@ function buildStubStudentModel() {
   return out;
 }
 
+function resolveArtifactModule(context) {
+  const attempts = [];
+  // Prefer real module resolution: from the consumer's site first, then from
+  // this plugin (pancake-wasm is create-pancake-search's own dependency, so
+  // the plugin-scoped resolve works under pnpm/strict node_modules layouts).
+  for (const resolve of [
+    () => createRequire(path.join(context.siteDir, 'package.json')).resolve('pancake-wasm/artifact'),
+    () => createRequire(import.meta.url).resolve('pancake-wasm/artifact'),
+  ]) {
+    try {
+      return resolve();
+    } catch (error) {
+      attempts.push(error.message.split('\n')[0]);
+    }
+  }
+  // Monorepo dev fallback: the repo root IS pancake-wasm, with no
+  // node_modules self-reference to resolve through.
+  const repoArtifactModule = path.resolve(context.siteDir, '..', 'pancake-artifact.js');
+  if (fssync.existsSync(repoArtifactModule)) return repoArtifactModule;
+  throw new Error(
+    `docusaurus-plugin-pancake-search could not resolve pancake-wasm/artifact; install pancake-wasm alongside create-pancake-search. Tried: ${attempts.join(' | ')}`
+  );
+}
+
 export default function pancakeDocusaurusPlugin(context, rawOptions = {}) {
   const options = normalizeOptions(rawOptions);
   const workDir = path.resolve(context.siteDir, options.workDir);
+  const siteArtifactModule = resolveArtifactModule(context);
+  // Docusaurus's babel-loader excludes node_modules. When the artifact module
+  // resolves outside it (the monorepo's file:-linked layout realpaths to the
+  // repo root), babel transpiles the CommonJS file with sourceType module,
+  // webpack flags it as ESM, and the widget dies at runtime on its
+  // module.exports assignment. Keep the alias and webpack's resolution on
+  // the symlinked node_modules side in that layout.
+  const symlinkedArtifact = path.join(context.siteDir, 'node_modules', 'pancake-wasm', 'pancake-artifact.js');
+  const useSymlinkPaths = !siteArtifactModule.includes(`${path.sep}node_modules${path.sep}`)
+    && fssync.existsSync(symlinkedArtifact);
+  const artifactAlias = useSymlinkPaths ? symlinkedArtifact : siteArtifactModule;
 
   return {
     name: 'docusaurus-plugin-pancake-search',
@@ -322,7 +371,7 @@ export default function pancakeDocusaurusPlugin(context, rawOptions = {}) {
           skipBundleSizeCheck: true,
         })
       );
-      await rewriteCorpusUrls(assetDir, context);
+      await rewriteCorpusUrls(assetDir, context, options);
       const studentModelInfo = await publishStudentModel(options, context, workDir, assetDir);
       await copyRuntimeManifest(assetDir, context, options, studentModelInfo);
     },
@@ -351,10 +400,23 @@ export default function pancakeDocusaurusPlugin(context, rawOptions = {}) {
     },
 
     configureWebpack(config, isServer) {
-      if (isServer) return {};
-      // pancake-wasm/artifact is pure JS in the browser, but its Node-only
-      // file helpers statically reference fs/crypto, which webpack must stub.
-      return { resolve: { fallback: { fs: false, crypto: false } } };
+      return {
+        module: {
+          rules: [
+            {
+              test: /pancake-(artifact|errors)\.js$/,
+              type: 'javascript/auto',
+            },
+          ],
+        },
+        resolve: {
+          ...(useSymlinkPaths ? { symlinks: false } : {}),
+          alias: { 'pancake-wasm/artifact': artifactAlias },
+          // pancake-wasm/artifact is pure JS in the browser, but its Node-only
+          // file helpers statically reference fs/crypto, which webpack must stub.
+          ...(isServer ? {} : { fallback: { fs: false, crypto: false } }),
+        },
+      };
     },
 
     getClientModules() {

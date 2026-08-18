@@ -1,5 +1,9 @@
 import { createInlineTransformerEmbedder, parseInlineTransformerEncoder } from '../../src/inline-transformer.mjs';
 import createEncoder from '../../src/encoder-kernels/encoder.mjs';
+// Bare specifier so the import resolves in npm consumer installs; the plugin's
+// webpack alias points it at the site-resolved module (the repo root copy when
+// building inside the pancake monorepo).
+import * as artifactModule from 'pancake-wasm/artifact';
 
 const MAGIC = 0x31465350;
 const HEADER_BYTES = 64;
@@ -47,15 +51,12 @@ function windowSource(source, offset, length) {
   };
 }
 
-async function loadArtifactContract() {
-  const mod = await import('pancake-wasm/artifact');
-  const contract = mod.default || mod;
-  if (contract.PancakeSketchArtifact) return contract;
-  if (globalThis.process?.versions?.node) {
-    const fallback = await import(new URL('../../../pancake-artifact.js', import.meta.url).href);
-    return fallback.default || fallback;
+function loadArtifactContract() {
+  for (const contract of [artifactModule, artifactModule?.default, artifactModule?.default?.default]) {
+    if (contract?.PancakeSketchArtifact) return contract;
   }
-  throw new Error('pancake-wasm/artifact does not expose PancakeSketchArtifact');
+  const keys = (value) => value && typeof value === 'object' ? Object.keys(value).join(',') : typeof value;
+  throw new Error(`pancake-wasm/artifact does not expose PancakeSketchArtifact (${keys(artifactModule)} / ${keys(artifactModule?.default)})`);
 }
 
 function createAbstentionScorer(asset, bloomBytes) {
@@ -101,7 +102,7 @@ function createAbstentionScorer(asset, bloomBytes) {
 }
 
 export async function openCompletePancake(bytes, options = {}) {
-  const { PancakeSketchArtifact } = await loadArtifactContract();
+  const { PancakeSketchArtifact } = loadArtifactContract();
   const source = memorySource(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
   const header = new Uint8Array(await source.read(0, HEADER_BYTES));
   const headerView = viewOf(header);
