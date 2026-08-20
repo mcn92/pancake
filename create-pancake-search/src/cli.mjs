@@ -60,6 +60,14 @@ class CliError extends Error {
 
 export async function main(argv) {
   const parsed = parseArgs(argv.slice(2));
+  if (parsed.positionals[0] === 'doctor') {
+    const { runDoctor } = await import('./doctor.mjs');
+    const report = await runDoctor(parsed.positionals[1]);
+    if (report.failures) {
+      throw Object.assign(new Error('doctor found failing hosting checks'), { exitCode: 1 });
+    }
+    return;
+  }
   const command = parsed.positionals[0] === 'rebuild' ? 'rebuild' : 'create';
   if (parsed.flags.help || parsed.flags.h) {
     printHelp();
@@ -78,6 +86,7 @@ function printHelp() {
 Usage:
   npm create pancake-search -- --name my-docs-search --source ./docs --no-deploy --yes
   create-pancake-search rebuild --yes
+  create-pancake-search doctor <url>   # probe artifact hosting: Range/206, cache-key ranges, h2, ETag, RTT
 
 Flags:
   --name <dir>          Generated project directory
