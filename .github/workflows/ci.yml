@@ -80,6 +80,41 @@ jobs:
       - run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run test:browser
 
+  native-build:
+    # The native addon was previously never compiled in CI, so the x86 ISA
+    # #elif chains had no gate at all (the AVX-512 build silently dropped
+    # uint8_dot to scalar and nothing could notice). Two layers here: the
+    # ISA compile sweep proves every define combination still compiles —
+    # including AVX-512, which runners may not execute — and the build+test
+    # runs whatever -march=native selects on this runner.
+    name: Native addon (build, test, ISA compile sweep)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: ISA compile sweep over src/ headers
+        run: |
+          printf '#include "uint8_float_hnsw.hpp"\n#include "float_hnsw.hpp"\nint main() { return 0; }\n' > /tmp/isa_check.cpp
+          set -e
+          for FLAGS in \
+            "-mavx512f -mavx512bw -DPANCAKE_ENABLE_AVX512_SIMD -DPANCAKE_ENABLE_AVX2_SIMD -DPANCAKE_ENABLE_SSE2_SIMD" \
+            "-mavx2 -DPANCAKE_ENABLE_AVX2_SIMD -DPANCAKE_ENABLE_SSE2_SIMD" \
+            "-msse2 -DPANCAKE_ENABLE_SSE2_SIMD" \
+            ""; do
+            g++ -std=c++17 -O2 -Isrc $FLAGS -fsyntax-only /tmp/isa_check.cpp
+            echo "compiles: [${FLAGS:-scalar}]"
+          done
+      - name: Report runner SIMD capability
+        run: grep -o 'avx512[a-z]*\|avx2\|sse2' /proc/cpuinfo | sort -u | tr '\n' ' '; echo
+      - run: npm ci
+        working-directory: native
+      - run: npm run build
+        working-directory: native
+      - run: npm test
+        working-directory: native
+
   docs-site-build:
     name: Docusaurus docs site (kind-3 search)
     runs-on: ubuntu-latest

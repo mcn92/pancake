@@ -1546,7 +1546,12 @@ private:
         sum = static_cast<uint32_t>(
             wasm_i32x4_extract_lane(acc, 0) + wasm_i32x4_extract_lane(acc, 1) +
             wasm_i32x4_extract_lane(acc, 2) + wasm_i32x4_extract_lane(acc, 3));
-#elif defined(UINT8_HNSW_AVX2_SIMD)
+#elif defined(UINT8_HNSW_AVX2_SIMD) || defined(UINT8_HNSW_AVX512_SIMD)
+        // This kernel has no 512-bit variant yet, and the ISA defines are an
+        // exclusive #elif chain: without this alternation, an AVX-512 build
+        // (which undefines the AVX2 macro) fell through to the scalar tail
+        // for the full width. AVX-512F implies AVX2, so the 256-bit madd
+        // path below always compiles and runs on AVX-512 targets.
         __m256i acc = _mm256_setzero_si256();
         for (; d + 32 <= dims_; d += 32) {
             __m128i va0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(da + d));
