@@ -57,9 +57,13 @@ check('probe hydration matches source corpus', probe.results.every((r) => {
 
 // 3. Parity with the six-asset spike facade on the manifest sample queries.
 const spike = await openDocsSearch(docsAssetPaths());
+// The spike facade reranks at its manifest's efSearch; the artifact now
+// carries a measured (usually smaller) operating point. Parity is about
+// same components → same answers, so compare at the same explicit C.
+const spikeRerank = JSON.parse(fs.readFileSync(docsAssetPaths().manifestPath, 'utf8')).efSearch || 120;
 let parity = true;
 for (const q of info.sampleQueries) {
-    const a = await search.query(q, { k: 5 });
+    const a = await search.query(q, { k: 5, rerank: spikeRerank });
     const b = await spike.query(q, { k: 5 });
     if (a.matchQuality !== b.matchQuality
         || JSON.stringify(a.results.map((r) => r.id)) !== JSON.stringify(b.results.map((r) => r.id))) {

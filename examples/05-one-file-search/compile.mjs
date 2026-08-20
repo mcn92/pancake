@@ -17,16 +17,18 @@ import { assertIdentityMapping, docsAssetPaths } from './search-reader.mjs';
 import {
     MAGIC, HEADER_BYTES, TABLE_ENTRY_BYTES, KIND_NAMES,
     sha256, buildQueryInterpSegment, buildCorpusSegmentFromBuffers, assemblePancakeFile,
+    measureRecommendedRerank,
 } from '../../create-pancake-search/src/complete-profile.mjs';
 
 const require = createRequire(import.meta.url);
 const Pancake = require('../../pancake.js');
+const Artifact = require('../../pancake-artifact.js');
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 // The full student evaluation is per-row and large; the evaluation segment
 // carries the golden queries plus the evaluation's scalar/summary fields
 // (arrays over 100 entries dropped, noted by key).
-function buildEvaluationSegment(goldenQueries, studentEvaluation) {
+function buildEvaluationSegment(goldenQueries, studentEvaluation, rerankSweep) {
     const summary = {};
     const dropped = [];
     for (const [key, value] of Object.entries(studentEvaluation)) {
@@ -37,10 +39,12 @@ function buildEvaluationSegment(goldenQueries, studentEvaluation) {
         goldenQueries,
         student: summary,
         studentFieldsOmitted: dropped,
+        // Spec 5.4: the recall-vs-C measurements behind recommendedRerank.
+        rerankSweep,
     }), 'utf8');
 }
 
-function compile(paths, outPath) {
+async function compile(paths, outPath) {
     const sourceManifest = JSON.parse(fs.readFileSync(paths.manifestPath, 'utf8'));
     const corpusRaw = JSON.parse(fs.readFileSync(paths.corpusPath, 'utf8'));
     const count = Object.keys(corpusRaw).length;
@@ -56,8 +60,20 @@ function compile(paths, outPath) {
     const snapshotBytes = fs.readFileSync(paths.indexPath);
     assertIdentityMapping(snapshotBytes);
 
+    // Spec section 5: recommendedRerank is a measured operating point, not a
+    // copy of efSearch. Sweep recall-vs-C on the artifact's own vectors
+    // (03 ships no float query set, so queries are dequantized rows) and
+    // bake the smallest C that reaches the target into the sketch header.
+    const { bytes: provisionalSketch } = Pancake.buildSketchArtifactBytes(snapshotBytes, {});
+    const rerankSweep = await measureRecommendedRerank({
+        artifactModule: Artifact,
+        sketchBytes: provisionalSketch,
+        snapshotBytes,
+    });
+    console.log(`measured rerank operating point: C=${rerankSweep.recommendedRerank} `
+        + `(recall@${rerankSweep.k} ${rerankSweep.recall} over ${rerankSweep.queries} ${rerankSweep.querySource} queries)`);
     const { bytes: sketchBytes } = Pancake.buildSketchArtifactBytes(snapshotBytes, {
-        recommendedRerank: sourceManifest.efSearch || 120,
+        recommendedRerank: rerankSweep.recommendedRerank,
     });
     const goldenQueries = JSON.parse(fs.readFileSync(path.join(
         path.dirname(paths.manifestPath), '..', 'fixtures', 'abstention-golden.json'), 'utf8'));
@@ -74,7 +90,8 @@ function compile(paths, outPath) {
         {
             kind: 'evaluation',
             bytes: buildEvaluationSegment(goldenQueries,
-                JSON.parse(fs.readFileSync(paths.manifestPath.replace('docs-manifest', 'docs-student-evaluation'), 'utf8'))),
+                JSON.parse(fs.readFileSync(paths.manifestPath.replace('docs-manifest', 'docs-student-evaluation'), 'utf8')),
+                rerankSweep),
         },
     ];
 
@@ -84,6 +101,7 @@ function compile(paths, outPath) {
         dim: sourceManifest.dim,
         metric: sourceManifest.metric,
         encoder: { kind: 'student-inline-v1', ...sourceManifest.encoder },
+        recommendedRerank: rerankSweep.recommendedRerank,
         sampleQueries: sourceManifest.sampleQueries || [],
     }, segments, outPath);
 }
@@ -130,7 +148,7 @@ if (invokedDirectly) {
         inspect(args[1] || path.join(here, 'pancake-docs.pancake'));
     } else {
         const outPath = args[0] || path.join(here, 'pancake-docs.pancake');
-        const result = compile(docsAssetPaths(), outPath);
+        const result = await compile(docsAssetPaths(), outPath);
         console.log(`compiled ${result.outPath}`);
         console.log(`  ${(result.fileBytes / 1048576).toFixed(2)} MiB, identity ${result.identity.slice(0, 16)}...`);
         for (const s of result.manifest.segments) {

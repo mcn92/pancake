@@ -2,6 +2,27 @@ import { createWordPiece } from './wordpiece.mjs';
 
 const decoder = new TextDecoder();
 
+// The wasm kernel compiles these in (encoder-spike/encoder.cpp `constexpr`
+// block) and walks the weight blob with a bare running cursor — it never
+// reads the declaration. Declaration/blob skew is therefore only catchable
+// here, host-side, before the first forward.
+export const KERNEL_LAYOUT = { V: 30522, P: 512, T: 2, D: 384, F: 1536, L: 6, B: 64, H: 12 };
+const KERNEL_MAX_SEQ = 128;
+
+// Byte size the kernel's fill_layout() will consume for a given layout:
+// each quantized matrix is rows*cols u8 plus per-block f32 scales and
+// offsets; biases and layer norms are plain f32.
+export function expectedBlobBytes(layout = KERNEL_LAYOUT) {
+  const { V, P, T, D, F, L, B } = layout;
+  const quant = (rows, cols) => rows * cols + rows * (cols / B) * 4 * 2;
+  const layer = 4 * quant(D, D) + 4 * (D * 4)   // wq,wk,wv,wo + their biases
+    + 2 * (D * 4)                                // ln1 gamma/beta
+    + quant(F, D) + F * 4                        // wu + bu
+    + quant(D, F) + D * 4                        // wd + bd
+    + 2 * (D * 4);                               // ln2 gamma/beta
+  return quant(V, D) + quant(P, D) + quant(T, D) + 2 * (D * 4) + L * layer;
+}
+
 export function parseInlineTransformerEncoder(encoderBytes) {
   const view = new DataView(encoderBytes.buffer, encoderBytes.byteOffset, encoderBytes.byteLength);
   const declLen = view.getUint32(0, true);
@@ -10,18 +31,39 @@ export function parseInlineTransformerEncoder(encoderBytes) {
   if (12 + declLen + vocabLen + blobLen !== encoderBytes.length) {
     throw new Error('.pancake inline-encoder layout is inconsistent');
   }
+  const declaration = JSON.parse(decoder.decode(encoderBytes.subarray(12, 12 + declLen)));
+  const blob = encoderBytes.subarray(12 + declLen + vocabLen);
+  const layout = declaration.layout || {};
+  for (const key of Object.keys(KERNEL_LAYOUT)) {
+    if (layout[key] !== KERNEL_LAYOUT[key]) {
+      throw new Error(`.pancake inline-encoder declares layout ${key}=${layout[key]}; `
+        + `the compiled kernel requires ${key}=${KERNEL_LAYOUT[key]}`);
+    }
+  }
+  if (declaration.dim !== KERNEL_LAYOUT.D) {
+    throw new Error(`.pancake inline-encoder declares dim ${declaration.dim}; the kernel emits ${KERNEL_LAYOUT.D}`);
+  }
+  const expected = expectedBlobBytes(layout);
+  if (blob.length !== expected) {
+    throw new Error(`.pancake inline-encoder blob is ${blob.length} bytes but its declared layout implies ${expected}`);
+  }
   return {
-    declaration: JSON.parse(decoder.decode(encoderBytes.subarray(12, 12 + declLen))),
+    declaration,
     vocabText: decoder.decode(encoderBytes.subarray(12 + declLen, 12 + declLen + vocabLen)),
-    blob: encoderBytes.subarray(12 + declLen + vocabLen),
+    blob,
   };
 }
 
-export async function createInlineTransformerEmbedder({ declaration, vocabText, blob, createEncoder }) {
+export async function createInlineTransformerEmbedder({ declaration, vocabText, blob, createEncoder, verify = true }) {
+  const vocabLines = vocabText.split('\n');
+  const vocabSize = vocabLines[vocabLines.length - 1] === '' ? vocabLines.length - 1 : vocabLines.length;
+  if (vocabSize > KERNEL_LAYOUT.V) {
+    throw new Error(`inline-encoder vocab has ${vocabSize} entries; the kernel's embedding table holds ${KERNEL_LAYOUT.V}`);
+  }
   const tokenizer = createWordPiece(vocabText);
   const EM = await createEncoder();
   const dim = declaration.dim;
-  const maxSeq = Math.min(declaration.maxTokens || 128, 128);
+  const maxSeq = Math.min(declaration.maxTokens || KERNEL_MAX_SEQ, KERNEL_MAX_SEQ);
   const blobPtr = EM._malloc(blob.length);
   EM.HEAPU8.set(blob, blobPtr);
   const idsPtr = EM._malloc(maxSeq * 4);
@@ -57,7 +99,7 @@ export async function createInlineTransformerEmbedder({ declaration, vocabText, 
     return { vector: pooled, text, windows };
   }
 
-  return {
+  const embedder = {
     declaration,
     dim,
     maxSeq,
@@ -68,4 +110,66 @@ export async function createInlineTransformerEmbedder({ declaration, vocabText, 
       EM._free(blobPtr);
     },
   };
+  if (verify && Array.isArray(declaration.testVectors) && declaration.testVectors.length > 0) {
+    try {
+      await verifyInlineTestVectors(embedder);
+    } catch (err) {
+      embedder.dispose();
+      throw err;
+    }
+  }
+  return embedder;
+}
+
+// Conformance probes for kind-3 declarations (contract section 4.4 mode 1:
+// an inline encoder carries verification vectors). The last probe exceeds
+// the kernel window so the windowed mean-pool path stays pinned alongside
+// the single-window path.
+export const INLINE_TEST_VECTOR_TEXTS = [
+  'how do volcanoes form and why do they erupt',
+  'which treaty ended the first world war',
+  'The water cycle describes how water moves between the oceans, the atmosphere, and the land. '
+    + 'Heat from the sun evaporates water from the surface of the sea, and plants release more through their leaves. '
+    + 'The rising vapor cools as it climbs, condensing into droplets that gather into clouds. '
+    + 'When the droplets grow too heavy they fall as rain, snow, or hail, depending on the temperature of the air they pass through. '
+    + 'Some of the water soaks into the soil and filters down to recharge underground aquifers, '
+    + 'while the rest runs off into streams and rivers that carry it back toward the coast. '
+    + 'Along the way it erodes rock, deposits sediment, and sustains wetlands, forests, and farmland. '
+    + 'Glaciers and ice sheets hold a share of it frozen for centuries before releasing meltwater in spring. '
+    + 'Eventually nearly every drop returns to the ocean, where the sun lifts it again and the whole journey repeats.',
+];
+
+export async function buildInlineTestVectors(embedder, texts = INLINE_TEST_VECTOR_TEXTS) {
+  const out = [];
+  for (const text of texts) {
+    const { vector, windows } = await embedder.embed(text);
+    out.push({
+      text,
+      windows,
+      embedding: Array.from(vector, (v) => Number(v.toFixed(6))),
+      tolerance: 1e-3,
+    });
+  }
+  return out;
+}
+
+export async function verifyInlineTestVectors(embedder) {
+  for (const tv of embedder.declaration.testVectors) {
+    const { vector, windows } = await embedder.embed(tv.text);
+    if (tv.windows !== undefined && windows !== tv.windows) {
+      throw new Error(`inline encoder verification: "${tv.text.slice(0, 40)}…" pooled over ${windows} window(s); `
+        + `the declaration recorded ${tv.windows}`);
+    }
+    const tolerance = tv.tolerance ?? 1e-3;
+    let maxDiff = 0;
+    for (let d = 0; d < vector.length; d++) {
+      const diff = Math.abs(vector[d] - tv.embedding[d]);
+      if (diff > maxDiff) maxDiff = diff;
+    }
+    if (!(maxDiff <= tolerance)) {
+      throw new Error(`inline encoder failed its declaration's verification vector "${tv.text.slice(0, 40)}…": `
+        + `max component diff ${maxDiff.toExponential(2)} exceeds tolerance ${tolerance}`);
+    }
+  }
+  return { checked: embedder.declaration.testVectors.length };
 }

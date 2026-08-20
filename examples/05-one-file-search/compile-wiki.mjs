@@ -40,14 +40,16 @@ function buildWikiCorpusSegment() {
 
 // kind 3: the teacher compiled in — declaration + vocab + weight blob as
 // segment data (kernels live in the reader, per spec 3.6).
-function buildInlineQueryInterp(packManifest) {
+async function buildInlineQueryInterp(packManifest) {
     const SPIKE = path.join(here, 'encoder-spike', 'real');
     const blobPath = path.join(SPIKE, 'encoder-weights.bin');
     const vocabPath = path.join(SPIKE, 'vocab.txt');
     if (!fs.existsSync(blobPath) || !fs.existsSync(vocabPath)) {
         throw new Error('inline encoder assets missing — run encoder-spike/export_encoder_blob.py first');
     }
-    const declaration = Buffer.from(JSON.stringify({
+    const vocab = fs.readFileSync(vocabPath);
+    const blob = fs.readFileSync(blobPath);
+    const declarationFields = {
         kind: 'inline-transformer-v1',
         model: packManifest.model,
         license: 'apache-2.0',
@@ -55,11 +57,32 @@ function buildInlineQueryInterp(packManifest) {
         dim: packManifest.dim,
         pooling: packManifest.pooling,
         normalized: packManifest.normalized,
-        maxTokens: packManifest.maxTokens,
+        // NOT packManifest.maxTokens: the pack's 256 describes the teacher
+        // that embedded the passages. This kernel's compiled window is 128
+        // (encoder.cpp MAXSEQ) and longer inputs are mean-pooled across
+        // [CLS]…[SEP] windows — the declaration states what the embedded
+        // encoder does.
+        maxTokens: 128,
+        longInputs: 'windowed-mean-pool',
         layout: { V: 30522, P: 512, T: 2, D: 384, F: 1536, L: 6, B: 64, H: 12 },
-    }), 'utf8');
-    const vocab = fs.readFileSync(vocabPath);
-    const blob = fs.readFileSync(blobPath);
+    };
+    // Contract section 4.4 mode 1: embed verification vectors produced by
+    // this very kernel+blob, so readers can prove theirs matches.
+    const { createInlineTransformerEmbedder, buildInlineTestVectors } =
+        await import('../../create-pancake-search/src/inline-transformer.mjs');
+    const createEncoder = (await import('../../create-pancake-search/src/encoder-kernels/encoder.node.mjs')).default;
+    const embedder = await createInlineTransformerEmbedder({
+        declaration: declarationFields,
+        vocabText: vocab.toString('utf8'),
+        blob,
+        createEncoder,
+    });
+    try {
+        declarationFields.testVectors = await buildInlineTestVectors(embedder);
+    } finally {
+        embedder.dispose();
+    }
+    const declaration = Buffer.from(JSON.stringify(declarationFields), 'utf8');
     const encoder = Buffer.alloc(12 + declaration.length + vocab.length + blob.length);
     encoder.writeUInt32LE(declaration.length, 0);
     encoder.writeUInt32LE(vocab.length, 4);
@@ -133,7 +156,7 @@ const segments = [
     { kind: 'corpus', bytes: corpusSegment },
     {
         kind: 'query-interp',
-        bytes: inline ? buildInlineQueryInterp(packManifest) : buildWikiQueryInterp(packManifest),
+        bytes: inline ? await buildInlineQueryInterp(packManifest) : buildWikiQueryInterp(packManifest),
     },
     { kind: 'evaluation', bytes: evaluationSegment },
 ];
@@ -152,7 +175,8 @@ const result = assemblePancakeFile({
         model: packManifest.model,
         pooling: packManifest.pooling,
         normalized: packManifest.normalized,
-        maxTokens: packManifest.maxTokens,
+        // Inline: the embedded kernel's true window, not the teacher's.
+        maxTokens: inline ? 128 : packManifest.maxTokens,
     },
     recommendedRerank: packManifest.recommendedRerank,
     sampleQueries: ['who was the first person on the moon', 'how do volcanoes form'],

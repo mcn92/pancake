@@ -13,9 +13,10 @@ import {
   buildCorpusSegmentFromBuffers,
   buildInlineTransformerEncoderSegment,
   buildQueryInterpSegment,
+  measureRecommendedRerank,
   sha256,
 } from './complete-profile.mjs';
-import { createInlineTransformerEmbedder } from './inline-transformer.mjs';
+import { buildInlineTestVectors, createInlineTransformerEmbedder } from './inline-transformer.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -459,6 +460,8 @@ async function buildAssets(projectDir, config, options = {}) {
       config,
       chunks,
       snapshot,
+      vectors,
+      log,
     });
     manifest.artifactSha256 = artifactInfo.sha256;
     manifest.artifact = artifactInfo;
@@ -512,30 +515,67 @@ async function buildAssets(projectDir, config, options = {}) {
   }
 }
 
-async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, chunks, snapshot }) {
+async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, chunks, snapshot, vectors, log = () => {} }) {
   const artifactContract = await loadArtifactContract();
   const runtime = config.runtime || {};
-  const { encoder, vocabPath, weightsPath } = resolveInlineEncoderInputs(config, projectDir);
+  const { encoder, vocabPath, weightsPath } = await resolveInlineEncoderInputs(config, projectDir);
 
   const declaration = inlineEncoderDeclaration(config, encoder);
+  const vocabText = await fs.readFile(vocabPath, 'utf8');
+  const weightBytes = await fs.readFile(weightsPath);
+  if (!Array.isArray(declaration.testVectors) || declaration.testVectors.length === 0) {
+    // Contract section 4.4 mode 1: an inline encoder carries verification
+    // vectors, so any reader can prove its kernel reproduces this build's
+    // encoder before serving. One probe exceeds the kernel window to pin
+    // the windowed mean-pool path.
+    const { default: createEncoderModule } = await import('./encoder-kernels/encoder.mjs');
+    const encoderWasm = await fs.readFile(new URL('./encoder-kernels/encoder.wasm', import.meta.url));
+    const embedder = await createInlineTransformerEmbedder({
+      declaration,
+      vocabText,
+      blob: weightBytes,
+      createEncoder: () => createEncoderModule({ wasmBinary: encoderWasm }),
+    });
+    try {
+      declaration.testVectors = await buildInlineTestVectors(embedder);
+    } finally {
+      embedder.dispose();
+    }
+    log(`Embedded ${declaration.testVectors.length} encoder verification vectors in the declaration`);
+  }
   const inlineEncoderBytes = buildInlineTransformerEncoderSegment({
     declaration,
-    vocabBytes: await fs.readFile(vocabPath),
-    weightBytes: await fs.readFile(weightsPath),
+    vocabBytes: Buffer.from(vocabText, 'utf8'),
+    weightBytes,
   });
   const calibrationBytes = encoder.calibrationPath
     ? await fs.readFile(path.resolve(projectDir, encoder.calibrationPath))
     : Buffer.from(JSON.stringify({ kind: 'retrieval-signals-v1', asset: null, vocabBloomBase64: '' }), 'utf8');
+  const provisionalSketch = artifactContract.buildSketchArtifactBytes(snapshot, {
+    sketchDims: runtime.sketchDims,
+    sketchBits: runtime.sketchBits,
+  });
+  const rerankSweep = await measureRecommendedRerank({
+    artifactModule: artifactContract,
+    sketchBytes: provisionalSketch.bytes,
+    queryVectors: vectors,
+    snapshotBytes: snapshot,
+  });
+  log(`Measured rerank operating point: C=${rerankSweep.recommendedRerank} `
+    + `(recall@${rerankSweep.k} ${rerankSweep.recall} over ${rerankSweep.queries} ${rerankSweep.querySource} queries)`);
   const sketch = artifactContract.buildSketchArtifactBytes(snapshot, {
     sketchDims: runtime.sketchDims,
     sketchBits: runtime.sketchBits,
-    recommendedRerank: config.index.efSearch || 120,
+    recommendedRerank: rerankSweep.recommendedRerank,
   });
   const records = chunks.map((chunk) => Buffer.from(JSON.stringify(publicChunk(chunk)), 'utf8'));
   const evaluation = Buffer.from(JSON.stringify({
     kind: 'docs-site-build-v1',
     generatedAt: new Date().toISOString(),
     querySet: runtime.evaluation?.queries || [],
+    // COMPLETE_PROFILE.md section 5.4: the recall-vs-C measurements behind
+    // this artifact's recommendedRerank.
+    rerankSweep,
   }), 'utf8');
   const outPath = path.join(assetsDir, runtime.fileName || 'search.pancake');
   const result = assemblePancakeFile({
@@ -550,7 +590,7 @@ async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, c
       normalized: declaration.normalized,
       maxTokens: declaration.maxTokens,
     },
-    recommendedRerank: config.index.efSearch || 120,
+    recommendedRerank: rerankSweep.recommendedRerank,
     sampleQueries: runtime.sampleQueries || [],
   }, [
     { kind: 'index', bytes: Buffer.from(sketch.bytes) },
@@ -578,7 +618,11 @@ function inlineEncoderDeclaration(config, encoder = {}) {
     dim: config.embedding.dims,
     pooling: config.embedding.pooling || 'mean',
     normalized: config.embedding.normalize !== false,
-    maxTokens: encoder.maxTokens || 128,
+    // The compiled kernel's window is 128 tokens (encoder.cpp MAXSEQ); the
+    // declaration states what this artifact's encoder actually does, so a
+    // larger configured value cannot be declared.
+    maxTokens: Math.min(encoder.maxTokens || 128, 128),
+    longInputs: 'windowed-mean-pool',
     prefixPolicy: {
       passage: config.embedding.prefixPolicy?.passage || '',
       query: config.embedding.prefixPolicy?.query || '',
