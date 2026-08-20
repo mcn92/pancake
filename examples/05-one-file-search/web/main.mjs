@@ -5,7 +5,18 @@
 import { openPancakeFile } from '../pancake-file-reader.mjs';
 import { httpRangeSource } from '../sources.mjs';
 
-const FILE_URL = '/pancake-docs.pancake';
+// Prefer the content-addressed URL from the pointer (immutable-cacheable,
+// safe across rebuilds); the bare filename stays as the fallback for hosts
+// serving the file without serve.mjs's pointer route.
+const FALLBACK_URL = '/pancake-docs.pancake';
+async function resolveFileUrl() {
+    try {
+        const pointer = await (await fetch('/pancake-latest.json')).json();
+        if (typeof pointer?.url === 'string') return pointer.url;
+    } catch { /* no pointer route on this host */ }
+    return FALLBACK_URL;
+}
+const FILE_URL = await resolveFileUrl();
 
 const statusEl = document.getElementById('status');
 const inputEl = document.getElementById('q');

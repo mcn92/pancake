@@ -33,7 +33,13 @@ export function httpRangeSource(url, options = {}) {
             }
             if (response.status === 200) {
                 if (!full) {
+                    // An unknown size must refuse, not pass the gate: with no
+                    // Content-Length (chunked body) and init() never called,
+                    // size would be 0 and the cap check silently vacuous.
                     const size = Number(response.headers.get('content-length')) || this.size || 0;
+                    if (size <= 0) {
+                        throw new Error('host ignores Range and reports no size; refusing unbounded full download (call init() first or fix the host)');
+                    }
                     if (size > maxFullFallbackBytes) {
                         throw new Error(`host ignores Range and the file is ${size} bytes; refusing full download`);
                     }
