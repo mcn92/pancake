@@ -338,6 +338,25 @@ function resolveArtifactModule(context) {
   );
 }
 
+function resolveCompleteModule(context) {
+  const attempts = [];
+  for (const resolve of [
+    () => createRequire(path.join(context.siteDir, 'package.json')).resolve('pancake-wasm/complete'),
+    () => createRequire(import.meta.url).resolve('pancake-wasm/complete'),
+  ]) {
+    try {
+      return resolve();
+    } catch (error) {
+      attempts.push(error.message.split('\n')[0]);
+    }
+  }
+  const repoCompleteModule = path.resolve(context.siteDir, '..', 'complete', 'index.mjs');
+  if (fssync.existsSync(repoCompleteModule)) return repoCompleteModule;
+  throw new Error(
+    `docusaurus-plugin-pancake-search could not resolve pancake-wasm/complete; install pancake-wasm >= 0.3 alongside create-pancake-search. Tried: ${attempts.join(' | ')}`
+  );
+}
+
 export default function pancakeDocusaurusPlugin(context, rawOptions = {}) {
   const options = normalizeOptions(rawOptions);
   const workDir = path.resolve(context.siteDir, options.workDir);
@@ -352,6 +371,12 @@ export default function pancakeDocusaurusPlugin(context, rawOptions = {}) {
   const useSymlinkPaths = !siteArtifactModule.includes(`${path.sep}node_modules${path.sep}`)
     && fssync.existsSync(symlinkedArtifact);
   const artifactAlias = useSymlinkPaths ? symlinkedArtifact : siteArtifactModule;
+  // The one-file reader gets the same treatment: bare specifier in the
+  // client, alias resolved here (site -> plugin -> monorepo sibling).
+  const siteCompleteModule = resolveCompleteModule(context);
+  const completeAlias = useSymlinkPaths
+    ? path.join(context.siteDir, 'node_modules', 'pancake-wasm', 'complete', 'index.mjs')
+    : siteCompleteModule;
 
   return {
     name: 'docusaurus-plugin-pancake-search',
@@ -420,7 +445,10 @@ export default function pancakeDocusaurusPlugin(context, rawOptions = {}) {
         },
         resolve: {
           ...(useSymlinkPaths ? { symlinks: false } : {}),
-          alias: { 'pancake-wasm/artifact': artifactAlias },
+          alias: {
+            'pancake-wasm/artifact': artifactAlias,
+            'pancake-wasm/complete': completeAlias,
+          },
           // pancake-wasm/artifact is pure JS in the browser, but its Node-only
           // file helpers statically reference fs/crypto, which webpack must stub.
           ...(isServer ? {} : { fallback: { fs: false, crypto: false } }),

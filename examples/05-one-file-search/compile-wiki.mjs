@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildQueryInterpSegment, assemblePancakeFile } from '../../create-pancake-search/src/complete-profile.mjs';
+import { buildQueryInterpSegment, assemblePancakeFile } from '../../complete/builder.mjs';
 import { inspect } from './compile.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -69,8 +69,8 @@ async function buildInlineQueryInterp(packManifest) {
     // Contract section 4.4 mode 1: embed verification vectors produced by
     // this very kernel+blob, so readers can prove theirs matches.
     const { createInlineTransformerEmbedder, buildInlineTestVectors } =
-        await import('../../create-pancake-search/src/inline-transformer.mjs');
-    const createEncoder = (await import('../../create-pancake-search/src/encoder-kernels/encoder.node.mjs')).default;
+        await import('../../complete/inline-transformer.mjs');
+    const createEncoder = (await import('../../complete/encoder-kernels/encoder.node.mjs')).default;
     const embedder = await createInlineTransformerEmbedder({
         declaration: declarationFields,
         vocabText: vocab.toString('utf8'),

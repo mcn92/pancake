@@ -1,1 +1,1 @@
-export { createWordPiece } from '../../../create-pancake-search/src/wordpiece.mjs';
+export { createWordPiece } from '../../../complete/wordpiece.mjs';

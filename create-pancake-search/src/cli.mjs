@@ -8,15 +8,36 @@ import { stdin as input, stdout as output } from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import zlib from 'node:zlib';
 import { spawnSync } from 'node:child_process';
-import {
-  assemblePancakeFile,
-  buildCorpusSegmentFromBuffers,
-  buildInlineTransformerEncoderSegment,
-  buildQueryInterpSegment,
-  measureRecommendedRerank,
-  sha256,
-} from './complete-profile.mjs';
-import { buildInlineTestVectors, createInlineTransformerEmbedder } from './inline-transformer.mjs';
+const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest();
+
+// The complete-profile builder and reader live in pancake-wasm
+// (pancake-wasm/complete[-builder]) — resolved like loadArtifactContract:
+// bare specifier for npm consumers, repo root when developing in the
+// monorepo (where create-pancake-search's installed pancake-wasm may lag).
+let completeModulesPromise = null;
+function loadCompleteModules() {
+  completeModulesPromise ??= (async () => {
+    const attempts = [];
+    try {
+      return {
+        builder: await import('pancake-wasm/complete/builder'),
+        reader: await import('pancake-wasm/complete'),
+      };
+    } catch (error) {
+      attempts.push(error.message.split('\n')[0]);
+    }
+    try {
+      return {
+        builder: await import(pathToFileURL(path.join(REPO_ROOT, 'complete', 'builder.mjs')).href),
+        reader: await import(pathToFileURL(path.join(REPO_ROOT, 'complete', 'index.mjs')).href),
+      };
+    } catch (error) {
+      attempts.push(error.message.split('\n')[0]);
+    }
+    throw new CliError(`could not resolve pancake-wasm/complete; install pancake-wasm >= 0.3 alongside create-pancake-search. Tried: ${attempts.join(' | ')}`, 2);
+  })();
+  return completeModulesPromise;
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -526,6 +547,11 @@ async function buildAssets(projectDir, config, options = {}) {
 
 async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, chunks, snapshot, vectors, log = () => {} }) {
   const artifactContract = await loadArtifactContract();
+  const {
+    assemblePancakeFile, buildCorpusSegmentFromBuffers, buildInlineTransformerEncoderSegment,
+    buildQueryInterpSegment, measureRecommendedRerank, loadInlineEncoderKernel,
+  } = (await loadCompleteModules()).builder;
+  const { createInlineTransformerEmbedder, buildInlineTestVectors } = (await loadCompleteModules()).reader;
   const runtime = config.runtime || {};
   const { encoder, vocabPath, weightsPath } = await resolveInlineEncoderInputs(config, projectDir);
 
@@ -537,13 +563,11 @@ async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, c
     // vectors, so any reader can prove its kernel reproduces this build's
     // encoder before serving. One probe exceeds the kernel window to pin
     // the windowed mean-pool path.
-    const { default: createEncoderModule } = await import('./encoder-kernels/encoder.mjs');
-    const encoderWasm = await fs.readFile(new URL('./encoder-kernels/encoder.wasm', import.meta.url));
     const embedder = await createInlineTransformerEmbedder({
       declaration,
       vocabText,
       blob: weightBytes,
-      createEncoder: () => createEncoderModule({ wasmBinary: encoderWasm }),
+      createEncoder: await loadInlineEncoderKernel(),
     });
     try {
       declaration.testVectors = await buildInlineTestVectors(embedder);
@@ -1100,20 +1124,17 @@ async function trainStudentVectors(chunks, embeddingConfig, log, projectDir) {
 
 async function embedChunksWithInlineTransformer(chunks, config, log, projectDir) {
   const { encoder, vocabPath, weightsPath } = await resolveInlineEncoderInputs(config, projectDir);
-  // The web glue with an explicit wasmBinary, not encoder.node.mjs: when the
-  // Docusaurus plugin runs this module it is loaded through jiti's CJS
-  // transform, which breaks the node glue's createRequire bootstrap
-  // ("require is not a function"). The web glue does no filesystem access,
-  // so it works under both native ESM and jiti.
-  const { default: createEncoderModule } = await import('./encoder-kernels/encoder.mjs');
-  const encoderWasm = await fs.readFile(new URL('./encoder-kernels/encoder.wasm', import.meta.url));
-  const createEncoder = () => createEncoderModule({ wasmBinary: encoderWasm });
+  const { builder, reader } = await loadCompleteModules();
+  // loadInlineEncoderKernel uses the web glue with an explicit wasmBinary,
+  // not encoder.node.mjs: when the Docusaurus plugin runs this module it is
+  // loaded through jiti's CJS transform, which breaks the node glue's
+  // createRequire bootstrap ("require is not a function").
   const declaration = inlineEncoderDeclaration(config, encoder);
-  const embedder = await createInlineTransformerEmbedder({
+  const embedder = await reader.createInlineTransformerEmbedder({
     declaration,
     vocabText: await fs.readFile(vocabPath, 'utf8'),
     blob: await fs.readFile(weightsPath),
-    createEncoder,
+    createEncoder: await builder.loadInlineEncoderKernel(),
   });
   const vectors = [];
   let windowed = 0;

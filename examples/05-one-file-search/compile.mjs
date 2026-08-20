@@ -18,7 +18,7 @@ import {
     MAGIC, HEADER_BYTES, TABLE_ENTRY_BYTES, KIND_NAMES,
     sha256, buildQueryInterpSegment, buildCorpusSegmentFromBuffers, assemblePancakeFile,
     measureRecommendedRerank,
-} from '../../create-pancake-search/src/complete-profile.mjs';
+} from '../../complete/builder.mjs';
 
 const require = createRequire(import.meta.url);
 const Pancake = require('../../pancake.js');

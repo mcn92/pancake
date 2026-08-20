@@ -1,12 +1,19 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { expectedBlobBytes } from './inline-transformer.mjs';
+import { MAGIC, HEADER_BYTES, TABLE_ENTRY_BYTES, KINDS, KIND_NAMES } from './format.mjs';
 
-export const MAGIC = 0x31465350; // "PSF1"
-export const HEADER_BYTES = 64;
-export const TABLE_ENTRY_BYTES = 48;
-export const KINDS = { index: 1, corpus: 2, 'query-interp': 3, evaluation: 4 };
-export const KIND_NAMES = Object.fromEntries(Object.entries(KINDS).map(([name, kind]) => [kind, name]));
+export { MAGIC, HEADER_BYTES, TABLE_ENTRY_BYTES, KINDS, KIND_NAMES };
+
+// The inline-transformer kernel via the web glue with an explicitly read
+// wasm binary — the form that works under both native ESM and jiti's CJS
+// transform (the node glue's createRequire bootstrap breaks there). Node
+// builders only; the reader picks its own kernel.
+export async function loadInlineEncoderKernel() {
+  const { default: createEncoderModule } = await import('./encoder-kernels/encoder.mjs');
+  const wasmBinary = fs.readFileSync(new URL('./encoder-kernels/encoder.wasm', import.meta.url));
+  return () => createEncoderModule({ wasmBinary });
+}
 
 export const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest();
 export const align16 = (n) => Math.ceil(n / 16) * 16;

@@ -17,7 +17,7 @@ node test-browser.mjs                 # Chromium acceptance (needs playwright ch
 ```
 
 ```js
-import { openPancakeFile } from './pancake-file-reader.mjs';
+import { openPancakeFile } from 'pancake-wasm/complete';
 const search = await openPancakeFile('pancake-docs.pancake');   // or a range source
 const out = await search.query('how do workers restore snapshots');
 // { matchQuality: 'strong', confidence: 0.94, results: [{ title, text, sourcePath, ... }] }
@@ -73,12 +73,13 @@ smoke, provenance, identity, abstention, and embedded-evaluation checks.
   hydration), encoder+calibration share one query-interpretation segment,
   and the evaluation segment carries the golden queries. `--inspect`
   verifies every digest.
-- `pancake-file-reader.mjs` — the one-file reader. Environment-neutral:
-  Node opens a path, the browser passes an HTTP range source. Verifies the
-  manifest identity and eager segments at open; the sketch tier and corpus
-  records stay lazy. Kind-1 files use a pure-JS query path; kind-3 files load
-  the shared inline-transformer module and WASM kernels from
-  `create-pancake-search/src/` (rebuilt and synced by
+- `pancake-file-reader.mjs` — now a shim over the published reader at
+  `pancake-wasm/complete` (`complete/index.mjs` in this repo).
+  Environment-neutral: Node opens a path, the browser passes an HTTP range
+  source. Verifies the manifest identity and eager segments at open; the
+  sketch tier and corpus records stay lazy. Kind-1 files use a pure-JS
+  query path; kind-3 files load the reader-owned inline-transformer module
+  and WASM kernels from `complete/encoder-kernels/` (rebuilt and synced by
   `encoder-spike/build-encoder.sh`).
 - `web/` — the browser host: an input box over the reader, showing per-query
   range requests and bytes. `serve.mjs` is the entire hosting requirement:
@@ -88,9 +89,9 @@ smoke, provenance, identity, abstention, and embedded-evaluation checks.
   one-file reader is tested against.
 - `abstention.mjs` — calibration scoring shared by both readers (extracted
   from 03's worker.js).
-- `../../create-pancake-search/src/complete-profile.mjs` — shared container
-  assembly (canonical JSON, header + table layout, streamed writes) used by
-  both compilers.
+- `../../complete/builder.mjs` (`pancake-wasm/complete/builder`) — shared
+  container assembly (canonical JSON, header + table layout, streamed
+  writes, the recall-vs-C rerank sweep) used by both compilers.
 - `compile-wiki.mjs` / `test-wiki.mjs` — the wiki-scale compiler and its
   acceptance gate (see "Wiki scale" above).
 

@@ -63,9 +63,18 @@
       "types": "./pancake-artifact.d.ts",
       "default": "./pancake-artifact.js"
     },
+    "./complete": {
+      "types": "./complete/index.d.ts",
+      "default": "./complete/index.mjs"
+    },
+    "./complete/builder": {
+      "types": "./complete/builder.d.ts",
+      "default": "./complete/builder.mjs"
+    },
     "./engine.wasm": "./dist/engine.wasm"
   },
   "files": [
+    "complete",
     "pancake.js",
     "pancake-artifact.js",
     "pancake.node.mjs",
