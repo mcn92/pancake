@@ -631,7 +631,33 @@ function inlineEncoderDeclaration(config, encoder = {}) {
   };
 }
 
-function resolveInlineEncoderInputs(config, projectDir) {
+// The 24.3 MiB weight blob is excluded from published tarballs
+// (src/inline-encoder/.npmignore), so npm consumers fetch it once, pinned by
+// digest, from the release asset. A repo checkout carries the file in git,
+// so this path never runs in-tree.
+const INLINE_WEIGHTS_URL = 'https://github.com/mcn92/pancake/releases/download/inline-encoder-v1/encoder-weights.bin';
+const INLINE_WEIGHTS_SHA256 = '3b14685a73bd7f30477be8dad89902b6e4bb55e49ec325c9e071c462cf89089b';
+
+async function fetchInlineEncoderWeights(weightsPath) {
+  const url = process.env.PANCAKE_ENCODER_WEIGHTS_URL || INLINE_WEIGHTS_URL;
+  let body;
+  try {
+    const response = await fetch(url, { redirect: 'follow' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    body = Buffer.from(await response.arrayBuffer());
+  } catch (error) {
+    throw new CliError(`Inline encoder weights not found at ${weightsPath} and the download from ${url} failed (${error.message}). `
+      + `Next: place the encoder blob there yourself (sha256 ${INLINE_WEIGHTS_SHA256}), or set PANCAKE_ENCODER_WEIGHTS_URL to a mirror.`, 2);
+  }
+  const digest = sha256(body).toString('hex');
+  if (digest !== INLINE_WEIGHTS_SHA256) {
+    throw new CliError(`Downloaded encoder weights failed verification: sha256 ${digest} != pinned ${INLINE_WEIGHTS_SHA256}. Refusing to use them.`, 2);
+  }
+  await fs.mkdir(path.dirname(weightsPath), { recursive: true });
+  await fs.writeFile(weightsPath, body);
+}
+
+async function resolveInlineEncoderInputs(config, projectDir) {
   const encoder = config.runtime?.inlineEncoder || {};
   const resolveInput = (value, label) => {
     if (!value) throw new CliError(`runtime.inlineEncoder.${label} is required for complete kind-3 artifacts`, 1);
@@ -640,7 +666,14 @@ function resolveInlineEncoderInputs(config, projectDir) {
   const vocabPath = resolveInput(encoder.vocabPath, 'vocabPath');
   const weightsPath = resolveInput(encoder.weightsPath, 'weightsPath');
   if (!fssync.existsSync(vocabPath)) throw new CliError(`Inline encoder vocab not found: ${vocabPath}`, 1);
-  if (!fssync.existsSync(weightsPath)) throw new CliError(`Inline encoder weights not found: ${weightsPath}`, 1);
+  if (!fssync.existsSync(weightsPath)) {
+    // Only the packaged default blob is auto-fetched — the digest pin is
+    // for that exact file; custom weights must be supplied by the user.
+    if (path.basename(weightsPath) !== 'encoder-weights.bin') {
+      throw new CliError(`Inline encoder weights not found: ${weightsPath}`, 1);
+    }
+    await fetchInlineEncoderWeights(weightsPath);
+  }
   return { encoder, vocabPath, weightsPath };
 }
 
@@ -1057,7 +1090,7 @@ async function trainStudentVectors(chunks, embeddingConfig, log, projectDir) {
 }
 
 async function embedChunksWithInlineTransformer(chunks, config, log, projectDir) {
-  const { encoder, vocabPath, weightsPath } = resolveInlineEncoderInputs(config, projectDir);
+  const { encoder, vocabPath, weightsPath } = await resolveInlineEncoderInputs(config, projectDir);
   // The web glue with an explicit wasmBinary, not encoder.node.mjs: when the
   // Docusaurus plugin runs this module it is loaded through jiti's CJS
   // transform, which breaks the node glue's createRequire bootstrap

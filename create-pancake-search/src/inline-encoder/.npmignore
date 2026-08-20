@@ -1,0 +1,4 @@
+# The 24.3 MiB MiniLM weight blob stays out of every published tarball; the
+# CLI downloads it on first use, pinned by sha256 (see fetchInlineEncoderWeights
+# in src/cli.mjs). vocab.txt (226 KiB) ships normally.
+encoder-weights.bin
