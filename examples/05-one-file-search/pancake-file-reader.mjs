@@ -132,11 +132,34 @@ export async function openPancakeFile(input, options = {}) {
 
         // Query interpretation: one eager read, digest-verified, then split
         // into encoder + calibration (one unit, shared version + kind).
+        // After the segment table, every remaining open-path extent is known,
+        // so the query-interp segment, the embedded sketch (two dependent
+        // reads of its own), and the corpus count+offsets tables fetch as one
+        // concurrent wave instead of five dependent rounds — at 100 ms/request
+        // that is most of the open time. The manifest's record count sizes
+        // the offsets read; the corpus's own count word is the cross-check.
         const qi = segments.get('query-interp');
-        const qiBytes = new Uint8Array(await source.read(qi.offset, qi.length));
-        if (await sha256hex(qiBytes) !== qi.sha256) {
-            throw new Error('.pancake query-interp segment failed hash verification');
+        const idx = segments.get('index');
+        const corpus = segments.get('corpus');
+        const declaredRecords = manifest.corpus?.records;
+        if (!Number.isInteger(declaredRecords) || declaredRecords < 0
+            || 4 + 8 * (declaredRecords + 1) > corpus.length) {
+            throw new Error('.pancake manifest corpus.records is implausible for the corpus segment');
         }
+        const [qiBytes, sketch, corpusTables] = await Promise.all([
+            (async () => {
+                const bytes = new Uint8Array(await source.read(qi.offset, qi.length));
+                if (await sha256hex(bytes) !== qi.sha256) {
+                    throw new Error('.pancake query-interp segment failed hash verification');
+                }
+                return bytes;
+            })(),
+            PancakeSketchArtifact.open(windowSource(source, idx.offset, idx.length)),
+            Promise.all([
+                source.read(corpus.offset, 4),
+                source.read(corpus.offset + 4, 8 * (declaredRecords + 1)),
+            ]),
+        ]);
         const qiView = viewOf(qiBytes);
         const qiKind = qiView.getUint32(4, true);
         const encoderLen = qiView.getUint32(8, true);
@@ -234,22 +257,19 @@ export async function openPancakeFile(input, options = {}) {
             throw new Error(`unsupported query-interpretation kind ${qiKind}`);
         }
 
-        // Index: the embedded sketch artifact, opened by the existing reader
+        // Index: the embedded sketch artifact, opened in the wave above
         // against a segment-windowed source (resident hash verified there).
-        const idx = segments.get('index');
-        const sketch = await PancakeSketchArtifact.open(windowSource(source, idx.offset, idx.length));
         if (sketch.count !== manifest.corpus.records) {
             throw new Error(`.pancake index count ${sketch.count} != corpus records ${manifest.corpus.records}`);
         }
 
         // Corpus: resident offsets table; records hydrate by range read.
-        const corpus = segments.get('corpus');
-        const countBuf = new Uint8Array(await source.read(corpus.offset, 4));
+        const countBuf = new Uint8Array(corpusTables[0]);
         const recordCount = viewOf(countBuf).getUint32(0, true);
         if (recordCount !== manifest.corpus.records) {
             throw new Error('.pancake corpus count disagrees with manifest');
         }
-        const offsetsBuf = new Uint8Array(await source.read(corpus.offset + 4, 8 * (recordCount + 1)));
+        const offsetsBuf = new Uint8Array(corpusTables[1]);
         const offsetsView = viewOf(offsetsBuf);
         const recordOffsets = new Array(recordCount + 1);
         for (let i = 0; i <= recordCount; i++) {
