@@ -13,9 +13,9 @@ import { openPancakeFile } from './pancake-file-reader.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(here, '..', '04-static-wiki-pack', 'data-full');
 const pancakePath = path.join(here, 'pancake-wiki-inline.pancake');
-const artifactUrl = 'https://github.com/mcn92/pancake/releases/download/artifact-wiki-inline-v1/pancake-wiki-inline.pancake';
-const expectedIdentity = '77a08937d1414409d55e28b17bccf43a4ef374e76223eaefec590451ad9afba1';
-const expectedBytes = 562725721;
+const artifactUrl = 'https://github.com/mcn92/pancake/releases/download/artifact-wiki-inline-v2/pancake-wiki-inline.pancake';
+const expectedIdentity = 'b25ff90d074fe889f02f6249ca5d4ce95099f2e1b04b9c1f71bd23f6d61b3828';
+const expectedBytes = 562737657;
 const HEADER_BYTES = 64;
 
 let passed = 0;

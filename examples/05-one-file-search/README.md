@@ -57,7 +57,7 @@ node test-inline.mjs
 Expected manifest identity:
 
 ```text
-77a08937d1414409d55e28b17bccf43a4ef374e76223eaefec590451ad9afba1
+b25ff90d074fe889f02f6249ca5d4ce95099f2e1b04b9c1f71bd23f6d61b3828
 ```
 
 If the local `data-full` eval query files are present, the same command also
