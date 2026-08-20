@@ -638,7 +638,7 @@ function inlineEncoderDeclaration(config, encoder = {}) {
 const INLINE_WEIGHTS_URL = 'https://github.com/mcn92/pancake/releases/download/inline-encoder-v1/encoder-weights.bin';
 const INLINE_WEIGHTS_SHA256 = '3b14685a73bd7f30477be8dad89902b6e4bb55e49ec325c9e071c462cf89089b';
 
-async function fetchInlineEncoderWeights(weightsPath) {
+export async function fetchInlineEncoderWeights(weightsPath) {
   const url = process.env.PANCAKE_ENCODER_WEIGHTS_URL || INLINE_WEIGHTS_URL;
   let body;
   try {

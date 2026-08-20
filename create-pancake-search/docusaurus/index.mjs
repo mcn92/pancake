@@ -3,7 +3,7 @@ import fssync from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildSearchAssets } from '../src/cli.mjs';
+import { buildSearchAssets, fetchInlineEncoderWeights } from '../src/cli.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -229,6 +229,15 @@ async function stageCompleteProfileInputs(options, context, workDir) {
   };
   if (options.completeProfile.vectors) await copyRequired(options.completeProfile.vectors, 'docs-vectors.f32', 'vectors');
   await copyRequired(options.completeProfile.vocab, path.join('inline-encoder', 'vocab.txt'), 'vocab');
+  // The packaged default weight blob is not shipped in npm tarballs; fetch
+  // it into the configured path (digest-pinned) so later builds reuse it,
+  // then stage it like any other input. Custom-named weights never fetch.
+  if (options.completeProfile.weights) {
+    const weightsSource = path.resolve(context.siteDir, options.completeProfile.weights);
+    if (!fssync.existsSync(weightsSource) && path.basename(weightsSource) === 'encoder-weights.bin') {
+      await fetchInlineEncoderWeights(weightsSource);
+    }
+  }
   await copyRequired(options.completeProfile.weights, path.join('inline-encoder', 'encoder-weights.bin'), 'weights');
   if (options.completeProfile.calibration) {
     await copyRequired(options.completeProfile.calibration, path.join('inline-encoder', 'calibration.json'), 'calibration');
