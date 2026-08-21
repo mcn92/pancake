@@ -1,6 +1,6 @@
 {
   "name": "create-pancake-search",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Scaffold a Pancake-backed Cloudflare Worker search app.",
   "type": "module",
   "bin": {

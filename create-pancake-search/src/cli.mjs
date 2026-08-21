@@ -44,7 +44,13 @@ const __dirname = path.dirname(__filename);
 const PACKAGE_ROOT = path.resolve(__dirname, '..');
 const REPO_ROOT = path.resolve(PACKAGE_ROOT, '..');
 const STUDENT_TRAINER = path.join(PACKAGE_ROOT, 'tools', 'train_student.py');
-const CLI_VERSION = JSON.parse(fssync.readFileSync(path.join(PACKAGE_ROOT, 'package.json'), 'utf8')).version;
+const OWN_PACKAGE = JSON.parse(fssync.readFileSync(path.join(PACKAGE_ROOT, 'package.json'), 'utf8'));
+const CLI_VERSION = OWN_PACKAGE.version;
+// The generated project must run its artifacts on a pancake-wasm at least as
+// new as the one that built them (range artifact format revisions are not
+// readable by older readers), so it inherits this package's own range rather
+// than carrying a second hardcoded one that drifts.
+const PANCAKE_WASM_RANGE = OWN_PACKAGE.dependencies['pancake-wasm'];
 const DEFAULT_PREFIX = 'Represent this sentence for searching relevant passages: ';
 const CONFIG_SCHEMA_URL = 'https://raw.githubusercontent.com/mcn92/pancake/main/create-pancake-search/schemas/v1/pancake.config.schema.json';
 const MAX_CRAWL_BODY_BYTES = 2 * 1024 * 1024;
@@ -399,7 +405,7 @@ function generatedPackageJson(config) {
       reindex: 'create-pancake-search rebuild --yes',
     },
     dependencies: {
-      'pancake-wasm': '^0.2.0',
+      'pancake-wasm': PANCAKE_WASM_RANGE,
     },
     devDependencies: {
       'create-pancake-search': CLI_VERSION,
