@@ -353,6 +353,22 @@ async function testReadOnlyMode(env) {
 
 const WORKER_DIR = path.resolve(__dirname, '..', 'examples', 'reference-worker');
 const DEV_VARS_PATH = path.join(WORKER_DIR, '.dev.vars');
+// A developer's own .dev.vars (API_KEY, READ_ONLY, ...) may already live in
+// the worker directory; the suites below overwrite that file with their own
+// variables, so capture the original once and put it back in cleanup — on
+// every path, including a crash or Ctrl-C mid-suite — instead of deleting it.
+const ORIGINAL_DEV_VARS = fs.existsSync(DEV_VARS_PATH) ? fs.readFileSync(DEV_VARS_PATH) : null;
+let devVarsRestored = false;
+function restoreOriginalDevVars() {
+  if (devVarsRestored) return;
+  devVarsRestored = true;
+  if (ORIGINAL_DEV_VARS !== null) fs.writeFileSync(DEV_VARS_PATH, ORIGINAL_DEV_VARS);
+  else if (fs.existsSync(DEV_VARS_PATH)) fs.rmSync(DEV_VARS_PATH, { force: true });
+}
+process.on('exit', restoreOriginalDevVars);
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => { restoreOriginalDevVars(); process.exit(130); });
+}
 
 function wranglerCommand() {
   return path.resolve(__dirname, '..', 'node_modules', 'wrangler', 'bin', 'wrangler.js');
@@ -370,9 +386,10 @@ function writeDevVars(envVars = {}) {
 }
 
 function cleanupDevVars() {
-  if (fs.existsSync(DEV_VARS_PATH)) {
-    fs.rmSync(DEV_VARS_PATH, { force: true });
-  }
+  // Between suites and at the end: put the developer's file back (or remove
+  // ours if there was none) rather than leaving the suite's variables behind.
+  if (ORIGINAL_DEV_VARS !== null) fs.writeFileSync(DEV_VARS_PATH, ORIGINAL_DEV_VARS);
+  else if (fs.existsSync(DEV_VARS_PATH)) fs.rmSync(DEV_VARS_PATH, { force: true });
 }
 
 function getFreePort() {
