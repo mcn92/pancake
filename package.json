@@ -152,7 +152,7 @@
   "sideEffects": false,
   "devDependencies": {
     "miniflare": "^4.20260409.0",
-    "pancake-wasm": "^0.2.0",
+    "pancake-wasm": "^0.3.0",
     "playwright": "^1.60.0",
     "typescript": "^7.0.2",
     "vite": "^8.0.16",
