@@ -113,6 +113,7 @@
     "test:simd": "node test/simd_parity.js",
     "test:fuzz": "node test/fuzz_import.js",
     "test:worker-example": "cd examples/03-edge-docs-search && npx wrangler deploy --dry-run --outdir ../../.tmp-test-work/student-worker-distilled && cd ../.. && node examples/03-edge-docs-search/test_worker.mjs",
+    "test:scaffold": "node scripts/test-scaffold-e2e.mjs",
     "pack:dry-run": "node scripts/pack-dry-run.mjs",
     "prepublishOnly": "npm run build:all && npm test && npm run test:fuzz && npm run test:simd && npm run test:browser && npm run test:worker-web && npm run test:worker-example && npm run pack:dry-run"
   },
