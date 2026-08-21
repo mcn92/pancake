@@ -1,6 +1,6 @@
 {
   "name": "pancake-wasm",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "HNSW vector search in WebAssembly. Runs in Node.js, browsers, and Cloudflare Workers with no native dependencies.",
   "main": "pancake.js",
   "types": "pancake.d.ts",
@@ -91,7 +91,8 @@
     "dist/engine.scalar.js",
     "dist/engine.scalar.wasm",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "node scripts/build-engine.mjs",

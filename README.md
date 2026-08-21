@@ -115,14 +115,16 @@ Recent local acceptance for the inline wiki artifact:
 
 ```text
 456,153 records
-~537 MiB complete artifact
-manifest identity: 77a08937d1414409d55e28b17bccf43a4ef374e76223eaefec590451ad9afba1
+~537 MiB complete artifact (562,737,657 bytes)
+manifest identity: b25ff90d074fe889f02f6249ca5d4ce95099f2e1b04b9c1f71bd23f6d61b3828
 recall@10: 82.4% over the 200-query pre-registered eval set, against brute-force ground truth
 natural-language query served with no host encoder option, ~228 ms/query end to end locally
 ```
 
-Release asset:
-`https://github.com/mcn92/pancake/releases/download/artifact-wiki-inline-v1/pancake-wiki-inline.pancake`
+Release asset (v2 — declaration states the kernel's real `maxTokens: 128`
+and carries verification vectors; index, corpus, and evaluation bytes are
+identical to v1, which stays published for older checkouts):
+`https://github.com/mcn92/pancake/releases/download/artifact-wiki-inline-v2/pancake-wiki-inline.pancake`
 
 `node test-inline.mjs` downloads that file automatically when it is missing
 locally, then verifies the manifest identity before running the acceptance
@@ -191,6 +193,13 @@ import Pancake from 'pancake-wasm';
 // Explicit Node/browser entries
 import Pancake from 'pancake-wasm/node';
 import Pancake from 'pancake-wasm/web';
+
+// Search Artifact layer (range + sketch readers/builders)
+import { PancakeRangeArtifact, buildRangeArtifact } from 'pancake-wasm/artifact';
+
+// Complete one-file profile: reader (any runtime) and builder (Node)
+import { openPancakeFile } from 'pancake-wasm/complete';
+import { assemblePancakeFile } from 'pancake-wasm/complete/builder';
 ```
 
 Repository checkout:
@@ -278,7 +287,7 @@ Use the complete reader when you want a file that is itself the search
 application data plane.
 
 ```js
-import { openPancakeFile } from './examples/05-one-file-search/pancake-file-reader.mjs';
+import { openPancakeFile } from 'pancake-wasm/complete'; // or './complete/index.mjs' in a checkout
 
 const search = await openPancakeFile('examples/05-one-file-search/pancake-docs.pancake');
 

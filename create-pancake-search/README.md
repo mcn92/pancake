@@ -96,6 +96,25 @@ range-read stats so cold-load and warm-cache behavior are visible directly.
 URL ingestion is intentionally conservative: crawls stay on the seed origin,
 skip redirects, and cap HTML response bodies before parsing.
 
+## Checking a host: `doctor`
+
+Range-read artifacts depend on transport properties that hosts get wrong
+silently, and the symptom is "the demo is slow", not an error. Before (or
+after) deploying a `.pancake`, `.pancake-sketch`, or `.pancake-range` file,
+probe the URL it is served from:
+
+```bash
+npx create-pancake-search doctor https://example.com/search/search.pancake
+```
+
+It prints a pass/warn/fail line per check — `HEAD` (size, `Accept-Ranges`,
+`ETag`), a real 64-byte `Range` GET (206 vs full-body 200), the same range
+with a `?r=start-end` cache-key query (the form every browser read uses, to
+defeat Chromium's same-URL cache-entry lock), the negotiated protocol
+(HTTP/1.1 serializes parallel rerank reads at ~6 connections; h2/h3
+multiplex), median RTT over three small reads, and the artifact's magic and
+identity from its first 64 bytes — and exits 1 if any check fails.
+
 ## Docusaurus
 
 Docusaurus sites can build a static Pancake Search Artifact through the package
@@ -169,6 +188,51 @@ the matching teacher document vectors for the rendered corpus:
 bare student model because that silently changes the index geometry. A
 Wikipedia-trained student is only useful for smoke testing the mechanics; it is
 not a general-purpose docs encoder.
+
+### Complete profile (one `search.pancake` file, query-interp kind 3)
+
+`completeProfile.enabled` switches the plugin from the range artifact plus
+student encoder to the complete profile: a single `search.pancake` that
+carries the corpus, index, WordPiece vocab, quantized MiniLM encoder weights,
+calibration, and evaluation data, read in the browser by the kind-3 reader
+from `pancake-wasm/complete`. No student training, no Python, no hosted
+encoder — the reader supplies kernels, the file supplies data.
+
+```js
+[
+  pancakeSearch,
+  {
+    assetBase: 'pancake-search',
+    sourcePath: 'docs',              // index markdown/MDX sources instead of built HTML
+    sourceRouteBase: 'docs',
+    completeProfile: {
+      enabled: true,
+      vocab: 'node_modules/create-pancake-search/src/inline-encoder/vocab.txt',
+      weights: './pancake-search/encoder-weights.bin',   // fetched here on first build
+      model: 'sentence-transformers/all-MiniLM-L6-v2',
+      maxTokens: 128,
+      // vectors: './docs-vectors.f32',       // optional precomputed document vectors
+      // calibration: './calibration.json',   // optional abstention calibration
+    },
+  },
+]
+```
+
+Paths resolve against the site directory. `vocab.txt` ships in this package
+(`src/inline-encoder/vocab.txt`). The 24.3 MiB `encoder-weights.bin` does
+not: when the configured path is missing
+and its basename is `encoder-weights.bin`, the plugin (and the CLI's
+`runtime.mode: "complete"` path) downloads it once from the
+`inline-encoder-v1` GitHub release, verifies the pinned SHA-256, and writes
+it to that path for reuse. Set `PANCAKE_ENCODER_WEIGHTS_URL` to fetch from a
+mirror; custom-named weights are never fetched. Without `vectors`, the build
+embeds every chunk through the packaged encoder at build time (inputs longer
+than `maxTokens` are windowed and mean-pooled, and the build logs how many).
+
+The output is `build/pancake-search/search.pancake` (plus `corpus.json` and
+`manifest.json`);
+the plugin's search panel opens it over HTTP range reads, so the host must
+honor `Range` — check with `create-pancake-search doctor <url>`.
 
 ## Limitations
 
