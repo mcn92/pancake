@@ -16,8 +16,8 @@ import { fileURLToPath } from 'node:url';
 import { assertIdentityMapping, docsAssetPaths } from './search-reader.mjs';
 import {
     MAGIC, HEADER_BYTES, TABLE_ENTRY_BYTES, KIND_NAMES,
-    sha256, buildQueryInterpSegment, buildCorpusSegmentFromBuffers, assemblePancakeFile,
-    measureRecommendedRerank,
+    sha256, buildQueryInterpSegment, buildCorpusSegment, assemblePancakeFile,
+    measureRecommendedRerank, PROFILE_V2, FORMAT_VERSIONS,
 } from '../../complete/builder.mjs';
 
 const require = createRequire(import.meta.url);
@@ -78,9 +78,12 @@ async function compile(paths, outPath) {
     const goldenQueries = JSON.parse(fs.readFileSync(path.join(
         path.dirname(paths.manifestPath), '..', 'fixtures', 'abstention-golden.json'), 'utf8'));
 
+    // Corpus layout v2: per-record digests behind a page table, so each
+    // hydrated record verifies on its own range read (spec 3.5, Draft 2).
+    const corpusSegment = buildCorpusSegment(records);
     const segments = [
         { kind: 'index', bytes: Buffer.from(sketchBytes) },
-        { kind: 'corpus', bytes: buildCorpusSegmentFromBuffers(records) },
+        { kind: 'corpus', bytes: corpusSegment.bytes },
         {
             kind: 'query-interp',
             bytes: buildQueryInterpSegment(1,
@@ -96,8 +99,8 @@ async function compile(paths, outPath) {
     ];
 
     return assemblePancakeFile({
-        profile: 'pancake-complete-v1',
-        corpus: { records: count, provenance: null },
+        profile: PROFILE_V2,
+        corpus: { ...corpusSegment.corpus, provenance: null },
         dim: sourceManifest.dim,
         metric: sourceManifest.metric,
         encoder: { kind: 'student-inline-v1', ...sourceManifest.encoder },
@@ -110,7 +113,8 @@ export function inspect(filePath) {
     const bytes = fs.readFileSync(filePath);
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     if (view.getUint32(0, true) !== MAGIC) throw new Error('not a .pancake file (bad magic)');
-    if (view.getUint32(4, true) !== 1) throw new Error(`unsupported format version ${view.getUint32(4, true)}`);
+    const formatVersion = view.getUint32(4, true);
+    if (!Object.values(FORMAT_VERSIONS).includes(formatVersion)) throw new Error(`unsupported format version ${formatVersion}`);
     const manifestBytes = view.getUint32(8, true);
     const segmentCount = view.getUint32(12, true);
     const fileBytes = Number(view.getBigUint64(16, true));
@@ -120,10 +124,13 @@ export function inspect(filePath) {
     const manifestOk = sha256(manifestBuf).equals(bytes.subarray(24, 56));
     const manifest = JSON.parse(manifestBuf.toString('utf8'));
 
-    console.log(`${path.basename(filePath)}: ${(fileBytes / 1048576).toFixed(2)} MiB, profile ${manifest.profile}`);
+    console.log(`${path.basename(filePath)}: ${(fileBytes / 1048576).toFixed(2)} MiB, profile ${manifest.profile} (format ${formatVersion})`);
     console.log(`identity (manifest sha256): ${Buffer.from(bytes.subarray(24, 56)).toString('hex')}`);
     console.log(`manifest digest verifies: ${manifestOk}`);
     console.log(`corpus: ${manifest.corpus.records} records, ${manifest.dim}D ${manifest.metric}, encoder ${manifest.encoder?.kind || 'unknown'}`);
+    console.log(`corpus integrity: ${manifest.corpus.layout === 'records-v2'
+        ? `per-record sha256, ${manifest.corpus.pages} page(s) of ${manifest.corpus.pageRecords}, page table ${manifest.corpus.pageTableSha256.slice(0, 12)}...`
+        : 'whole-segment digest only (layout v1)'}`);
     console.log('segments:');
     const tableOffset = HEADER_BYTES + manifestBytes;
     for (let i = 0; i < segmentCount; i++) {

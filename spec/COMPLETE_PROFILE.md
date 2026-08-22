@@ -1,6 +1,10 @@
 # Pancake Complete Search Artifact Profile
 
-**Status:** Draft 1 — for review, not frozen
+**Status:** Draft 2 (2026-08-21) — for review, not frozen. Draft 2 adds
+format version 2: per-record corpus integrity (section 3.5), the host-encoder
+verification obligation for kind 2 (section 3.6), the reader's bounded-read
+rules (section 4), and the CI conformance suite (section 5). Format-1 files
+remain readable; readers report which integrity stance a file carries.
 **Profile of:** the Search Artifact Contract (`SEARCH_ARTIFACT_CONTRACT.md`, section 9.4)
 **File extension:** `.pancake`
 **Magic:** `PSF1` (`0x31465350`, little-endian u32)
@@ -60,8 +64,8 @@ All integers little-endian. All offsets absolute. Segments begin at
 | Offset | Type | Field | Notes |
 | ---: | --- | --- | --- |
 | 0 | u32 | magic | `0x31465350` (`PSF1`) |
-| 4 | u32 | formatVersion | `1` |
-| 8 | u32 | manifestBytes | length of the canonical manifest JSON |
+| 4 | u32 | formatVersion | `1` (corpus layout v1, profile `pancake-complete-v1`) or `2` (corpus layout v2, profile `pancake-complete-v2`); readers MUST reject other values |
+| 8 | u32 | manifestBytes | length of the canonical manifest JSON (readers MUST reject > 16 MiB) |
 | 12 | u32 | segmentCount | number of segment-table entries |
 | 16 | u64 | fileBytes | total file size; MUST match |
 | 24 | 32 bytes | manifestSha256 | digest of the manifest bytes |
@@ -81,8 +85,17 @@ fields:
 
 ```jsonc
 {
-  "profile": "pancake-complete-v1",
-  "corpus": { "records": 208, "provenance": null },   // provenance reserved per contract 4.3
+  "profile": "pancake-complete-v2",                    // "pancake-complete-v1" for format-1 files
+  "corpus": {
+    "records": 208,
+    "provenance": null,                                 // reserved per contract 4.3
+    // format 2 only (layout v2, section 3.5); absent on format 1:
+    "layout": "records-v2",
+    "pageRecords": 256,
+    "pages": 1,
+    "recordDigest": "sha256",
+    "pageTableSha256": "..."                            // digest of the page table bytes
+  },
   "dim": 384,
   "metric": "cosine",
   "encoder": { /* identity, preprocessing, dims, normalization — contract 4.4 list */ },
@@ -142,6 +155,38 @@ of `[offsets[i], offsets[i+1])` — resident cost is the offsets array
 (`8*(count+1)` bytes, ~1.6 MB at 200k records). Readers MAY cache records;
 cache state MUST NOT change results.
 
+That is **layout v1**, carried by format-1 files: record reads are covered
+only by the whole-segment digest, so a lazily read record is not
+independently verifiable. **Layout v2** (format 2, manifest
+`corpus.layout: "records-v2"`) makes each record read range-verifiable per
+contract sections 4.1 and 7:
+
+```
+[0, 4)                 u32 count
+[4, 8)                 u32 pageRecords (P)        1 <= P <= 65536; 256 by default
+[8, 8 + 8*(count+1))   u64 offsets[count+1]       record i = [offsets[i], offsets[i+1])
+[A, A + 32*pages)      pageSha256[pages]          pages = ceil(count / P); entry p is the
+                                                  SHA-256 of recordSha256[p*P, min(count,(p+1)*P))
+[B, B + 32*count)      recordSha256[count]        SHA-256 of each record's bytes
+[C, ...)               records                    offsets[0] MUST equal C
+```
+
+The manifest commits to the page table (`corpus.pageTableSha256`, together
+with `pageRecords`, `pages`, and `recordDigest: "sha256"`), so the
+verification chain is: identity → page table (read at open, 32 bytes per
+`P` records — 57 KB at 456k records) → one page of record digests (one read
+of `32*P` bytes the first time a record in that page is hydrated; readers
+SHOULD cache verified pages) → the record. A reader MUST verify the page
+table against the manifest at open, and each hydrated record against its
+digest (after verifying that digest's page) before returning it; a mismatch
+MUST fail the hydration, not degrade it. Per-record reads stay one range
+read plus, per page touched, one small read.
+
+Format-2 files MUST use layout v2 and header `formatVersion` 2; format-1
+files MUST use layout v1 (no `corpus.layout`) and `formatVersion` 1. A
+reader MUST reject a manifest whose layout does not match its header
+version.
+
 ### 3.6 Query-interpretation segment (kind 3)
 
 ```
@@ -169,7 +214,15 @@ retrieval-signal abstention model (distance signals plus a corpus-vocabulary
 bloom filter, base64-embedded) that scores query text and hits without
 touching the encoder internals. A reader without a host encoder for the
 declared model MUST surface the artifact as requiring one, not fall back
-silently.
+silently. A reader given a host encoder MUST run it against every
+verification vector before serving the first query — dimension equal to
+the manifest's, every component within the vector's declared tolerance —
+and MUST refuse the open on disagreement (encoder/index skew is a contract
+violation, section 4.4). A kind-2 declaration without verification vectors
+is incomplete: a reader MUST refuse to serve it as verified and MAY serve
+it only when the host explicitly accepts an unverified encoder, reporting
+that state (the reference reader: `allowUnverifiedEncoder`,
+`info().encoderVerified === false`).
 
 **kind 3 — inline-transformer-v1:** the pinned teacher compiled into the
 artifact as data. The encoder bytes are three length-prefixed regions:
@@ -215,15 +268,31 @@ conformance fixtures for readers (section 5).
 
 `open(source)`:
 
-1. Read header (64 bytes); check magic, version `=== 1`, sane counts.
+1. Read header (64 bytes); check magic, version `1` or `2`, sane counts
+   (`manifestBytes` ≤ 16 MiB, 1 ≤ `segmentCount` ≤ 64, `fileBytes` a safe
+   integer equal to the source size when the source reports one).
 2. Read manifest + segment table; verify `manifestSha256`; parse; verify
-   table/manifest agreement (kinds, offsets within file, byte lengths).
-3. Read the query-interpretation segment (one read, ~1.2 MB today); load
-   encoder + calibration.
+   table/manifest agreement (kinds, packed 16-byte-aligned offsets within
+   file, byte lengths, one segment per known kind, unknown kinds skipped),
+   and the profile/layout against the header version.
+3. Read the query-interpretation segment (one read, ~1.2 MB today), verify
+   its digest; check its version word; load encoder + calibration; for
+   kind 2 with a host encoder, verify the host encoder (section 3.6).
 4. Open the index segment with the sketch reader (staged or full); read the
-   corpus offsets array.
+   corpus tables (count + offsets, plus the page table on layout v2) in one
+   read; check the count words against the manifest, the offsets
+   (monotonic, starting exactly where the tables end, ending inside the
+   segment), and on layout v2 the page table's digest.
 5. The artifact is now serving. Total cold-open transfer at the reference
    corpus: header + manifest + query-interp + sketch stage-1 — under 2 MB.
+
+Every read in steps 1–4 (and every lazy read below) is issued only after
+its `(offset, length)` has been validated — safe non-negative integers, no
+overflow, within `fileBytes`, within the source's size when known, and
+within the reader's per-read budget (the reference reader: 256 MiB per
+open-path read, configurable; 16 MiB per corpus record; 2 GiB absolute) —
+and MUST return exactly the bytes requested. A short read is a failure, not
+a partial success. u64 fields above `2^53 - 1` are rejected.
 
 `query(text, k)`:
 
@@ -231,7 +300,10 @@ conformance fixtures for readers (section 5).
    here without touching the index).
 2. Search: sketch scan + one parallel rerank fetch round (SKETCH_PROFILE.md
    section 3).
-3. Hydrate: one range read per result id via the corpus offsets.
+3. Hydrate: one range read per result id via the corpus offsets; on layout
+   v2, verify the record against its digest (fetching and verifying that
+   digest's page on first use). A record that fails verification fails the
+   query rather than being returned.
 4. Calibrate: score match quality from hits + feature stream; a `none`
    verdict returns zero results with the score.
 
@@ -241,12 +313,22 @@ in one response; returning bare ids does not satisfy this profile.
 
 ## 5. Conformance
 
-- **Fixtures:** a committed golden `.pancake` compiled from the
-  `examples/03-edge-docs-search` assets, with the reference reader's exact
-  results for the evaluation segment's golden queries (ids, distances at
-  declared tolerance, match-quality labels). The 10 abstention goldens MUST
-  reproduce their labels — already demonstrated component-wise by the
-  composition spike.
+- **Fixtures:** `test/complete_profile.mjs` (run by `npm test`, so by CI)
+  builds every fixture deterministically in-process — no downloads, no
+  model weights — and is the reference reader's conformance suite:
+  (A) a seeded kind-2 format-2 artifact with a deterministic host encoder,
+  covering open/query/hydrate, host-encoder verification, per-record and
+  page-table tamper detection, structural rejection of hostile headers,
+  tables, and offsets, read budgets, truncation and short reads, unknown
+  and duplicate segments, and format-version bounds; (B) the same corpus as
+  a format-1 file, which MUST still open and report the transitional
+  integrity stance (a record tamper is documented as undetectable there);
+  (C) a kind-1 artifact compiled from the committed
+  `examples/03-edge-docs-search` assets, whose 10 abstention goldens MUST
+  reproduce their labels, whose hydration round-trips the source corpus,
+  and whose compile MUST be byte-deterministic. Kind 3 is covered by
+  `examples/05-one-file-search/test-inline.mjs` against the released
+  wiki-inline artifact (its weight blob is not a CI fixture).
 - **Producer:** emits structurally valid files whose manifest digests
   verify, whose index segment passes sketch-profile conformance, whose
   corpus round-trips every record, and whose evaluation bounds hold under
@@ -259,16 +341,25 @@ in one response; returning bare ids does not satisfy this profile.
   validated before allocation per the contract's section 7 rules, and reads
   respect the layered budgets the readers already enforce.
 
-## 6. Integrity stance (transitional)
+## 6. Integrity stance
 
-Draft 1 commits to whole-segment digests via the manifest, plus the sketch
-artifact's internal hashes. Individual lazy range reads (corpus records,
-sketch rows) are NOT independently verifiable — the same transitional
-stance as every current profile. Contract section 4.1's range-verifiable
-chunk commitments are the planned v2 upgrade: a per-segment chunk-digest
-list in the manifest, sized to the real read shapes (corpus records and
-sketch rows), at which point this profile satisfies section 4.1 in full.
-Draft 1 states this honestly rather than claiming completeness.
+Format 2 commits to every corpus record individually (section 3.5): a
+hydrated record is verified on its own range read through the page table
+the manifest commits to, which is contract section 4.1's range-verifiable
+chunk commitment sized to the corpus's real read shape (one record). Eager
+segments (manifest, query-interp, evaluation, corpus tables) verify whole,
+and the index segment inherits the sketch artifact's resident hash.
+
+What remains transitional: the sketch artifact's lazy rerank rows are
+still covered only by its whole-segment `vectorsSha256` (verifiable after
+the fact via `verifyVectors()`, not per read). Per-row commitments belong
+to SKETCH_PROFILE.md's next revision; this profile will inherit them
+unchanged.
+
+Format-1 files keep Draft 1's stance — whole-segment digests only, lazy
+record reads not independently verifiable — and readers MUST report which
+stance a file carries (`info().corpusIntegrity`) rather than presenting
+both as equivalent.
 
 ## 7. Relationship to existing tooling
 

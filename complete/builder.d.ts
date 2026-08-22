@@ -14,18 +14,49 @@ export declare function sha256(bytes: Uint8Array | Buffer): Buffer;
 export declare function canonicalJson(value: unknown): string;
 export declare const align16: (n: number) => number;
 
+/** Manifest profile strings and the header formatVersion each one implies. */
+export declare const PROFILE_V1: 'pancake-complete-v1';
+export declare const PROFILE_V2: 'pancake-complete-v2';
+export declare const FORMAT_VERSIONS: Record<string, number>;
+/** Corpus layout name for format 2 (per-record digests behind a page table). */
+export declare const CORPUS_LAYOUT_V2: 'records-v2';
+export declare const DEFAULT_CORPUS_PAGE_RECORDS: number;
+
 export declare function buildQueryInterpSegment(kind: number, encoderBytes: Buffer | Uint8Array, calibrationBytes: Buffer | Uint8Array): Buffer;
+/** Corpus layout v1 (format 1): count + offsets + records, whole-segment integrity only. */
 export declare function buildCorpusSegmentFromBuffers(records: Array<Buffer | Uint8Array>): Buffer;
+/**
+ * Corpus layout v2 (format 2): count, pageRecords, offsets, a page table of
+ * SHA-256s over runs of record digests, one SHA-256 per record, then the
+ * records. Spread the returned `corpus` block into manifest.corpus.
+ */
+export declare function buildCorpusSegment(records: Array<Buffer | Uint8Array>, options?: { pageRecords?: number }): {
+  bytes: Buffer;
+  corpus: {
+    records: number;
+    layout: 'records-v2';
+    pageRecords: number;
+    pages: number;
+    recordDigest: 'sha256';
+    pageTableSha256: string;
+  };
+};
 export declare function buildInlineTransformerEncoderSegment(input: {
   declaration: Record<string, unknown>;
   vocabBytes: Buffer | Uint8Array;
   weightBytes: Buffer | Uint8Array;
 }): Buffer;
+/**
+ * Writes the container. manifestFields.profile selects the header format
+ * version (PROFILE_V1 -> 1 with a v1 corpus, PROFILE_V2 -> 2 with a
+ * buildCorpusSegment() corpus); mismatches throw. Segments with a kind this
+ * spec does not name must carry an explicit kindNumber (readers skip them).
+ */
 export declare function assemblePancakeFile(
-  manifestFields: Record<string, unknown>,
-  segments: Array<{ kind: string; bytes: Buffer | Uint8Array }>,
+  manifestFields: Record<string, unknown> & { profile: string; corpus: { records: number } & Record<string, unknown> },
+  segments: Array<{ kind: string; bytes: Buffer | Uint8Array; kindNumber?: number }>,
   outPath: string
-): { outPath: string; fileBytes: number; identity: string; manifest: Record<string, unknown> };
+): { outPath: string; fileBytes: number; formatVersion: number; identity: string; manifest: Record<string, unknown> };
 
 /** Measured recall-vs-rerank operating point (SKETCH_PROFILE.md section 5). */
 export declare function measureRecommendedRerank(input: {

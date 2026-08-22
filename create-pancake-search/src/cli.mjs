@@ -554,7 +554,7 @@ async function buildAssets(projectDir, config, options = {}) {
 async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, chunks, snapshot, vectors, log = () => {} }) {
   const artifactContract = await loadArtifactContract();
   const {
-    assemblePancakeFile, buildCorpusSegmentFromBuffers, buildInlineTransformerEncoderSegment,
+    assemblePancakeFile, buildCorpusSegment, buildInlineTransformerEncoderSegment, PROFILE_V2,
     buildQueryInterpSegment, measureRecommendedRerank, loadInlineEncoderKernel,
   } = (await loadCompleteModules()).builder;
   const { createInlineTransformerEmbedder, buildInlineTestVectors } = (await loadCompleteModules()).reader;
@@ -617,9 +617,10 @@ async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, c
     rerankSweep,
   }), 'utf8');
   const outPath = path.join(assetsDir, runtime.fileName || 'search.pancake');
+  const corpusSegment = buildCorpusSegment(records);
   const result = assemblePancakeFile({
-    profile: 'pancake-complete-v1',
-    corpus: { records: chunks.length, provenance: { source: config.source.type, name: config.name } },
+    profile: PROFILE_V2,
+    corpus: { ...corpusSegment.corpus, provenance: { source: config.source.type, name: config.name } },
     dim: config.embedding.dims,
     metric: config.index.metric,
     encoder: {
@@ -633,12 +634,12 @@ async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, c
     sampleQueries: runtime.sampleQueries || [],
   }, [
     { kind: 'index', bytes: Buffer.from(sketch.bytes) },
-    { kind: 'corpus', bytes: buildCorpusSegmentFromBuffers(records) },
+    { kind: 'corpus', bytes: corpusSegment.bytes },
     { kind: 'query-interp', bytes: buildQueryInterpSegment(3, inlineEncoderBytes, calibrationBytes) },
     { kind: 'evaluation', bytes: evaluation },
   ], outPath);
   return {
-    profile: 'pancake-complete-v1',
+    profile: PROFILE_V2,
     kind: 'inline-transformer-v1',
     path: path.basename(outPath),
     bytes: result.fileBytes,

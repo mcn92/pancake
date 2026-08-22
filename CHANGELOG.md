@@ -6,6 +6,47 @@ Release notes for the two published packages in this repository,
 pre-1.0: a minor bump may carry breaking changes, and each entry lists them
 first.
 
+## Unreleased — pancake-wasm 0.4.0 / create-pancake-search 0.4.0
+
+### Breaking / compatibility
+
+- **Complete artifact format 2** (`pancake-complete-v2`, header
+  `formatVersion` 2) is now what the builder writes by default
+  (`buildCorpusSegment`, `PROFILE_V2`): the corpus segment carries one
+  SHA-256 per record behind a page table the manifest commits to, so every
+  hydrated record is verified on its own range read. Readers ≤ 0.3.0 reject
+  format-2 files explicitly ("unsupported .pancake format version 2"); the
+  0.4.0 reader opens format 1 and 2 and reports the stance in
+  `info().corpusIntegrity`. `create-pancake-search` complete-mode builds
+  (`search.pancake`) and `examples/05` compiles now produce format 2;
+  released wiki artifacts stay format 1 and remain readable.
+- `openPancakeFile` on kind-2 artifacts now runs `options.encodeQuery`
+  against the declaration's verification vectors **at open** and refuses
+  the open on disagreement (dimension or tolerance); declarations without
+  vectors are refused unless `allowUnverifiedEncoder: true`. Previously the
+  host encoder was trusted.
+- Reader hardening: every artifact-derived read is validated (safe
+  integers, overflow, `fileBytes`, source size, per-open `maxReadBytes`
+  budget — default 256 MiB, `Infinity` → 2 GiB backstop — and
+  `maxRecordBytes` per record, default 16 MiB) and must return exactly the
+  bytes requested; u64 fields above 2^53−1, unknown query-interp versions,
+  duplicate segment kinds, and inconsistent offsets tables are rejected.
+  Unknown segment kinds are skipped (spec 3.3). Files that previously
+  opened only because a check was missing may now be refused with a
+  specific error.
+
+### Added
+
+- `info().formatVersion`, `profile`, `encoderVerified`, `corpusIntegrity`;
+  `record(id)`; `verifyHostEncoder()`, `SUPPORTED_PROFILES`,
+  `CORPUS_LAYOUT_V2` exports; `assemblePancakeFile` accepts unknown kinds
+  via `kindNumber` and returns `formatVersion`.
+- `test/complete_profile.mjs` — deterministic complete-profile reader
+  conformance (77 checks: hostile input, verification, integrity, format-1
+  compatibility, kind-1 goldens from the committed 03 assets), run by
+  `npm test` and therefore CI.
+- spec/COMPLETE_PROFILE.md Draft 2.
+
 ## pancake-wasm 0.3.0 — 2026-08-20
 
 ### Breaking / compatibility

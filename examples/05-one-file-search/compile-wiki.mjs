@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildQueryInterpSegment, assemblePancakeFile } from '../../complete/builder.mjs';
+import { buildQueryInterpSegment, buildCorpusSegment, assemblePancakeFile, PROFILE_V2 } from '../../complete/builder.mjs';
 import { inspect } from './compile.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -20,7 +20,9 @@ const DATA = path.join(here, '..', '04-static-wiki-pack', 'data-full');
 function buildWikiCorpusSegment() {
     // The pack already stores the corpus as JSONL bytes plus a u32
     // count+1 offsets index; the container form is the same records behind
-    // u64 offsets (spec 3.5). Records pass through untouched.
+    // u64 offsets plus per-record digests (spec 3.5, layout records-v2).
+    // Records pass through untouched — sliced as views, no copy until the
+    // segment is assembled.
     const corpusBytes = fs.readFileSync(path.join(DATA, 'corpus.bin'));
     const u32 = fs.readFileSync(path.join(DATA, 'corpus-offsets.u32'));
     const packOffsets = new Uint32Array(u32.buffer, u32.byteOffset, u32.byteLength / 4);
@@ -28,14 +30,12 @@ function buildWikiCorpusSegment() {
     if (packOffsets[count] !== corpusBytes.length) {
         throw new Error(`corpus offsets end ${packOffsets[count]} != corpus bytes ${corpusBytes.length}`);
     }
-    const prefix = 4 + 8 * (count + 1);
-    const out = Buffer.alloc(prefix + corpusBytes.length);
-    out.writeUInt32LE(count, 0);
-    for (let i = 0; i <= count; i++) {
-        out.writeBigUInt64LE(BigInt(prefix + packOffsets[i]), 4 + 8 * i);
+    const records = new Array(count);
+    for (let i = 0; i < count; i++) {
+        records[i] = corpusBytes.subarray(packOffsets[i], packOffsets[i + 1]);
     }
-    corpusBytes.copy(out, prefix);
-    return { segment: out, count };
+    const built = buildCorpusSegment(records);
+    return { segment: built.bytes, corpus: built.corpus, count };
 }
 
 // kind 3: the teacher compiled in — declaration + vocab + weight blob as
@@ -137,7 +137,7 @@ function buildWikiQueryInterp(packManifest) {
 }
 
 const packManifest = JSON.parse(fs.readFileSync(path.join(DATA, 'pack-manifest.json'), 'utf8'));
-const { segment: corpusSegment, count } = buildWikiCorpusSegment();
+const { segment: corpusSegment, corpus: corpusFields, count } = buildWikiCorpusSegment();
 if (count !== packManifest.chunks) {
     throw new Error(`corpus count ${count} != pack manifest chunks ${packManifest.chunks}`);
 }
@@ -163,9 +163,9 @@ const segments = [
 
 const outPath = args[0] || path.join(here, inline ? 'pancake-wiki-inline.pancake' : 'pancake-wiki.pancake');
 const result = assemblePancakeFile({
-    profile: 'pancake-complete-v1',
+    profile: PROFILE_V2,
     corpus: {
-        records: count,
+        ...corpusFields,
         provenance: { dataset: packManifest.dataset, articles: packManifest.articles },
     },
     dim: packManifest.dim,

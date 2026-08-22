@@ -299,7 +299,13 @@ console.log(out.results[0].title);
 await search.close();
 ```
 
-For kind-2 artifacts, pass `options.encodeQuery`. For kind-3 artifacts, no
+For kind-2 artifacts, pass `options.encodeQuery`; the reader runs it against
+the declaration's verification vectors before serving and refuses the open
+if they disagree (`info().encoderVerified` reports the outcome). Format-2
+files (`pancake-complete-v2`, the builder's default) carry per-record
+corpus digests, so every hydrated record is verified on its own range read
+(`info().corpusIntegrity`); every artifact-derived read is bounds-checked
+and budgeted (`maxReadBytes`, `maxRecordBytes`). For kind-3 artifacts, no
 host encoder is required:
 
 ```js

@@ -38,6 +38,10 @@ export function buildQueryInterpSegment(kind, encoderBytes, calibrationBytes) {
   return out;
 }
 
+// Corpus layout v1 (format 1, profile pancake-complete-v1): count + offsets +
+// records, integrity by whole-segment digest only. Kept for producing
+// format-1 files (compatibility fixtures, readers that predate format 2);
+// new artifacts use buildCorpusSegment() below.
 export function buildCorpusSegmentFromBuffers(records) {
   const count = records.length;
   const prefix = 4 + 8 * (count + 1);
@@ -52,6 +56,67 @@ export function buildCorpusSegmentFromBuffers(records) {
   }
   out.writeBigUInt64LE(BigInt(cursor), 4 + 8 * count);
   return out;
+}
+
+// Corpus layout v2 (format 2, profile pancake-complete-v2): per-record
+// integrity that a reader can check on the single range read that hydrates
+// a record, without fetching the rest of the segment (contract 4.1 / 7):
+//
+//   [0, 4)                 u32 count
+//   [4, 8)                 u32 pageRecords (P)
+//   [8, 8 + 8*(count+1))   u64 offsets[count+1]   record i = [offsets[i], offsets[i+1])
+//   [A, A + 32*pages)      pageSha256[pages]      pages = ceil(count / P); page p is
+//                                                 the digest of recordSha256[p*P .. min(count,(p+1)*P))
+//   [B, B + 32*count)      recordSha256[count]    digest of each record's bytes
+//   [C, ...)               records                offsets[0] == C
+//
+// The manifest carries pageTableSha256 (digest of the page table bytes), so
+// the chain is identity -> page table (read at open, 32 bytes per P
+// records) -> one page of record digests (read when a record in it is first
+// hydrated) -> the record. Returns the segment bytes plus the manifest's
+// corpus fields; callers spread them under manifest.corpus.
+export const CORPUS_LAYOUT_V2 = 'records-v2';
+export const DEFAULT_CORPUS_PAGE_RECORDS = 256;
+export function buildCorpusSegment(records, options = {}) {
+  const count = records.length;
+  const pageRecords = options.pageRecords ?? DEFAULT_CORPUS_PAGE_RECORDS;
+  if (!Number.isInteger(pageRecords) || pageRecords < 1 || pageRecords > 65536) {
+    throw new Error('pageRecords must be an integer in [1, 65536]');
+  }
+  const pages = Math.ceil(count / pageRecords);
+  const offsetsAt = 8;
+  const pageTableAt = offsetsAt + 8 * (count + 1);
+  const recordDigestsAt = pageTableAt + 32 * pages;
+  const recordsAt = recordDigestsAt + 32 * count;
+  const total = recordsAt + records.reduce((sum, b) => sum + b.length, 0);
+  const out = Buffer.alloc(total);
+  out.writeUInt32LE(count, 0);
+  out.writeUInt32LE(pageRecords, 4);
+  let cursor = recordsAt;
+  for (let id = 0; id < count; id++) {
+    out.writeBigUInt64LE(BigInt(cursor), offsetsAt + 8 * id);
+    records[id].copy(out, cursor);
+    sha256(records[id]).copy(out, recordDigestsAt + 32 * id);
+    cursor += records[id].length;
+  }
+  out.writeBigUInt64LE(BigInt(cursor), offsetsAt + 8 * count);
+  for (let p = 0; p < pages; p++) {
+    const from = recordDigestsAt + 32 * p * pageRecords;
+    const to = recordDigestsAt + 32 * Math.min(count, (p + 1) * pageRecords);
+    sha256(out.subarray(from, to)).copy(out, pageTableAt + 32 * p);
+  }
+  const pageTableSha256 = sha256(out.subarray(pageTableAt, recordDigestsAt)).toString('hex');
+  return {
+    bytes: out,
+    corpus: {
+      records: count,
+      layout: CORPUS_LAYOUT_V2,
+      pageRecords,
+      pages,
+      recordDigest: 'sha256',
+      pageTableSha256,
+    },
+  };
 }
 
 export function buildInlineTransformerEncoderSegment({ declaration, vocabBytes, weightBytes }) {
@@ -177,7 +242,30 @@ function selfQueriesFromSnapshot(graph, maxQueries) {
   return queries;
 }
 
+// Container format version follows the profile string: pancake-complete-v1
+// files carry corpus layout v1 and header version 1; pancake-complete-v2
+// files carry corpus layout records-v2 (buildCorpusSegment) and header
+// version 2, so readers that predate per-record integrity reject them
+// explicitly instead of misreading the corpus tables.
+export const PROFILE_V1 = 'pancake-complete-v1';
+export const PROFILE_V2 = 'pancake-complete-v2';
+export const FORMAT_VERSIONS = { [PROFILE_V1]: 1, [PROFILE_V2]: 2 };
+
 export function assemblePancakeFile(manifestFields, segments, outPath) {
+  const formatVersion = FORMAT_VERSIONS[manifestFields.profile];
+  if (!formatVersion) {
+    throw new Error(`manifest.profile must be ${PROFILE_V1} or ${PROFILE_V2}, got ${manifestFields.profile}`);
+  }
+  const layout = manifestFields.corpus?.layout;
+  if (formatVersion === 2 && layout !== CORPUS_LAYOUT_V2) {
+    throw new Error(`${PROFILE_V2} requires manifest.corpus from buildCorpusSegment() (layout ${CORPUS_LAYOUT_V2})`);
+  }
+  if (formatVersion === 1 && layout !== undefined) {
+    throw new Error(`${PROFILE_V1} carries corpus layout v1 (buildCorpusSegmentFromBuffers); got layout ${layout}`);
+  }
+  if (!Number.isInteger(manifestFields.corpus?.records) || manifestFields.corpus.records < 0) {
+    throw new Error('manifest.corpus.records must be a non-negative integer');
+  }
   const manifest = {
     ...manifestFields,
     segments: segments.map((s) => ({
@@ -195,7 +283,14 @@ export function assemblePancakeFile(manifestFields, segments, outPath) {
   const placed = [];
   for (let i = 0; i < segments.length; i++) {
     const entry = i * TABLE_ENTRY_BYTES;
-    table.writeUInt32LE(KINDS[segments[i].kind], entry);
+    // Known kinds map by name; a producer may carry an extra segment under
+    // a name this spec revision does not define by giving its numeric kind
+    // explicitly (readers skip unknown kinds, spec 3.3).
+    const kindNumber = KINDS[segments[i].kind] ?? segments[i].kindNumber;
+    if (!Number.isInteger(kindNumber) || kindNumber < 1 || kindNumber > 0xffffffff) {
+      throw new Error(`segment ${i} (${segments[i].kind}) has no kind number`);
+    }
+    table.writeUInt32LE(kindNumber, entry);
     table.writeBigUInt64LE(BigInt(cursor), entry + 8);
     table.writeBigUInt64LE(BigInt(segments[i].bytes.length), entry + 16);
     placed.push({ offset: cursor, bytes: segments[i].bytes });
@@ -206,7 +301,7 @@ export function assemblePancakeFile(manifestFields, segments, outPath) {
 
   const header = Buffer.alloc(HEADER_BYTES);
   header.writeUInt32LE(MAGIC, 0);
-  header.writeUInt32LE(1, 4);
+  header.writeUInt32LE(formatVersion, 4);
   header.writeUInt32LE(manifestBytes.length, 8);
   header.writeUInt32LE(segments.length, 12);
   header.writeBigUInt64LE(BigInt(fileBytes), 16);
@@ -224,5 +319,5 @@ export function assemblePancakeFile(manifestFields, segments, outPath) {
   } finally {
     fs.closeSync(fd);
   }
-  return { outPath, fileBytes, identity: identity.toString('hex'), manifest };
+  return { outPath, fileBytes, formatVersion, identity: identity.toString('hex'), manifest };
 }
