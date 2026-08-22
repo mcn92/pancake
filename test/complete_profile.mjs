@@ -430,6 +430,52 @@ const A = buildSynthetic();
     check('close() twice on a file-path reader does not throw (no EBADF)', secondClose === 'ok', secondClose);
     await rejects('query() after close is refused', () => spoof.query('rec 1'), /reader is closed/);
     await rejects('record() after close is refused', () => spoof.record(1), /reader is closed/);
+    // A digest-page read that fails for a transport reason must not stay
+    // cached as a rejection: the next hydration retries and succeeds.
+    {
+        let failNext = true;
+        const flaky = {
+            size: A.bytes.length, preferredParallelism: Infinity, preferredGapBytes: 0,
+            async read(offset, length) {
+                // The digest table sits between the offsets table and the
+                // records; fail the first read that lands there.
+                const { segments } = layoutOf(A.bytes);
+                const corpus = segments.corpus;
+                const pageTableAt = corpus.offset + 8 + 8 * (COUNT + 1);
+                const recordsAt = pageTableAt + 32 * Math.ceil(COUNT / PAGE_RECORDS) + 32 * COUNT;
+                if (failNext && offset >= pageTableAt + 32 * Math.ceil(COUNT / PAGE_RECORDS) && offset < recordsAt) {
+                    failNext = false;
+                    throw new Error('simulated transport failure');
+                }
+                return A.bytes.subarray(offset, offset + length);
+            },
+            async close() {},
+        };
+        const fl = await openPancakeFile(flaky, { encodeQuery: hostEncode });
+        await rejects('first hydration fails with the transport error', () => fl.record(100), /simulated transport failure/);
+        check('the failed digest page is not cached: the retry succeeds', (await fl.record(100)).title === 'rec 100');
+        await fl.close();
+    }
+    // httpRangeSource: a 206 whose Content-Range is not the requested slice
+    // is refused instead of being handed to the reader.
+    {
+        const realFetch2 = globalThis.fetch;
+        globalThis.fetch = async (url, init = {}) => {
+            if (init.method === 'HEAD') return new Response(null, { status: 200, headers: { 'content-length': String(A.bytes.length), 'accept-ranges': 'bytes' } });
+            const m = /bytes=(\d+)-(\d+)/.exec(init.headers.Range);
+            const start = Number(m[1]) + 16; // off by 16: a misbehaving cache
+            const body = A.bytes.subarray(start, start + (Number(m[2]) - Number(m[1]) + 1));
+            return new Response(body, { status: 206, headers: { 'content-range': `bytes ${start}-${start + body.length - 1}/${A.bytes.length}` } });
+        };
+        try {
+            const { httpRangeSource: rangeSource } = await import('../complete/sources.mjs');
+            const src = rangeSource('http://host.invalid/b.pancake');
+            await src.init();
+            await rejects('a 206 answering a different range than requested is refused', () => src.read(64, 64), /returned bytes 80-143, requested 64-127/);
+        } finally {
+            globalThis.fetch = realFetch2;
+        }
+    }
     // 4. httpRangeSource: after the one-time full-download fallback, reads
     // are served from memory and issue no further requests.
     const { httpRangeSource } = await import('../complete/sources.mjs');

@@ -32,6 +32,15 @@ export function httpRangeSource(url, options = {}) {
             const response = await fetch(`${url}${sep}r=${offset}-${end}`, { headers });
 
             if (response.status === 206) {
+                // A 206 must be the range we asked for: a host (or cache)
+                // that answers with a different slice would otherwise be
+                // caught only downstream, by the digest on whatever that
+                // slice happens to be part of.
+                const contentRange = response.headers.get('content-range');
+                const m = contentRange && /^bytes (\d+)-(\d+)\//.exec(contentRange);
+                if (m && (Number(m[1]) !== offset || Number(m[2]) > end)) {
+                    throw new Error(`range read returned bytes ${m[1]}-${m[2]}, requested ${offset}-${end}`);
+                }
                 return new Uint8Array(await response.arrayBuffer());
             }
             if (response.status === 200) {

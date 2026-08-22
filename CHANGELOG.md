@@ -88,7 +88,17 @@ first.
 - `parseUint8Snapshot` reads version-1 uint8 payloads with their 4-byte
   edges (id only), matching the engine's deserializer; v1 payloads were
   previously misparsed as the v2 {id, distance} layout.
-- New `test/artifact_hardening.js` (56 checks) in `npm test`; 13 more checks
+- `rerank: 0` / `efSearch: 0` keep their historical "use the default"
+  meaning (`undefined`, `null`, `0` → default; anything else must be a
+  positive integer).
+- `parseUint8Snapshot` bounds `M`/`M0` to the engine's own envelope
+  (`M ∈ [2,128]`, `M ≤ M0 ≤ 256`).
+- Complete reader: a kind-3 encoder's WASM buffers are released when the
+  open fails after the encoder was created; a digest-page read that fails
+  for a transport reason is not cached as a rejection (the next hydration
+  retries). `httpRangeSource` refuses a 206 whose `Content-Range` is not the
+  requested slice.
+- New `test/artifact_hardening.js` (60 checks) in `npm test`; 16 more checks
   in `test/complete_profile.mjs`.
 
 ### Internal

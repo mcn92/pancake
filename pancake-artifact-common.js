@@ -296,10 +296,13 @@ function resolveSearchK(k, count) {
     }
     return Math.min(k, count);
 }
+// undefined, null, and 0 all mean "use the default" — 0 kept its historical
+// `options.rerank || default` meaning so existing callers do not break;
+// anything else must be a positive safe integer.
 function resolveOptionalPositiveInt(value, name, fallback) {
-    if (value === undefined || value === null) return fallback;
+    if (value === undefined || value === null || value === 0) return fallback;
     if (!Number.isSafeInteger(value) || value < 1) {
-        throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, `search() ${name} must be a positive integer`, { [name]: value });
+        throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, `search() ${name} must be a positive integer (0 or undefined selects the default)`, { [name]: value });
     }
     return value;
 }
@@ -399,7 +402,9 @@ function parseUint8Snapshot(bytes) {
     // every neighbor id must address a node — all checked before the
     // Uint32Array for that level is allocated, so a crafted count cannot
     // drive a giant allocation that truncation would only catch afterwards.
-    if (M < 1 || M0 < 1 || M > 4096 || M0 > 8192 || M0 < M) {
+    // Same envelope as the engine: create() accepts M in [2, 128] and fixes
+    // M0 = 2*M, and its own import rejects M outside that range.
+    if (!(M >= 2 && M <= 128) || !(M0 >= M && M0 <= 256)) {
         throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'uint8 snapshot graph parameters are implausible', { M, M0 });
     }
     // Edge layout follows the engine's deserializer (uint8_float_hnsw.hpp):

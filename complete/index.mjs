@@ -257,6 +257,9 @@ export async function openPancakeFile(input, options = {}) {
     const maxRecordBytes = resolveBudget(options.maxRecordBytes, 'maxRecordBytes', DEFAULT_RECORD_BYTES);
     const verifyRecords = options.verifyRecords !== false;
     const verifyEncoder = options.verifyEncoder !== false;
+    // Declared outside the try so a failure after the encoder is created
+    // (count mismatch, bad corpus tables, ...) still releases its buffers.
+    let disposeEncoder = () => {};
     try {
         // Header: the only read whose bounds come from nowhere but the spec.
         const header = await readChecked(source, 0, HEADER_BYTES, 'header', maxReadBytes);
@@ -437,7 +440,6 @@ export async function openPancakeFile(input, options = {}) {
         let scoreQuality;
         let encoderInfo;
         let encoderVerified = null;
-        let disposeEncoder = () => {};
         const retrievalScorer = () => {
             const scorer = createAbstentionScorer(calibrationJson.asset, base64Bytes(calibrationJson.vocabBloomBase64));
             const VERDICTS = { answer: 'strong', weak: 'weak', abstain: 'none' };
@@ -588,6 +590,10 @@ export async function openPancakeFile(input, options = {}) {
                 return bytes;
             })();
             digestPages.set(page, pending);
+            // A failed fetch (transport error, short read, hash mismatch) must
+            // not stay cached as a rejected promise that every later record in
+            // the page re-throws; evict it so the next hydration retries.
+            pending.catch(() => { if (digestPages.get(page) === pending) digestPages.delete(page); });
             if (digestPages.size > DIGEST_PAGE_CACHE) digestPages.delete(digestPages.keys().next().value);
             return pending;
         };
@@ -723,6 +729,7 @@ export async function openPancakeFile(input, options = {}) {
             },
         };
     } catch (err) {
+        try { disposeEncoder(); } catch { /* already released */ }
         if (owned && source.close) await source.close().catch(() => {});
         throw err;
     }

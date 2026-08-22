@@ -99,6 +99,7 @@ async function main() {
         await rejects('range: k=0 is rejected', () => range.search(q, 0), 'INVALID_ARGUMENT', /positive integer/);
         await rejects('range: fractional k is rejected', () => range.search(q, 2.5), 'INVALID_ARGUMENT');
         await rejects('range: efSearch must be a positive integer', () => range.search(q, 5, { efSearch: -1 }), 'INVALID_ARGUMENT', /efSearch/);
+        check('range: efSearch: 0 still means the default (historical `|| 100`)', (await range.search(q, 5, { efSearch: 0 })).results.length === 5);
         const hugeRange = (await range.search(q, 1e9)).results;
         check('range: k=1e9 returns at most count results', hugeRange.length <= fx.count && hugeRange.length > 0, `${hugeRange.length}`);
         check('range: k=1e9 top result equals the k=5 top result', hugeRange[0].id === baseline[0].id);
@@ -110,6 +111,7 @@ async function main() {
         await rejects('sketch: wrong dimension is rejected', () => sketch.search(new Float32Array(fx.dim + 1), 5), 'DIMENSION_MISMATCH');
         await rejects('sketch: k=0 is rejected', () => sketch.search(q, 0), 'INVALID_ARGUMENT', /positive integer/);
         await rejects('sketch: rerank must be a positive integer', () => sketch.search(q, 5, { rerank: 1.5 }), 'INVALID_ARGUMENT', /rerank/);
+        check('sketch: rerank: 0 still means the default (historical `|| 0`)', (await sketch.search(q, 5, { rerank: 0 })).results.length === 5);
         const t0 = Date.now();
         const hugeSketch = (await sketch.search(q, 1e9, { rerank: 1e9 })).results;
         check('sketch: k=1e9 / rerank=1e9 returns at most count results without a giant allocation',
