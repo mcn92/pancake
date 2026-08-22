@@ -129,18 +129,37 @@ async function readChecked(source, offset, length, label, limit, fileBytes) {
 
 async function fileSource(filePath) {
     const fs = await import(/* webpackIgnore: true */ /* @vite-ignore */ 'node:fs');
-    const fd = fs.openSync(filePath, 'r');
-    const size = fs.fstatSync(fd).size;
+    let fd = fs.openSync(filePath, 'r');
+    let size;
+    try {
+        size = fs.fstatSync(fd).size;
+    } catch (err) {
+        fs.closeSync(fd);
+        throw err;
+    }
     return {
         size,
         preferredParallelism: Infinity,
         preferredGapBytes: 2048,
         async read(offset, length) {
+            if (fd === null) throw new Error('.pancake file source is closed');
             const buffer = new Uint8Array(length);
-            const bytesRead = fs.readSync(fd, buffer, 0, length, offset);
+            let bytesRead = 0;
+            while (bytesRead < length) {
+                const chunk = fs.readSync(fd, buffer, bytesRead, length - bytesRead, offset + bytesRead);
+                if (chunk === 0) break;
+                bytesRead += chunk;
+            }
             return buffer.subarray(0, bytesRead);
         },
-        async close() { fs.closeSync(fd); },
+        // Idempotent: a second close() is a no-op, not EBADF.
+        async close() {
+            if (fd !== null) {
+                const handle = fd;
+                fd = null;
+                fs.closeSync(handle);
+            }
+        },
     };
 }
 
@@ -612,6 +631,14 @@ export async function openPancakeFile(input, options = {}) {
             return cacheRecord(id, record);
         };
 
+        // Lifecycle: close() is idempotent (the encoder's WASM buffers and the
+        // file descriptor are released once), and the query surface refuses
+        // use after close instead of reading through a freed encoder.
+        let closed = false;
+        const assertOpen = () => {
+            if (closed) throw new Error('.pancake reader is closed');
+        };
+
         return {
             info() {
                 return {
@@ -632,7 +659,19 @@ export async function openPancakeFile(input, options = {}) {
             },
 
             async query(text, queryOptions = {}) {
-                const k = Number.isInteger(queryOptions.k) && queryOptions.k > 0 ? Math.min(queryOptions.k, Math.max(recordCount, 1)) : 5;
+                assertOpen();
+                // k: absent means the default; anything supplied must be a
+                // positive integer (an explicit 0, -1, or 2.5 is an error,
+                // not a silent fallback) and is capped to the corpus size
+                // before it sizes the search.
+                let k = 5;
+                if (queryOptions.k !== undefined) {
+                    if (!Number.isSafeInteger(queryOptions.k) || queryOptions.k < 1) {
+                        throw new Error('query() k must be a positive integer');
+                    }
+                    k = queryOptions.k;
+                }
+                k = Math.min(k, Math.max(recordCount, 1));
                 const trimmed = String(text || '').trim();
                 if (!trimmed) throw new Error('query text is required');
                 const context = await embed(trimmed);
@@ -648,19 +687,24 @@ export async function openPancakeFile(input, options = {}) {
                 }
                 const quality = pre || scoreQuality(hits, context);
                 const returned = quality.match_quality === 'none' ? [] : hits;
+                // The search's id and distance are authoritative: they are
+                // written last so a corpus record carrying its own `id` or
+                // `distance` field cannot overwrite them (reserved names).
                 const results = await Promise.all(returned.map(async (hit) => {
                     const record = await hydrate(hit.id);
-                    return { id: hit.id, distance: hit.distance, ...record };
+                    return { ...record, id: hit.id, distance: hit.distance };
                 }));
                 return { matchQuality: quality.match_quality, confidence: quality.confidence, results };
             },
 
             /** Hydrate one corpus record by id (verified per record on format 2). */
             async record(id) {
+                assertOpen();
                 return hydrate(id);
             },
 
             async evaluation() {
+                assertOpen();
                 const ev = segments.get('evaluation');
                 if (!ev) return null;
                 const bytes = await readChecked(source, ev.offset, ev.length, 'evaluation segment', maxReadBytes, fileBytes);
@@ -671,6 +715,8 @@ export async function openPancakeFile(input, options = {}) {
             },
 
             async close() {
+                if (closed) return;
+                closed = true;
                 disposeEncoder();
                 await sketch.close();
                 if (owned) await source.close();

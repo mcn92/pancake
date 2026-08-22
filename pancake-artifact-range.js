@@ -20,6 +20,8 @@ const {
     parseUint8Snapshot,
     verifySha256,
     verifySegmentSha256,
+    resolveSearchK,
+    resolveOptionalPositiveInt,
 } = require('./pancake-artifact-common.js');
 
 const RANGE_MAGIC = 0x31415250; // PRA1
@@ -118,7 +120,15 @@ class PancakeRangeArtifact {
     }
 
     static async openFile(filePath, options = {}) {
-        return PancakeRangeArtifact.open(new NodeFileRangeSource(filePath), options);
+        // The source owns a file descriptor from construction; a rejected
+        // open must release it, or every corrupt artifact leaks an fd.
+        const source = new NodeFileRangeSource(filePath);
+        try {
+            return await PancakeRangeArtifact.open(source, options);
+        } catch (err) {
+            await source.close().catch(() => {});
+            throw err;
+        }
     }
 
     async close() {
@@ -414,10 +424,9 @@ class PancakeRangeArtifact {
 
     async search(queryInput, k, options = {}) {
         const query = normalizeQuery(queryInput, this.dim, this.metric);
-        if (!Number.isInteger(k) || k <= 0) {
-            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'search() k must be a positive integer', { k });
-        }
-        const efSearch = Math.max(options.efSearch || 100, k);
+        k = resolveSearchK(k, this.count);
+        if (k === 0) return { results: [], rounds: [], stats: this.stats() };
+        const efSearch = Math.max(resolveOptionalPositiveInt(options.efSearch, 'efSearch', 100), k);
         const expansionBatch = Math.max(1, Math.trunc(options.expansionBatch || 1));
         const rounds = [];
         const prefetchRound = async (ids) => {

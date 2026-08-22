@@ -1,0 +1,10 @@
+{
+  "name": "pancake-benchmarks",
+  "private": true,
+  "description": "Native ANN baselines for benchmarks/*.js. Installed on demand (cd benchmarks && npm install); deliberately not a dependency of pancake-wasm, so consumers never build faiss/hnswlib/usearch.",
+  "dependencies": {
+    "faiss-node": "^0.5.1",
+    "hnswlib-node": "^3.0.0",
+    "usearch": "^2.25.1"
+  }
+}

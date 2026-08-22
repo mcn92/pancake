@@ -49,6 +49,41 @@ first.
 - `create-pancake-search --help` / `-h` print usage (previously "Missing
   value for --help").
 
+### Fixed (artifact layer hardening, from the 2026-08-21 external review)
+
+- `PancakeRangeArtifact.openFile` / `PancakeSketchArtifact.openFile` close
+  their file descriptor when the open is rejected (previously every corrupt
+  artifact leaked one fd); `NodeFileRangeSource` releases the fd if `fstat`
+  fails after `open`, and refuses reads after `close()`.
+- Range and sketch `search()` apply the core engine's query contract:
+  plain-array coordinates must be numbers (no `'1'` coercion), every
+  component must be finite for every metric (L2 no longer returns
+  `distance: NaN`), dimension checked; `k`, `rerank`, `efSearch` must be
+  positive integers and `k` / the sketch candidate pool are capped to the
+  row count before sizing any allocation (`search(q, 1e9)` over 300 rows no
+  longer attempts a 1e9-slot allocation).
+- `parseUint8Snapshot` validates `M`/`M0`, bounds each level's adjacency
+  count by `M0`/`M`, checks the bytes it claims are present, and range-checks
+  neighbor ids — all before allocating that level's edge array.
+- `httpRangeSource`: after the one-time full-download fallback, reads are
+  served from memory with no further requests (previously every read still
+  issued a fetch).
+- Complete reader: `id` and `distance` are reserved result names and always
+  come from the search (a record's own fields no longer overwrite them);
+  `close()` is idempotent (no `EBADF` on a second call) and queries after
+  close are refused; `query({ k })` rejects 0 / negative / fractional `k`
+  instead of silently defaulting to 5.
+- `create-pancake-search` loaders prefer the in-repo `pancake-wasm` when
+  running inside the monorepo (a stale installed copy higher in the tree
+  no longer shadows the checkout); npm consumers are unaffected.
+- Packaging: the native benchmark baselines (`faiss-node`, `hnswlib-node`,
+  `usearch`) and the `@emnapi/*` pins are no longer `optionalDependencies`
+  of `pancake-wasm` — consumers no longer attempt those native builds; they
+  live in `benchmarks/package.json` (`cd benchmarks && npm install`). The
+  unused self devDependency on `pancake-wasm` is removed.
+- New `test/artifact_hardening.js` (52 checks) in `npm test`; 13 more checks
+  in `test/complete_profile.mjs`.
+
 ### Internal
 
 - `pancake-artifact.js` is now a thin entry over `pancake-artifact-common.js`,

@@ -453,6 +453,9 @@ The older engine-level benchmarks are still useful for HNSW behavior. The
 newer artifact-level benchmarks are more representative of the current
 project goal: search from static files and range-readable storage.
 
+The native baselines the engine benchmarks compare against (faiss-node,
+hnswlib-node, usearch) are not dependencies of `pancake-wasm`; install them
+on demand with `cd benchmarks && npm install` before running those scripts.
 See `benchmarks/`, `benchmark_results/`, and the example READMEs for current
 numbers.
 

@@ -20,6 +20,9 @@ export function httpRangeSource(url, options = {}) {
         },
 
         async read(offset, length) {
+            // After a one-time full download (host ignored Range) every read
+            // is served from memory; no further requests go out.
+            if (full) return full.subarray(offset, offset + length);
             stats.requests += 1;
             stats.bytes += length;
             const end = offset + length - 1;

@@ -16,25 +16,34 @@ let completeModulesPromise = null;
 function loadCompleteModules() {
   completeModulesPromise ??= (async () => {
     const attempts = [];
-    try {
-      return {
-        builder: await import('pancake-wasm/complete/builder'),
-        reader: await import('pancake-wasm/complete'),
-      };
-    } catch (error) {
-      attempts.push(error.message.split('\n')[0]);
-    }
-    try {
-      return {
-        builder: await import(pathToFileURL(path.join(REPO_ROOT, 'complete', 'builder.mjs')).href),
-        reader: await import(pathToFileURL(path.join(REPO_ROOT, 'complete', 'index.mjs')).href),
-      };
-    } catch (error) {
-      attempts.push(error.message.split('\n')[0]);
+    const fromRepo = async () => ({
+      builder: await import(pathToFileURL(path.join(REPO_ROOT, 'complete', 'builder.mjs')).href),
+      reader: await import(pathToFileURL(path.join(REPO_ROOT, 'complete', 'index.mjs')).href),
+    });
+    const fromPackage = async () => ({
+      builder: await import('pancake-wasm/complete/builder'),
+      reader: await import('pancake-wasm/complete'),
+    });
+    // Inside the monorepo the sibling checkout is the source of truth (a
+    // stale node_modules copy up the tree must not shadow it); npm consumers
+    // have no REPO_ROOT and resolve the installed package.
+    for (const attempt of inMonorepo() ? [fromRepo, fromPackage] : [fromPackage, fromRepo]) {
+      try {
+        return await attempt();
+      } catch (error) {
+        attempts.push(error.message.split('\n')[0]);
+      }
     }
     throw new CliError(`could not resolve pancake-wasm/complete; install pancake-wasm >= 0.3 alongside create-pancake-search. Tried: ${attempts.join(' | ')}`, 2);
   })();
   return completeModulesPromise;
+}
+
+// True when this package runs from its checkout in the pancake monorepo
+// (REPO_ROOT holds the engine entry), where the in-tree pancake-wasm must be
+// preferred over any installed copy.
+function inMonorepo() {
+  return fssync.existsSync(path.join(REPO_ROOT, 'pancake.node.mjs')) && fssync.existsSync(path.join(REPO_ROOT, 'complete', 'index.mjs'));
 }
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -80,25 +89,25 @@ class CliError extends Error {
   }
 }
 async function loadArtifactContract() {
-  try {
-    const mod = await import('pancake-wasm/artifact');
-    const contract = mod.default || mod;
-    if (typeof contract.buildSketchArtifactBytes === 'function') return contract;
-  } catch {}
-  const mod = await import(pathToFileURL(path.join(REPO_ROOT, 'pancake-artifact.js')).href);
-  const contract = mod.default || mod;
-  if (typeof contract.buildSketchArtifactBytes !== 'function') {
-    throw new CliError('pancake-wasm/artifact does not expose buildSketchArtifactBytes; update pancake-wasm or use the monorepo root fallback.', 2);
+  const fromRepo = () => import(pathToFileURL(path.join(REPO_ROOT, 'pancake-artifact.js')).href);
+  const fromPackage = () => import('pancake-wasm/artifact');
+  for (const attempt of inMonorepo() ? [fromRepo, fromPackage] : [fromPackage, fromRepo]) {
+    try {
+      const mod = await attempt();
+      const contract = mod.default || mod;
+      if (typeof contract.buildSketchArtifactBytes === 'function') return contract;
+    } catch {}
   }
-  return contract;
+  throw new CliError('pancake-wasm/artifact does not expose buildSketchArtifactBytes; install pancake-wasm >= 0.3 alongside create-pancake-search.', 2);
 }
 async function loadPancake() {
+  const fromRepo = () => import(pathToFileURL(path.join(REPO_ROOT, 'pancake.node.mjs')).href);
+  const fromPackage = () => import('pancake-wasm');
+  const [first, second] = inMonorepo() ? [fromRepo, fromPackage] : [fromPackage, fromRepo];
   try {
-    const mod = await import('pancake-wasm');
-    return mod.default;
+    return (await first()).default;
   } catch {
-    const mod = await import(pathToFileURL(path.join(REPO_ROOT, 'pancake.node.mjs')).href);
-    return mod.default;
+    return (await second()).default;
   }
 }
 

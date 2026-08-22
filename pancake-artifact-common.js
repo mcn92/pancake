@@ -198,12 +198,23 @@ class NodeFileRangeSource {
         this.fs = fs;
         this.filePath = filePath;
         this.fd = fs.openSync(filePath, 'r');
-        this.size = fs.statSync(filePath).size;
+        try {
+            // fstat on the descriptor we hold: no second path lookup to race,
+            // and if it fails the descriptor is released before the throw.
+            this.size = fs.fstatSync(this.fd).size;
+        } catch (err) {
+            fs.closeSync(this.fd);
+            this.fd = null;
+            throw err;
+        }
         this.preferredParallelism = Infinity;
         this.preferredGapBytes = 2048;
     }
 
     async read(offset, length) {
+        if (this.fd === null) {
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'NodeFileRangeSource is closed', { filePath: this.filePath });
+        }
         // Defense in depth: the callers validate artifact-derived ranges, but
         // a future caller must not be able to drive a giant Buffer.alloc or a
         // read past the file end through this source directly.
@@ -233,28 +244,64 @@ class NodeFileRangeSource {
     }
 }
 
+// The artifact readers apply the same query-vector contract as the core
+// engine (pancake-core.js assertNumericVector / validateVectorValues): a
+// plain array must hold real numbers (Float32Array.from would coerce '1',
+// '', true silently), every component must be finite for every metric (an
+// L2 search over NaN would otherwise return distance: NaN results), and a
+// cosine query must have a usable norm.
 function normalizeQuery(query, dim, metric = 0) {
     if (!(query instanceof Float32Array)) {
         if (!Array.isArray(query)) {
             throw pancakeError(PANCAKE_ERROR_CODES.INVALID_VECTOR, 'search() query must be a Float32Array or number[]');
+        }
+        for (let i = 0; i < query.length; i++) {
+            if (typeof query[i] !== 'number') {
+                throw pancakeError(PANCAKE_ERROR_CODES.INVALID_VECTOR,
+                    `search() query must contain only numbers; found ${typeof query[i]} at index ${i}`, { index: i, actualType: typeof query[i] });
+            }
         }
         query = Float32Array.from(query);
     }
     if (query.length !== dim) {
         throw pancakeError(PANCAKE_ERROR_CODES.DIMENSION_MISMATCH, `search() query dimension ${query.length} does not match artifact dimension ${dim}`, { queryDim: query.length, dim });
     }
+    let norm = 0;
+    for (let i = 0; i < query.length; i++) {
+        const value = query[i];
+        if (!Number.isFinite(value)) {
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_VECTOR, 'search() query contains non-finite value (NaN or Infinity)', { index: i, reason: 'non_finite' });
+        }
+        norm += value * value;
+    }
     if (metric === 1) {
-        let norm = 0;
-        for (let i = 0; i < query.length; i++) norm += query[i] * query[i];
         norm = Math.sqrt(norm);
         if (!Number.isFinite(norm) || norm <= 1e-30) {
-            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_VECTOR, 'search() query has invalid cosine norm');
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_VECTOR, 'search() query has invalid cosine norm', { reason: 'invalid_cosine_norm' });
         }
         const normalized = new Float32Array(query.length);
         for (let i = 0; i < query.length; i++) normalized[i] = query[i] / norm;
         return normalized;
     }
     return query;
+}
+
+// Positive-integer search arguments (k, rerank, efSearch) shared by both
+// artifact readers: integers only, and bounded by the artifact's row count
+// before they size any allocation — an artifact cannot return more than
+// count results, so a k of 1e9 over 300 rows must not allocate 1e9 slots.
+function resolveSearchK(k, count) {
+    if (!Number.isSafeInteger(k) || k < 1) {
+        throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'search() k must be a positive integer', { k });
+    }
+    return Math.min(k, count);
+}
+function resolveOptionalPositiveInt(value, name, fallback) {
+    if (value === undefined || value === null) return fallback;
+    if (!Number.isSafeInteger(value) || value < 1) {
+        throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, `search() ${name} must be a positive integer`, { [name]: value });
+    }
+    return value;
 }
 
 function unwrapSnapshot(bytes) {
@@ -346,6 +393,15 @@ function parseUint8Snapshot(bytes) {
     const qdata = raw.subarray(offset, offset + count * dim);
     offset += qdata.byteLength;
 
+    // Adjacency bounds mirror the engine's own deserializer: a level's edge
+    // count is capped by M0 (layer 0) / M (upper layers), the bytes it claims
+    // (4 per id + 4 per serialized distance) must still be in the buffer, and
+    // every neighbor id must address a node — all checked before the
+    // Uint32Array for that level is allocated, so a crafted count cannot
+    // drive a giant allocation that truncation would only catch afterwards.
+    if (M < 1 || M0 < 1 || M > 4096 || M0 > 8192 || M0 < M) {
+        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'uint8 snapshot graph parameters are implausible', { M, M0 });
+    }
     const levels = new Uint16Array(count);
     const base = new Array(count);
     const upper = Array.from({ length: count }, () => []);
@@ -357,10 +413,19 @@ function parseUint8Snapshot(bytes) {
         levels[id] = level;
         for (let l = 0; l <= level; l++) {
             const size = u32();
+            const cap = l === 0 ? M0 : M;
+            if (size > cap) {
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'uint8 snapshot adjacency exceeds the graph parameter bound', { id, level: l, size, cap });
+            }
+            if (raw.byteLength - offset < size * 8) throw truncated();
             const edges = new Uint32Array(size);
             for (let e = 0; e < size; e++) {
-                edges[e] = u32();
-                offset += 4;
+                const neighbor = u32();
+                if (neighbor >= count) {
+                    throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'uint8 snapshot neighbor id is out of range', { id, level: l, neighbor, count });
+                }
+                edges[e] = neighbor;
+                offset += 4; // the serialized float edge distance, unused here
             }
             if (l === 0) base[id] = edges;
             else upper[id][l - 1] = edges;
@@ -452,6 +517,8 @@ async function verifySegmentSha256(source, offset, totalBytes, expected, label, 
 }
 
 module.exports = {
+    resolveSearchK,
+    resolveOptionalPositiveInt,
     PANCAKE_MAGIC,
     V1_ENVELOPE_HEADER_SIZE,
     V2_ENVELOPE_HEADER_SIZE,

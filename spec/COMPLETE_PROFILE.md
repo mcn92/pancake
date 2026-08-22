@@ -309,7 +309,13 @@ a partial success. u64 fields above `2^53 - 1` are rejected.
 
 Result shape: `{ matchQuality, confidence, results: [{ id, distance,
 title, text, sourcePath, ... }] }` — ids, distances, and hydrated records
-in one response; returning bare ids does not satisfy this profile.
+in one response; returning bare ids does not satisfy this profile. `id`
+and `distance` are reserved result names: they MUST come from the search,
+and a corpus record carrying fields of those names MUST NOT replace them
+(records are application data; the binding between a record and the row
+that matched is the reader's to assert). A reader MUST validate `k`
+(positive integer, capped to the corpus size) and MUST refuse queries
+after `close()`; `close()` MUST be idempotent.
 
 ## 5. Conformance
 

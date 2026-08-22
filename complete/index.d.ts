@@ -37,6 +37,12 @@ export declare function httpRangeSource(url: string, options?: {
 export interface CompleteQueryResult {
   matchQuality: 'strong' | 'weak' | 'none' | 'unscored';
   confidence?: number;
+  /**
+   * Each result is the hydrated corpus record plus the search's `id` and
+   * `distance`. Those two names are reserved: they always come from the
+   * search, and a record field of the same name is overwritten, never the
+   * other way round.
+   */
   results: Array<{ id: number; distance: number } & Record<string, unknown>>;
 }
 

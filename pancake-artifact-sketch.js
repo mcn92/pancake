@@ -19,6 +19,11 @@ const {
     sha256BytesAsync,
     verifySegmentSha256,
 } = require('./pancake-artifact-common.js');
+const {
+    normalizeQuery: normalizeQueryVector,
+    resolveSearchK,
+    resolveOptionalPositiveInt,
+} = require('./pancake-artifact-common.js');
 
 // ============================================================================
 // Sketch artifact profile (.pancake-sketch) — spec/SKETCH_PROFILE.md
@@ -423,7 +428,15 @@ class PancakeSketchArtifact {
     }
 
     static async openFile(filePath, options = {}) {
-        return PancakeSketchArtifact.open(new NodeFileRangeSource(filePath), options);
+        // The source owns a file descriptor from construction; a rejected
+        // open must release it, or every corrupt artifact leaks an fd.
+        const source = new NodeFileRangeSource(filePath);
+        try {
+            return await PancakeSketchArtifact.open(source, options);
+        } catch (err) {
+            await source.close().catch(() => {});
+            throw err;
+        }
     }
 
     stats() {
@@ -547,21 +560,25 @@ class PancakeSketchArtifact {
         return rows;
     }
 
-    async search(query, k, options = {}) {
-        if (!query || query.length !== this.dim) {
-            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'search() query must match artifact dim', { dim: this.dim });
-        }
-        if (!Number.isInteger(k) || k < 1) {
-            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'search() k must be a positive integer', { k });
-        }
+    async search(queryInput, k, options = {}) {
+        // Same query contract as the core engine and the range reader:
+        // numeric, finite, right dimension, usable cosine norm (normalized
+        // here for cosine; the pooling below then sees a unit vector).
+        const query = normalizeQueryVector(queryInput, this.dim, this.metric);
+        k = resolveSearchK(k, this.count);
+        if (k === 0) return { results: [], stats: this.stats() };
         const tier = this.activeTier();
         // The micro tier is coarser, so its candidate pool defaults wider:
         // an explicit options.rerank always wins; otherwise recommendedRerank
-        // is scaled by microBoost while serving from the micro tier.
-        const base = Math.trunc(options.rerank || 0);
+        // is scaled by microBoost while serving from the micro tier. The
+        // candidate pool C can never usefully exceed the row count, and it
+        // sizes the selection buffers below, so it is bounded by count before
+        // anything is allocated — a k or rerank of 1e9 over a small artifact
+        // must not try to allocate 1e9 slots.
+        const base = resolveOptionalPositiveInt(options.rerank, 'rerank', 0);
         const boost = Math.max(1, Math.trunc(options.microBoost || 4));
         const rec = this.recommendedRerank || Math.max(100, k * 10);
-        const C = Math.max(k, base > 0 ? base : tier.name === 'micro' ? rec * boost : rec);
+        const C = Math.min(this.count, Math.max(k, base > 0 ? base : tier.name === 'micro' ? rec * boost : rec));
         const { dim, count } = this;
         const tierDims = tier.dims;
         const pool = dim / tierDims;

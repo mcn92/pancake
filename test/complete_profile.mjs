@@ -395,6 +395,69 @@ const A = buildSynthetic();
     await tinyRecords.close();
 }
 
+// Result semantics and lifecycle (2026-08-21 external review items 4, 5, 7, 8).
+{
+    // 5. A corpus record that carries its own `id` / `distance` cannot
+    // overwrite the search's values.
+    const spoofRecords = RECORDS.map((b, i) => (i === 17
+        ? Buffer.from(JSON.stringify({ ...JSON.parse(b.toString('utf8')), id: 999, distance: -1 }), 'utf8')
+        : b));
+    const spoofCorpus = buildCorpusSegment(spoofRecords, { pageRecords: PAGE_RECORDS });
+    const spoofPath = path.join(tmp, 'spoof.pancake');
+    assemblePancakeFile({
+        profile: PROFILE_V2, corpus: { ...spoofCorpus.corpus, provenance: null }, dim: DIM, metric: 'cosine',
+        encoder: { kind: 'external-transformers-v1' }, recommendedRerank: 40, sampleQueries: [],
+    }, [
+        { kind: 'index', bytes: SKETCH },
+        { kind: 'corpus', bytes: spoofCorpus.bytes },
+        { kind: 'query-interp', bytes: buildQueryInterpSegment(2, Buffer.from(JSON.stringify(kind2Declaration()), 'utf8'), CALIBRATION) },
+        { kind: 'evaluation', bytes: EVALUATION },
+    ], spoofPath);
+    const spoof = await openPancakeFile(spoofPath, { encodeQuery: hostEncode });
+    const hit = (await spoof.query('rec 17', { k: 1 })).results[0];
+    check('a record\'s own id/distance fields do not overwrite the search id/distance', hit.id === 17 && hit.distance >= 0 && hit.title === 'rec 17', JSON.stringify(hit).slice(0, 120));
+    // 8. k: absent -> default; supplied must be a positive integer.
+    check('k omitted -> default 5', (await spoof.query('rec 17')).results.length === 5);
+    for (const bad of [0, -1, 2.5, '3', NaN]) {
+        await rejects(`k=${String(bad)} is rejected rather than silently defaulting`, () => spoof.query('rec 17', { k: bad }), /k must be a positive integer/);
+    }
+    check('k above the corpus size is capped', (await spoof.query('rec 17', { k: 10000 })).results.length <= COUNT);
+    // 7. close() is idempotent (file-path open owns the fd) and the reader
+    // refuses use after close.
+    await spoof.close();
+    let secondClose = 'ok';
+    try { await spoof.close(); } catch (err) { secondClose = err.code || err.message; }
+    check('close() twice on a file-path reader does not throw (no EBADF)', secondClose === 'ok', secondClose);
+    await rejects('query() after close is refused', () => spoof.query('rec 1'), /reader is closed/);
+    await rejects('record() after close is refused', () => spoof.record(1), /reader is closed/);
+    // 4. httpRangeSource: after the one-time full-download fallback, reads
+    // are served from memory and issue no further requests.
+    const { httpRangeSource } = await import('../complete/sources.mjs');
+    const realFetch = globalThis.fetch;
+    let requests = 0;
+    globalThis.fetch = async (url, init = {}) => {
+        requests++;
+        if (init.method === 'HEAD') return new Response(null, { status: 200, headers: { 'content-length': String(A.bytes.length) } });
+        // A host that ignores Range: always the full body with 200.
+        return new Response(A.bytes, { status: 200, headers: { 'content-length': String(A.bytes.length) } });
+    };
+    try {
+        const warn = console.warn; console.warn = () => {};
+        const src = httpRangeSource('http://host.invalid/a.pancake');
+        await src.init();
+        const reqAfterInit = requests;
+        const first = await src.read(0, 64);
+        const reqAfterFirst = requests;
+        await src.read(64, 64);
+        await src.read(128, 64);
+        console.warn = warn;
+        check('range-ignoring host: first read falls back to one full download', reqAfterFirst - reqAfterInit === 1 && src.stats.fullFallback && first.length === 64);
+        check('subsequent reads are served from memory with no further requests', requests === reqAfterFirst, `requests after 3 reads: ${requests - reqAfterInit}`);
+    } finally {
+        globalThis.fetch = realFetch;
+    }
+}
+
 // Unknown and duplicate segments; manifest integrity-block consistency.
 {
     const extra = buildSynthetic({ extraSegments: [{ kind: 'vendor-extra', kindNumber: 9, bytes: Buffer.from('opaque future segment') }], name: 'extra' });
