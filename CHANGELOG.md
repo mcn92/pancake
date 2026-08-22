@@ -81,7 +81,14 @@ first.
   of `pancake-wasm` — consumers no longer attempt those native builds; they
   live in `benchmarks/package.json` (`cd benchmarks && npm install`). The
   unused self devDependency on `pancake-wasm` is removed.
-- New `test/artifact_hardening.js` (52 checks) in `npm test`; 13 more checks
+- Sketch `search()` with a candidate pool equal to the row count (small
+  artifact, or `k`/`rerank` ≥ count) no longer runs the resident selection
+  scan — every row is a candidate for the exact rerank — instead of the
+  2·count² slot operations the selection loop degenerated to.
+- `parseUint8Snapshot` reads version-1 uint8 payloads with their 4-byte
+  edges (id only), matching the engine's deserializer; v1 payloads were
+  previously misparsed as the v2 {id, distance} layout.
+- New `test/artifact_hardening.js` (56 checks) in `npm test`; 13 more checks
   in `test/complete_profile.mjs`.
 
 ### Internal

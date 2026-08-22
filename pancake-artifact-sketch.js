@@ -617,6 +617,12 @@ class PancakeSketchArtifact {
                 throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'cosine sketch artifacts require a metric-aware scanner (scanner.metric === 1)', { metric: this.metric });
             }
             ids = scanner.scan(qPool, C);
+        } else if (C >= count) {
+            // Every row is a candidate: the exact rerank below scores them
+            // all, so the resident scan has nothing to select. Without this
+            // the selection loop degenerates to 2*count^2 slot operations
+            // (candMax stays Infinity until the last slot fills).
+            ids = Array.from({ length: count }, (_, i) => i);
         } else {
             const candDist = new Float64Array(C).fill(Infinity);
             const candId = new Int32Array(C).fill(-1);

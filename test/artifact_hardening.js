@@ -150,6 +150,60 @@ async function main() {
     const truncatedEdges = Buffer.from(raw.subarray(0, sizeAt + 8)); // claims edges, bytes end
     await rejects('adjacency that runs past the buffer is rejected as truncated', async () => parseUint8Snapshot(truncatedEdges), 'SNAPSHOT_INVALID', /truncated|adjacency/);
 
+    // Version-1 payloads store 4 bytes per edge (id only; the engine
+    // recomputes distances on load). Re-encode the v2 graph as v1 and the
+    // parser must produce the same adjacency.
+    {
+        const v1 = [];
+        const head = Buffer.from(raw.subarray(0, levelsAt)); head.writeUInt32LE(1, 8); // version = 1
+        v1.push(head);
+        let off = levelsAt;
+        const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+        for (let id = 0; id < fx.count; id++) {
+            const level = view.getUint32(off, true); off += 4;
+            const node = [Buffer.alloc(4)]; node[0].writeUInt32LE(level, 0);
+            for (let l = 0; l <= level; l++) {
+                const size = view.getUint32(off, true); off += 4;
+                const b = Buffer.alloc(4 + 4 * size); b.writeUInt32LE(size, 0);
+                for (let e = 0; e < size; e++) { b.writeUInt32LE(view.getUint32(off, true), 4 + 4 * e); off += 8; }
+                node.push(b);
+            }
+            v1.push(...node);
+        }
+        const v1graph = parseUint8Snapshot(Buffer.concat(v1));
+        const same = v1graph.count === graph.count && v1graph.version === 1
+            && Array.from({ length: fx.count }, (_, i) => i).every((i) => Buffer.from(v1graph.base[i].buffer, v1graph.base[i].byteOffset, v1graph.base[i].byteLength)
+                .equals(Buffer.from(graph.base[i].buffer, graph.base[i].byteOffset, graph.base[i].byteLength)));
+        check('a version-1 payload (4-byte edges) parses to the same layer-0 adjacency as v2', same);
+    }
+
+    // 5. A candidate pool equal to the row count (small artifact, or a large
+    // k / rerank) must not pay a quadratic resident scan: every row is a
+    // candidate and the exact rerank scores them all.
+    console.log('\n5. sketch search with C == count stays linear');
+    {
+        const dim = 16, count = 6000;
+        const index = await Pancake.create({ dim, maxElements: count, metric: 'l2', quantized: true });
+        for (let n = 0; n < count; n++) {
+            const v = new Float32Array(dim);
+            for (let d = 0; d < dim; d++) v[d] = Math.sin(n * 0.37 + d);
+            index.add(v);
+        }
+        const big = index.export(); index.dispose();
+        const bigPath = path.join(tmp, 'big.pancake-sketch');
+        buildSketchArtifact(big, bigPath, { recommendedRerank: 40 });
+        const sketch = await PancakeSketchArtifact.openFile(bigPath);
+        const q = new Float32Array(dim); for (let d = 0; d < dim; d++) q[d] = Math.sin(17 * 0.37 + d);
+        const t0 = Date.now();
+        const all = (await sketch.search(q, count)).results;
+        const ms = Date.now() - t0;
+        check(`search(q, count) over ${count} rows returns ${count} results`, all.length === count);
+        check(`...in linear time (${ms} ms, not a 2*count^2 scan)`, ms < 3000);
+        const top = (await sketch.search(q, 5)).results;
+        check('k=count top-5 agree with k=5 (exact rerank over all rows)', all.slice(0, 5).every((r, i) => r.id === top[i].id));
+        await sketch.close();
+    }
+
     fs.rmSync(tmp, { recursive: true, force: true });
     console.log(`\nArtifact hardening: ${passed} passed, ${failed} failed`);
     process.exit(failed > 0 ? 1 : 0);

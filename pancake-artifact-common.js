@@ -402,6 +402,11 @@ function parseUint8Snapshot(bytes) {
     if (M < 1 || M0 < 1 || M > 4096 || M0 > 8192 || M0 < M) {
         throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'uint8 snapshot graph parameters are implausible', { M, M0 });
     }
+    // Edge layout follows the engine's deserializer (uint8_float_hnsw.hpp):
+    // version >= 2 stores {u32 id, f32 distance} per edge, version 1 stores
+    // the u32 id only (distances are recomputed on load). The artifact
+    // readers never use the stored distance, so both parse to the same graph.
+    const edgeBytes = version >= 2 ? 8 : 4;
     const levels = new Uint16Array(count);
     const base = new Array(count);
     const upper = Array.from({ length: count }, () => []);
@@ -417,7 +422,7 @@ function parseUint8Snapshot(bytes) {
             if (size > cap) {
                 throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'uint8 snapshot adjacency exceeds the graph parameter bound', { id, level: l, size, cap });
             }
-            if (raw.byteLength - offset < size * 8) throw truncated();
+            if (raw.byteLength - offset < size * edgeBytes) throw truncated();
             const edges = new Uint32Array(size);
             for (let e = 0; e < size; e++) {
                 const neighbor = u32();
@@ -425,7 +430,7 @@ function parseUint8Snapshot(bytes) {
                     throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'uint8 snapshot neighbor id is out of range', { id, level: l, neighbor, count });
                 }
                 edges[e] = neighbor;
-                offset += 4; // the serialized float edge distance, unused here
+                if (version >= 2) offset += 4; // the serialized float edge distance, unused here
             }
             if (l === 0) base[id] = edges;
             else upper[id][l - 1] = edges;
