@@ -46,6 +46,18 @@ first.
   compatibility, kind-1 goldens from the committed 03 assets), run by
   `npm test` and therefore CI.
 - spec/COMPLETE_PROFILE.md Draft 2.
+- `create-pancake-search --help` / `-h` print usage (previously "Missing
+  value for --help").
+
+### Internal
+
+- `pancake-artifact.js` is now a thin entry over `pancake-artifact-common.js`,
+  `pancake-artifact-range.js`, `pancake-artifact-sketch.js` (same exports,
+  same typings; the three files ship in the tarball).
+- `create-pancake-search/src/cli.mjs` is split into `common`, `ingest`,
+  `embed`, `complete-build`, `scaffold`, `build` modules; `cli.mjs` keeps
+  the commands and re-exports `buildSearchAssets`, `fetchInlineEncoderWeights`,
+  `CliError` for the Docusaurus plugin. See the README's "Package layout".
 
 ## pancake-wasm 0.3.0 — 2026-08-20
 

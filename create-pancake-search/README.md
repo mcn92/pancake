@@ -96,6 +96,23 @@ range-read stats so cold-load and warm-cache behavior are visible directly.
 URL ingestion is intentionally conservative: crawls stay on the seed origin,
 skip redirects, and cap HTML response bodies before parsing.
 
+## Package layout
+
+`bin/create-pancake-search.mjs` calls `main()` in `src/cli.mjs`, which owns
+argument parsing and the `create` / `rebuild` / `doctor` commands and the
+config a scaffold is generated from. The work lives beside it:
+
+| module | responsibility |
+| --- | --- |
+| `src/common.mjs` | package paths and version, config defaults, the model table, `CliError`, loaders that resolve `pancake-wasm` (engine, `/artifact`, `/complete`) from npm or the monorepo |
+| `src/ingest.mjs` | folder walk and URL crawl, HTML/Markdown/MDX extraction, chunking, dedupe, Docusaurus route mapping, the public chunk shape |
+| `src/embed.mjs` | build-time embeddings: transformers.js, the student trainer, the inline transformer, precomputed vectors, the deterministic stub, self-recall |
+| `src/complete-build.mjs` | kind-3 complete artifact assembly, the inline-encoder declaration, the pinned weights download |
+| `src/scaffold.mjs` | generated-project files: runtime modules, templates, `wrangler.toml` / `package.json`, student input staging, deploy |
+| `src/build.mjs` | `buildAssets` (ingest → chunk → embed → index → artifact), config validation, `manifest.json`, student asset publishing, bundle sizing |
+| `src/doctor.mjs` | the `doctor <url>` hosting probe |
+| `docusaurus/` | the Docusaurus plugin and its browser client, built on `buildSearchAssets` |
+
 ## Checking a host: `doctor`
 
 Range-read artifacts depend on transport properties that hosts get wrong

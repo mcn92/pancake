@@ -658,7 +658,7 @@ operator controls both the URL and the machine. Keep it that way: a future
 "restore from URL" route on a deployed Worker is the moment scheme
 allowlisting, private/link-local IP rejection, redirect pinning, and
 response size caps become mandatory — the crawler in
-`create-pancake-search/src/cli.mjs` already implements most of that list
+`create-pancake-search/src/ingest.mjs` already implements most of that list
 and is the model to copy.
 
 ### 11.1 Request lifecycle
