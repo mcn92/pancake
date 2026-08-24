@@ -206,6 +206,28 @@ async function main() {
         await sketch.close();
     }
 
+    // 6. Stable external ids are bounded to the uint32 the snapshot stores.
+    console.log('\n6. stable-id space is bounded to the uint32 snapshot representation');
+    {
+        const index = await Pancake.create({ dim: 4, maxElements: 16, metric: 'l2', quantized: true });
+        const v = new Float32Array(4).fill(0.5);
+        index._nextExtId = 0xFFFFFFFE; // one id left in the u32 space
+        const last = index.add(v);
+        check('the last representable id (0xFFFFFFFE) is assigned', last === 0xFFFFFFFE);
+        const snapshot = index.export();
+        const restored = await Pancake.restore(snapshot, { maxElements: 16 });
+        check('a snapshot at the id boundary round-trips (nextExtId = 0xFFFFFFFF fits u32)', restored.count === 1);
+        restored.dispose();
+        const countBefore = index.count;
+        await rejects('the next id assignment is refused before the engine mutates',
+            async () => index.add(v), 'INDEX_LIMIT', /Stable id space exhausted/);
+        check('the refused add did not insert', index.count === countBefore);
+        await rejects('addBatch preflights the whole batch against the id bound',
+            async () => { index._nextExtId = 0xFFFFFFFD; return index.addBatch([v, v, v]); }, 'INDEX_LIMIT', /run past the last representable id/);
+        check('the refused batch did not insert', index.count === countBefore);
+        index.dispose();
+    }
+
     fs.rmSync(tmp, { recursive: true, force: true });
     console.log(`\nArtifact hardening: ${passed} passed, ${failed} failed`);
     process.exit(failed > 0 ? 1 : 0);

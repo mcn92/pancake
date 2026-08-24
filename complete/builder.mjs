@@ -18,11 +18,22 @@ export async function loadInlineEncoderKernel() {
 export const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest();
 export const align16 = (n) => Math.ceil(n / 16) * 16;
 
+// Canonical form = JSON.stringify semantics with sorted object keys:
+// undefined / functions / symbols are omitted as object properties and
+// become null as array elements, exactly as JSON.stringify treats them —
+// previously they leaked through as the literal text `undefined`, producing
+// output JSON.parse rejects.
 export function canonicalJson(value) {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (Array.isArray(value)) {
+    return `[${value.map((v) => canonicalJson(v) ?? 'null').join(',')}]`;
+  }
   if (value && typeof value === 'object') {
-    const keys = Object.keys(value).sort();
-    return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson(value[k])}`).join(',')}}`;
+    const parts = [];
+    for (const k of Object.keys(value).sort()) {
+      const serialized = canonicalJson(value[k]);
+      if (serialized !== undefined) parts.push(`${JSON.stringify(k)}:${serialized}`);
+    }
+    return `{${parts.join(',')}}`;
   }
   return JSON.stringify(value);
 }
@@ -266,8 +277,22 @@ export function assemblePancakeFile(manifestFields, segments, outPath) {
   if (!Number.isInteger(manifestFields.corpus?.records) || manifestFields.corpus.records < 0) {
     throw new Error('manifest.corpus.records must be a non-negative integer');
   }
+  // Format 2 additionally commits to the embedded sketch's 256-byte header
+  // under the identity. The header carries the sketch's metric/dim/count and
+  // its residentSha256 / vectorsSha256, so anchoring the header anchors the
+  // sketch's own integrity chain to the complete identity without forcing a
+  // whole-segment read at open (the index segment stays lazy).
+  let indexCommitment;
+  if (formatVersion >= 2) {
+    const index = segments.find((s) => s.kind === 'index');
+    if (!index || index.bytes.length < 256) {
+      throw new Error('index segment must carry a 256-byte sketch header');
+    }
+    indexCommitment = { ...manifestFields.index, headerSha256: sha256(index.bytes.subarray(0, 256)).toString('hex') };
+  }
   const manifest = {
     ...manifestFields,
+    ...(indexCommitment ? { index: indexCommitment } : {}),
     segments: segments.map((s) => ({
       kind: s.kind,
       sha256: sha256(s.bytes).toString('hex'),

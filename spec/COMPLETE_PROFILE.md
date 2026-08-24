@@ -98,6 +98,9 @@ fields:
   },
   "dim": 384,
   "metric": "cosine",
+  // format 2 only: SHA-256 of the index segment's first 256 bytes (the
+  // embedded sketch's header — section 3.4). REQUIRED on format 2.
+  "index": { "headerSha256": "..." },
   "encoder": { /* identity, preprocessing, dims, normalization — contract 4.4 list */ },
   "segments": [
     { "kind": "index",       "sha256": "...", "bytes": 126400 },
@@ -131,10 +134,21 @@ Unknown kinds MUST be skipped (they are still committed via the manifest).
 A byte-for-byte valid `.pancake-sketch` artifact (magic `PSA1`), row ids
 `[0, count)` binding positionally to corpus records. Readers open it with
 the sketch reader against a range source offset by the segment's `offset`;
-`staged` open is RECOMMENDED for interactive hosts. The sketch artifact's
-internal `residentSha256`/`vectorsSha256` remain valid and SHOULD be
-verified per SKETCH_PROFILE.md; the container's segment digest additionally
-covers the whole segment.
+`staged` open is RECOMMENDED for interactive hosts.
+
+The segment is deliberately lazy, so the container's whole-segment digest
+is not checked at open — which means the sketch's *self*-checks
+(`residentSha256`/`vectorsSha256`, held in its own header) are not by
+themselves authentication: an attacker who rewrites the segment also
+rewrites those fields. Format 2 therefore commits to the sketch's 256-byte
+header in the manifest (`index.headerSha256`, REQUIRED): a reader MUST
+verify the header against it at open, which anchors the header's metric /
+dim / count and its `residentSha256` / `vectorsSha256` — and through them
+the resident prefix and the lazy rows — to the artifact identity without a
+whole-segment read. On every format a reader MUST also cross-check the
+sketch header's metric, dim, and count against the identity-verified
+manifest; on format 1 (no header commitment) that cross-check is the only
+binding, and the residual gap is stated in section 6.
 
 ### 3.5 Corpus segment (kind 2)
 
@@ -353,14 +367,17 @@ Format 2 commits to every corpus record individually (section 3.5): a
 hydrated record is verified on its own range read through the page table
 the manifest commits to, which is contract section 4.1's range-verifiable
 chunk commitment sized to the corpus's real read shape (one record). Eager
-segments (manifest, query-interp, evaluation, corpus tables) verify whole,
-and the index segment inherits the sketch artifact's resident hash.
+segments (manifest, query-interp, evaluation, corpus tables) verify whole.
+The index segment is anchored through the manifest's header commitment
+(section 3.4): the sketch header is verified at open, so its
+`residentSha256` authenticates the resident prefix and its `vectorsSha256`
+authenticates the lazy rows, both under the artifact identity.
 
 What remains transitional: the sketch artifact's lazy rerank rows are
-still covered only by its whole-segment `vectorsSha256` (verifiable after
-the fact via `verifyVectors()`, not per read). Per-row commitments belong
-to SKETCH_PROFILE.md's next revision; this profile will inherit them
-unchanged.
+covered by the (now identity-anchored) whole-segment `vectorsSha256`,
+verifiable after the fact via `verifyVectors()`, not per read. Per-row
+commitments belong to SKETCH_PROFILE.md's next revision; this profile will
+inherit them unchanged.
 
 Format-1 files keep Draft 1's stance — whole-segment digests only, lazy
 record reads not independently verifiable — and readers MUST report which

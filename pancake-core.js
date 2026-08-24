@@ -121,6 +121,17 @@ class PancakeIndex {
                 { expected: this._dim, actual: f32.length });
         }
         validateVectorValues(f32, 'Vector', !this._isL2);
+        // The v3 snapshot stores every external id and the next-id counter as
+        // u32. Assigning past that boundary would produce ids the snapshot
+        // cannot represent (export would truncate, restore would reject), so
+        // the limit is enforced before the engine insert, leaving the index
+        // unmutated. Ids survive deletes, so a long-lived high-churn index
+        // can reach this without ever holding 2^32 vectors at once.
+        if (this._nextExtId >= 0xFFFFFFFF) {
+            throw pancakeError(PANCAKE_ERROR_CODES.INDEX_LIMIT,
+                'Stable id space exhausted: ids are serialized as uint32 and the next id would not fit',
+                { nextExtId: this._nextExtId });
+        }
         this._e.HEAPF32.set(f32, this._vecPtr >> 2);
         const intId = this._e._pancake_add(this._handle, this._vecPtr);
         if (intId === 0xFFFFFFFF || intId < 0) {
@@ -144,6 +155,13 @@ class PancakeIndex {
         if (this.count + vectors.length > this._maxElements) {
             throw pancakeError(PANCAKE_ERROR_CODES.INDEX_FULL,
                 'Insert failed (index full or not initialized)');
+        }
+        // Same u32 stable-id bound as add(), preflighted for the whole batch
+        // so the failure happens before any row is inserted.
+        if (this._nextExtId + vectors.length > 0xFFFFFFFF) {
+            throw pancakeError(PANCAKE_ERROR_CODES.INDEX_LIMIT,
+                'Stable id space exhausted: ids are serialized as uint32 and this batch would run past the last representable id',
+                { nextExtId: this._nextExtId, batch: vectors.length });
         }
 
         // Validate ALL vectors first before mutating the index, so a bad

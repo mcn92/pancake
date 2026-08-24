@@ -98,7 +98,32 @@ first.
   for a transport reason is not cached as a rejection (the next hydration
   retries). `httpRangeSource` refuses a 206 whose `Content-Range` is not the
   requested slice.
-- New `test/artifact_hardening.js` (60 checks) in `npm test`; 16 more checks
+- **Format 2 manifests now commit to the embedded sketch's 256-byte header
+  (`index.headerSha256`, required)**, and the reader verifies it at open:
+  the sketch's metric/dim/count and its `residentSha256`/`vectorsSha256`
+  are anchored to the artifact identity instead of living only in the
+  segment's own (attacker-rewritable) header. Previously a flipped metric
+  word changed search semantics under an unchanged identity. On every
+  format the reader also cross-checks the sketch metric against the
+  manifest. Format-2 identities change (format 2 was never released).
+- `httpRangeSource`: a 206 without a valid `Content-Range` naming the
+  requested slice is refused (RFC 9110 requires the header) and the body
+  length must match it; the full-download fallback cap is enforced on
+  bytes actually received (a chunked 200 aborts as soon as it streams past
+  the cap) instead of trusting `Content-Length`/HEAD; new `cacheKeyParam`
+  option (`null` for signed-URL hosts keeps the URL untouched, default
+  `'r'` keeps the Chromium cache-lock workaround).
+- Stable external ids are bounded to the uint32 the v3 snapshot stores:
+  `add()` refuses (INDEX_LIMIT) before the engine mutates and `addBatch()`
+  preflights the whole batch, instead of assigning ids the snapshot would
+  truncate into an unrestorable export.
+- `canonicalJson()` follows JSON semantics for unsupported values
+  (undefined/function object properties omitted, array entries become
+  null) instead of emitting invalid JSON.
+- `evaluation()` is typed `Promise<Record<string, unknown> | null>` (it
+  returns null with no evaluation segment) and refuses a non-object
+  segment at runtime.
+- New `test/artifact_hardening.js` (66 checks) in `npm test`; 27 more checks
   in `test/complete_profile.mjs`.
 
 ### Internal

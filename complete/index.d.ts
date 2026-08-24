@@ -31,7 +31,15 @@ export interface HttpRangeSource extends CompleteRangeSource {
 export declare function httpRangeSource(url: string, options?: {
   preferredParallelism?: number;
   preferredGapBytes?: number;
+  /** Cap on the one-time full download when a host ignores Range, enforced on received bytes. Default 64 MiB. */
   maxFullFallbackBytes?: number;
+  /**
+   * Query parameter appended per range read so each read gets its own HTTP
+   * cache key (defeats Chromium's same-URL cache-entry lock). Default 'r';
+   * pass null for hosts that sign the full query string (presigned URLs) —
+   * range reads then share the unmodified URL.
+   */
+  cacheKeyParam?: string | null | false;
 }): HttpRangeSource;
 
 export interface CompleteQueryResult {
@@ -85,7 +93,8 @@ export interface CompleteSearch {
   }): Promise<CompleteQueryResult>;
   /** Hydrate one corpus record by id (verified per record on format 2). */
   record(id: number): Promise<Record<string, unknown>>;
-  evaluation(): Promise<Record<string, unknown>>;
+  /** The evaluation segment's JSON object, or null when the artifact carries none. */
+  evaluation(): Promise<Record<string, unknown> | null>;
   close(): Promise<void>;
 }
 

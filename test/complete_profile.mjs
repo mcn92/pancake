@@ -25,7 +25,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import {
     buildCorpusSegment, buildCorpusSegmentFromBuffers, buildQueryInterpSegment,
-    assemblePancakeFile, PROFILE_V1, PROFILE_V2, sha256,
+    assemblePancakeFile, PROFILE_V1, PROFILE_V2, sha256, canonicalJson,
 } from '../complete/builder.mjs';
 import { openPancakeFile, verifyHostEncoder } from '../complete/index.mjs';
 
@@ -471,7 +471,7 @@ const A = buildSynthetic();
             const { httpRangeSource: rangeSource } = await import('../complete/sources.mjs');
             const src = rangeSource('http://host.invalid/b.pancake');
             await src.init();
-            await rejects('a 206 answering a different range than requested is refused', () => src.read(64, 64), /returned bytes 80-143, requested 64-127/);
+            await rejects('a 206 answering a different range than requested is refused', () => src.read(64, 64), /returned Content-Range bytes 80-143.*requested bytes 64-127/);
         } finally {
             globalThis.fetch = realFetch2;
         }
@@ -501,6 +501,128 @@ const A = buildSynthetic();
         check('subsequent reads are served from memory with no further requests', requests === reqAfterFirst, `requests after 3 reads: ${requests - reqAfterInit}`);
     } finally {
         globalThis.fetch = realFetch;
+    }
+}
+
+// Index authentication: the identity must bind the embedded sketch's
+// semantics, not just its bytes-as-a-lazy-segment.
+{
+    const { manifest, segments } = layoutOf(A.bytes);
+    check('format-2 manifest commits to the index header', /^[0-9a-f]{64}$/.test(manifest.index?.headerSha256));
+    // The sketch header's metric word decides search semantics. Flipping it
+    // (cosine -> l2) leaves the complete identity and the sketch's own
+    // resident hash untouched — the manifest's header commitment must catch it.
+    const metricFlip = Buffer.from(A.bytes);
+    metricFlip.writeUInt32LE(0, segments.index.offset + 12); // metric: cosine -> l2
+    await rejects('format 2: a flipped index metric fails the manifest header commitment',
+        () => openPancakeFile(memorySource(metricFlip), { encodeQuery: hostEncode }), /index header failed hash verification/);
+    // Rewriting the sketch's own residentSha256 (the self-check an attacker
+    // who rewrites the segment also controls) is caught the same way.
+    const selfHash = Buffer.from(A.bytes);
+    selfHash[segments.index.offset + 60] ^= 0xff;
+    await rejects('format 2: a rewritten sketch self-hash fails the manifest header commitment',
+        () => openPancakeFile(memorySource(selfHash), { encodeQuery: hostEncode }), /index header failed hash verification/);
+    // Format 1 has no header commitment; the metric cross-check against the
+    // identity-verified manifest is the binding there.
+    const v1 = buildSynthetic({ profile: PROFILE_V1, name: 'v1metric' });
+    const v1layout = layoutOf(v1.bytes);
+    const v1flip = Buffer.from(v1.bytes);
+    v1flip.writeUInt32LE(0, v1layout.segments.index.offset + 12);
+    await rejects('format 1: a flipped index metric fails the manifest cross-check',
+        () => openPancakeFile(memorySource(v1flip), { encodeQuery: hostEncode }), /index metric l2 != manifest metric cosine/);
+}
+
+// canonicalJson follows JSON.stringify semantics for unsupported values.
+{
+    check('canonicalJson omits undefined object properties', canonicalJson({ a: 1, b: undefined, c: () => {} }) === '{"a":1}');
+    check('canonicalJson turns unsupported array entries into null', canonicalJson([1, undefined, () => {}, 2]) === '[1,null,null,2]');
+    check('canonicalJson output parses', JSON.parse(canonicalJson({ b: [undefined], a: 'x' })).b[0] === null);
+}
+
+// evaluation(): absent segment -> null; a non-object segment is refused.
+{
+    const noEval = (() => {
+        const corpus = buildCorpusSegment(RECORDS, { pageRecords: PAGE_RECORDS });
+        const outPath = path.join(tmp, 'noeval.pancake');
+        assemblePancakeFile({
+            profile: PROFILE_V2, corpus: { ...corpus.corpus, provenance: null }, dim: DIM, metric: 'cosine',
+            encoder: { kind: 'external-transformers-v1' }, recommendedRerank: 40, sampleQueries: [],
+        }, [
+            { kind: 'index', bytes: SKETCH },
+            { kind: 'corpus', bytes: corpus.bytes },
+            { kind: 'query-interp', bytes: buildQueryInterpSegment(2, Buffer.from(JSON.stringify(kind2Declaration()), 'utf8'), CALIBRATION) },
+        ], outPath);
+        return fs.readFileSync(outPath);
+    })();
+    const ne = await openPancakeFile(memorySource(noEval), { encodeQuery: hostEncode });
+    check('evaluation() is null when the artifact carries no evaluation segment', (await ne.evaluation()) === null);
+    await ne.close();
+    const arrayEval = buildSynthetic({ name: 'arrayeval' });
+    const { segments: ae } = layoutOf(arrayEval.bytes);
+    // Rebuild with an array evaluation segment.
+    const corpus = buildCorpusSegment(RECORDS, { pageRecords: PAGE_RECORDS });
+    const outPath = path.join(tmp, 'arrayeval2.pancake');
+    assemblePancakeFile({
+        profile: PROFILE_V2, corpus: { ...corpus.corpus, provenance: null }, dim: DIM, metric: 'cosine',
+        encoder: { kind: 'external-transformers-v1' }, recommendedRerank: 40, sampleQueries: [],
+    }, [
+        { kind: 'index', bytes: SKETCH },
+        { kind: 'corpus', bytes: corpus.bytes },
+        { kind: 'query-interp', bytes: buildQueryInterpSegment(2, Buffer.from(JSON.stringify(kind2Declaration()), 'utf8'), CALIBRATION) },
+        { kind: 'evaluation', bytes: Buffer.from('[1,2]', 'utf8') },
+    ], outPath);
+    const av = await openPancakeFile(outPath, { encodeQuery: hostEncode });
+    await rejects('a non-object evaluation segment is refused', () => av.evaluation(), /must be a JSON object/);
+    await av.close();
+    void ae;
+}
+
+// httpRangeSource fails closed on malformed 206s and streaming overruns.
+{
+    const realFetch3 = globalThis.fetch;
+    try {
+        const { httpRangeSource: rangeSource } = await import('../complete/sources.mjs');
+        // 206 without Content-Range (RFC requires it): refused.
+        globalThis.fetch = async (url, init = {}) => {
+            if (init.method === 'HEAD') return new Response(null, { status: 200, headers: { 'content-length': String(A.bytes.length) } });
+            const m = /bytes=(\d+)-(\d+)/.exec(init.headers.Range);
+            return new Response(A.bytes.subarray(Number(m[1]), Number(m[2]) + 1), { status: 206 });
+        };
+        const noHeader = rangeSource('http://host.invalid/c.pancake');
+        await noHeader.init();
+        await rejects('a 206 without Content-Range is refused', () => noHeader.read(0, 64), /Content-Range \(missing\)/);
+        // A 200 that streams more than the fallback cap is aborted on
+        // received bytes, whatever the headers claimed.
+        globalThis.fetch = async (url, init = {}) => {
+            if (init.method === 'HEAD') return new Response(null, { status: 200, headers: { 'content-length': '1024' } });
+            const chunk = new Uint8Array(1024).fill(7);
+            let sent = 0;
+            return new Response(new ReadableStream({
+                pull(controller) {
+                    if (sent >= 16) { controller.close(); return; }
+                    sent++; controller.enqueue(chunk);
+                },
+            }), { status: 200 });
+        };
+        const streamy = rangeSource('http://host.invalid/d.pancake', { maxFullFallbackBytes: 4096 });
+        await streamy.init();
+        await rejects('a chunked 200 streaming past the cap is aborted on received bytes',
+            () => streamy.read(0, 64), /streamed over 4096 bytes/);
+        // cacheKeyParam: null keeps the URL untouched (signed-URL hosts).
+        const seen = [];
+        globalThis.fetch = async (url, init = {}) => {
+            if (init.method === 'HEAD') return new Response(null, { status: 200, headers: { 'content-length': String(A.bytes.length) } });
+            seen.push(String(url));
+            const m = /bytes=(\d+)-(\d+)/.exec(init.headers.Range);
+            const body = A.bytes.subarray(Number(m[1]), Number(m[2]) + 1);
+            return new Response(body, { status: 206, headers: { 'content-range': `bytes ${m[1]}-${m[2]}/${A.bytes.length}` } });
+        };
+        const unsigned = rangeSource('http://host.invalid/e.pancake?sig=abc', { cacheKeyParam: null });
+        await unsigned.init();
+        await unsigned.read(0, 64);
+        check('cacheKeyParam: null leaves the URL untouched for signed-URL hosts', seen[0] === 'http://host.invalid/e.pancake?sig=abc');
+    } finally {
+        globalThis.fetch = realFetch3;
     }
 }
 

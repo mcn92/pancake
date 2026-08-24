@@ -54,6 +54,10 @@ const MAX_RECORDS = 2 ** 31 - 1;
 const MAX_PAGE_RECORDS = 65536;
 const DIGEST_PAGE_CACHE = 64;
 const RECORD_CACHE = 256;
+// The embedded index is a .pancake-sketch artifact (SKETCH_PROFILE.md);
+// its fixed-size header is what format 2 commits to in the manifest.
+const SKETCH_HEADER_BYTES = 256;
+const METRIC_NAMES = { 0: 'l2', 1: 'cosine' };
 
 const decoder = new TextDecoder();
 const MAX_SAFE_BIG = BigInt(Number.MAX_SAFE_INTEGER);
@@ -389,6 +393,14 @@ export async function openPancakeFile(input, options = {}) {
         if (!Number.isSafeInteger(recordsAt) || recordsAt > corpus.length) {
             throw new Error('.pancake manifest corpus.records is implausible for the corpus segment');
         }
+        // Format 2 commits to the embedded sketch's 256-byte header
+        // (metric/dim/count and the sketch's residentSha256/vectorsSha256),
+        // anchoring the sketch's own integrity chain to the identity; the
+        // sketch's self-checks alone verify against fields an attacker who
+        // rewrites the segment also controls.
+        if (perRecord && (!isSha256Hex(manifest.index?.headerSha256) || idx.length < SKETCH_HEADER_BYTES)) {
+            throw new Error('.pancake manifest carries no index header commitment (index.headerSha256)');
+        }
 
         // After the segment table, every remaining open-path extent is known,
         // so the query-interp segment, the embedded sketch (two dependent
@@ -405,6 +417,12 @@ export async function openPancakeFile(input, options = {}) {
             })(),
             PancakeSketchArtifact.open(windowSource(source, idx.offset, idx.length), { maxReadBytes }),
             readChecked(source, corpus.offset, tablesBytes, 'corpus tables', maxReadBytes, fileBytes),
+            perRecord ? (async () => {
+                const headerBytes = await readChecked(source, idx.offset, SKETCH_HEADER_BYTES, 'index header', maxReadBytes, fileBytes);
+                if (await sha256hex(headerBytes) !== manifest.index.headerSha256) {
+                    throw new Error('.pancake index header failed hash verification against the manifest');
+                }
+            })() : null,
         ]);
 
         // Query interpretation: version word, kind, two length-prefixed
@@ -536,6 +554,14 @@ export async function openPancakeFile(input, options = {}) {
         }
         if (sketch.dim !== undefined && sketch.dim !== dim) {
             throw new Error(`.pancake index dim ${sketch.dim} != manifest dim ${dim}`);
+        }
+        // The metric decides the search semantics; the sketch header's copy
+        // must agree with the identity-verified manifest (on format 2 the
+        // header itself is hash-anchored above; on format 1 this cross-check
+        // is the only binding).
+        if (METRIC_NAMES[sketch.metric] !== undefined && typeof manifest.metric === 'string'
+            && METRIC_NAMES[sketch.metric] !== manifest.metric) {
+            throw new Error(`.pancake index metric ${METRIC_NAMES[sketch.metric]} != manifest metric ${manifest.metric}`);
         }
 
         // Corpus tables: cross-check the segment's own words, then the
@@ -717,7 +743,14 @@ export async function openPancakeFile(input, options = {}) {
                 if (await sha256hex(bytes) !== ev.sha256) {
                     throw new Error('.pancake evaluation segment failed hash verification');
                 }
-                return JSON.parse(decoder.decode(bytes));
+                let parsed;
+                try { parsed = JSON.parse(decoder.decode(bytes)); } catch (err) {
+                    throw new Error('.pancake evaluation segment is not valid JSON', { cause: err });
+                }
+                if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                    throw new Error('.pancake evaluation segment must be a JSON object');
+                }
+                return parsed;
             },
 
             async close() {
