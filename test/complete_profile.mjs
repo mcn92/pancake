@@ -542,6 +542,88 @@ const A = buildSynthetic();
         () => openPancakeFile(memorySource(v1flip), { encodeQuery: hostEncode }), /index metric l2 != manifest metric cosine/);
 }
 
+// Lazy vector rows: committed to the identity, verified only by a full
+// pass — the documented transitional stance, exercised both ways.
+{
+    const { segments } = layoutOf(A.bytes);
+    // Find the vectors offset from the (authenticated) sketch header:
+    // vectorsSha256 lives at [88,120); the vectors offset field is what the
+    // reader computes — tamper a byte near the end of the index segment,
+    // inside the lazy row region, far past the resident prefix.
+    const rowTamper = Buffer.from(A.bytes);
+    rowTamper[segments.index.offset + segments.index.length - 8] ^= 0xff;
+    const lazy = await openPancakeFile(memorySource(rowTamper), { encodeQuery: hostEncode });
+    check('a tampered lazy vector row does not fail the default open (documented transitional stance)',
+        lazy.info().vectorsVerified === false);
+    await rejects('...but verifyVectors() detects it', () => lazy.verifyVectors(), /vector|hash/i);
+    await lazy.close();
+    await rejects('verifyIndexVectors: true authenticates the rows at open and refuses the tamper',
+        () => openPancakeFile(memorySource(rowTamper), { encodeQuery: hostEncode, verifyIndexVectors: true }), /vector|hash/i);
+    const clean = await openPancakeFile(memorySource(A.bytes), { encodeQuery: hostEncode, verifyIndexVectors: true });
+    check('verifyIndexVectors: true on a clean artifact opens with vectorsVerified true',
+        clean.info().vectorsVerified === true && (await clean.query('rec 17', { k: 1 })).results[0].id === 17);
+    await clean.close();
+}
+
+// Malformed verification-vector expectations must fail verification, not
+// slip through as NaN comparisons.
+{
+    const wrongEncoder = () => new Float32Array(DIM).fill(0.25);
+    const cases = [
+        ['string components', TEST_VECTOR_TEXTS.map((text) => ({ text, embedding: Array(DIM).fill('x'), tolerance: 1e-6 }))],
+        ['null components', TEST_VECTOR_TEXTS.map((text) => ({ text, embedding: Array(DIM).fill(null), tolerance: 1e-6 }))],
+        ['too-short embedding', TEST_VECTOR_TEXTS.map((text) => ({ text, embedding: [0.1, 0.2], tolerance: 1e-6 }))],
+        ['too-long embedding', TEST_VECTOR_TEXTS.map((text) => ({ text, embedding: Array(DIM + 1).fill(0.1), tolerance: 1e-6 }))],
+        ['missing embedding', TEST_VECTOR_TEXTS.map((text) => ({ text, tolerance: 1e-6 }))],
+    ];
+    for (const [label, testVectors] of cases) {
+        const bad = buildSynthetic({ declaration: { ...kind2Declaration({ withVectors: false }), testVectors }, name: `badvec-${label.replace(/[^a-z]/g, '')}` });
+        await rejects(`a declaration with ${label} fails encoder verification instead of passing vacuously`,
+            () => openPancakeFile(memorySource(bad.bytes), { encodeQuery: wrongEncoder }), /expected embedding/);
+    }
+    // NaN / Infinity cannot ride in JSON, but the exported API can receive
+    // them programmatically.
+    for (const poison of [NaN, Infinity]) {
+        await rejects(`verifyHostEncoder rejects a ${poison} expectation`,
+            () => verifyHostEncoder({ model: 'x', testVectors: [{ text: 't', embedding: Array(DIM).fill(poison) }] }, wrongEncoder, DIM), /finite number/);
+    }
+    // And the validated path still catches a genuinely wrong encoder.
+    const good = buildSynthetic({ name: 'goodvec' });
+    await rejects('a wrong encoder still fails against well-formed vectors',
+        () => openPancakeFile(memorySource(good.bytes), { encodeQuery: wrongEncoder }), /failed the artifact's verification vector/);
+}
+
+// Builders accept plain Uint8Arrays wherever the typings say Uint8Array.
+{
+    const u8records = RECORDS.map((b) => new Uint8Array(b)); // copies, not Buffers
+    const u8corpus = buildCorpusSegment(u8records, { pageRecords: PAGE_RECORDS });
+    const u8qi = buildQueryInterpSegment(2,
+        new Uint8Array(Buffer.from(JSON.stringify(kind2Declaration()), 'utf8')),
+        new Uint8Array(CALIBRATION));
+    const u8path = path.join(tmp, 'u8.pancake');
+    assemblePancakeFile({
+        profile: PROFILE_V2, corpus: { ...u8corpus.corpus, provenance: null }, dim: DIM, metric: 'cosine',
+        encoder: { kind: 'external-transformers-v1' }, recommendedRerank: 40, sampleQueries: [],
+    }, [
+        { kind: 'index', bytes: new Uint8Array(SKETCH) },
+        { kind: 'corpus', bytes: u8corpus.bytes },
+        { kind: 'query-interp', bytes: u8qi },
+        { kind: 'evaluation', bytes: new Uint8Array(EVALUATION) },
+    ], u8path);
+    const u8 = await openPancakeFile(u8path, { encodeQuery: hostEncode });
+    check('an artifact built entirely from plain Uint8Arrays opens and queries',
+        (await u8.query('rec 17', { k: 1 })).results[0].id === 17);
+    // set() must write the same bytes copy() did: the segments (index,
+    // corpus, query-interp, evaluation) digest identically to the
+    // Buffer-built artifact's. (The manifests differ in unrelated fields,
+    // so whole-artifact identities are not compared.)
+    const u8segments = layoutOf(fs.readFileSync(u8path)).manifest.segments;
+    const bufSegments = layoutOf(A.bytes).manifest.segments;
+    check('...with segments byte-identical to the Buffer-built artifact',
+        u8segments.length === bufSegments.length && u8segments.every((s, i) => s.sha256 === bufSegments[i].sha256));
+    await u8.close();
+}
+
 // canonicalJson follows JSON.stringify semantics for unsupported values.
 {
     check('canonicalJson omits undefined object properties', canonicalJson({ a: 1, b: undefined, c: () => {} }) === '{"a":1}');

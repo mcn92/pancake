@@ -44,8 +44,8 @@ export function buildQueryInterpSegment(kind, encoderBytes, calibrationBytes) {
   out.writeUInt32LE(kind, 4);
   out.writeUInt32LE(encoderBytes.length, 8);
   out.writeUInt32LE(calibrationBytes.length, 12);
-  encoderBytes.copy(out, 16);
-  calibrationBytes.copy(out, 16 + encoderBytes.length);
+  out.set(encoderBytes, 16); // set(), not copy(): inputs may be plain Uint8Arrays
+  out.set(calibrationBytes, 16 + encoderBytes.length);
   return out;
 }
 
@@ -62,7 +62,7 @@ export function buildCorpusSegmentFromBuffers(records) {
   let cursor = prefix;
   for (let id = 0; id < count; id++) {
     out.writeBigUInt64LE(BigInt(cursor), 4 + 8 * id);
-    records[id].copy(out, cursor);
+    out.set(records[id], cursor); // set(), not copy(): records may be plain Uint8Arrays
     cursor += records[id].length;
   }
   out.writeBigUInt64LE(BigInt(cursor), 4 + 8 * count);
@@ -106,8 +106,8 @@ export function buildCorpusSegment(records, options = {}) {
   let cursor = recordsAt;
   for (let id = 0; id < count; id++) {
     out.writeBigUInt64LE(BigInt(cursor), offsetsAt + 8 * id);
-    records[id].copy(out, cursor);
-    sha256(records[id]).copy(out, recordDigestsAt + 32 * id);
+    out.set(records[id], cursor); // set(), not copy(): records may be plain Uint8Arrays
+    out.set(sha256(records[id]), recordDigestsAt + 32 * id);
     cursor += records[id].length;
   }
   out.writeBigUInt64LE(BigInt(cursor), offsetsAt + 8 * count);
@@ -142,9 +142,9 @@ export function buildInlineTransformerEncoderSegment({ declaration, vocabBytes, 
   out.writeUInt32LE(declarationBytes.length, 0);
   out.writeUInt32LE(vocabBytes.length, 4);
   out.writeUInt32LE(weightBytes.length, 8);
-  declarationBytes.copy(out, 12);
-  vocabBytes.copy(out, 12 + declarationBytes.length);
-  weightBytes.copy(out, 12 + declarationBytes.length + vocabBytes.length);
+  out.set(declarationBytes, 12);
+  out.set(vocabBytes, 12 + declarationBytes.length); // set(), not copy(): inputs may be plain Uint8Arrays
+  out.set(weightBytes, 12 + declarationBytes.length + vocabBytes.length);
   return out;
 }
 

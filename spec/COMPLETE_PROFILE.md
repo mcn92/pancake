@@ -232,7 +232,11 @@ silently. A reader given a host encoder MUST run it against every
 verification vector before serving the first query — dimension equal to
 the manifest's, every component within the vector's declared tolerance —
 and MUST refuse the open on disagreement (encoder/index skew is a contract
-violation, section 4.4). A kind-2 declaration without verification vectors
+violation, section 4.4). A verification vector's expected embedding MUST
+itself be validated before comparison — exactly `dim` finite numbers — and
+a malformed expectation MUST fail the verification rather than skip it
+(NaN comparisons are never "within tolerance"). A kind-2 declaration
+without verification vectors
 is incomplete: a reader MUST refuse to serve it as verified and MAY serve
 it only when the host explicitly accepts an unverified encoder, reporting
 that state (the reference reader: `allowUnverifiedEncoder`,
@@ -373,11 +377,18 @@ The index segment is anchored through the manifest's header commitment
 `residentSha256` authenticates the resident prefix and its `vectorsSha256`
 authenticates the lazy rows, both under the artifact identity.
 
-What remains transitional: the sketch artifact's lazy rerank rows are
-covered by the (now identity-anchored) whole-segment `vectorsSha256`,
-verifiable after the fact via `verifyVectors()`, not per read. Per-row
-commitments belong to SKETCH_PROFILE.md's next revision; this profile will
-inherit them unchanged.
+What remains transitional — stated prominently because it bounds what the
+identity guarantees during a query: the sketch artifact's lazy rerank rows
+are covered by the (now identity-anchored) whole-segment `vectorsSha256`
+but are NOT verified on the reads that feed reranking. Between open and a
+full vectors pass, modified vector bytes in transport or storage can alter
+which results a query returns, under an unchanged identity. Hosts that
+need every query-influencing byte authenticated before serving MUST run
+the full pass — the reference reader offers `verifyIndexVectors: true` at
+open and `verifyVectors()` afterwards (one streamed read of the vectors
+region; `info().vectorsVerified` reports the state). Per-row commitments
+that would close this per-read belong to SKETCH_PROFILE.md's next revision
+(section 8, question 6); this profile will inherit them unchanged.
 
 Format-1 files keep Draft 1's stance — whole-segment digests only, lazy
 record reads not independently verifiable — and readers MUST report which
@@ -407,3 +418,13 @@ both as equivalent.
    (section 8), revisit only with a concrete host need.
 5. Browser reader packaging (the encoder runs in plain JS today; confirm
    no Node-only dependencies before freezing the host story).
+6. Per-row vector commitments (closing section 6's transitional gap per
+   read). The corpus's two-level scheme does not transplant directly: a
+   rerank fetches ~C rows scattered across the id space, so per-row
+   digests behind 256-entry pages would drag in up to C digest pages —
+   at wiki scale (456k rows, C=600) roughly 600 × 8 KiB ≈ 4.8 MB of
+   digest reads against ~230 KiB of row bytes on a cold query. Candidate
+   shapes to measure: digest pages sized to the reader's coalesced-run
+   geometry, truncated per-row digests, or a Merkle tree with proofs
+   inlined per fetched run. Belongs to SKETCH_PROFILE.md's next
+   revision.

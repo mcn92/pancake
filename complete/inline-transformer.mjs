@@ -153,14 +153,44 @@ export async function buildInlineTestVectors(embedder, texts = INLINE_TEST_VECTO
   return out;
 }
 
+// A verification vector's expected embedding must itself be verifiable:
+// exactly dim real, finite numbers. A malformed entry (string, null, NaN,
+// missing component, wrong length) would otherwise make every comparison
+// NaN, and `NaN > maxDiff` is false — the vector would "pass" without a
+// single meaningful comparison. Shared by the kind-2 host verifier and the
+// kind-3 inline verifier.
+export function validateExpectedEmbedding(values, dim, label) {
+  if (!Array.isArray(values) || values.length !== dim) {
+    throw new Error(`${label}: expected embedding must be an array of ${dim} numbers, got ${Array.isArray(values) ? `length ${values.length}` : typeof values}`);
+  }
+  for (let d = 0; d < dim; d++) {
+    if (typeof values[d] !== 'number' || !Number.isFinite(values[d])) {
+      throw new Error(`${label}: expected embedding component ${d} is not a finite number`);
+    }
+  }
+}
+
+export function validateTestVectorTolerance(tolerance, label) {
+  if (tolerance === undefined) return 1e-3;
+  if (typeof tolerance !== 'number' || !Number.isFinite(tolerance) || tolerance <= 0 || tolerance >= 1) {
+    throw new Error(`${label}: tolerance is implausible`);
+  }
+  return tolerance;
+}
+
 export async function verifyInlineTestVectors(embedder) {
   for (const tv of embedder.declaration.testVectors) {
+    if (!tv || typeof tv.text !== 'string') {
+      throw new Error('inline encoder verification vector is malformed (no text)');
+    }
+    const label = `inline encoder verification vector "${tv.text.slice(0, 40)}…"`;
     const { vector, windows } = await embedder.embed(tv.text);
+    validateExpectedEmbedding(tv.embedding, vector.length, label);
+    const tolerance = validateTestVectorTolerance(tv.tolerance, label);
     if (tv.windows !== undefined && windows !== tv.windows) {
       throw new Error(`inline encoder verification: "${tv.text.slice(0, 40)}…" pooled over ${windows} window(s); `
         + `the declaration recorded ${tv.windows}`);
     }
-    const tolerance = tv.tolerance ?? 1e-3;
     let maxDiff = 0;
     for (let d = 0; d < vector.length; d++) {
       const diff = Math.abs(vector[d] - tv.embedding[d]);

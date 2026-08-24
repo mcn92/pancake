@@ -82,8 +82,21 @@ export interface CompleteSearch {
     fileBytes: number;
     residentBytes: number;
     residentVerified: boolean;
+    /**
+     * True only after a full vectors pass (verifyIndexVectors at open, or
+     * verifyVectors() later). Until then, lazily fetched rerank rows are
+     * committed via the identity-anchored vectorsSha256 but not verified
+     * per read.
+     */
+    vectorsVerified: boolean;
     sampleQueries: string[];
   };
+  /**
+   * Verify the index's lazy vector rows against the identity-anchored
+   * vectorsSha256 (streamed where a streaming hash exists). Resolves true
+   * on match; throws on mismatch.
+   */
+  verifyVectors(options?: { chunkBytes?: number }): Promise<true>;
   query(text: string, options?: {
     k?: number;
     rerank?: number;
@@ -113,6 +126,14 @@ export declare function openPancakeFile(
     allowUnverifiedEncoder?: boolean;
     /** Verify each hydrated record against its digest on format 2. Default true. */
     verifyRecords?: boolean;
+    /**
+     * Fully verify the index's lazy vector rows at open (one streamed pass
+     * against the identity-anchored vectorsSha256). Default false: without
+     * it, rows that feed reranking are covered by the whole-segment
+     * commitment but not verified per read until verifyVectors() runs —
+     * the documented transitional stance (spec section 6).
+     */
+    verifyIndexVectors?: boolean;
     /**
      * Budget for any single open-path read (manifest, segment table,
      * query-interp, corpus tables, evaluation, digest pages), honored
@@ -164,6 +185,14 @@ export declare function createInlineTransformerEmbedder(input: {
   embed(text: string): Promise<{ vector: Float32Array; text: string; windows: number }>;
   dispose(): void;
 }>;
+/**
+ * Assert an expected verification-vector embedding is exactly dim finite
+ * numbers; throws otherwise. Malformed expectations would otherwise make
+ * every comparison NaN and "pass".
+ */
+export declare function validateExpectedEmbedding(values: unknown, dim: number, label: string): void;
+/** Validate (or default to 1e-3) a verification vector's tolerance. */
+export declare function validateTestVectorTolerance(tolerance: unknown, label: string): number;
 export declare const INLINE_TEST_VECTOR_TEXTS: string[];
 export declare function buildInlineTestVectors(embedder: unknown, texts?: string[]): Promise<Array<{
   text: string; windows: number; embedding: number[]; tolerance: number;

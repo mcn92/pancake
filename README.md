@@ -305,8 +305,12 @@ if they disagree (`info().encoderVerified` reports the outcome). Format-2
 files (`pancake-complete-v2`, the builder's default) carry per-record
 corpus digests, so every hydrated record is verified on its own range read
 (`info().corpusIntegrity`); every artifact-derived read is bounds-checked
-and budgeted (`maxReadBytes`, `maxRecordBytes`). For kind-3 artifacts, no
-host encoder is required:
+and budgeted (`maxReadBytes`, `maxRecordBytes`). One documented gap: the
+index's lazy rerank rows are committed to the identity but not verified
+per read — pass `verifyIndexVectors: true` (or call `verifyVectors()`)
+to authenticate them with one full pass before trusting results from an
+untrusted transport (spec/COMPLETE_PROFILE.md section 6). For kind-3
+artifacts, no host encoder is required:
 
 ```js
 const search = await openPancakeFile('pancake-wiki-inline.pancake');

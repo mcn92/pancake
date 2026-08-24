@@ -123,7 +123,24 @@ first.
 - `evaluation()` is typed `Promise<Record<string, unknown> | null>` (it
   returns null with no evaluation segment) and refuses a non-object
   segment at runtime.
-- New `test/artifact_hardening.js` (66 checks) in `npm test`; 28 more checks
+- Encoder verification validates the *expected* embeddings too: a
+  verification vector whose expectation is malformed (strings, null, NaN,
+  wrong length, missing) now fails verification instead of passing
+  vacuously — `x - "x"` is NaN and `NaN > maxDiff` is false, so such
+  vectors previously compared nothing while still reporting
+  `encoderVerified: true`. Applies to kind-2 host verification and kind-3
+  inline verification (shared `validateExpectedEmbedding`, exported).
+- Lazy rerank rows: new `verifyIndexVectors: true` open option and
+  `verifyVectors()` method on the complete reader run the full pass
+  against the identity-anchored `vectorsSha256`; `info().vectorsVerified`
+  reports the state. Documented prominently (README, spec section 6):
+  without the pass, rows that feed reranking are committed but not
+  verified per read; per-row commitments are spec section 8 question 6.
+- Builder inputs may be plain `Uint8Array`s, as the typings always said:
+  `buildCorpusSegment(FromBuffers)`, `buildQueryInterpSegment`, and
+  `buildInlineTransformerEncoderSegment` no longer call Buffer-only
+  `.copy()` on caller-supplied bytes.
+- New `test/artifact_hardening.js` (66 checks) in `npm test`; 41 more checks
   in `test/complete_profile.mjs`.
 
 ### Internal

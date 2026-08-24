@@ -28,6 +28,7 @@ import {
     KERNEL_LAYOUT, expectedBlobBytes, parseInlineTransformerEncoder,
     createInlineTransformerEmbedder, INLINE_TEST_VECTOR_TEXTS,
     buildInlineTestVectors, verifyInlineTestVectors,
+    validateExpectedEmbedding, validateTestVectorTolerance,
 } from './inline-transformer.mjs';
 
 export { httpRangeSource } from './sources.mjs';
@@ -35,6 +36,7 @@ export {
     KERNEL_LAYOUT, expectedBlobBytes, parseInlineTransformerEncoder,
     createInlineTransformerEmbedder, INLINE_TEST_VECTOR_TEXTS,
     buildInlineTestVectors, verifyInlineTestVectors,
+    validateExpectedEmbedding, validateTestVectorTolerance,
 };
 
 // Supported container formats: header formatVersion -> manifest profile.
@@ -224,13 +226,15 @@ export async function verifyHostEncoder(declaration, encodeQuery, dim) {
         throw new Error(`.pancake kind-2 declaration dim ${declaration.dim} disagrees with manifest dim ${dim}`);
     }
     for (const tv of vectors) {
-        if (!tv || typeof tv.text !== 'string' || !Array.isArray(tv.embedding) || tv.embedding.length !== dim) {
+        if (!tv || typeof tv.text !== 'string') {
             throw new Error('.pancake kind-2 verification vector is malformed');
         }
-        const tolerance = tv.tolerance ?? 1e-3;
-        if (!(typeof tolerance === 'number' && tolerance > 0 && tolerance < 1)) {
-            throw new Error('.pancake kind-2 verification vector tolerance is implausible');
-        }
+        // The expected embedding must be dim finite numbers: a malformed
+        // entry would turn every comparison into NaN, and NaN > maxDiff is
+        // false — the vector would "pass" without comparing anything.
+        const label = `.pancake kind-2 verification vector "${tv.text.slice(0, 40)}…"`;
+        validateExpectedEmbedding(tv.embedding, dim, label);
+        const tolerance = validateTestVectorTolerance(tv.tolerance, label);
         const vector = toFloat32(await encodeQuery(tv.text), dim, 'options.encodeQuery');
         let maxDiff = 0;
         for (let d = 0; d < dim; d++) {
@@ -260,6 +264,13 @@ export async function openPancakeFile(input, options = {}) {
     const maxReadBytes = resolveBudget(options.maxReadBytes, 'maxReadBytes', DEFAULT_OPEN_READ_BYTES);
     const maxRecordBytes = resolveBudget(options.maxRecordBytes, 'maxRecordBytes', DEFAULT_RECORD_BYTES);
     const verifyRecords = options.verifyRecords !== false;
+    // Opt-in full authentication of the lazy rerank rows at open: one
+    // streamed pass over the vectors segment against the (identity-anchored)
+    // vectorsSha256. Without it, rows that feed reranking are covered by the
+    // whole-segment commitment but not verified per read — the documented
+    // transitional stance (spec section 6) — and verifyVectors() can run the
+    // same pass at any later point.
+    const verifyIndexVectors = options.verifyIndexVectors === true;
     const verifyEncoder = options.verifyEncoder !== false;
     // Declared outside the try so a failure after the encoder is created
     // (count mismatch, bad corpus tables, ...) still releases its buffers.
@@ -563,6 +574,9 @@ export async function openPancakeFile(input, options = {}) {
             && METRIC_NAMES[sketch.metric] !== manifest.metric) {
             throw new Error(`.pancake index metric ${METRIC_NAMES[sketch.metric]} != manifest metric ${manifest.metric}`);
         }
+        if (verifyIndexVectors) {
+            await sketch.verifyVectors();
+        }
 
         // Corpus tables: cross-check the segment's own words, then the
         // offsets — monotonic, starting exactly where the tables end, ending
@@ -686,6 +700,10 @@ export async function openPancakeFile(input, options = {}) {
                     fileBytes,
                     residentBytes: sketch.residentBytes + 8 * (recordCount + 1) + (pageTable ? pageTable.length : 0),
                     residentVerified: sketch.stats().residentVerified,
+                    // True only after a full vectors pass (verifyIndexVectors
+                    // at open, or verifyVectors() later). Until then lazy
+                    // rerank rows are committed but not verified per read.
+                    vectorsVerified: sketch.vectorsVerified === true,
                     sampleQueries: Array.isArray(manifest.sampleQueries) ? manifest.sampleQueries : [],
                 };
             },
@@ -733,6 +751,17 @@ export async function openPancakeFile(input, options = {}) {
             async record(id) {
                 assertOpen();
                 return hydrate(id);
+            },
+
+            /**
+             * Full pass over the index's lazy vector rows against the
+             * identity-anchored vectorsSha256 (streamed where possible).
+             * Until this resolves (or verifyIndexVectors ran at open), rows
+             * that feed reranking are committed but not verified per read.
+             */
+            async verifyVectors(verifyOptions) {
+                assertOpen();
+                return sketch.verifyVectors(verifyOptions);
             },
 
             async evaluation() {
