@@ -123,7 +123,7 @@ first.
 - `evaluation()` is typed `Promise<Record<string, unknown> | null>` (it
   returns null with no evaluation segment) and refuses a non-object
   segment at runtime.
-- New `test/artifact_hardening.js` (66 checks) in `npm test`; 27 more checks
+- New `test/artifact_hardening.js` (66 checks) in `npm test`; 28 more checks
   in `test/complete_profile.mjs`.
 
 ### Internal

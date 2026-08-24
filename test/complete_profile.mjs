@@ -516,12 +516,22 @@ const A = buildSynthetic();
     metricFlip.writeUInt32LE(0, segments.index.offset + 12); // metric: cosine -> l2
     await rejects('format 2: a flipped index metric fails the manifest header commitment',
         () => openPancakeFile(memorySource(metricFlip), { encodeQuery: hostEncode }), /index header failed hash verification/);
-    // Rewriting the sketch's own residentSha256 (the self-check an attacker
-    // who rewrites the segment also controls) is caught the same way.
+    // A header field the sketch never self-verifies (recommendedRerank at
+    // offset 120) is caught ONLY by the manifest commitment — this is the
+    // deterministic proof of the anchor.
+    const rerankFlip = Buffer.from(A.bytes);
+    rerankFlip.writeUInt32LE(7, segments.index.offset + 120);
+    await rejects('format 2: a tampered sketch header field the sketch never self-checks fails the manifest commitment',
+        () => openPancakeFile(memorySource(rerankFlip), { encodeQuery: hostEncode }), /index header failed hash verification/);
+    // Rewriting the sketch's own residentSha256 fails both the manifest
+    // commitment and the sketch's resident self-check; they run in the same
+    // open wave, so whichever rejects first surfaces — either way the open
+    // fails closed.
     const selfHash = Buffer.from(A.bytes);
     selfHash[segments.index.offset + 60] ^= 0xff;
-    await rejects('format 2: a rewritten sketch self-hash fails the manifest header commitment',
-        () => openPancakeFile(memorySource(selfHash), { encodeQuery: hostEncode }), /index header failed hash verification/);
+    await rejects('format 2: a rewritten sketch self-hash fails the open (manifest commitment or resident self-check)',
+        () => openPancakeFile(memorySource(selfHash), { encodeQuery: hostEncode }),
+        /index header failed hash verification|resident prefix failed hash verification/);
     // Format 1 has no header commitment; the metric cross-check against the
     // identity-verified manifest is the binding there.
     const v1 = buildSynthetic({ profile: PROFILE_V1, name: 'v1metric' });
