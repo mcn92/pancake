@@ -419,12 +419,23 @@ both as equivalent.
 5. Browser reader packaging (the encoder runs in plain JS today; confirm
    no Node-only dependencies before freezing the host story).
 6. Per-row vector commitments (closing section 6's transitional gap per
-   read). The corpus's two-level scheme does not transplant directly: a
-   rerank fetches ~C rows scattered across the id space, so per-row
-   digests behind 256-entry pages would drag in up to C digest pages —
-   at wiki scale (456k rows, C=600) roughly 600 × 8 KiB ≈ 4.8 MB of
-   digest reads against ~230 KiB of row bytes on a cold query. Candidate
-   shapes to measure: digest pages sized to the reader's coalesced-run
-   geometry, truncated per-row digests, or a Merkle tree with proofs
-   inlined per fetched run. Belongs to SKETCH_PROFILE.md's next
-   revision.
+   read). Measured 2026-08-25 on the wiki workload — byte/run model,
+   adversarial dispersion, and real-HTTP wall-clock replay
+   (`examples/05-one-file-search/poc/ROW_COMMITMENT_MEASUREMENT.md`).
+   Outcome, for SKETCH_PROFILE.md's next revision: **interleaved digest
+   blocks** — each 16-row group stores a 16-byte-per-row truncated
+   SHA-256 digest page inline ahead of its rows, with 32-byte page
+   hashes in the resident prefix (891 KiB at wiki scale,
+   identity-covered via `residentSha256`). Measured: ~0% query-latency
+   overhead on HTTP/1.1 and HTTP/2 at 20/80 ms RTT (digests ride inside
+   the reader's existing coalesced row runs — zero extra requests),
+   ~3× byte inflation on the rerank's cold reads (~230 ms at 50 Mbps
+   when bandwidth, not RTT, dominates), +4.2% file size,
+   adversarial-safe (degrades linearly). Rejected by measurement:
+   corpus-v2's 256-row/32-byte geometry (4–6× byte amplification),
+   lazily fetched separate-region tables (~2× wall-clock on *both*
+   protocols — request count dominates even under h2 multiplexing), and
+   Merkle-per-run proofs (perpetual ≥0.75× byte cost, no cache
+   convergence). Verify-everything hosts warm the ~7 MB digest region
+   once instead of today's 167 MB full-vectors pass (~24× less
+   transfer).

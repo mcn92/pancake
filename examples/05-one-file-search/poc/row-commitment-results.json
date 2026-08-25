@@ -1,0 +1,2309 @@
+{
+  "generatedFor": "COMPLETE_PROFILE.md section 8 q6",
+  "N": 456153,
+  "dim": 384,
+  "workloads": [
+    {
+      "label": "real wiki queries, C=600",
+      "queries": 200,
+      "meanCandidates": 600,
+      "idGap": {
+        "p50": 270,
+        "p90": 2059,
+        "p99": 6120
+      },
+      "rowReads": {
+        "meanKiB": 672.94875,
+        "meanRuns": 422.985,
+        "gap": 16384
+      },
+      "merkleUpperBoundKiB": 502.2946875,
+      "geometries": [
+        {
+          "P": 16,
+          "D": 16,
+          "meanPages": 484.1,
+          "reusePct": 73.6,
+          "naiveKiB": 121,
+          "coalesced": [
+            {
+              "KiB": 121,
+              "runs": 443.6
+            },
+            {
+              "KiB": 379.3,
+              "runs": 296.9
+            },
+            {
+              "KiB": 1833.2,
+              "runs": 136.2
+            }
+          ],
+          "amplification16K": 2.72,
+          "residentKiB": 890.9,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 16,
+          "D": 32,
+          "meanPages": 484.1,
+          "reusePct": 73.6,
+          "naiveKiB": 242,
+          "coalesced": [
+            {
+              "KiB": 242,
+              "runs": 443.6
+            },
+            {
+              "KiB": 424.5,
+              "runs": 351.4
+            },
+            {
+              "KiB": 1644.3,
+              "runs": 222.7
+            }
+          ],
+          "amplification16K": 2.44,
+          "residentKiB": 890.9,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 32,
+          "D": 16,
+          "meanPages": 463.8,
+          "reusePct": 85.2,
+          "naiveKiB": 231.9,
+          "coalesced": [
+            {
+              "KiB": 231.9,
+              "runs": 419.3
+            },
+            {
+              "KiB": 488.8,
+              "runs": 288.1
+            },
+            {
+              "KiB": 1912.6,
+              "runs": 133.4
+            }
+          ],
+          "amplification16K": 2.84,
+          "residentKiB": 445.5,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 32,
+          "D": 32,
+          "meanPages": 463.8,
+          "reusePct": 85.2,
+          "naiveKiB": 463.8,
+          "coalesced": [
+            {
+              "KiB": 463.8,
+              "runs": 419.3
+            },
+            {
+              "KiB": 647.9,
+              "runs": 339.4
+            },
+            {
+              "KiB": 1844.4,
+              "runs": 217.1
+            }
+          ],
+          "amplification16K": 2.74,
+          "residentKiB": 445.5,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 64,
+          "D": 16,
+          "meanPages": 441.6,
+          "reusePct": 92.1,
+          "naiveKiB": 441.6,
+          "coalesced": [
+            {
+              "KiB": 441.6,
+              "runs": 383.4
+            },
+            {
+              "KiB": 696.1,
+              "runs": 272.3
+            },
+            {
+              "KiB": 2064.4,
+              "runs": 128.1
+            }
+          ],
+          "amplification16K": 3.07,
+          "residentKiB": 222.8,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 64,
+          "D": 32,
+          "meanPages": 441.6,
+          "reusePct": 92.1,
+          "naiveKiB": 883.2,
+          "coalesced": [
+            {
+              "KiB": 883.2,
+              "runs": 383.4
+            },
+            {
+              "KiB": 1069.6,
+              "runs": 318.9
+            },
+            {
+              "KiB": 2225.1,
+              "runs": 206.9
+            }
+          ],
+          "amplification16K": 3.31,
+          "residentKiB": 222.8,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 128,
+          "D": 16,
+          "meanPages": 412.6,
+          "reusePct": 95.7,
+          "naiveKiB": 825.2,
+          "coalesced": [
+            {
+              "KiB": 825.2,
+              "runs": 333.1
+            },
+            {
+              "KiB": 1079.8,
+              "runs": 244.5
+            },
+            {
+              "KiB": 2351.6,
+              "runs": 118.1
+            }
+          ],
+          "amplification16K": 3.49,
+          "residentKiB": 111.4,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 128,
+          "D": 32,
+          "meanPages": 412.6,
+          "reusePct": 95.7,
+          "naiveKiB": 1650.3,
+          "coalesced": [
+            {
+              "KiB": 1650.3,
+              "runs": 333.1
+            },
+            {
+              "KiB": 1849.8,
+              "runs": 283.2
+            },
+            {
+              "KiB": 2943.2,
+              "runs": 187.9
+            }
+          ],
+          "amplification16K": 4.37,
+          "residentKiB": 111.4,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 256,
+          "D": 16,
+          "meanPages": 372.8,
+          "reusePct": 97.6,
+          "naiveKiB": 1491.2,
+          "coalesced": [
+            {
+              "KiB": 1491.2,
+              "runs": 263.8
+            },
+            {
+              "KiB": 1743.2,
+              "runs": 200.8
+            },
+            {
+              "KiB": 2858.4,
+              "runs": 101.1
+            }
+          ],
+          "amplification16K": 4.25,
+          "residentKiB": 55.7,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 256,
+          "D": 32,
+          "meanPages": 372.8,
+          "reusePct": 97.6,
+          "naiveKiB": 2982.5,
+          "coalesced": [
+            {
+              "KiB": 2982.5,
+              "runs": 263.8
+            },
+            {
+              "KiB": 2982.5,
+              "runs": 263.8
+            },
+            {
+              "KiB": 4194.3,
+              "runs": 156.6
+            }
+          ],
+          "amplification16K": 6.23,
+          "residentKiB": 55.7,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 512,
+          "D": 16,
+          "meanPages": 318.4,
+          "reusePct": 98.6,
+          "naiveKiB": 2547,
+          "coalesced": [
+            {
+              "KiB": 2547,
+              "runs": 178.6
+            },
+            {
+              "KiB": 2547,
+              "runs": 178.6
+            },
+            {
+              "KiB": 3689.4,
+              "runs": 74.5
+            }
+          ],
+          "amplification16K": 5.48,
+          "residentKiB": 27.8,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 512,
+          "D": 32,
+          "meanPages": 318.4,
+          "reusePct": 98.6,
+          "naiveKiB": 5094.1,
+          "coalesced": [
+            {
+              "KiB": 5094.1,
+              "runs": 178.6
+            },
+            {
+              "KiB": 5094.1,
+              "runs": 178.6
+            },
+            {
+              "KiB": 6137.9,
+              "runs": 113.3
+            }
+          ],
+          "amplification16K": 9.12,
+          "residentKiB": 27.8,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 1024,
+          "D": 16,
+          "meanPages": 248.6,
+          "reusePct": 99.1,
+          "naiveKiB": 3978.1,
+          "coalesced": [
+            {
+              "KiB": 3978.1,
+              "runs": 94
+            },
+            {
+              "KiB": 3978.1,
+              "runs": 94
+            },
+            {
+              "KiB": 4784.5,
+              "runs": 43.6
+            }
+          ],
+          "amplification16K": 7.11,
+          "residentKiB": 13.9,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 1024,
+          "D": 32,
+          "meanPages": 248.6,
+          "reusePct": 99.1,
+          "naiveKiB": 7956.2,
+          "coalesced": [
+            {
+              "KiB": 7956.2,
+              "runs": 94
+            },
+            {
+              "KiB": 7956.2,
+              "runs": 94
+            },
+            {
+              "KiB": 7956.2,
+              "runs": 94
+            }
+          ],
+          "amplification16K": 11.82,
+          "residentKiB": 13.9,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        }
+      ]
+    },
+    {
+      "label": "uniform baseline, C=600",
+      "queries": 200,
+      "meanCandidates": 600,
+      "idGap": {
+        "p50": 527,
+        "p90": 1748,
+        "p99": 3467
+      },
+      "rowReads": {
+        "meanKiB": 480.661875,
+        "meanRuns": 567.185,
+        "gap": 16384
+      },
+      "merkleUpperBoundKiB": 673.5321875,
+      "geometries": [
+        {
+          "P": 16,
+          "D": 16,
+          "meanPages": 594.1,
+          "reusePct": 76.4,
+          "naiveKiB": 148.5,
+          "coalesced": [
+            {
+              "KiB": 148.5,
+              "runs": 581.9
+            },
+            {
+              "KiB": 485.8,
+              "runs": 414.9
+            },
+            {
+              "KiB": 2882,
+              "runs": 152.4
+            }
+          ],
+          "amplification16K": 6,
+          "residentKiB": 890.9,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 16,
+          "D": 32,
+          "meanPages": 594.1,
+          "reusePct": 76.4,
+          "naiveKiB": 297.1,
+          "coalesced": [
+            {
+              "KiB": 297.1,
+              "runs": 581.9
+            },
+            {
+              "KiB": 494,
+              "runs": 491.7
+            },
+            {
+              "KiB": 2382.3,
+              "runs": 297.2
+            }
+          ],
+          "amplification16K": 4.96,
+          "residentKiB": 890.9,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 32,
+          "D": 16,
+          "meanPages": 588,
+          "reusePct": 87.9,
+          "naiveKiB": 294,
+          "coalesced": [
+            {
+              "KiB": 294,
+              "runs": 563.8
+            },
+            {
+              "KiB": 640.7,
+              "runs": 402.1
+            },
+            {
+              "KiB": 2997.7,
+              "runs": 147.5
+            }
+          ],
+          "amplification16K": 6.24,
+          "residentKiB": 445.5,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 32,
+          "D": 32,
+          "meanPages": 588,
+          "reusePct": 87.9,
+          "naiveKiB": 588,
+          "coalesced": [
+            {
+              "KiB": 588,
+              "runs": 563.8
+            },
+            {
+              "KiB": 798.9,
+              "runs": 476.9
+            },
+            {
+              "KiB": 2674.5,
+              "runs": 288.2
+            }
+          ],
+          "amplification16K": 5.56,
+          "residentKiB": 445.5,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 64,
+          "D": 16,
+          "meanPages": 575.9,
+          "reusePct": 93.8,
+          "naiveKiB": 575.9,
+          "coalesced": [
+            {
+              "KiB": 575.9,
+              "runs": 529
+            },
+            {
+              "KiB": 941.1,
+              "runs": 377.1
+            },
+            {
+              "KiB": 3211.4,
+              "runs": 138.7
+            }
+          ],
+          "amplification16K": 6.68,
+          "residentKiB": 222.8,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 64,
+          "D": 32,
+          "meanPages": 575.9,
+          "reusePct": 93.8,
+          "naiveKiB": 1151.8,
+          "coalesced": [
+            {
+              "KiB": 1151.8,
+              "runs": 529
+            },
+            {
+              "KiB": 1393.6,
+              "runs": 447.4
+            },
+            {
+              "KiB": 3240.2,
+              "runs": 270.8
+            }
+          ],
+          "amplification16K": 6.74,
+          "residentKiB": 222.8,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 128,
+          "D": 16,
+          "meanPages": 552.5,
+          "reusePct": 96.8,
+          "naiveKiB": 1105,
+          "coalesced": [
+            {
+              "KiB": 1105,
+              "runs": 467
+            },
+            {
+              "KiB": 1494.3,
+              "runs": 333
+            },
+            {
+              "KiB": 3616.9,
+              "runs": 122.1
+            }
+          ],
+          "amplification16K": 7.52,
+          "residentKiB": 111.4,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 128,
+          "D": 32,
+          "meanPages": 552.5,
+          "reusePct": 96.8,
+          "naiveKiB": 2210.1,
+          "coalesced": [
+            {
+              "KiB": 2210.1,
+              "runs": 467
+            },
+            {
+              "KiB": 2503.9,
+              "runs": 393.6
+            },
+            {
+              "KiB": 4295.9,
+              "runs": 238.6
+            }
+          ],
+          "amplification16K": 8.94,
+          "residentKiB": 111.4,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 256,
+          "D": 16,
+          "meanPages": 510.1,
+          "reusePct": 98.3,
+          "naiveKiB": 2040.3,
+          "coalesced": [
+            {
+              "KiB": 2040.3,
+              "runs": 363.7
+            },
+            {
+              "KiB": 2451.9,
+              "runs": 260.8
+            },
+            {
+              "KiB": 4298.9,
+              "runs": 94.8
+            }
+          ],
+          "amplification16K": 8.94,
+          "residentKiB": 55.7,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 256,
+          "D": 32,
+          "meanPages": 510.1,
+          "reusePct": 98.3,
+          "naiveKiB": 4080.6,
+          "coalesced": [
+            {
+              "KiB": 4080.6,
+              "runs": 363.7
+            },
+            {
+              "KiB": 4080.6,
+              "runs": 363.7
+            },
+            {
+              "KiB": 6096.9,
+              "runs": 186.2
+            }
+          ],
+          "amplification16K": 12.68,
+          "residentKiB": 55.7,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 512,
+          "D": 16,
+          "meanPages": 436.8,
+          "reusePct": 99,
+          "naiveKiB": 3494.8,
+          "coalesced": [
+            {
+              "KiB": 3494.8,
+              "runs": 223.7
+            },
+            {
+              "KiB": 3494.8,
+              "runs": 223.7
+            },
+            {
+              "KiB": 5259.7,
+              "runs": 58.4
+            }
+          ],
+          "amplification16K": 10.94,
+          "residentKiB": 27.8,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 512,
+          "D": 32,
+          "meanPages": 436.8,
+          "reusePct": 99,
+          "naiveKiB": 6989.5,
+          "coalesced": [
+            {
+              "KiB": 6989.5,
+              "runs": 223.7
+            },
+            {
+              "KiB": 6989.5,
+              "runs": 223.7
+            },
+            {
+              "KiB": 8750.1,
+              "runs": 113.7
+            }
+          ],
+          "amplification16K": 18.2,
+          "residentKiB": 27.8,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 1024,
+          "D": 16,
+          "meanPages": 330.2,
+          "reusePct": 99.3,
+          "naiveKiB": 5283,
+          "coalesced": [
+            {
+              "KiB": 5283,
+              "runs": 86.2
+            },
+            {
+              "KiB": 5283,
+              "runs": 86.2
+            },
+            {
+              "KiB": 6291.4,
+              "runs": 23.2
+            }
+          ],
+          "amplification16K": 13.09,
+          "residentKiB": 13.9,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 1024,
+          "D": 32,
+          "meanPages": 330.2,
+          "reusePct": 99.3,
+          "naiveKiB": 10566.1,
+          "coalesced": [
+            {
+              "KiB": 10566.1,
+              "runs": 86.2
+            },
+            {
+              "KiB": 10566.1,
+              "runs": 86.2
+            },
+            {
+              "KiB": 10566.1,
+              "runs": 86.2
+            }
+          ],
+          "amplification16K": 21.98,
+          "residentKiB": 13.9,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        }
+      ]
+    },
+    {
+      "label": "adversarial (evenly spread), C=600",
+      "queries": 200,
+      "meanCandidates": 600,
+      "idGap": {
+        "p50": 760,
+        "p90": 760,
+        "p99": 760
+      },
+      "rowReads": {
+        "meanKiB": 225,
+        "meanRuns": 600,
+        "gap": 16384
+      },
+      "merkleUpperBoundKiB": 712.5,
+      "geometries": [
+        {
+          "P": 16,
+          "D": 16,
+          "meanPages": 600,
+          "reusePct": 76.3,
+          "naiveKiB": 150,
+          "coalesced": [
+            {
+              "KiB": 150,
+              "runs": 600
+            },
+            {
+              "KiB": 150,
+              "runs": 600
+            },
+            {
+              "KiB": 7113.4,
+              "runs": 1
+            }
+          ],
+          "amplification16K": 31.61,
+          "residentKiB": 890.9,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 16,
+          "D": 32,
+          "meanPages": 600,
+          "reusePct": 76.3,
+          "naiveKiB": 300,
+          "coalesced": [
+            {
+              "KiB": 300,
+              "runs": 600
+            },
+            {
+              "KiB": 300,
+              "runs": 600
+            },
+            {
+              "KiB": 300,
+              "runs": 600
+            }
+          ],
+          "amplification16K": 1.33,
+          "residentKiB": 890.9,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 32,
+          "D": 16,
+          "meanPages": 600,
+          "reusePct": 88.1,
+          "naiveKiB": 300,
+          "coalesced": [
+            {
+              "KiB": 300,
+              "runs": 600
+            },
+            {
+              "KiB": 300,
+              "runs": 600
+            },
+            {
+              "KiB": 7113.6,
+              "runs": 1
+            }
+          ],
+          "amplification16K": 31.62,
+          "residentKiB": 445.5,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 32,
+          "D": 32,
+          "meanPages": 600,
+          "reusePct": 88.1,
+          "naiveKiB": 600,
+          "coalesced": [
+            {
+              "KiB": 600,
+              "runs": 600
+            },
+            {
+              "KiB": 600,
+              "runs": 600
+            },
+            {
+              "KiB": 600,
+              "runs": 600
+            }
+          ],
+          "amplification16K": 2.67,
+          "residentKiB": 445.5,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 64,
+          "D": 16,
+          "meanPages": 600,
+          "reusePct": 94.1,
+          "naiveKiB": 600,
+          "coalesced": [
+            {
+              "KiB": 600,
+              "runs": 600
+            },
+            {
+              "KiB": 600,
+              "runs": 600
+            },
+            {
+              "KiB": 7114.1,
+              "runs": 1
+            }
+          ],
+          "amplification16K": 31.62,
+          "residentKiB": 222.8,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 64,
+          "D": 32,
+          "meanPages": 600,
+          "reusePct": 94.1,
+          "naiveKiB": 1200,
+          "coalesced": [
+            {
+              "KiB": 1200,
+              "runs": 600
+            },
+            {
+              "KiB": 1200,
+              "runs": 600
+            },
+            {
+              "KiB": 1200,
+              "runs": 600
+            }
+          ],
+          "amplification16K": 5.33,
+          "residentKiB": 222.8,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 128,
+          "D": 16,
+          "meanPages": 600,
+          "reusePct": 97,
+          "naiveKiB": 1200,
+          "coalesced": [
+            {
+              "KiB": 1200,
+              "runs": 600
+            },
+            {
+              "KiB": 1200,
+              "runs": 600
+            },
+            {
+              "KiB": 7115.1,
+              "runs": 1
+            }
+          ],
+          "amplification16K": 31.62,
+          "residentKiB": 111.4,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 128,
+          "D": 32,
+          "meanPages": 600,
+          "reusePct": 97,
+          "naiveKiB": 2400,
+          "coalesced": [
+            {
+              "KiB": 2400,
+              "runs": 600
+            },
+            {
+              "KiB": 2400,
+              "runs": 600
+            },
+            {
+              "KiB": 2999.1,
+              "runs": 562.6
+            }
+          ],
+          "amplification16K": 13.33,
+          "residentKiB": 111.4,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 256,
+          "D": 16,
+          "meanPages": 600,
+          "reusePct": 98.5,
+          "naiveKiB": 2400,
+          "coalesced": [
+            {
+              "KiB": 2400,
+              "runs": 600
+            },
+            {
+              "KiB": 2474.9,
+              "runs": 581.3
+            },
+            {
+              "KiB": 7117.1,
+              "runs": 1
+            }
+          ],
+          "amplification16K": 31.63,
+          "residentKiB": 55.7,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 256,
+          "D": 32,
+          "meanPages": 600,
+          "reusePct": 98.5,
+          "naiveKiB": 4800,
+          "coalesced": [
+            {
+              "KiB": 4800,
+              "runs": 600
+            },
+            {
+              "KiB": 4800,
+              "runs": 600
+            },
+            {
+              "KiB": 14234.2,
+              "runs": 1
+            }
+          ],
+          "amplification16K": 63.26,
+          "residentKiB": 55.7,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 512,
+          "D": 16,
+          "meanPages": 600,
+          "reusePct": 99.3,
+          "naiveKiB": 4800,
+          "coalesced": [
+            {
+              "KiB": 4800,
+              "runs": 291.1
+            },
+            {
+              "KiB": 4800,
+              "runs": 291.1
+            },
+            {
+              "KiB": 7120.7,
+              "runs": 1
+            }
+          ],
+          "amplification16K": 31.65,
+          "residentKiB": 27.8,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 512,
+          "D": 32,
+          "meanPages": 600,
+          "reusePct": 99.3,
+          "naiveKiB": 9600,
+          "coalesced": [
+            {
+              "KiB": 9600,
+              "runs": 291.1
+            },
+            {
+              "KiB": 9600,
+              "runs": 291.1
+            },
+            {
+              "KiB": 14241.4,
+              "runs": 1
+            }
+          ],
+          "amplification16K": 63.3,
+          "residentKiB": 27.8,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 1024,
+          "D": 16,
+          "meanPages": 445.4,
+          "reusePct": 99.5,
+          "naiveKiB": 7126.7,
+          "coalesced": [
+            {
+              "KiB": 7126.7,
+              "runs": 1
+            },
+            {
+              "KiB": 7126.7,
+              "runs": 1
+            },
+            {
+              "KiB": 7126.7,
+              "runs": 1
+            }
+          ],
+          "amplification16K": 31.67,
+          "residentKiB": 13.9,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 1024,
+          "D": 32,
+          "meanPages": 445.4,
+          "reusePct": 99.5,
+          "naiveKiB": 14253.4,
+          "coalesced": [
+            {
+              "KiB": 14253.4,
+              "runs": 1
+            },
+            {
+              "KiB": 14253.4,
+              "runs": 1
+            },
+            {
+              "KiB": 14253.4,
+              "runs": 1
+            }
+          ],
+          "amplification16K": 63.35,
+          "residentKiB": 13.9,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        }
+      ]
+    },
+    {
+      "label": "real wiki queries, C=120",
+      "queries": 200,
+      "meanCandidates": 120,
+      "idGap": {
+        "p50": 1393,
+        "p90": 10078,
+        "p99": 28344
+      },
+      "rowReads": {
+        "meanKiB": 92.11125,
+        "meanRuns": 94.605,
+        "gap": 16384
+      },
+      "merkleUpperBoundKiB": 112.34343750000001,
+      "geometries": [
+        {
+          "P": 16,
+          "D": 16,
+          "meanPages": 101.8,
+          "reusePct": 35.6,
+          "naiveKiB": 25.4,
+          "coalesced": [
+            {
+              "KiB": 25.4,
+              "runs": 96.5
+            },
+            {
+              "KiB": 48.4,
+              "runs": 83.5
+            },
+            {
+              "KiB": 215.4,
+              "runs": 66
+            }
+          ],
+          "amplification16K": 2.34,
+          "residentKiB": 890.9,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 16,
+          "D": 32,
+          "meanPages": 101.8,
+          "reusePct": 35.6,
+          "naiveKiB": 50.9,
+          "coalesced": [
+            {
+              "KiB": 50.9,
+              "runs": 96.5
+            },
+            {
+              "KiB": 67.2,
+              "runs": 88.3
+            },
+            {
+              "KiB": 180.2,
+              "runs": 76.5
+            }
+          ],
+          "amplification16K": 1.96,
+          "residentKiB": 890.9,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 32,
+          "D": 16,
+          "meanPages": 99.1,
+          "reusePct": 50.5,
+          "naiveKiB": 49.5,
+          "coalesced": [
+            {
+              "KiB": 49.5,
+              "runs": 94.3
+            },
+            {
+              "KiB": 72.6,
+              "runs": 82.7
+            },
+            {
+              "KiB": 238.3,
+              "runs": 65.6
+            }
+          ],
+          "amplification16K": 2.59,
+          "residentKiB": 445.5,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 32,
+          "D": 32,
+          "meanPages": 99.1,
+          "reusePct": 50.5,
+          "naiveKiB": 99.1,
+          "coalesced": [
+            {
+              "KiB": 99.1,
+              "runs": 94.3
+            },
+            {
+              "KiB": 115.2,
+              "runs": 87.3
+            },
+            {
+              "KiB": 227.7,
+              "runs": 76
+            }
+          ],
+          "amplification16K": 2.47,
+          "residentKiB": 445.5,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 64,
+          "D": 16,
+          "meanPages": 96.8,
+          "reusePct": 67.5,
+          "naiveKiB": 96.8,
+          "coalesced": [
+            {
+              "KiB": 96.8,
+              "runs": 91.1
+            },
+            {
+              "KiB": 119.4,
+              "runs": 81.3
+            },
+            {
+              "KiB": 284,
+              "runs": 64.8
+            }
+          ],
+          "amplification16K": 3.08,
+          "residentKiB": 222.8,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 64,
+          "D": 32,
+          "meanPages": 96.8,
+          "reusePct": 67.5,
+          "naiveKiB": 193.6,
+          "coalesced": [
+            {
+              "KiB": 193.6,
+              "runs": 91.1
+            },
+            {
+              "KiB": 209.7,
+              "runs": 85.5
+            },
+            {
+              "KiB": 322.7,
+              "runs": 74.8
+            }
+          ],
+          "amplification16K": 3.5,
+          "residentKiB": 222.8,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 128,
+          "D": 16,
+          "meanPages": 93.8,
+          "reusePct": 81.7,
+          "naiveKiB": 187.7,
+          "coalesced": [
+            {
+              "KiB": 187.7,
+              "runs": 86.7
+            },
+            {
+              "KiB": 210.7,
+              "runs": 78.8
+            },
+            {
+              "KiB": 374.3,
+              "runs": 63.2
+            }
+          ],
+          "amplification16K": 4.06,
+          "residentKiB": 111.4,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 128,
+          "D": 32,
+          "meanPages": 93.8,
+          "reusePct": 81.7,
+          "naiveKiB": 375.4,
+          "coalesced": [
+            {
+              "KiB": 375.4,
+              "runs": 86.7
+            },
+            {
+              "KiB": 393.2,
+              "runs": 82.3
+            },
+            {
+              "KiB": 505.7,
+              "runs": 72.7
+            }
+          ],
+          "amplification16K": 5.49,
+          "residentKiB": 111.4,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 256,
+          "D": 16,
+          "meanPages": 90.3,
+          "reusePct": 90.3,
+          "naiveKiB": 361.2,
+          "coalesced": [
+            {
+              "KiB": 361.2,
+              "runs": 80.5
+            },
+            {
+              "KiB": 386.8,
+              "runs": 74.1
+            },
+            {
+              "KiB": 550.2,
+              "runs": 60.2
+            }
+          ],
+          "amplification16K": 5.97,
+          "residentKiB": 55.7,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 256,
+          "D": 32,
+          "meanPages": 90.3,
+          "reusePct": 90.3,
+          "naiveKiB": 722.5,
+          "coalesced": [
+            {
+              "KiB": 722.5,
+              "runs": 80.5
+            },
+            {
+              "KiB": 722.5,
+              "runs": 80.5
+            },
+            {
+              "KiB": 857.5,
+              "runs": 68.9
+            }
+          ],
+          "amplification16K": 9.31,
+          "residentKiB": 55.7,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 512,
+          "D": 16,
+          "meanPages": 85.3,
+          "reusePct": 94.8,
+          "naiveKiB": 682.7,
+          "coalesced": [
+            {
+              "KiB": 682.7,
+              "runs": 71.4
+            },
+            {
+              "KiB": 682.7,
+              "runs": 71.4
+            },
+            {
+              "KiB": 873,
+              "runs": 55
+            }
+          ],
+          "amplification16K": 9.48,
+          "residentKiB": 27.8,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 512,
+          "D": 32,
+          "meanPages": 85.3,
+          "reusePct": 94.8,
+          "naiveKiB": 1365.4,
+          "coalesced": [
+            {
+              "KiB": 1365.4,
+              "runs": 71.4
+            },
+            {
+              "KiB": 1365.4,
+              "runs": 71.4
+            },
+            {
+              "KiB": 1510,
+              "runs": 62.4
+            }
+          ],
+          "amplification16K": 16.39,
+          "residentKiB": 27.8,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 1024,
+          "D": 16,
+          "meanPages": 78.4,
+          "reusePct": 97.2,
+          "naiveKiB": 1253.8,
+          "coalesced": [
+            {
+              "KiB": 1253.8,
+              "runs": 58.6
+            },
+            {
+              "KiB": 1253.8,
+              "runs": 58.6
+            },
+            {
+              "KiB": 1449.4,
+              "runs": 46.4
+            }
+          ],
+          "amplification16K": 15.74,
+          "residentKiB": 13.9,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 1024,
+          "D": 32,
+          "meanPages": 78.4,
+          "reusePct": 97.2,
+          "naiveKiB": 2507.5,
+          "coalesced": [
+            {
+              "KiB": 2507.5,
+              "runs": 58.6
+            },
+            {
+              "KiB": 2507.5,
+              "runs": 58.6
+            },
+            {
+              "KiB": 2507.5,
+              "runs": 58.6
+            }
+          ],
+          "amplification16K": 27.22,
+          "residentKiB": 13.9,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        }
+      ]
+    },
+    {
+      "label": "uniform baseline, C=120",
+      "queries": 200,
+      "meanCandidates": 120,
+      "idGap": {
+        "p50": 2638,
+        "p90": 8654,
+        "p99": 17065
+      },
+      "rowReads": {
+        "meanKiB": 54.223125,
+        "meanRuns": 118.73,
+        "gap": 16384
+      },
+      "merkleUpperBoundKiB": 140.991875,
+      "geometries": [
+        {
+          "P": 16,
+          "D": 16,
+          "meanPages": 119.7,
+          "reusePct": 32.1,
+          "naiveKiB": 29.9,
+          "coalesced": [
+            {
+              "KiB": 29.9,
+              "runs": 119.3
+            },
+            {
+              "KiB": 45.9,
+              "runs": 111.6
+            },
+            {
+              "KiB": 248.7,
+              "runs": 91.3
+            }
+          ],
+          "amplification16K": 4.59,
+          "residentKiB": 890.9,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 16,
+          "D": 32,
+          "meanPages": 119.7,
+          "reusePct": 32.1,
+          "naiveKiB": 59.9,
+          "coalesced": [
+            {
+              "KiB": 59.9,
+              "runs": 119.3
+            },
+            {
+              "KiB": 68.3,
+              "runs": 115.4
+            },
+            {
+              "KiB": 179,
+              "runs": 104.5
+            }
+          ],
+          "amplification16K": 3.3,
+          "residentKiB": 890.9,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 32,
+          "D": 16,
+          "meanPages": 119.5,
+          "reusePct": 51.4,
+          "naiveKiB": 59.7,
+          "coalesced": [
+            {
+              "KiB": 59.7,
+              "runs": 118.6
+            },
+            {
+              "KiB": 76.7,
+              "runs": 110.9
+            },
+            {
+              "KiB": 281.1,
+              "runs": 90.7
+            }
+          ],
+          "amplification16K": 5.18,
+          "residentKiB": 445.5,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 32,
+          "D": 32,
+          "meanPages": 119.5,
+          "reusePct": 51.4,
+          "naiveKiB": 119.5,
+          "coalesced": [
+            {
+              "KiB": 119.5,
+              "runs": 118.6
+            },
+            {
+              "KiB": 128.9,
+              "runs": 114.7
+            },
+            {
+              "KiB": 242.4,
+              "runs": 103.8
+            }
+          ],
+          "amplification16K": 4.47,
+          "residentKiB": 445.5,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 64,
+          "D": 16,
+          "meanPages": 119,
+          "reusePct": 71.1,
+          "naiveKiB": 119,
+          "coalesced": [
+            {
+              "KiB": 119,
+              "runs": 117
+            },
+            {
+              "KiB": 137.3,
+              "runs": 109.6
+            },
+            {
+              "KiB": 347.9,
+              "runs": 89.4
+            }
+          ],
+          "amplification16K": 6.42,
+          "residentKiB": 222.8,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 64,
+          "D": 32,
+          "meanPages": 119,
+          "reusePct": 71.1,
+          "naiveKiB": 238,
+          "coalesced": [
+            {
+              "KiB": 238,
+              "runs": 117
+            },
+            {
+              "KiB": 249.7,
+              "runs": 113.2
+            },
+            {
+              "KiB": 366.4,
+              "runs": 102.5
+            }
+          ],
+          "amplification16K": 6.76,
+          "residentKiB": 222.8,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 128,
+          "D": 16,
+          "meanPages": 118,
+          "reusePct": 84.9,
+          "naiveKiB": 235.9,
+          "coalesced": [
+            {
+              "KiB": 235.9,
+              "runs": 114.2
+            },
+            {
+              "KiB": 257.6,
+              "runs": 106.9
+            },
+            {
+              "KiB": 474,
+              "runs": 87.1
+            }
+          ],
+          "amplification16K": 8.74,
+          "residentKiB": 111.4,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 128,
+          "D": 32,
+          "meanPages": 118,
+          "reusePct": 84.9,
+          "naiveKiB": 471.9,
+          "coalesced": [
+            {
+              "KiB": 471.9,
+              "runs": 114.2
+            },
+            {
+              "KiB": 486.8,
+              "runs": 110.5
+            },
+            {
+              "KiB": 612.9,
+              "runs": 100
+            }
+          ],
+          "amplification16K": 11.3,
+          "residentKiB": 111.4,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 256,
+          "D": 16,
+          "meanPages": 116.1,
+          "reusePct": 92.3,
+          "naiveKiB": 464.3,
+          "coalesced": [
+            {
+              "KiB": 464.3,
+              "runs": 108.7
+            },
+            {
+              "KiB": 492,
+              "runs": 101.8
+            },
+            {
+              "KiB": 718.1,
+              "runs": 82.7
+            }
+          ],
+          "amplification16K": 13.24,
+          "residentKiB": 55.7,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 256,
+          "D": 32,
+          "meanPages": 116.1,
+          "reusePct": 92.3,
+          "naiveKiB": 928.6,
+          "coalesced": [
+            {
+              "KiB": 928.6,
+              "runs": 108.7
+            },
+            {
+              "KiB": 928.6,
+              "runs": 108.7
+            },
+            {
+              "KiB": 1091,
+              "runs": 95.1
+            }
+          ],
+          "amplification16K": 20.12,
+          "residentKiB": 55.7,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 512,
+          "D": 16,
+          "meanPages": 112.3,
+          "reusePct": 96,
+          "naiveKiB": 898.8,
+          "coalesced": [
+            {
+              "KiB": 898.8,
+              "runs": 98.4
+            },
+            {
+              "KiB": 898.8,
+              "runs": 98.4
+            },
+            {
+              "KiB": 1175.8,
+              "runs": 74.7
+            }
+          ],
+          "amplification16K": 21.68,
+          "residentKiB": 27.8,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 512,
+          "D": 32,
+          "meanPages": 112.3,
+          "reusePct": 96,
+          "naiveKiB": 1797.5,
+          "coalesced": [
+            {
+              "KiB": 1797.5,
+              "runs": 98.4
+            },
+            {
+              "KiB": 1797.5,
+              "runs": 98.4
+            },
+            {
+              "KiB": 2001.1,
+              "runs": 85.7
+            }
+          ],
+          "amplification16K": 36.91,
+          "residentKiB": 27.8,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 1024,
+          "D": 16,
+          "meanPages": 105.3,
+          "reusePct": 97.9,
+          "naiveKiB": 1684.4,
+          "coalesced": [
+            {
+              "KiB": 1684.4,
+              "runs": 80.1
+            },
+            {
+              "KiB": 1684.4,
+              "runs": 80.1
+            },
+            {
+              "KiB": 1979.9,
+              "runs": 61.7
+            }
+          ],
+          "amplification16K": 36.51,
+          "residentKiB": 13.9,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 1024,
+          "D": 32,
+          "meanPages": 105.3,
+          "reusePct": 97.9,
+          "naiveKiB": 3368.8,
+          "coalesced": [
+            {
+              "KiB": 3368.8,
+              "runs": 80.1
+            },
+            {
+              "KiB": 3368.8,
+              "runs": 80.1
+            },
+            {
+              "KiB": 3368.8,
+              "runs": 80.1
+            }
+          ],
+          "amplification16K": 62.13,
+          "residentKiB": 13.9,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        }
+      ]
+    },
+    {
+      "label": "adversarial (evenly spread), C=120",
+      "queries": 200,
+      "meanCandidates": 120,
+      "idGap": {
+        "p50": 3801,
+        "p90": 3801,
+        "p99": 3801
+      },
+      "rowReads": {
+        "meanKiB": 45,
+        "meanRuns": 120,
+        "gap": 16384
+      },
+      "merkleUpperBoundKiB": 142.5,
+      "geometries": [
+        {
+          "P": 16,
+          "D": 16,
+          "meanPages": 120,
+          "reusePct": 76.4,
+          "naiveKiB": 30,
+          "coalesced": [
+            {
+              "KiB": 30,
+              "runs": 120
+            },
+            {
+              "KiB": 30,
+              "runs": 120
+            },
+            {
+              "KiB": 30,
+              "runs": 120
+            }
+          ],
+          "amplification16K": 0.67,
+          "residentKiB": 890.9,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 16,
+          "D": 32,
+          "meanPages": 120,
+          "reusePct": 76.4,
+          "naiveKiB": 60,
+          "coalesced": [
+            {
+              "KiB": 60,
+              "runs": 120
+            },
+            {
+              "KiB": 60,
+              "runs": 120
+            },
+            {
+              "KiB": 60,
+              "runs": 120
+            }
+          ],
+          "amplification16K": 1.33,
+          "residentKiB": 890.9,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 32,
+          "D": 16,
+          "meanPages": 120,
+          "reusePct": 85.2,
+          "naiveKiB": 60,
+          "coalesced": [
+            {
+              "KiB": 60,
+              "runs": 120
+            },
+            {
+              "KiB": 60,
+              "runs": 120
+            },
+            {
+              "KiB": 60,
+              "runs": 120
+            }
+          ],
+          "amplification16K": 1.33,
+          "residentKiB": 445.5,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 32,
+          "D": 32,
+          "meanPages": 120,
+          "reusePct": 85.2,
+          "naiveKiB": 120,
+          "coalesced": [
+            {
+              "KiB": 120,
+              "runs": 120
+            },
+            {
+              "KiB": 120,
+              "runs": 120
+            },
+            {
+              "KiB": 120,
+              "runs": 120
+            }
+          ],
+          "amplification16K": 2.67,
+          "residentKiB": 445.5,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 64,
+          "D": 16,
+          "meanPages": 120,
+          "reusePct": 89.6,
+          "naiveKiB": 120,
+          "coalesced": [
+            {
+              "KiB": 120,
+              "runs": 120
+            },
+            {
+              "KiB": 120,
+              "runs": 120
+            },
+            {
+              "KiB": 120,
+              "runs": 120
+            }
+          ],
+          "amplification16K": 2.67,
+          "residentKiB": 222.8,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 64,
+          "D": 32,
+          "meanPages": 120,
+          "reusePct": 89.6,
+          "naiveKiB": 240,
+          "coalesced": [
+            {
+              "KiB": 240,
+              "runs": 120
+            },
+            {
+              "KiB": 240,
+              "runs": 120
+            },
+            {
+              "KiB": 240,
+              "runs": 120
+            }
+          ],
+          "amplification16K": 5.33,
+          "residentKiB": 222.8,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 128,
+          "D": 16,
+          "meanPages": 120,
+          "reusePct": 91.8,
+          "naiveKiB": 240,
+          "coalesced": [
+            {
+              "KiB": 240,
+              "runs": 120
+            },
+            {
+              "KiB": 240,
+              "runs": 120
+            },
+            {
+              "KiB": 240,
+              "runs": 120
+            }
+          ],
+          "amplification16K": 5.33,
+          "residentKiB": 111.4,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 128,
+          "D": 32,
+          "meanPages": 120,
+          "reusePct": 91.8,
+          "naiveKiB": 480,
+          "coalesced": [
+            {
+              "KiB": 480,
+              "runs": 120
+            },
+            {
+              "KiB": 480,
+              "runs": 120
+            },
+            {
+              "KiB": 480,
+              "runs": 120
+            }
+          ],
+          "amplification16K": 10.67,
+          "residentKiB": 111.4,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 256,
+          "D": 16,
+          "meanPages": 120,
+          "reusePct": 92.9,
+          "naiveKiB": 480,
+          "coalesced": [
+            {
+              "KiB": 480,
+              "runs": 120
+            },
+            {
+              "KiB": 480,
+              "runs": 120
+            },
+            {
+              "KiB": 480,
+              "runs": 120
+            }
+          ],
+          "amplification16K": 10.67,
+          "residentKiB": 55.7,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 256,
+          "D": 32,
+          "meanPages": 120,
+          "reusePct": 92.9,
+          "naiveKiB": 960,
+          "coalesced": [
+            {
+              "KiB": 960,
+              "runs": 120
+            },
+            {
+              "KiB": 960,
+              "runs": 120
+            },
+            {
+              "KiB": 960,
+              "runs": 120
+            }
+          ],
+          "amplification16K": 21.33,
+          "residentKiB": 55.7,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 512,
+          "D": 16,
+          "meanPages": 120,
+          "reusePct": 96.3,
+          "naiveKiB": 960,
+          "coalesced": [
+            {
+              "KiB": 960,
+              "runs": 120
+            },
+            {
+              "KiB": 960,
+              "runs": 120
+            },
+            {
+              "KiB": 960,
+              "runs": 120
+            }
+          ],
+          "amplification16K": 21.33,
+          "residentKiB": 27.8,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 512,
+          "D": 32,
+          "meanPages": 120,
+          "reusePct": 96.3,
+          "naiveKiB": 1920,
+          "coalesced": [
+            {
+              "KiB": 1920,
+              "runs": 120
+            },
+            {
+              "KiB": 1920,
+              "runs": 120
+            },
+            {
+              "KiB": 1920,
+              "runs": 120
+            }
+          ],
+          "amplification16K": 42.67,
+          "residentKiB": 27.8,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        },
+        {
+          "P": 1024,
+          "D": 16,
+          "meanPages": 120,
+          "reusePct": 98.1,
+          "naiveKiB": 1920,
+          "coalesced": [
+            {
+              "KiB": 1920,
+              "runs": 120
+            },
+            {
+              "KiB": 1920,
+              "runs": 120
+            },
+            {
+              "KiB": 1920,
+              "runs": 120
+            }
+          ],
+          "amplification16K": 42.67,
+          "residentKiB": 13.9,
+          "tableMiB": 6.96,
+          "tableOverheadPct": 4.2
+        },
+        {
+          "P": 1024,
+          "D": 32,
+          "meanPages": 120,
+          "reusePct": 98.1,
+          "naiveKiB": 3840,
+          "coalesced": [
+            {
+              "KiB": 3840,
+              "runs": 120
+            },
+            {
+              "KiB": 3840,
+              "runs": 120
+            },
+            {
+              "KiB": 3840,
+              "runs": 120
+            }
+          ],
+          "amplification16K": 85.33,
+          "residentKiB": 13.9,
+          "tableMiB": 13.92,
+          "tableOverheadPct": 8.3
+        }
+      ]
+    }
+  ],
+  "interleaved": [
+    {
+      "label": "real, C=600",
+      "P": 16,
+      "D": 16,
+      "gaps": {
+        "4096": {
+          "totalKiB": 1053.7,
+          "totalRuns": 593.8,
+          "rowsOnlyKiB": 318.2,
+          "rowsOnlyRuns": 462.3,
+          "extraKiB": 735.5,
+          "extraRuns": 131.4
+        },
+        "16384": {
+          "totalKiB": 2068.9,
+          "totalRuns": 417.2,
+          "rowsOnlyKiB": 670.1,
+          "rowsOnlyRuns": 424.5,
+          "extraKiB": 1398.8,
+          "extraRuns": -7.2
+        }
+      }
+    },
+    {
+      "label": "adversarial, C=600",
+      "P": 16,
+      "D": 16,
+      "gaps": {
+        "4096": {
+          "totalKiB": 1148.4,
+          "totalRuns": 787.5,
+          "rowsOnlyKiB": 225,
+          "rowsOnlyRuns": 600,
+          "extraKiB": 923.4,
+          "extraRuns": 187.5
+        },
+        "16384": {
+          "totalKiB": 2062.5,
+          "totalRuns": 600,
+          "rowsOnlyKiB": 225,
+          "rowsOnlyRuns": 600,
+          "extraKiB": 1837.5,
+          "extraRuns": 0
+        }
+      }
+    },
+    {
+      "label": "real, C=120",
+      "P": 16,
+      "D": 16,
+      "gaps": {
+        "4096": {
+          "totalKiB": 210.8,
+          "totalRuns": 128.2,
+          "rowsOnlyKiB": 57.5,
+          "rowsOnlyRuns": 98.6,
+          "extraKiB": 153.3,
+          "extraRuns": 29.6
+        },
+        "16384": {
+          "totalKiB": 390.3,
+          "totalRuns": 94.1,
+          "rowsOnlyKiB": 92.3,
+          "rowsOnlyRuns": 94.7,
+          "extraKiB": 298,
+          "extraRuns": -0.6
+        }
+      }
+    },
+    {
+      "label": "adversarial, C=120",
+      "P": 16,
+      "D": 16,
+      "gaps": {
+        "4096": {
+          "totalKiB": 229.7,
+          "totalRuns": 157.5,
+          "rowsOnlyKiB": 45,
+          "rowsOnlyRuns": 120,
+          "extraKiB": 184.7,
+          "extraRuns": 37.5
+        },
+        "16384": {
+          "totalKiB": 412.5,
+          "totalRuns": 120,
+          "rowsOnlyKiB": 45,
+          "rowsOnlyRuns": 120,
+          "extraKiB": 367.5,
+          "extraRuns": 0
+        }
+      }
+    }
+  ]
+}

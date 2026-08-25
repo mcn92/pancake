@@ -1,0 +1,170 @@
+{
+  "latenciesMs": [
+    20,
+    80
+  ],
+  "h1Sockets": 6,
+  "h2Streams": 64,
+  "cells": [
+    {
+      "workload": "C600",
+      "latencyMs": 20,
+      "scenario": "rows",
+      "meanRuns": 439,
+      "h1Ms": 1569,
+      "h2Ms": 171,
+      "h1OverheadPct": 0,
+      "h2OverheadPct": 0
+    },
+    {
+      "workload": "C600",
+      "latencyMs": 20,
+      "scenario": "digests0",
+      "meanRuns": 895.8,
+      "h1Ms": 3169,
+      "h2Ms": 333,
+      "h1OverheadPct": 102,
+      "h2OverheadPct": 94
+    },
+    {
+      "workload": "C600",
+      "latencyMs": 20,
+      "scenario": "digests4k",
+      "meanRuns": 748.9,
+      "h1Ms": 2665,
+      "h2Ms": 280,
+      "h1OverheadPct": 69.8,
+      "h2OverheadPct": 63.1
+    },
+    {
+      "workload": "C600",
+      "latencyMs": 20,
+      "scenario": "interleaved",
+      "meanRuns": 434.3,
+      "h1Ms": 1550,
+      "h2Ms": 163,
+      "h1OverheadPct": -1.2,
+      "h2OverheadPct": -5.2
+    },
+    {
+      "workload": "C600",
+      "latencyMs": 80,
+      "scenario": "rows",
+      "meanRuns": 441.9,
+      "h1Ms": 6050,
+      "h2Ms": 630,
+      "h1OverheadPct": 0,
+      "h2OverheadPct": 0
+    },
+    {
+      "workload": "C600",
+      "latencyMs": 80,
+      "scenario": "digests0",
+      "meanRuns": 899.9,
+      "h1Ms": 12220,
+      "h2Ms": 1217,
+      "h1OverheadPct": 102,
+      "h2OverheadPct": 93.1
+    },
+    {
+      "workload": "C600",
+      "latencyMs": 80,
+      "scenario": "digests4k",
+      "meanRuns": 757.9,
+      "h1Ms": 10314,
+      "h2Ms": 1021,
+      "h1OverheadPct": 70.5,
+      "h2OverheadPct": 61.9
+    },
+    {
+      "workload": "C600",
+      "latencyMs": 80,
+      "scenario": "interleaved",
+      "meanRuns": 438,
+      "h1Ms": 5970,
+      "h2Ms": 608,
+      "h1OverheadPct": -1.3,
+      "h2OverheadPct": -3.6
+    },
+    {
+      "workload": "C120",
+      "latencyMs": 20,
+      "scenario": "rows",
+      "meanRuns": 98.9,
+      "h1Ms": 358,
+      "h2Ms": 46,
+      "h1OverheadPct": 0,
+      "h2OverheadPct": 0
+    },
+    {
+      "workload": "C120",
+      "latencyMs": 20,
+      "scenario": "digests0",
+      "meanRuns": 199.3,
+      "h1Ms": 715,
+      "h2Ms": 87,
+      "h1OverheadPct": 99.8,
+      "h2OverheadPct": 88.3
+    },
+    {
+      "workload": "C120",
+      "latencyMs": 20,
+      "scenario": "digests4k",
+      "meanRuns": 186.9,
+      "h1Ms": 673,
+      "h2Ms": 83,
+      "h1OverheadPct": 87.9,
+      "h2OverheadPct": 79.6
+    },
+    {
+      "workload": "C120",
+      "latencyMs": 20,
+      "scenario": "interleaved",
+      "meanRuns": 98.5,
+      "h1Ms": 360,
+      "h2Ms": 47,
+      "h1OverheadPct": 0.4,
+      "h2OverheadPct": 1.7
+    },
+    {
+      "workload": "C120",
+      "latencyMs": 80,
+      "scenario": "rows",
+      "meanRuns": 102.4,
+      "h1Ms": 1413,
+      "h2Ms": 169,
+      "h1OverheadPct": 0,
+      "h2OverheadPct": 0
+    },
+    {
+      "workload": "C120",
+      "latencyMs": 80,
+      "scenario": "digests0",
+      "meanRuns": 206,
+      "h1Ms": 2831,
+      "h2Ms": 315,
+      "h1OverheadPct": 100.3,
+      "h2OverheadPct": 86.4
+    },
+    {
+      "workload": "C120",
+      "latencyMs": 80,
+      "scenario": "digests4k",
+      "meanRuns": 192.5,
+      "h1Ms": 2646,
+      "h2Ms": 302,
+      "h1OverheadPct": 87.2,
+      "h2OverheadPct": 78.6
+    },
+    {
+      "workload": "C120",
+      "latencyMs": 80,
+      "scenario": "interleaved",
+      "meanRuns": 102,
+      "h1Ms": 1415,
+      "h2Ms": 169,
+      "h1OverheadPct": 0.1,
+      "h2OverheadPct": -0.2
+    }
+  ]
+}
