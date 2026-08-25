@@ -167,10 +167,14 @@ verified working (see examples/README.md ordering).
 
 ## Track C: Demos and product surface
 
-- `create-pancake-search` (v0.1.0): artifact runtime mode just landed
-  (`templates/worker.artifact.js`). Next: the `student` encoder mode
-  (currently stubbed), which is the scaffolder's path to encoder-bearing
-  artifacts. Decide when to publish to npm.
+- `create-pancake-search` (v0.4.0 on npm, alongside `pancake-wasm` 0.4.0):
+  scaffolds snapshot, artifact, and complete (kind-3 `search.pancake`)
+  runtimes; `--mode student` distills a corpus-specific encoder into the
+  Worker; the Docusaurus plugin builds the same assets for static sites;
+  `doctor <url>` probes artifact hosting. Next: implement the interleaved
+  digest blocks the 2026-08-25 measurement selected (sketch-profile
+  revision; per-read row integrity at ~0% latency overhead), then the
+  launch pass.
 - `worker-semantic-search` maintenance:
   - always run `test_worker.mjs` after retraining, not just
     `verify_student.mjs` — offline and live distances have diverged before;
