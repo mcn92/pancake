@@ -104,8 +104,9 @@ async function run() {
             const manifest = Pancake.buildSketchArtifactFile(snapshotPath, artifactPath, {
                 sketchDims: 16, sketchBits, recommendedRerank: 60,
             });
-            check('manifest shape', manifest.formatVersion === 1 && manifest.graph.count === COUNT
-                && manifest.sketch.sketchBits === sketchBits && manifest.sizeBytes === fs.statSync(artifactPath).size);
+            check('manifest shape', manifest.formatVersion === 2 && manifest.graph.count === COUNT
+                && manifest.sketch.sketchBits === sketchBits && manifest.sizeBytes === fs.statSync(artifactPath).size
+                && manifest.rowIntegrity.rowsPerBlock === 16 && manifest.rowIntegrity.rowDigestBytes === 16);
 
             const artifact = await Pancake.openSketchArtifactFile(artifactPath);
             check('open + header', artifact.count === COUNT && artifact.dim === DIM
@@ -174,8 +175,12 @@ async function run() {
             depthSource.resetStats();
             await depthArtifact.fetchRows(sparseIds, { maxRangeBytes: DIM, gap: 0 });
             const dependentRounds = Math.ceil(depthSource.requests / depthSource.maxInFlight);
+            // All runs go out concurrently up to the source's parallelism
+            // (32): with more runs than that, the ceiling must be hit; with
+            // fewer (format 2 fetches whole digest blocks, so 90 sparse rows
+            // collapse into ~12 block runs), every run flies at once.
             check('rerank row fetch uses source parallelism in <= 3 dependent rounds',
-                depthSource.maxInFlight === 32 && dependentRounds <= 3,
+                depthSource.maxInFlight === Math.min(32, depthSource.requests) && dependentRounds <= 3,
                 `requests=${depthSource.requests} maxInFlight=${depthSource.maxInFlight} rounds=${dependentRounds}`);
             await depthArtifact.close();
 

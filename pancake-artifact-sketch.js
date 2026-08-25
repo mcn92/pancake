@@ -84,6 +84,25 @@ function exportSketchArtifact(index, outPath, options = {}) {
             throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'invalid micro sketch encoding', { microBits, microDims });
         }
     }
+    // Per-row integrity (format version 2, spec section 2.4): the vectors
+    // region is written as blocks of rowsPerBlock rows, each preceded by a
+    // digest page of truncated per-row SHA-256s, and a 32-byte-per-block
+    // page-hash table sits at the end of the resident prefix — so
+    // residentSha256 (and any identity that commits to the header) anchors
+    // every lazily fetched row. The 2026-08-25 measurement chose the
+    // defaults: 16 rows x 16-byte digests ride inside the reader's existing
+    // coalesced runs at ~0% latency cost. rowIntegrity:false emits v1.
+    const rowIntegrity = options.rowIntegrity !== false;
+    const rowsPerBlock = options.rowsPerBlock || 16;
+    const rowDigestBytes = options.rowDigestBytes || 16;
+    if (rowIntegrity) {
+        if (!Number.isInteger(rowsPerBlock) || rowsPerBlock < 1 || rowsPerBlock > 4096) {
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'rowsPerBlock must be an integer in [1, 4096]', { rowsPerBlock });
+        }
+        if (!Number.isInteger(rowDigestBytes) || rowDigestBytes < 8 || rowDigestBytes > 32) {
+            throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'rowDigestBytes must be an integer in [8, 32]', { rowDigestBytes });
+        }
+    }
     const pool = dim / sketchDims;
     const sketchRowBytes = (sketchDims * sketchBits) / 8;
     const microPool = microDims ? dim / microDims : 0;
@@ -94,13 +113,21 @@ function exportSketchArtifact(index, outPath, options = {}) {
     const sketchesOffset = offsetsOffset + count * 4;
     const sketchesEnd = sketchesOffset + count * sketchRowBytes;
     const microOffset = microDims ? sketchesEnd : 0;
-    const residentEnd = microDims ? microOffset + count * microRowBytes : sketchesEnd;
+    const tiersEnd = microDims ? microOffset + count * microRowBytes : sketchesEnd;
+    const numBlocks = rowIntegrity ? Math.ceil(count / rowsPerBlock) : 0;
+    const pageTableOffset = rowIntegrity ? tiersEnd : 0;
+    const residentEnd = rowIntegrity ? pageTableOffset + numBlocks * 32 : tiersEnd;
     const vectorsOffset = Math.ceil(residentEnd / 16) * 16;
-    const fileBytes = vectorsOffset + count * dim;
+    const pageBytes = rowIntegrity ? rowsPerBlock * rowDigestBytes : 0;
+    const blockBytes = rowIntegrity ? pageBytes + rowsPerBlock * dim : 0;
+    const vectorsRegionBytes = rowIntegrity
+        ? (numBlocks - 1) * blockBytes + pageBytes + (count - (numBlocks - 1) * rowsPerBlock) * dim
+        : count * dim;
+    const fileBytes = vectorsOffset + vectorsRegionBytes;
 
     const out = Buffer.alloc(fileBytes);
     out.writeUInt32LE(SKETCH_MAGIC, 0);
-    out.writeUInt32LE(1, 4);
+    out.writeUInt32LE(rowIntegrity ? 2 : 1, 4);
     out.writeUInt32LE(SKETCH_KIND_U8, 8);
     out.writeUInt32LE(index.metric, 12);
     out.writeUInt32LE(dim, 16);
@@ -117,6 +144,11 @@ function exportSketchArtifact(index, outPath, options = {}) {
         out.writeUInt32LE(microDims, 124);
         out.writeUInt32LE(microBits, 128);
         out.writeUInt32LE(microOffset, 132);
+    }
+    if (rowIntegrity) {
+        out.writeUInt32LE(rowsPerBlock, 168);
+        out.writeUInt32LE(rowDigestBytes, 172);
+        out.writeUInt32LE(pageTableOffset, 176);
     }
 
     for (let i = 0; i < count; i++) out.writeFloatLE(index.scales[i], scalesOffset + i * 4);
@@ -154,29 +186,53 @@ function exportSketchArtifact(index, outPath, options = {}) {
         }
     }
 
-    Buffer.from(index.qdata.buffer, index.qdata.byteOffset, count * dim).copy(out, vectorsOffset);
+    if (rowIntegrity) {
+        // Interleaved vectors region: [digest page][rows] per block. Digest
+        // pages are written first per block so the page hash (into the
+        // resident page table) covers the final page bytes; unused digest
+        // slots in the last block stay zero.
+        for (let b = 0; b < numBlocks; b++) {
+            const blockStart = vectorsOffset + b * blockBytes;
+            const rowsInBlock = Math.min(rowsPerBlock, count - b * rowsPerBlock);
+            for (let j = 0; j < rowsInBlock; j++) {
+                const id = b * rowsPerBlock + j;
+                const row = Buffer.from(index.qdata.buffer, index.qdata.byteOffset + id * dim, dim);
+                out.set(row, blockStart + pageBytes + j * dim);
+                out.set(sha256Bytes(row).subarray(0, rowDigestBytes), blockStart + j * rowDigestBytes);
+            }
+            out.set(sha256Bytes(out.subarray(blockStart, blockStart + pageBytes)), pageTableOffset + b * 32);
+        }
+    } else {
+        Buffer.from(index.qdata.buffer, index.qdata.byteOffset, count * dim).copy(out, vectorsOffset);
+    }
 
     sha256Bytes(out.subarray(SKETCH_HEADER_BYTES, vectorsOffset)).copy(out, 56);
     sha256Bytes(out.subarray(vectorsOffset)).copy(out, 88);
     if (microDims) {
-        // Stage-1 hash: scales+offsets plus the micro segment, exactly the
-        // bytes a staged open serves from, verifiable before the full
-        // sketches arrive. The full resident hash still covers everything.
-        const stage1 = Buffer.concat([
+        // Stage-1 hash: scales+offsets plus the micro segment (and, on v2,
+        // the page-hash table, so staged readers can verify rows during the
+        // micro window) — exactly the bytes a staged open serves from,
+        // verifiable before the full sketches arrive. The full resident hash
+        // still covers everything.
+        const stage1Parts = [
             out.subarray(SKETCH_HEADER_BYTES, sketchesOffset),
             out.subarray(microOffset, microOffset + count * microRowBytes),
-        ]);
-        sha256Bytes(stage1).copy(out, 136);
+        ];
+        if (rowIntegrity) stage1Parts.push(out.subarray(pageTableOffset, pageTableOffset + numBlocks * 32));
+        sha256Bytes(Buffer.concat(stage1Parts)).copy(out, 136);
     }
 
     const manifest = {
         format: 'pancake-sketch-artifact',
-        formatVersion: 1,
+        formatVersion: rowIntegrity ? 2 : 1,
         sizeBytes: fileBytes,
         metric: index.metric === 1 ? 'cosine' : 'l2',
         graph: { count, dim },
         sketch: { sketchDims, sketchBits, pool, residentBytes: vectorsOffset },
         micro: microDims ? { microDims, microBits, microPool, stage1Bytes: sketchesOffset + count * microRowBytes } : null,
+        rowIntegrity: rowIntegrity
+            ? { rowsPerBlock, rowDigestBytes, blocks: numBlocks, pageTableBytes: numBlocks * 32, regionBytes: vectorsRegionBytes }
+            : null,
         addressing: { scalesOffset, offsetsOffset, sketchesOffset, vectorsOffset },
         recommendedRerank,
     };
@@ -257,9 +313,10 @@ class PancakeSketchArtifact {
             throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Not a Pancake sketch artifact (bad magic)');
         }
         const version = view.getUint32(4, true);
-        if (version !== 1) {
+        if (version !== 1 && version !== 2) {
             throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Unsupported sketch artifact version', { version });
         }
+        artifact.formatVersion = version;
         if (view.getUint32(8, true) !== SKETCH_KIND_U8) {
             throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Unsupported sketch artifact kind');
         }
@@ -280,6 +337,9 @@ class PancakeSketchArtifact {
         artifact.microDims = view.getUint32(124, true);
         artifact.microBits = artifact.microDims ? view.getUint32(128, true) : 0;
         const microOffset = artifact.microDims ? view.getUint32(132, true) : 0;
+        artifact.rowsPerBlock = version >= 2 ? view.getUint32(168, true) : 0;
+        artifact.rowDigestBytes = version >= 2 ? view.getUint32(172, true) : 0;
+        const pageTableOffset = version >= 2 ? view.getUint32(176, true) : 0;
         artifact.maxCacheBytes = resolveMaxCacheBytes(options.maxCacheBytes, 256 * artifact.dim, artifact.maxCacheBytes);
 
         const { metric, dim, count, sketchDims, sketchBits, vectorsOffset } = artifact;
@@ -293,7 +353,30 @@ class PancakeSketchArtifact {
             throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Invalid sketch encoding', { sketchBits, sketchDims });
         }
         const sketchRowBytes = (sketchDims * sketchBits) / 8;
-        const expectVectors = count * dim;
+        // Version 2 interleaves a digest page ahead of each rowsPerBlock rows
+        // and stores a 32-byte-per-block page-hash table at the end of the
+        // resident prefix; the vectors region size follows from that geometry.
+        if (version >= 2) {
+            const P = artifact.rowsPerBlock;
+            const D = artifact.rowDigestBytes;
+            if (!Number.isInteger(P) || P < 1 || P > 4096 || !Number.isInteger(D) || D < 8 || D > 32) {
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Invalid sketch row-integrity geometry', { rowsPerBlock: P, rowDigestBytes: D });
+            }
+            artifact.numBlocks = Math.ceil(count / P);
+            artifact.pageBytes = P * D;
+            artifact.blockBytes = artifact.pageBytes + P * dim;
+            artifact.vectorsRegionBytes = (artifact.numBlocks - 1) * artifact.blockBytes
+                + artifact.pageBytes + (count - (artifact.numBlocks - 1) * P) * dim;
+            if (!Number.isSafeInteger(artifact.vectorsRegionBytes)
+                || pageTableOffset < sketchesOffset + count * sketchRowBytes
+                || pageTableOffset + artifact.numBlocks * 32 > vectorsOffset) {
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact page table layout is inconsistent', { pageTableOffset });
+            }
+        } else {
+            artifact.numBlocks = 0;
+            artifact.vectorsRegionBytes = count * dim;
+        }
+        const expectVectors = artifact.vectorsRegionBytes;
         if (!Number.isSafeInteger(fileBytes) || !Number.isSafeInteger(expectVectors)
             || scalesOffset !== SKETCH_HEADER_BYTES
             || offsetsOffset !== scalesOffset + count * 4
@@ -314,8 +397,20 @@ class PancakeSketchArtifact {
             }
         }
         artifact.microOffset = microOffset;
+        if (version >= 2) {
+            // The page table must sit exactly at the end of the sketch tiers,
+            // still inside the resident prefix residentSha256 covers.
+            const tiersEnd = artifact.microDims ? microOffset + count * microRowBytes : sketchesOffset + count * sketchRowBytes;
+            if (pageTableOffset !== tiersEnd) {
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact page table layout is inconsistent', { pageTableOffset, tiersEnd });
+            }
+        }
+        artifact.pageTableOffset = pageTableOffset;
 
         const verify = options.verify !== false;
+        // Per-row verification on format 2 follows the same switch as the
+        // resident hash: on by default, verify:false opts the whole open out.
+        artifact.verifyRows = version >= 2 && verify;
         const staged = options.staged === true && artifact.microDims > 0;
         artifact.tier = 'full';
         artifact.fullyResident = Promise.resolve(artifact);
@@ -342,21 +437,29 @@ class PancakeSketchArtifact {
         // integrity contract. Result semantics differ between tiers, so the
         // tier is reported on every search result rather than hidden.
         artifact.tier = 'micro';
-        const [affineBytes, microBytes] = await Promise.all([
+        // On v2 the page-hash table joins the stage-1 wave (and its hash), so
+        // rows fetched during the micro window are verifiable too.
+        const pageTableBytes = version >= 2 ? artifact.numBlocks * 32 : 0;
+        const [affineBytes, microBytes, pageTableRead] = await Promise.all([
             readChecked(source, SKETCH_HEADER_BYTES, sketchesOffset - SKETCH_HEADER_BYTES, 'stage-1 affine', artifact.maxReadBytes),
             readChecked(source, microOffset, count * microRowBytes, 'stage-1 micro', artifact.maxReadBytes),
+            version >= 2 ? readChecked(source, pageTableOffset, pageTableBytes, 'stage-1 page table', artifact.maxReadBytes) : null,
         ]);
-        if (affineBytes.byteLength !== sketchesOffset - SKETCH_HEADER_BYTES || microBytes.byteLength !== count * microRowBytes) {
+        if (affineBytes.byteLength !== sketchesOffset - SKETCH_HEADER_BYTES || microBytes.byteLength !== count * microRowBytes
+            || (version >= 2 && pageTableRead.byteLength !== pageTableBytes)) {
             throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact stage-1 read is truncated');
         }
         const affineCopy = new Uint8Array(affineBytes.byteLength);
         affineCopy.set(affineBytes);
         const microCopy = new Uint8Array(microBytes.byteLength);
         microCopy.set(microBytes);
+        const pageTableCopy = version >= 2 ? new Uint8Array(pageTableRead.byteLength) : null;
+        if (pageTableCopy) pageTableCopy.set(pageTableRead);
         if (verify) {
-            const stage1 = new Uint8Array(affineCopy.byteLength + microCopy.byteLength);
+            const stage1 = new Uint8Array(affineCopy.byteLength + microCopy.byteLength + (pageTableCopy ? pageTableCopy.byteLength : 0));
             stage1.set(affineCopy, 0);
             stage1.set(microCopy, affineCopy.byteLength);
+            if (pageTableCopy) stage1.set(pageTableCopy, affineCopy.byteLength + microCopy.byteLength);
             const digest = await sha256BytesAsync(stage1);
             if (!digest) {
                 // Verification requested but no crypto backend: fail closed.
@@ -375,7 +478,8 @@ class PancakeSketchArtifact {
         artifact.offsets = new Float32Array(affineCopy.buffer, count * 4, count);
         artifact.sketches = null;
         artifact.microSketches = microCopy;
-        artifact.residentBytes = SKETCH_HEADER_BYTES + affineCopy.byteLength + microCopy.byteLength;
+        if (pageTableCopy) artifact.pageTable = pageTableCopy;
+        artifact.residentBytes = SKETCH_HEADER_BYTES + affineCopy.byteLength + microCopy.byteLength + (pageTableCopy ? pageTableCopy.byteLength : 0);
 
         const onStage = typeof options.onStage === 'function' ? options.onStage : null;
         if (onStage) onStage({ tier: 'micro', residentBytes: artifact.residentBytes });
@@ -405,6 +509,9 @@ class PancakeSketchArtifact {
         this.sketches = new Uint8Array(residentCopy.buffer, count * 8, count * sketchRowBytes);
         if (this.microDims) {
             this.microSketches = new Uint8Array(residentCopy.buffer, microOffset - SKETCH_HEADER_BYTES, count * microRowBytes);
+        }
+        if (this.formatVersion >= 2) {
+            this.pageTable = new Uint8Array(residentCopy.buffer, this.pageTableOffset - SKETCH_HEADER_BYTES, this.numBlocks * 32);
         }
         this.residentBytes = this.vectorsOffset;
     }
@@ -459,7 +566,7 @@ class PancakeSketchArtifact {
     // per-chunk commitments, which arrive with the contract's
     // complete-profile manifest.
     async verifyVectors(options = {}) {
-        const bytes = this.count * this.dim;
+        const bytes = this.vectorsRegionBytes;
         await verifySegmentSha256(this.source, this.vectorsOffset, bytes, this.vectorsSha256,
             'Sketch artifact vectors segment', { chunkBytes: options.chunkBytes, oneShotLimit: this.maxReadBytes });
         this.vectorsVerified = true;
@@ -489,6 +596,7 @@ class PancakeSketchArtifact {
     }
 
     async fetchRows(ids, options = {}) {
+        if (this.formatVersion >= 2) return this._fetchRowsVerified(ids, options);
         const defaultGap = this.source.preferredGapBytes === undefined ? 2048 : this.source.preferredGapBytes;
         const gap = Math.max(0, options.gap === undefined ? defaultGap : options.gap);
         const preferredParallelism = this.source.preferredParallelism === undefined ? 32 : this.source.preferredParallelism;
@@ -555,6 +663,111 @@ class PancakeSketchArtifact {
                     const row = new Uint8Array(bytes.subarray((id - startId) * dim, (id - startId + 1) * dim));
                 if (rows.has(id)) rows.set(id, row);
                 this.cacheRow(id, row);
+            }
+        }
+        return rows;
+    }
+
+    // Format-2 row fetch: rows live in interleaved blocks
+    // [digest page][rowsPerBlock rows], so each needed block is fetched from
+    // its page through the last needed row (the page rides inside the same
+    // read), the page is verified against the resident page-hash table —
+    // which residentSha256, and any identity committing to the header,
+    // anchors — and each row against its truncated digest in the page,
+    // before anything is returned or cached. Cached rows are already
+    // verified, so repeat hits cost nothing.
+    async _fetchRowsVerified(ids, options = {}) {
+        const defaultGap = this.source.preferredGapBytes === undefined ? 2048 : this.source.preferredGapBytes;
+        const gap = Math.max(0, options.gap === undefined ? defaultGap : options.gap);
+        const preferredParallelism = this.source.preferredParallelism === undefined ? 32 : this.source.preferredParallelism;
+        const requestedParallelism = options.parallelism === undefined ? preferredParallelism : options.parallelism;
+        const parallelism = requestedParallelism === 0 ? Infinity : Math.max(1, Math.trunc(requestedParallelism || 32));
+        const rows = new Map();
+        const missing = [];
+        for (const id of ids) {
+            if (rows.has(id)) continue;
+            if (!Number.isInteger(id) || id < 0 || id >= this.count) {
+                throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'row id out of range', { id });
+            }
+            const cached = this.cachedRow(id);
+            if (cached !== undefined) rows.set(id, cached);
+            else {
+                rows.set(id, null);
+                missing.push(id);
+            }
+        }
+        if (!missing.length) return rows;
+        missing.sort((a, b) => a - b);
+        const { dim, rowsPerBlock, rowDigestBytes, pageBytes, blockBytes, vectorsOffset } = this;
+        const blocks = new Map();
+        for (const id of missing) {
+            const b = Math.floor(id / rowsPerBlock);
+            let entry = blocks.get(b);
+            if (!entry) { entry = { maxIdx: 0, ids: [] }; blocks.set(b, entry); }
+            entry.ids.push(id);
+            const idx = id - b * rowsPerBlock;
+            if (idx > entry.maxIdx) entry.maxIdx = idx;
+        }
+        // Coalesce block spans into runs; a run always holds whole block
+        // spans and is split before exceeding maxRangeBytes (floor one block,
+        // so a single block is always fetchable).
+        const maxRunBytes = Math.max(blockBytes, Math.trunc(options.maxRangeBytes || MAX_COALESCED_RANGE_BYTES));
+        const runs = [];
+        let run = null;
+        for (const b of [...blocks.keys()].sort((x, y) => x - y)) {
+            const start = vectorsOffset + b * blockBytes;
+            const end = start + pageBytes + (blocks.get(b).maxIdx + 1) * dim;
+            if (run && start <= run.end + gap && end - run.start <= maxRunBytes) {
+                run.end = end;
+                run.blocks.push(b);
+            } else {
+                if (run) runs.push(run);
+                run = { start, end, blocks: [b] };
+            }
+        }
+        runs.push(run);
+        const buffers = await mapLimit(runs, parallelism, async (r) => {
+            const length = r.end - r.start;
+            const bytes = await readChecked(this.source, r.start, length, 'row block');
+            if (bytes.byteLength !== length) {
+                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact row read returned a truncated range', { offset: r.start, length });
+            }
+            this.rangeRequests++;
+            this.rangeBytes += length;
+            return { r, bytes };
+        });
+        for (const { r, bytes } of buffers) {
+            for (const b of r.blocks) {
+                const rel = vectorsOffset + b * blockBytes - r.start;
+                const page = bytes.subarray(rel, rel + pageBytes);
+                if (this.verifyRows) {
+                    const pageDigest = await sha256BytesAsync(page);
+                    if (!pageDigest) {
+                        throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID,
+                            'Sketch artifact row verification requested but no crypto backend is available; pass verify:false to skip');
+                    }
+                    const expected = this.pageTable.subarray(b * 32, b * 32 + 32);
+                    for (let i = 0; i < 32; i++) {
+                        if (pageDigest[i] !== expected[i]) {
+                            throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact row digest page failed hash verification', { block: b });
+                        }
+                    }
+                }
+                for (const id of blocks.get(b).ids) {
+                    const idx = id - b * rowsPerBlock;
+                    const row = new Uint8Array(bytes.subarray(rel + pageBytes + idx * dim, rel + pageBytes + (idx + 1) * dim));
+                    if (this.verifyRows) {
+                        const digest = await sha256BytesAsync(row);
+                        const slot = page.subarray(idx * rowDigestBytes, (idx + 1) * rowDigestBytes);
+                        for (let i = 0; i < rowDigestBytes; i++) {
+                            if (digest[i] !== slot[i]) {
+                                throw pancakeError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Sketch artifact row failed digest verification', { id });
+                            }
+                        }
+                    }
+                    if (rows.has(id)) rows.set(id, row);
+                    this.cacheRow(id, row);
+                }
             }
         }
         return rows;

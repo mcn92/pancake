@@ -542,22 +542,22 @@ const A = buildSynthetic();
         () => openPancakeFile(memorySource(v1flip), { encodeQuery: hostEncode }), /index metric l2 != manifest metric cosine/);
 }
 
-// Lazy vector rows: committed to the identity, verified only by a full
-// pass — the documented transitional stance, exercised both ways.
+// Lazy vector rows: with a format-2 embedded sketch (the default build),
+// every rerank row is verified on the read that fetches it, per-read.
 {
     const { segments } = layoutOf(A.bytes);
-    // Find the vectors offset from the (authenticated) sketch header:
-    // vectorsSha256 lives at [88,120); the vectors offset field is what the
-    // reader computes — tamper a byte near the end of the index segment,
-    // inside the lazy row region, far past the resident prefix.
+    // Tamper a byte near the end of the index segment — inside the last
+    // block's rows, far past the resident prefix.
     const rowTamper = Buffer.from(A.bytes);
     rowTamper[segments.index.offset + segments.index.length - 8] ^= 0xff;
     const lazy = await openPancakeFile(memorySource(rowTamper), { encodeQuery: hostEncode });
-    check('a tampered lazy vector row does not fail the default open (documented transitional stance)',
-        lazy.info().vectorsVerified === false);
-    await rejects('...but verifyVectors() detects it', () => lazy.verifyVectors(), /vector|hash/i);
+    check('the reader reports per-row index integrity for the format-2 sketch',
+        lazy.info().indexRowIntegrity === 'per-row-sha256' && lazy.info().vectorsVerified === false);
+    await rejects('a query whose rerank touches the tampered row fails its per-row digest',
+        () => lazy.query('rec 299', { k: 3 }), /row failed digest verification|digest page failed/);
+    await rejects('...and verifyVectors() detects it too', () => lazy.verifyVectors(), /vector|hash/i);
     await lazy.close();
-    await rejects('verifyIndexVectors: true authenticates the rows at open and refuses the tamper',
+    await rejects('verifyIndexVectors: true refuses the tamper at open',
         () => openPancakeFile(memorySource(rowTamper), { encodeQuery: hostEncode, verifyIndexVectors: true }), /vector|hash/i);
     const clean = await openPancakeFile(memorySource(A.bytes), { encodeQuery: hostEncode, verifyIndexVectors: true });
     check('verifyIndexVectors: true on a clean artifact opens with vectorsVerified true',

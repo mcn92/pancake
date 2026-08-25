@@ -440,6 +440,17 @@ export interface SketchArtifactBuildOptions {
   microDims?: number;
   /** Bits per micro-tier dimension. Default: 4. */
   microBits?: 4 | 8;
+  /**
+   * Per-row integrity (format version 2, the default): the vectors region is
+   * written as blocks of rowsPerBlock rows, each preceded by a digest page
+   * of truncated per-row SHA-256s, anchored by a page-hash table in the
+   * resident prefix. Pass false to emit a version-1 artifact.
+   */
+  rowIntegrity?: boolean;
+  /** Rows per digest block (format 2). Default: 16. */
+  rowsPerBlock?: number;
+  /** Truncated per-row digest size in bytes, 8..32 (format 2). Default: 16. */
+  rowDigestBytes?: number;
 }
 
 export interface SketchArtifactBuildManifest {

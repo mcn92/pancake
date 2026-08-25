@@ -701,9 +701,15 @@ export async function openPancakeFile(input, options = {}) {
                     residentBytes: sketch.residentBytes + 8 * (recordCount + 1) + (pageTable ? pageTable.length : 0),
                     residentVerified: sketch.stats().residentVerified,
                     // True only after a full vectors pass (verifyIndexVectors
-                    // at open, or verifyVectors() later). Until then lazy
-                    // rerank rows are committed but not verified per read.
+                    // at open, or verifyVectors() later).
                     vectorsVerified: sketch.vectorsVerified === true,
+                    // 'per-row-sha256' when the embedded sketch is format 2
+                    // (every rerank row verified on its own read against the
+                    // identity-anchored page-hash table); 'segment-sha256'
+                    // for format-1 sketches, where rows are committed but
+                    // unverified until a full vectors pass.
+                    indexRowIntegrity: sketch.formatVersion >= 2 && sketch.verifyRows !== false
+                        ? 'per-row-sha256' : 'segment-sha256',
                     sampleQueries: Array.isArray(manifest.sampleQueries) ? manifest.sampleQueries : [],
                 };
             },

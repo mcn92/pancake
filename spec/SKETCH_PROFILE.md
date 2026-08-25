@@ -49,7 +49,7 @@ eagerly.
 | Offset | Type | Field | Notes |
 | ---: | --- | --- | --- |
 | 0 | u32 | magic | `0x31415350` (`PSA1`) |
-| 4 | u32 | formatVersion | `1` |
+| 4 | u32 | formatVersion | `1`, or `2` with per-row integrity (section 2.4); readers MUST reject other values |
 | 8 | u32 | kind | `1` = u8 affine rows (the only defined kind) |
 | 12 | u32 | metric | `0` = L2, `1` = cosine |
 | 16 | u32 | dim | full vector dimensionality |
@@ -65,7 +65,41 @@ eagerly.
 | 88 | 32 bytes | vectorsSha256 | SHA-256 of the vectors segment |
 | 120 | u32 | recommendedRerank | producer's suggested top-C (see 4.3); `0` = unset |
 | 124..168 | — | staged residency extension | micro-tier fields and stage-1 hash (section 8); all zero when the extension is absent |
-| 168..256 | — | reserved | MUST be zero in v1; readers MUST ignore |
+| 168 | u32 | rowsPerBlock | v2 only (section 2.4); rows per digest block, `[1, 4096]` |
+| 172 | u32 | rowDigestBytes | v2 only; truncated per-row digest size, `[8, 32]` |
+| 176 | u32 | pageTableOffset | v2 only; start of the page-hash table, exactly at the end of the sketch tiers |
+| 180..256 | — | reserved | MUST be zero; readers MUST ignore |
+
+### 2.4 Per-row integrity (format version 2)
+
+Version 2 makes every lazily fetched row verifiable on the read that
+fetches it. The vectors region becomes a sequence of blocks —
+
+```
+[ digest page: rowsPerBlock x rowDigestBytes ][ rowsPerBlock rows x dim ]
+```
+
+— where slot `j` of a block's digest page is the first `rowDigestBytes`
+bytes of the SHA-256 of row `blockIndex*rowsPerBlock + j` (unused slots in
+the final block are zero; the final block carries only the remaining
+rows). A **page-hash table** of one full 32-byte SHA-256 per block sits at
+`pageTableOffset`, at the end of the resident prefix, so `residentSha256`
+— and any container identity that commits to this header — anchors it.
+`fileBytes` equals `vectorsOffset` plus the interleaved region;
+`vectorsSha256` covers the whole interleaved region. Row `id` lives at
+`vectorsOffset + floor(id/P)*(P*D + P*dim) + P*D + (id mod P)*dim`.
+
+A v2 reader MUST fetch a needed block from its digest page through the
+last needed row (one span; the page rides inside the read the reader
+already makes), verify the page against the page-hash table and each
+returned row against its digest slot before returning or caching it, and
+fail the fetch on any mismatch. `verify: false` opts the whole open out,
+reported as unverified. Defaults (16 rows, 16-byte digests) were chosen by
+the 2026-08-25 access-pattern measurement
+(`examples/05-one-file-search/poc/ROW_COMMITMENT_MEASUREMENT.md`):
+digests ride inside existing coalesced runs at ~0% latency overhead and
++4.2% file size. Version-1 files remain valid; readers report which
+stance a file carries.
 
 Integrity stance: the two whole-segment hashes let a reader verify the
 resident prefix after loading it and the vectors segment after a full
@@ -73,10 +107,16 @@ download. The reference reader verifies `residentSha256` at open (default
 on, fail-closed when verification is requested but no crypto backend
 exists) and exposes `verifyVectors()` to check the vectors segment on
 demand, streamed in bounded chunks where the runtime provides a streaming
-hash. The hashes do **not** make individual
-range reads verifiable; per-chunk commitments arrive with the contract's
-complete-profile manifest and are out of scope for v1. This is the same
-transitional stance as the snapshot and range profiles.
+hash. On **format 1** the hashes do not make individual range reads
+verifiable — the transitional stance shared with the snapshot and range
+profiles. **Format 2** (section 2.4) closes that per-read: every fetched
+row is verified against its digest page, and the page against the
+resident page-hash table, before it can influence a result. A bare v2
+file's chain still terminates in its own header, so an attacker who can
+rewrite the whole file (rows, pages, table, and both header hashes)
+defeats it; anchoring the header externally — the complete profile's
+`index.headerSha256` manifest commitment — extends the chain to a
+content-addressed identity.
 
 ### 2.2 Row encoding
 
@@ -225,8 +265,10 @@ re-embedding or re-training anything.
 
 ## 7. Open questions for v2
 
-1. Per-chunk integrity commitments (inherits the contract's manifest
-   decision).
+1. ~~Per-chunk integrity commitments~~ — resolved in format version 2
+   (section 2.4): interleaved per-row digest blocks anchored by a resident
+   page-hash table, geometry chosen by the 2026-08-25 access-pattern
+   measurement.
 2. An optional in-file evaluation segment (recall-vs-C table) ahead of the
    complete profile.
 3. Sub-4-bit or trained (PQ) sketch encodings, which would introduce

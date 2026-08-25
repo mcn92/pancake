@@ -377,18 +377,22 @@ The index segment is anchored through the manifest's header commitment
 `residentSha256` authenticates the resident prefix and its `vectorsSha256`
 authenticates the lazy rows, both under the artifact identity.
 
-What remains transitional — stated prominently because it bounds what the
-identity guarantees during a query: the sketch artifact's lazy rerank rows
-are covered by the (now identity-anchored) whole-segment `vectorsSha256`
-but are NOT verified on the reads that feed reranking. Between open and a
-full vectors pass, modified vector bytes in transport or storage can alter
-which results a query returns, under an unchanged identity. Hosts that
-need every query-influencing byte authenticated before serving MUST run
-the full pass — the reference reader offers `verifyIndexVectors: true` at
-open and `verifyVectors()` afterwards (one streamed read of the vectors
-region; `info().vectorsVerified` reports the state). Per-row commitments
-that would close this per-read belong to SKETCH_PROFILE.md's next revision
-(section 8, question 6); this profile will inherit them unchanged.
+With a **format-2 embedded sketch** (SKETCH_PROFILE.md section 2.4 —
+interleaved per-row digest blocks anchored by a page-hash table in the
+resident prefix, which `residentSha256` and therefore `index.headerSha256`
+and the identity cover), every rerank row is verified on the read that
+fetches it: nothing that influences a query goes unauthenticated, per
+read. `info().indexRowIntegrity` reports `'per-row-sha256'`.
+
+What remains transitional applies only to artifacts whose embedded sketch
+is **format 1** (every released artifact as of 0.4.0): their lazy rerank
+rows are covered by the identity-anchored whole-segment `vectorsSha256`
+but are NOT verified on the reads that feed reranking, so between open
+and a full vectors pass, modified vector bytes can alter results under an
+unchanged identity. Hosts serving format-1-sketch artifacts that need
+every byte authenticated MUST run the full pass — `verifyIndexVectors:
+true` at open or `verifyVectors()` afterwards (`info().vectorsVerified`
+reports the state).
 
 Format-1 files keep Draft 1's stance — whole-segment digests only, lazy
 record reads not independently verifiable — and readers MUST report which

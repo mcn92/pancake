@@ -6,6 +6,31 @@ Release notes for the two published packages in this repository,
 pre-1.0: a minor bump may carry breaking changes, and each entry lists them
 first.
 
+## Unreleased
+
+### Breaking / compatibility
+
+- **Sketch artifact format 2 (per-row integrity) is now what the builders
+  write by default.** The vectors region is laid out as interleaved blocks
+  — a digest page of truncated per-row SHA-256s (16 rows × 16 bytes by
+  default) ahead of each block's rows — anchored by a 32-byte-per-block
+  page-hash table at the end of the resident prefix, so `residentSha256`
+  (and, in a complete artifact, `index.headerSha256` and the identity)
+  covers it. `fetchRows` verifies every page against the table and every
+  row against its digest slot **on the read that fetches it**, in both the
+  full and staged micro tiers; tampered rows fail the query instead of
+  silently altering results. Geometry per the 2026-08-25 measurement:
+  ~0% query-latency overhead, +4.2% file size. Readers ≤ 0.4.0 reject
+  format-2 sketches ("Unsupported sketch artifact version"); the new
+  reader opens format 1 and 2 (`verify: false` opts out, reported).
+  `exportSketchArtifact(..., { rowIntegrity: false })` still emits
+  format 1; `rowsPerBlock` / `rowDigestBytes` tune the geometry.
+- Complete artifacts embedding a format-2 sketch report
+  `info().indexRowIntegrity: 'per-row-sha256'`; with that, every byte that
+  influences a query is authenticated per read and the spec's transitional
+  integrity stance applies only to format-1-sketch artifacts.
+- New `test/sketch_row_integrity.js` in `npm test`.
+
 ## pancake-wasm 0.4.0 / create-pancake-search 0.4.0 — 2026-08-25
 
 ### Breaking / compatibility
