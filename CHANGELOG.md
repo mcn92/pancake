@@ -6,7 +6,7 @@ Release notes for the two published packages in this repository,
 pre-1.0: a minor bump may carry breaking changes, and each entry lists them
 first.
 
-## Unreleased — pancake-wasm 0.4.0 / create-pancake-search 0.4.0
+## pancake-wasm 0.4.0 / create-pancake-search 0.4.0 — 2026-08-25
 
 ### Breaking / compatibility
 

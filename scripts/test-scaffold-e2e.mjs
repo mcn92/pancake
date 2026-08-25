@@ -88,10 +88,17 @@ const cpsRange = cpsPkg.dependencies?.['pancake-wasm'];
 console.log(`Scaffold e2e: pancake-wasm ${rootPkg.version} (in-repo), create-pancake-search ${cpsPkg.version}, runtimes ${RUNTIMES.join(', ')}`);
 console.log(`work dir: ${work}`);
 
-// In-repo pancake-wasm tarball, installed into each generated project.
+// In-repo tarballs for BOTH packages, installed into each generated project:
+// pancake-wasm so the reader under test is the one about to be published,
+// and create-pancake-search because the generated devDependency pins the
+// in-repo version, which does not exist on the registry until it is
+// published — before a release, resolving it from npm fails with ETARGET.
 const packOut = run(npm, ['pack', '--pack-destination', work, '--ignore-scripts'], { cwd: ROOT });
 const tarball = path.join(work, packOut.trim().split('\n').pop());
 ok(fs.existsSync(tarball), `packed in-repo pancake-wasm: ${path.basename(tarball)}`);
+const cpsPackOut = run(npm, ['pack', '--pack-destination', work, '--ignore-scripts'], { cwd: CPS_DIR });
+const cpsTarball = path.join(work, cpsPackOut.trim().split('\n').pop());
+ok(fs.existsSync(cpsTarball), `packed in-repo create-pancake-search: ${path.basename(cpsTarball)}`);
 
 let worker = null;
 try {
@@ -110,8 +117,8 @@ try {
     const sat = caretSatisfies(genRange, rootPkg.version);
     ok(sat === true, `in-repo pancake-wasm ${rootPkg.version} satisfies generated range ${genRange}`, sat === null ? 'unrecognized range shape' : 'not satisfied');
 
-    // Install as generated, with the in-repo pancake-wasm tarball on top.
-    run(npm, ['install', '--no-audit', '--no-fund', '--no-progress', tarball], { cwd: projectDir });
+    // Install as generated, with both in-repo tarballs on top.
+    run(npm, ['install', '--no-audit', '--no-fund', '--no-progress', tarball, cpsTarball], { cwd: projectDir });
     const installed = JSON.parse(fs.readFileSync(path.join(projectDir, 'node_modules', 'pancake-wasm', 'package.json'), 'utf8')).version;
     ok(installed === rootPkg.version, `generated project runs pancake-wasm ${installed}`);
 
