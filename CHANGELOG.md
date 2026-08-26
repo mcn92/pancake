@@ -6,7 +6,7 @@ Release notes for the two published packages in this repository,
 pre-1.0: a minor bump may carry breaking changes, and each entry lists them
 first.
 
-## Unreleased
+## pancake-wasm 0.5.0 / create-pancake-search 0.5.0 — 2026-08-26
 
 ### Breaking / compatibility
 
@@ -30,6 +30,10 @@ first.
   influences a query is authenticated per read and the spec's transitional
   integrity stance applies only to format-1-sketch artifacts.
 - New `test/sketch_row_integrity.js` in `npm test`.
+- `create-pancake-search` has no behavior changes of its own; generated
+  projects now depend on `pancake-wasm@^0.5.0` so the artifacts the
+  scaffolder builds (format-2 sketches included) open on the installed
+  reader.
 
 ## pancake-wasm 0.4.0 / create-pancake-search 0.4.0 — 2026-08-25
 

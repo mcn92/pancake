@@ -167,14 +167,13 @@ verified working (see examples/README.md ordering).
 
 ## Track C: Demos and product surface
 
-- `create-pancake-search` (v0.4.0 on npm, alongside `pancake-wasm` 0.4.0):
+- `create-pancake-search` (v0.5.0 on npm, alongside `pancake-wasm` 0.5.0):
   scaffolds snapshot, artifact, and complete (kind-3 `search.pancake`)
   runtimes; `--mode student` distills a corpus-specific encoder into the
   Worker; the Docusaurus plugin builds the same assets for static sites;
-  `doctor <url>` probes artifact hosting. Next: implement the interleaved
-  digest blocks the 2026-08-25 measurement selected (sketch-profile
-  revision; per-read row integrity at ~0% latency overhead), then the
-  launch pass.
+  `doctor <url>` probes artifact hosting. 0.5.0 ships sketch format 2 —
+  the interleaved digest blocks the 2026-08-25 measurement selected
+  (per-read row integrity at ~0% latency overhead). Next: the launch pass.
 - `worker-semantic-search` maintenance:
   - always run `test_worker.mjs` after retraining, not just
     `verify_student.mjs` — offline and live distances have diverged before;
