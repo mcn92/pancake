@@ -23,6 +23,19 @@ first.
   duplicate a whole site's content past exact-text chunk dedupe).
   `--include-url`/`--exclude-url` against a folder source error
   symmetrically.
+- **Crawler fixes from a five-site independent-docs sweep** (Sphinx,
+  MkDocs Material, Docusaurus, VitePress, Jekyll): URL filters now gate
+  the queue instead of the dequeue, so filtered links no longer consume
+  the `--max-pages` budget (a large excluded section — e.g. a versioned
+  doc tree — used to starve discovery: docusaurus.io yielded 30 pages of
+  a 70-page budget, 69 after the fix); self-recall validation tolerates
+  near-duplicate content (original within top 5 passes as degraded with a
+  logged hint toward `--exclude-url`, instead of hard-failing the build —
+  versioned doc trees put several near-identical chunks at the same point
+  in embedding space, where rank 1 among them is arbitrary); crawls that
+  discover fewer than 5 pages warn that client-side-rendered navigation
+  cannot be followed; the filter-skip log names which filters did the
+  skipping.
 
 ### Added
 

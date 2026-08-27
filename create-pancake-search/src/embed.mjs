@@ -263,14 +263,31 @@ function hashEmbedding(text, dims) {
 }
 function validateSelfRecall(index, chunks, vectors, log) {
   const sampleCount = Math.min(100, chunks.length);
+  // The check guards against a broken index (quantization or graph damage
+  // returning garbage), so a near-duplicate chunk outranking the original is
+  // not a failure — versioned doc trees and shared boilerplate put several
+  // nearly identical chunks at the same point in embedding space, where
+  // rank 1 among them is arbitrary. Rank-1 misses that still find the
+  // original in the top 5 pass as degraded and are reported.
+  let exact = 0;
+  const degraded = [];
   for (let i = 0; i < sampleCount; i++) {
     const idx = Math.floor(i * chunks.length / sampleCount);
-    const hit = index.search(vectors[idx], 1, { efSearch: Math.max(120, index.config.efSearch) })[0];
-    if (!hit || chunks[hit.id]?.text !== chunks[idx].text) {
-      throw new CliError(`Self-recall validation failed at chunk ${idx}. Next: reduce quantization risk or inspect duplicated content.`, 2);
+    const hits = index.search(vectors[idx], 5, { efSearch: Math.max(120, index.config.efSearch) });
+    if (hits[0] && chunks[hits[0].id]?.text === chunks[idx].text) {
+      exact++;
+    } else if (hits.some((hit) => chunks[hit.id]?.text === chunks[idx].text)) {
+      degraded.push(idx);
+    } else {
+      throw new CliError(`Self-recall validation failed at chunk ${idx} (not in top 5). Next: reduce quantization risk or inspect duplicated content.`, 2);
     }
   }
-  log(`Validated self-recall@1 on ${sampleCount} sampled chunks`);
+  if (degraded.length) {
+    log(`Validated self-recall on ${sampleCount} sampled chunks: ${exact} at rank 1, ${degraded.length} within top 5 — `
+      + 'near-duplicate content detected (versioned doc trees are the usual cause); consider --exclude-url patterns for duplicate sections');
+  } else {
+    log(`Validated self-recall@1 on ${sampleCount} sampled chunks`);
+  }
 }
 
 export {

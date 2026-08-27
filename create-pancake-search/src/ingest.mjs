@@ -96,11 +96,6 @@ async function ingestUrl(source, log) {
     const href = queue.shift();
     if (seen.has(href)) continue;
     seen.add(href);
-    // The seed the user typed is always crawled; filters shape the frontier.
-    if (href !== seed.href && !allowed(href)) {
-      filtered++;
-      continue;
-    }
     let response;
     try {
       response = await fetch(href, {
@@ -127,11 +122,34 @@ async function ingestUrl(source, log) {
     }
     const extracted = extractHtml(html);
     docs.push({ id: docs.length, url: href, title: extracted.title || href, text: extracted.text });
+    // Filters gate the queue, not the dequeue: a filtered link must never
+    // occupy page budget (queue.length counts toward maxPages), or a large
+    // excluded section starves discovery of the pages the crawl is for.
+    // The seed the user typed bypasses the filters — it seeds the queue
+    // directly above.
     for (const link of extractLinks(html, href, seed.origin)) {
-      if (!seen.has(link) && queue.length + docs.length < (source.maxPages || 500)) queue.push(link);
+      if (seen.has(link)) continue;
+      if (!allowed(link)) {
+        seen.add(link);
+        filtered++;
+        continue;
+      }
+      if (queue.length + docs.length < (source.maxPages || 500)) queue.push(link);
     }
   }
-  if (filtered > 0) log(`URL filters skipped ${filtered} pages (default excludes: ${DEFAULT_URL_EXCLUDES.join(', ')})`);
+  if (filtered > 0) {
+    const filters = [
+      ...(source.includeUrl?.length ? [`include ${source.includeUrl.join(' ')}`] : []),
+      `exclude ${[...DEFAULT_URL_EXCLUDES, ...(source.excludeUrl || [])].join(' ')}`,
+    ];
+    log(`URL filters skipped ${filtered} pages (${filters.join('; ')})`);
+  }
+  // A crawl that discovers almost nothing usually means the site renders its
+  // navigation client-side; the crawler only follows server-rendered anchors.
+  if (docs.length > 0 && docs.length < 5) {
+    log(`warn: crawl discovered only ${docs.length} page${docs.length === 1 ? '' : 's'} from ${seed.href}. `
+      + 'If the site builds its navigation with client-side JavaScript, the crawler cannot follow it.');
+  }
   return docs;
 }
 
