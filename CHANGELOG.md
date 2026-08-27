@@ -6,6 +6,28 @@ Release notes for the two published packages in this repository,
 pre-1.0: a minor bump may carry breaking changes, and each entry lists them
 first.
 
+## Unreleased
+
+### Breaking / compatibility
+
+- **`create-pancake-search` rejects `--runtime complete`** on create and
+  rebuild instead of silently building a snapshot project (the generated
+  Worker templates only serve snapshot and artifact runtimes; `complete`
+  passed validation but was dropped by the config builder). The error
+  points at the new command below.
+
+### Added
+
+- **`create-pancake-search compile`** builds a complete kind-3 `.pancake`
+  artifact from `--source <path|url>` and stops — no project, no Worker,
+  no Cloudflare. It chunks and embeds the corpus with the packaged inline
+  MiniLM encoder (auto-fetched, digest-pinned, when not present), measures
+  the rerank operating point, and writes one file (`--out`, default
+  `search.pancake`) openable with `pancake-wasm/complete` on any runtime.
+  Takes `--name`, `--max-pages`, `--include`/`--exclude`, `--force`.
+  Exercised by the scaffold e2e (compile → open → query, plus the
+  `--runtime complete` rejection).
+
 ## pancake-wasm 0.5.0 / create-pancake-search 0.5.0 — 2026-08-26
 
 ### Breaking / compatibility

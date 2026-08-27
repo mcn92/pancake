@@ -2,6 +2,8 @@
 // End-to-end check of create-pancake-search as a user experiences it:
 // scaffold a project (stub embeddings, no Cloudflare account), install it,
 // start its Worker with `wrangler dev`, and query /search — once per runtime.
+// Also exercises `compile` (complete kind-3 .pancake from a fixture corpus,
+// opened and queried with the in-repo reader).
 //
 // Two things this catches that the in-repo smoke does not:
 //   1. The generated project's pancake-wasm dependency range drifting from
@@ -99,6 +101,46 @@ ok(fs.existsSync(tarball), `packed in-repo pancake-wasm: ${path.basename(tarball
 const cpsPackOut = run(npm, ['pack', '--pack-destination', work, '--ignore-scripts'], { cwd: CPS_DIR });
 const cpsTarball = path.join(work, cpsPackOut.trim().split('\n').pop());
 ok(fs.existsSync(cpsTarball), `packed in-repo create-pancake-search: ${path.basename(cpsTarball)}`);
+
+// The compile command: a complete kind-3 .pancake from a small fixture
+// corpus, opened and queried with the in-repo complete reader. A fixture
+// rather than ROOT/docs because the inline transformer embeds for real
+// (no stub path), and the guard rail: --runtime complete must point at
+// compile instead of silently building a snapshot project (the pre-0.6
+// behavior).
+console.log('\n--- compile ---');
+{
+  const fixtureDir = path.join(work, 'compile-fixture');
+  fs.mkdirSync(fixtureDir, { recursive: true });
+  const fixtures = {
+    'volcanoes.md': 'Volcanoes form where magma rises through cracks in the crust and erupts onto the surface. Repeated eruptions of lava and ash build the cone over thousands of years, usually along tectonic plate boundaries where one plate subducts beneath another and melts into fresh magma below.',
+    'routers.md': 'A network router forwards packets between different networks by reading the destination address in each packet header and consulting its routing table. Routes are configured statically or learned through routing protocols, and home routers also perform network address translation with a built-in firewall.',
+    'sourdough.md': 'Sourdough bread rises without commercial yeast by relying on a starter, a live culture of wild yeast and lactic acid bacteria kept alive with regular feedings of flour and water. The long fermentation develops flavor and structure, and the acidity gives the crumb its characteristic tang.',
+  };
+  for (const [name, text] of Object.entries(fixtures)) fs.writeFileSync(path.join(fixtureDir, name), `# ${name}\n\n${(text + ' ').repeat(3)}`);
+  const outFile = path.join(work, 'compiled', 'search.pancake');
+  run(process.execPath, [CPS_BIN, 'compile', '--source', fixtureDir, '--out', outFile], { cwd: CPS_DIR });
+  ok(fs.existsSync(outFile), 'compile wrote the .pancake artifact');
+
+  const { openPancakeFile } = await import(path.join(ROOT, 'complete', 'index.mjs'));
+  const search = await openPancakeFile(outFile);
+  try {
+    const info = search.info();
+    ok(info.corpusIntegrity === 'per-record-sha256' && info.indexRowIntegrity === 'per-row-sha256',
+      'compiled artifact is format 2 with per-record and per-row integrity', JSON.stringify({ corpus: info.corpusIntegrity, index: info.indexRowIntegrity }));
+    const out = await search.query('how does bread rise without yeast', { k: 2 });
+    ok(out.results[0]?.sourcePath?.includes('sourdough') || out.results[0]?.title?.includes('sourdough'),
+      'compiled artifact answers a natural-language query with no host encoder', JSON.stringify(out.results[0] || {}).slice(0, 200));
+  } finally {
+    await search.close();
+  }
+
+  const rejected = spawnSync(process.execPath,
+    [CPS_BIN, '--name', path.join(work, 'proj-complete'), '--source', fixtureDir, '--runtime', 'complete', '--no-deploy', '--yes'],
+    { encoding: 'utf8', cwd: CPS_DIR });
+  ok(rejected.status !== 0 && `${rejected.stderr}${rejected.stdout}`.includes('compile --source'),
+    'scaffold --runtime complete is rejected with a pointer to compile', `${rejected.status} ${rejected.stderr.slice(0, 200)}`);
+}
 
 let worker = null;
 try {

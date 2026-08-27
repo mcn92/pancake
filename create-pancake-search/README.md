@@ -32,6 +32,34 @@ can exercise the endpoint mechanics locally without Workers AI.
 You can also provide a prebuilt `.pancake-range` file with `--artifact`. External
 artifacts must have dimension, count, and IDs that match the generated corpus.
 
+## Compiling a complete `.pancake` artifact
+
+When you want the search *file* rather than a search *app*, `compile` builds
+a complete kind-3 artifact and stops — no project, no Worker, no Cloudflare:
+
+```bash
+npx create-pancake-search compile --source ./docs --out search.pancake
+```
+
+The output is one self-contained file carrying the corpus records, sketch
+index, inline MiniLM query encoder, and evaluation data. Open it from any
+runtime with the complete reader:
+
+```js
+import { openPancakeFile } from 'pancake-wasm/complete';
+const search = await openPancakeFile('search.pancake');
+const out = await search.query('how do I configure auth', { k: 5 });
+```
+
+Passage embedding runs locally through the same inline encoder the artifact
+carries (the ~24 MiB weight blob is fetched once, digest-pinned, when the
+package copy is absent — registry installs ship without it). `compile`
+accepts `--source` (folder or URL), `--out`, `--name` (corpus name recorded
+in the artifact), `--max-pages`, `--include`/`--exclude`, and `--force` to
+overwrite the output file. The scaffold-only flags (`--mode`, `--runtime`,
+`--artifact`, deploy and student options) are rejected: compile always
+builds the complete kind-3 profile.
+
 ## Where this sits
 
 This package is the **product layer** of the Pancake stack. It consumes the

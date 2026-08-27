@@ -1,11 +1,13 @@
-// create-pancake-search CLI: argument parsing, create / rebuild / doctor
-// commands, and the config the scaffold is generated from. The work happens
-// in the sibling modules (see the module map in README / each file header).
+// create-pancake-search CLI: argument parsing, create / compile / rebuild /
+// doctor commands, and the config the scaffold is generated from. The work
+// happens in the sibling modules (see the module map in README / each file
+// header).
 
 import fs from 'node:fs/promises';
 import fssync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { CONFIG_SCHEMA_URL, DEFAULT_CONFIG, MODEL_MAP, CliError } from './common.mjs';
@@ -22,13 +24,17 @@ export async function main(argv) {
     }
     return;
   }
-  const command = parsed.positionals[0] === 'rebuild' ? 'rebuild' : 'create';
+  const command = ['rebuild', 'compile'].includes(parsed.positionals[0]) ? parsed.positionals[0] : 'create';
   if (parsed.flags.help || parsed.flags.h) {
     printHelp();
     return;
   }
   if (command === 'rebuild') {
     await rebuildProject(process.cwd(), parsed.flags);
+    return;
+  }
+  if (command === 'compile') {
+    await compileArtifact(parsed.flags);
     return;
   }
   await createProject(parsed.flags);
@@ -39,8 +45,15 @@ function printHelp() {
 
 Usage:
   npm create pancake-search -- --name my-docs-search --source ./docs --no-deploy --yes
+  create-pancake-search compile --source <path|url> --out search.pancake
   create-pancake-search rebuild --yes
   create-pancake-search doctor <url>   # probe artifact hosting: Range/206, cache-key ranges, h2, ETag, RTT
+
+compile builds a complete kind-3 .pancake artifact from the source and stops:
+no project, no Worker, no Cloudflare. The file carries the corpus, index,
+inline MiniLM query encoder, and evaluation data; open it with
+pancake-wasm/complete on any runtime. compile takes --source, --out, --name,
+--max-pages, --include, --exclude, and --force (overwrite the output file).
 
 Flags:
   --name <dir>          Generated project directory
@@ -60,9 +73,10 @@ Flags:
   --exclude <glob>      Folder exclude glob, repeatable
   --runtime snapshot|artifact
   --artifact <file>     Optional prebuilt .pancake-range artifact for --runtime artifact
+  --out <file>          compile only: output .pancake path (default search.pancake)
   --deploy / --no-deploy
   --yes
-  --force               Replace an existing target directory
+  --force               Replace an existing target directory (or output file for compile)
 `);
 }
 
@@ -172,8 +186,13 @@ function makeConfig(options) {
   const student = options.mode === 'student';
   const model = student ? null : MODEL_MAP[options.model];
   if (!student && !model) throw new CliError(`Unsupported --model ${options.model}. Supported: ${Object.keys(MODEL_MAP).join(', ')}`);
-  if (!['snapshot', 'artifact', 'complete'].includes(options.runtime)) {
-    throw new CliError(`--runtime must be snapshot, artifact, or complete, got ${options.runtime}`);
+  if (!['snapshot', 'artifact'].includes(options.runtime)) {
+    // 'complete' used to be accepted here and silently built a snapshot
+    // project: the generated Worker templates only serve the snapshot and
+    // artifact runtimes.
+    throw new CliError(options.runtime === 'complete'
+      ? 'The scaffold serves snapshot and artifact runtimes. To build a complete .pancake artifact, run: create-pancake-search compile --source <path|url> --out search.pancake'
+      : `--runtime must be snapshot or artifact, got ${options.runtime}`);
   }
   const isUrl = /^https?:\/\//i.test(options.source);
   const targetDir = path.resolve(process.cwd(), options.name);
@@ -217,6 +236,75 @@ function makeConfig(options) {
   };
 }
 
+// The packaged inline MiniLM encoder inputs. vocab.txt ships in the tarball;
+// the weight blob is npmignored and auto-fetched into this directory on first
+// use, digest-pinned (resolveInlineEncoderInputs in complete-build.mjs).
+const INLINE_ENCODER_DIR = fileURLToPath(new URL('./inline-encoder/', import.meta.url));
+
+async function compileArtifact(flags) {
+  if (!flags.source) throw new CliError('compile requires --source <path|url>');
+  const unsupported = ['mode', 'runtime', 'artifact', 'deploy', 'student-model', 'student-vectors', 'student-abstention', 'epochs', 'skip-abstention', 'model']
+    .filter((name) => flags[name] !== undefined);
+  if (unsupported.length) {
+    throw new CliError(`compile does not take --${unsupported.join(', --')}: it always builds a complete kind-3 .pancake with the inline transformer encoder`);
+  }
+  const outPath = path.resolve(process.cwd(), flags.out || 'search.pancake');
+  if (fssync.existsSync(outPath) && !flags.force) {
+    throw new CliError(`Output file already exists: ${outPath}\nNext: rerun with --force or choose --out`);
+  }
+  const isUrl = /^https?:\/\//i.test(flags.source);
+  const name = flags.name
+    || (isUrl ? new URL(flags.source).hostname : path.basename(path.resolve(process.cwd(), flags.source)));
+  const config = {
+    $schema: CONFIG_SCHEMA_URL,
+    version: 1,
+    name,
+    source: isUrl
+      ? { type: 'url', url: flags.source, maxPages: parsePositiveInt(flags['max-pages'] || '500', '--max-pages') }
+      : {
+          type: 'folder',
+          path: path.resolve(process.cwd(), flags.source),
+          include: flags.include || ['**/*.{md,mdx,html,txt}'],
+          exclude: flags.exclude || ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**'],
+        },
+    chunking: { ...DEFAULT_CONFIG.chunking },
+    embedding: {
+      mode: 'inline-transformer',
+      dims: 384,
+      prefixPolicy: { passage: '', query: '' },
+      pooling: 'mean',
+      normalize: true,
+    },
+    index: { ...DEFAULT_CONFIG.index },
+    runtime: {
+      mode: 'complete',
+      profile: 'kind3',
+      storage: 'bundled',
+      fileName: path.basename(outPath),
+      inlineEncoder: {
+        vocabPath: path.join(INLINE_ENCODER_DIR, 'vocab.txt'),
+        weightsPath: path.join(INLINE_ENCODER_DIR, 'encoder-weights.bin'),
+        model: 'sentence-transformers/all-MiniLM-L6-v2',
+        maxTokens: 128,
+      },
+    },
+    validation: { ...DEFAULT_CONFIG.validation },
+  };
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pancake-compile-'));
+  try {
+    await buildAssets(tmpDir, config, { skipBundleSizeCheck: true });
+    const manifest = JSON.parse(await fs.readFile(path.join(tmpDir, 'assets', 'manifest.json'), 'utf8'));
+    await fs.mkdir(path.dirname(outPath), { recursive: true });
+    // copyFile, not rename: os.tmpdir() and the output may be different mounts.
+    await fs.copyFile(path.join(tmpDir, 'assets', config.runtime.fileName), outPath);
+    console.log(`Compiled ${outPath}`);
+    console.log(`  ${(manifest.artifact.bytes / 1024 / 1024).toFixed(2)} MB, ${manifest.chunkCount} records, identity ${manifest.artifact.identity}`);
+    console.log("Query it from any runtime: openPancakeFile from 'pancake-wasm/complete'");
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 async function rebuildProject(projectDir, flags = {}) {
   const configPath = path.join(projectDir, 'pancake.config.json');
   const config = JSON.parse(await fs.readFile(configPath, 'utf8'));
@@ -231,8 +319,10 @@ async function rebuildProject(projectDir, flags = {}) {
 function applyRuntimeOverrides(config, projectDir, flags) {
   if (!flags.runtime && !flags.artifact) return;
   const runtime = flags.runtime || (flags.artifact ? 'artifact' : config.runtime?.mode || 'snapshot');
-  if (!['snapshot', 'artifact', 'complete'].includes(runtime)) {
-    throw new CliError(`--runtime must be snapshot, artifact, or complete, got ${runtime}`);
+  if (!['snapshot', 'artifact'].includes(runtime)) {
+    throw new CliError(runtime === 'complete'
+      ? 'The scaffold serves snapshot and artifact runtimes. To build a complete .pancake artifact, run: create-pancake-search compile --source <path|url> --out search.pancake'
+      : `--runtime must be snapshot or artifact, got ${runtime}`);
   }
   if (runtime === 'artifact') {
     const artifactPath = flags.artifact
