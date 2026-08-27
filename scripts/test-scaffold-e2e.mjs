@@ -147,6 +147,22 @@ console.log('\n--- compile ---');
     { encoding: 'utf8', cwd: CPS_DIR });
   ok(rejected.status !== 0 && `${rejected.stderr}${rejected.stdout}`.includes('compile --source'),
     'scaffold --runtime complete is rejected with a pointer to compile', `${rejected.status} ${rejected.stderr.slice(0, 200)}`);
+
+  // URL crawl filters: pattern semantics and the folder-glob/URL-pattern
+  // mismatch erroring instead of silently no-opping.
+  const { urlCrawlFilter } = await import(path.join(CPS_DIR, 'src', 'ingest.mjs'));
+  const defaultFilter = urlCrawlFilter({ url: 'https://docs.example.com/' });
+  ok(!defaultFilter('https://docs.example.com/print.html') && defaultFilter('https://docs.example.com/keymap.html'),
+    'URL crawl excludes print.html by default and keeps normal pages');
+  const scoped = urlCrawlFilter({ url: 'https://docs.example.com/', includeUrl: ['/guide/*'], excludeUrl: ['*/draft-*'] });
+  ok(scoped('https://docs.example.com/guide/setup.html') && !scoped('https://docs.example.com/blog/post.html')
+    && !scoped('https://docs.example.com/guide/draft-new.html'),
+    'include-url and exclude-url patterns scope the crawl frontier');
+  const globOnUrl = spawnSync(process.execPath,
+    [CPS_BIN, 'compile', '--source', 'https://docs.example.com', '--exclude', '*print*', '--out', path.join(work, 'x.pancake')],
+    { encoding: 'utf8', cwd: CPS_DIR });
+  ok(globOnUrl.status !== 0 && `${globOnUrl.stderr}${globOnUrl.stdout}`.includes('--exclude-url'),
+    'folder globs against a URL source error instead of silently no-opping', globOnUrl.stderr.slice(0, 200));
 }
 
 let worker = null;

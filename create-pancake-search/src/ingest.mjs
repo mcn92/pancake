@@ -59,15 +59,48 @@ function globMatch(file, glob) {
   return file === normalized || file.startsWith(`${normalized}/`);
 }
 
+// Aggregate pages that duplicate a whole site's content in one document —
+// crawling them alongside the per-page versions puts every chunk in the
+// corpus twice (near-duplicates survive exact-text dedupe because chunk
+// boundaries differ). mdBook's print.html is the known offender.
+const DEFAULT_URL_EXCLUDES = ['*/print.html'];
+
+// URL patterns are matched against the URL's pathname, full-match, with '*'
+// as the only wildcard — deliberately not the filesystem glob dialect the
+// folder source uses ('**', braces), which does not map onto URLs.
+function urlPatternMatcher(patterns) {
+  const regexes = patterns.map((pattern) => new RegExp(
+    `^${pattern.split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`,
+  ));
+  return (pathname) => regexes.some((regex) => regex.test(pathname));
+}
+
+function urlCrawlFilter(source) {
+  const excluded = urlPatternMatcher([...DEFAULT_URL_EXCLUDES, ...(source.excludeUrl || [])]);
+  const included = source.includeUrl?.length ? urlPatternMatcher(source.includeUrl) : null;
+  return (href) => {
+    const { pathname } = new URL(href);
+    if (excluded(pathname)) return false;
+    return included ? included(pathname) : true;
+  };
+}
+
 async function ingestUrl(source, log) {
   const seed = new URL(source.url);
   const seen = new Set();
   const queue = [seed.href];
   const docs = [];
+  const allowed = urlCrawlFilter(source);
+  let filtered = 0;
   while (queue.length && docs.length < (source.maxPages || 500)) {
     const href = queue.shift();
     if (seen.has(href)) continue;
     seen.add(href);
+    // The seed the user typed is always crawled; filters shape the frontier.
+    if (href !== seed.href && !allowed(href)) {
+      filtered++;
+      continue;
+    }
     let response;
     try {
       response = await fetch(href, {
@@ -98,6 +131,7 @@ async function ingestUrl(source, log) {
       if (!seen.has(link) && queue.length + docs.length < (source.maxPages || 500)) queue.push(link);
     }
   }
+  if (filtered > 0) log(`URL filters skipped ${filtered} pages (default excludes: ${DEFAULT_URL_EXCLUDES.join(', ')})`);
   return docs;
 }
 
@@ -310,6 +344,7 @@ export {
   matchesSource,
   globMatch,
   ingestUrl,
+  urlCrawlFilter,
   readLimitedText,
   extractByExtension,
   extractMarkdown,

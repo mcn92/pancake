@@ -27,7 +27,9 @@
           "properties": {
             "type": { "const": "url" },
             "url": { "type": "string" },
-            "maxPages": { "type": "integer", "minimum": 1 }
+            "maxPages": { "type": "integer", "minimum": 1 },
+            "includeUrl": { "type": "array", "items": { "type": "string" } },
+            "excludeUrl": { "type": "array", "items": { "type": "string" } }
           },
           "additionalProperties": false
         }

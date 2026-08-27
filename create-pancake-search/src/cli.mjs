@@ -75,6 +75,10 @@ Flags:
   --max-pages <n>       URL crawl cap
   --include <glob>      Folder include glob, repeatable
   --exclude <glob>      Folder exclude glob, repeatable
+  --include-url <pat>   URL-path include pattern ('*' wildcard), repeatable
+  --exclude-url <pat>   URL-path exclude pattern ('*' wildcard), repeatable;
+                        aggregate pages like mdBook's print.html are always
+                        excluded
   --runtime snapshot|artifact
   --artifact <file>     Optional prebuilt .pancake-range artifact for --runtime artifact
   --out <file>          compile only: output .pancake path (default search.pancake)
@@ -86,7 +90,7 @@ Flags:
 
 function parseArgs(args) {
   const flags = {};
-  const repeated = new Set(['include', 'exclude']);
+  const repeated = new Set(['include', 'exclude', 'include-url', 'exclude-url']);
   const positionals = [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -151,6 +155,7 @@ async function resolveCreateOptions(flags) {
       ? !!flags.deploy
       : flags.yes ? false : /^y/i.test(await rl.question('Deploy to Cloudflare when done? (y/N) '));
     if (!name || !source) throw new CliError('Project name and source are required');
+    assertSourceFilterFlags(flags, /^https?:\/\//i.test(source));
     const mode = flags.mode || 'workers-ai';
     if (!['workers-ai', 'student'].includes(mode)) {
       throw new CliError(`--mode must be workers-ai or student, got ${mode}`);
@@ -180,6 +185,8 @@ async function resolveCreateOptions(flags) {
       maxPages: parsePositiveInt(flags['max-pages'] || '500', '--max-pages'),
       include: flags.include || ['**/*.{md,mdx,html,txt}'],
       exclude: flags.exclude || ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**'],
+      includeUrl: flags['include-url'] || null,
+      excludeUrl: flags['exclude-url'] || null,
     };
   } finally {
     rl?.close();
@@ -208,7 +215,13 @@ function makeConfig(options) {
     version: 1,
     name: path.basename(options.name),
     source: isUrl
-      ? { type: 'url', url: options.source, maxPages: options.maxPages }
+      ? {
+          type: 'url',
+          url: options.source,
+          maxPages: options.maxPages,
+          ...(options.includeUrl ? { includeUrl: options.includeUrl } : {}),
+          ...(options.excludeUrl ? { excludeUrl: options.excludeUrl } : {}),
+        }
       : { type: 'folder', path: path.relative(path.resolve(process.cwd(), options.name), path.resolve(process.cwd(), options.source)) || '.', include: options.include, exclude: options.exclude },
     chunking: { ...DEFAULT_CONFIG.chunking },
     embedding: student
@@ -260,6 +273,7 @@ async function compileArtifact(flags) {
     throw new CliError(`Output file already exists: ${outPath}\nNext: rerun with --force or choose --out`);
   }
   const isUrl = /^https?:\/\//i.test(flags.source);
+  assertSourceFilterFlags(flags, isUrl);
   const name = flags.name
     || (isUrl ? new URL(flags.source).hostname : path.basename(path.resolve(process.cwd(), flags.source)));
   const config = {
@@ -267,7 +281,13 @@ async function compileArtifact(flags) {
     version: 1,
     name,
     source: isUrl
-      ? { type: 'url', url: flags.source, maxPages: parsePositiveInt(flags['max-pages'] || '500', '--max-pages') }
+      ? {
+          type: 'url',
+          url: flags.source,
+          maxPages: parsePositiveInt(flags['max-pages'] || '500', '--max-pages'),
+          ...(flags['include-url'] ? { includeUrl: flags['include-url'] } : {}),
+          ...(flags['exclude-url'] ? { excludeUrl: flags['exclude-url'] } : {}),
+        }
       : {
           type: 'folder',
           path: path.resolve(process.cwd(), flags.source),
@@ -343,6 +363,18 @@ function applyRuntimeOverrides(config, projectDir, flags) {
     config.runtime = { mode: 'artifact', storage: 'bundled', ...(artifactPath ? { artifactPath } : {}) };
   } else {
     config.runtime = { ...DEFAULT_CONFIG.runtime };
+  }
+}
+// --include/--exclude are filesystem globs over a folder source;
+// --include-url/--exclude-url are '*'-wildcard URL-path patterns over a
+// crawl. Passing one family against the other source type used to be
+// silently ignored; erroring guarantees no filter ever no-ops.
+function assertSourceFilterFlags(flags, isUrl) {
+  if (isUrl && (flags.include || flags.exclude)) {
+    throw new CliError("--include/--exclude are folder globs and do not apply to a URL source; use --include-url/--exclude-url ('*'-wildcard URL path patterns, e.g. --exclude-url '*/print.html')");
+  }
+  if (!isUrl && (flags['include-url'] || flags['exclude-url'])) {
+    throw new CliError('--include-url/--exclude-url apply only to a URL source; use --include/--exclude folder globs');
   }
 }
 function parsePositiveInt(value, name) {
