@@ -1,15 +1,18 @@
 # Pancake
 
-Pancake is a portable search engine toolkit for JavaScript runtimes.
+Pancake is a search engine you host like a file.
 
-At the bottom is a small WebAssembly HNSW vector engine. On top of that are
-immutable search artifact formats that package an index, corpus records,
-query interpretation, calibration, and evaluation data into files that can be
-served from ordinary static storage.
+At the bottom there's a small WebAssembly HNSW vector engine that runs
+anywhere JavaScript does — Node, browsers, Cloudflare Workers — with no
+native dependencies. On top of it sit immutable search artifact formats:
+files that package an index, corpus records, query interpretation,
+calibration, and evaluation data, and that can be served from any storage
+that answers byte-range requests.
 
-The current project focus is the **complete search artifact**: one `.pancake`
-file that can answer natural-language queries with hydrated, confidence-scored
-results using only the file, byte-range reads, and a reader.
+Where this has been heading is the **complete search artifact**: one
+`.pancake` file that answers natural-language queries with hydrated,
+confidence-scored results, using nothing but the file, range reads, and a
+reader.
 
 ```text
 query text
@@ -19,64 +22,68 @@ query text
   -> calibrated hydrated results
 ```
 
-The original `pancake-wasm` package remains the vector engine and artifact
-runtime. It runs in Node.js, browser-bundled apps, and Cloudflare Workers with
-no native dependency in the default path.
+The `pancake-wasm` package carries both the vector engine and the artifact
+runtime.
 
-## What This Repo Contains
+## What's in This Repo
 
-Pancake has three layers:
+Three layers, bottom to top:
 
 1. **WASM vector engine**
-   - In-memory HNSW index.
-   - Float32 and row-wise affine uint8 backends.
+   - In-memory HNSW index with float32 and row-wise affine uint8 backends.
    - JavaScript API: `Pancake.create()`, `add()`, `search()`, `export()`,
      `restore()`.
-   - Source: `src/`, package entrypoints at `pancake.js`,
+   - Source in `src/`, package entrypoints at `pancake.js`,
      `pancake.node.mjs`, `pancake.web.mjs`.
 
 2. **Search artifacts**
-   - Immutable, integrity-checked files built from indexes and corpus data.
-   - Range-readable from local files, R2, S3, CDNs, or any source that can
-     serve byte ranges.
+   - Immutable, integrity-checked files built from indexes and corpus data,
+     range-readable from local files, R2, S3, CDNs — anything that serves
+     byte ranges.
    - Profiles:
      - `.pnck`: engine snapshot envelope.
      - `.pancake-range`: range-readable index/corpus profile.
-     - `.pancake-sketch`: resident sketch plus lazy rerank rows.
-     - `.pancake`: complete one-file search artifact.
+     - `.pancake-sketch`: resident sketch plus lazy rerank rows; format 2
+       (the builder's default) interleaves per-row digests with the rows,
+       so every row a query fetches is verified on that read.
+     - `.pancake`: the complete one-file search artifact.
    - Specs: [spec/SEARCH_ARTIFACT_CONTRACT.md](spec/SEARCH_ARTIFACT_CONTRACT.md),
      [spec/SKETCH_PROFILE.md](spec/SKETCH_PROFILE.md), and
      [spec/COMPLETE_PROFILE.md](spec/COMPLETE_PROFILE.md).
 
-3. **Example products and compilers**
-   - `examples/05-one-file-search/`: the current flagship path, including the
-     complete `.pancake` container and reader.
-   - `examples/04-static-wiki-pack/`: wiki-scale corpus preparation and sketch
-     artifact pipeline.
-   - `examples/03-edge-docs-search/`: Worker search app with bundled snapshot,
-     distilled query encoder, and calibrated abstention.
-   - `create-pancake-search/`: scaffolded docs-search app generator.
+3. **Products and compilers**
+   - `create-pancake-search/`: the fast path. One command ingests your docs
+     and scaffolds a deployable search app:
+     ```bash
+     npm create pancake-search -- --name my-docs-search --source ./docs --no-deploy --yes
+     ```
+   - `examples/05-one-file-search/`: the flagship path — the complete
+     `.pancake` container, its compilers, and acceptance tests.
+   - `examples/04-static-wiki-pack/`: wiki-scale corpus preparation and the
+     sketch artifact pipeline.
+   - `examples/03-edge-docs-search/`: a Worker search app with a bundled
+     snapshot, distilled query encoder, and calibrated abstention.
 
 ## Why Pancake Exists
 
 Most vector search libraries assume a server process, native binaries, or a
-database service. Pancake is aimed at a different deployment shape:
+database service. Pancake is built for a different deployment shape:
 
 - static files instead of always-on index servers;
 - byte-range reads instead of whole-index downloads;
-- browser, Worker, and Node readers;
+- readers for browsers, Workers, and Node;
 - explicit artifact identity and digest verification;
-- query interpretation and evaluation data carried with the artifact;
+- query interpretation and evaluation data carried inside the artifact;
 - compact corpus-side vector representations that keep memory and transfer
-  costs practical.
+  costs sane.
 
-The result is a search package that can be hosted like an asset, not operated
-like a database.
+The result is search you can host like an asset instead of operating like a
+database.
 
-## Current Flagship: One-File Search
+## The Flagship: One-File Search
 
-The complete profile (`.pancake`) packages the five search components into one
-content-addressed file:
+The complete profile (`.pancake`) packs the five components of a search
+application into one content-addressed file:
 
 ```text
 index       embedded .pancake-sketch artifact
@@ -87,22 +94,25 @@ evaluation  golden queries and expected behavior
 ```
 
 The reader verifies the manifest and eager segments, opens the sketch index
-against a range source, and hydrates only the records needed for the final
-results.
+against a range source, and hydrates only the records the final results
+need.
 
-The newest complete-profile path supports three query-interpretation kinds:
+Query interpretation comes in three kinds:
 
-- **kind 1: `student-inline-v1`**
-  - a small inline student encoder in JavaScript.
-- **kind 2: `external-transformers-v1`**
-  - the artifact declares and verifies an external host-supplied encoder.
-- **kind 3: `inline-transformer-v1`**
-  - the artifact carries WordPiece vocab and quantized MiniLM teacher weights
-    as verified data; the reader ships the execution kernels.
+- **kind 1: `student-inline-v1`** — a small corpus-distilled student
+  encoder, inline in JavaScript.
+- **kind 2: `external-transformers-v1`** — the artifact declares an
+  external host-supplied encoder and verifies it against embedded test
+  vectors before serving.
+- **kind 3: `inline-transformer-v1`** — the artifact carries the WordPiece
+  vocab and quantized MiniLM teacher weights as verified data; the reader
+  ships the execution kernels.
 
-Kind 3 is the first fully self-contained open-domain artifact in this repo:
-the file carries the corpus, index, tokenizer, encoder weights, calibration,
-and evaluation data. The reader supplies code; the artifact supplies data.
+Kind 3 is the interesting one: the file carries the corpus, index,
+tokenizer, encoder weights, calibration, and evaluation data — the reader
+supplies code, the artifact supplies everything else. Ask it about
+volcanoes and no service, model host, or network dependency is involved
+beyond range reads of the file itself.
 
 ```bash
 cd examples/05-one-file-search
@@ -111,7 +121,7 @@ node compile.mjs --inspect pancake-wiki-inline.pancake
 node test-inline.mjs
 ```
 
-Recent local acceptance for the inline wiki artifact:
+Where the inline wiki artifact currently stands:
 
 ```text
 456,153 records
@@ -121,28 +131,29 @@ recall@10: 82.4% over the 200-query pre-registered eval set, against brute-force
 natural-language query served with no host encoder option, ~228 ms/query end to end locally
 ```
 
-Release asset (v2 — declaration states the kernel's real `maxTokens: 128`
-and carries verification vectors; index, corpus, and evaluation bytes are
-identical to v1, which stays published for older checkouts):
+Release asset (v2 — the declaration states the kernel's real
+`maxTokens: 128` and carries verification vectors; index, corpus, and
+evaluation bytes are identical to v1, which stays published for older
+checkouts):
 `https://github.com/mcn92/pancake/releases/download/artifact-wiki-inline-v2/pancake-wiki-inline.pancake`
 
 `node test-inline.mjs` downloads that file automatically when it is missing
-locally, then verifies the manifest identity before running the acceptance
+locally, verifies the manifest identity, and then runs the acceptance
 checks.
 
 See [examples/05-one-file-search/README.md](examples/05-one-file-search/README.md)
 for the full one-file walkthrough.
 
-## Core Design Choice
+## The Design Choice Everything Hangs On
 
-The vector engine's quantized backend stores corpus vectors as row-wise affine
+The engine's quantized backend stores corpus vectors as row-wise affine
 uint8:
 
 ```text
 value ~= offset[row] + scale[row] * byte
 ```
 
-That single constraint propagates through the system:
+That one constraint propagates through the whole system:
 
 - HNSW search keeps the query as float32 and scores it against compressed
   corpus rows.
@@ -156,9 +167,9 @@ That single constraint propagates through the system:
 - Range-backed readers keep the large corpus side compressed while queries
   stay precise and transient.
 
-This is why Pancake's artifact work and engine work are connected: the same
-corpus-side representation supports in-memory search, serialized snapshots,
-resident sketches, range reads, and reranking.
+This is why the engine work and the artifact work belong in one project:
+the same corpus-side representation serves in-memory search, serialized
+snapshots, resident sketches, range reads, and reranking.
 
 ## Install
 
@@ -176,8 +187,8 @@ cd pancake
 npm install
 ```
 
-The checkout includes prebuilt WASM in `dist/`, so you do not need to rebuild
-the engine unless you edit `src/`.
+The checkout includes prebuilt WASM in `dist/`, so you don't need to
+rebuild the engine unless you edit `src/`.
 
 ## Runtime Entry Points
 
@@ -299,25 +310,19 @@ console.log(out.results[0].title);
 await search.close();
 ```
 
-For kind-2 artifacts, pass `options.encodeQuery`; the reader runs it against
-the declaration's verification vectors before serving and refuses the open
-if they disagree (`info().encoderVerified` reports the outcome). Format-2
-files (`pancake-complete-v2`, the builder's default) carry per-record
-corpus digests, so every hydrated record is verified on its own range read
-(`info().corpusIntegrity`); every artifact-derived read is bounds-checked
-and budgeted (`maxReadBytes`, `maxRecordBytes`). One documented gap: the
-index's lazy rerank rows are committed to the identity but not verified
-per read — pass `verifyIndexVectors: true` (or call `verifyVectors()`)
-to authenticate them with one full pass before trusting results from an
-untrusted transport (spec/COMPLETE_PROFILE.md section 6). For kind-3
-artifacts, no host encoder is required:
+For kind-3 artifacts, no host encoder is needed:
 
 ```js
 const search = await openPancakeFile('pancake-wiki-inline.pancake');
 const out = await search.query('how do volcanoes form', { k: 5 });
 ```
 
-The reader also accepts a range source:
+For kind-2 artifacts, pass `options.encodeQuery`; the reader runs it
+against the declaration's verification vectors before serving and refuses
+the open if they disagree (`info().encoderVerified` reports the outcome).
+
+The reader also accepts a range source, which is how a `.pancake` on R2 or
+a CDN gets queried without downloading it:
 
 ```js
 const search = await openPancakeFile({
@@ -327,6 +332,18 @@ const search = await openPancakeFile({
   },
 });
 ```
+
+On integrity: every artifact-derived read is bounds-checked and budgeted
+(`maxReadBytes`, `maxRecordBytes`). Format-2 files (`pancake-complete-v2`,
+the builder's default) verify each hydrated record against a per-record
+digest on its own range read (`info().corpusIntegrity`), and an embedded
+format-2 sketch verifies each lazily fetched index row the same way
+(`info().indexRowIntegrity`) — so a tampered transport fails the query
+instead of skewing its results. Older files with a format-1 sketch commit
+the lazy index rows to the identity but don't verify them per read; for
+those, pass `verifyIndexVectors: true` (or call `verifyVectors()`) to
+authenticate them in one full pass before trusting results from an
+untrusted transport (spec/COMPLETE_PROFILE.md section 6).
 
 ## Demos
 
@@ -344,7 +361,8 @@ node examples/05-one-file-search/test-wiki.mjs
 node examples/05-one-file-search/test-inline.mjs
 ```
 
-The one-file example has the most current project direction:
+The one-file example is the closest thing to the project's current center
+of gravity:
 
 ```bash
 cd examples/05-one-file-search
@@ -362,7 +380,7 @@ const index = await Pancake.create(options);
 index.add(vector);
 index.addBatch(vectors);
 index.search(query, k, options?);
-index.searchFiltered(query, k, bitset, options?);
+index.searchFiltered(query, k, allowedIds, options?); // allowedIds: Set of ids
 index.delete(id);
 index.compact();
 index.export();
@@ -393,9 +411,10 @@ await Pancake.loadJsonFile(path, options);
 await Pancake.fromVectors(rows, options);
 ```
 
-Artifact APIs live in `pancake-artifact.js` and the example readers. The
-complete profile is still a draft profile, so its reference implementation is
-kept under `examples/05-one-file-search/` while the format settles.
+Range and sketch artifact APIs ship at `pancake-wasm/artifact`; the
+complete-profile reader and builder ship at `pancake-wasm/complete` and
+`pancake-wasm/complete/builder`. The wiki-scale compilers and acceptance
+tests live in `examples/05-one-file-search/`.
 
 ## Building From Source
 
@@ -422,16 +441,18 @@ The build emits `dist/engine.js`, `dist/engine.wasm`, and scalar variants.
 
 ## Tests
 
-Core:
+Core (`npm test` also runs the artifact and complete-profile conformance
+suites):
 
 ```bash
 npm test
 npm run test:fuzz
 npm run test:simd
 npm run test:browser
+npm run test:scaffold
 ```
 
-Complete profile:
+Complete profile, end to end:
 
 ```bash
 node examples/05-one-file-search/test-file.mjs
@@ -439,41 +460,43 @@ node examples/05-one-file-search/test-wiki.mjs
 node examples/05-one-file-search/test-inline.mjs
 ```
 
-The inline wiki acceptance test downloads the large release artifact on demand
-when `examples/05-one-file-search/pancake-wiki-inline.pancake` is missing.
+The inline wiki acceptance test downloads the large release artifact on
+demand when `examples/05-one-file-search/pancake-wiki-inline.pancake` is
+missing.
 
 ## Performance Notes
 
-Pancake's performance story is workload-dependent, but the main knobs are:
+Performance is workload-dependent, but these are the knobs that matter:
 
 - `quantized: true` for much smaller corpus-side vector storage.
-- `efSearch` for recall/latency tradeoff.
-- sketch artifacts for depth-1 candidate selection before lazy rerank reads.
+- `efSearch` for the recall/latency tradeoff.
+- sketch artifacts for depth-1 candidate selection before lazy rerank
+  reads.
 - corpus layout and clustering for fewer remote read rounds.
-- kind-3 inline encoders when deployment should not depend on an external ML
-  runtime.
+- kind-3 inline encoders when deployment shouldn't depend on an external
+  ML runtime.
 
 The older engine-level benchmarks are still useful for HNSW behavior. The
-newer artifact-level benchmarks are more representative of the current
-project goal: search from static files and range-readable storage.
+newer artifact-level benchmarks are more representative of what the project
+is actually for: search from static files and range-readable storage.
 
 The native baselines the engine benchmarks compare against (faiss-node,
-hnswlib-node, usearch) are not dependencies of `pancake-wasm`; install them
-on demand with `cd benchmarks && npm install` before running those scripts.
-See `benchmarks/`, `benchmark_results/`, and the example READMEs for current
-numbers.
+hnswlib-node, usearch) are not dependencies of `pancake-wasm`; install
+them on demand with `cd benchmarks && npm install` before running those
+scripts. See `benchmarks/`, `benchmark_results/`, and the example READMEs
+for current numbers.
 
 ## Tradeoffs
 
 Pancake is a good fit when:
 
-- you want search to run in JavaScript runtimes without native addons;
+- you want search in JavaScript runtimes without native addons;
 - you want static-file or edge deployment;
 - you need reproducible, inspectable search artifacts;
 - your corpus can be built offline;
 - byte-range reads are cheaper than operating a dedicated search service.
 
-Pancake is not the right tool when:
+It's the wrong tool when:
 
 - you need high-rate online mutation;
 - you need a multi-tenant database server;
@@ -483,10 +506,12 @@ Pancake is not the right tool when:
 
 ## Status
 
-The npm engine is usable today. The artifact profiles are actively evolving.
-The complete `.pancake` profile is still marked draft, but it is now the
-clearest expression of the project direction: a search engine packaged as one
-verified, range-readable file.
+The engine and the artifact readers/builders are published and usable
+today (`pancake-wasm`, with `create-pancake-search` as the app scaffold).
+The complete `.pancake` profile's spec is still marked draft — Draft 2,
+under review, not frozen — but its reader and builder ship in the package,
+and it is the clearest expression of where the project is going: a search
+engine packaged as one verified, range-readable file.
 
 ## License
 
