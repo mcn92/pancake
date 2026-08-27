@@ -51,9 +51,13 @@ Usage:
 
 compile builds a complete kind-3 .pancake artifact from the source and stops:
 no project, no Worker, no Cloudflare. The file carries the corpus, index,
-inline MiniLM query encoder, and evaluation data; open it with
-pancake-wasm/complete on any runtime. compile takes --source, --out, --name,
---max-pages, --include, --exclude, and --force (overwrite the output file).
+inline MiniLM query encoder, calibrated abstention, and evaluation data; open
+it with pancake-wasm/complete on any runtime. Abstention is self-calibrated
+from the corpus at build time (skipped with a logged reason when the corpus
+cannot support a trustworthy fit); --calibration <file> supplies a prebuilt
+retrieval-signals asset instead, --skip-calibration ships the artifact
+unscored. compile also takes --source, --out, --name, --max-pages, --include,
+--exclude, and --force (overwrite the output file).
 
 Flags:
   --name <dir>          Generated project directory
@@ -91,7 +95,7 @@ function parseArgs(args) {
       continue;
     }
     const name = arg.slice(2);
-    if (name === 'deploy' || name === 'yes' || name === 'force' || name === 'skip-abstention' || name === 'help' || name === 'h') {
+    if (name === 'deploy' || name === 'yes' || name === 'force' || name === 'skip-abstention' || name === 'skip-calibration' || name === 'help' || name === 'h') {
       flags[name] = true;
       continue;
     }
@@ -248,6 +252,9 @@ async function compileArtifact(flags) {
   if (unsupported.length) {
     throw new CliError(`compile does not take --${unsupported.join(', --')}: it always builds a complete kind-3 .pancake with the inline transformer encoder`);
   }
+  if (flags.calibration && flags['skip-calibration']) {
+    throw new CliError('--calibration and --skip-calibration are mutually exclusive');
+  }
   const outPath = path.resolve(process.cwd(), flags.out || 'search.pancake');
   if (fssync.existsSync(outPath) && !flags.force) {
     throw new CliError(`Output file already exists: ${outPath}\nNext: rerun with --force or choose --out`);
@@ -281,11 +288,16 @@ async function compileArtifact(flags) {
       profile: 'kind3',
       storage: 'bundled',
       fileName: path.basename(outPath),
+      // Self-calibrated abstention by default; --calibration supplies a
+      // prebuilt retrieval-signals asset instead, --skip-calibration ships
+      // the unscored placeholder.
+      ...(flags['skip-calibration'] || flags.calibration ? {} : { calibration: 'auto' }),
       inlineEncoder: {
         vocabPath: path.join(INLINE_ENCODER_DIR, 'vocab.txt'),
         weightsPath: path.join(INLINE_ENCODER_DIR, 'encoder-weights.bin'),
         model: 'sentence-transformers/all-MiniLM-L6-v2',
         maxTokens: 128,
+        ...(flags.calibration ? { calibrationPath: path.resolve(process.cwd(), flags.calibration) } : {}),
       },
     },
     validation: { ...DEFAULT_CONFIG.validation },

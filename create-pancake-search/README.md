@@ -60,6 +60,20 @@ overwrite the output file. The scaffold-only flags (`--mode`, `--runtime`,
 `--artifact`, deploy and student options) are rejected: compile always
 builds the complete kind-3 profile.
 
+Abstention is calibrated from the corpus at build time, so queries the
+artifact cannot answer return `matchQuality: "none"` with no results
+instead of confidently wrong ones. The calibrator generates answerable
+queries from chunk titles and content words (each verified by retrieval
+before it counts), scores them against a built-in bank of off-domain
+queries and out-of-vocabulary gibberish, and fits the same
+retrieval-signals model the wiki pack ships — the asset records its
+method, query counts, and AUC for inspection. When the corpus cannot
+support a trustworthy fit (too few verified positives, or the fit fails
+its AUC gate) the build logs why and ships unscored rather than
+miscalibrated. `--calibration <file>` embeds a prebuilt
+retrieval-signals-v1 asset instead; `--skip-calibration` ships unscored
+deliberately.
+
 ## Where this sits
 
 This package is the **product layer** of the Pancake stack. It consumes the

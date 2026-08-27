@@ -6,6 +6,7 @@ import fssync from 'node:fs';
 import path from 'node:path';
 import { sha256, loadCompleteModules, CliError, loadArtifactContract } from './common.mjs';
 import { publicChunk } from './ingest.mjs';
+import { calibrateRetrievalAbstention } from './calibrate.mjs';
 
 async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, chunks, snapshot, vectors, log = () => {} }) {
   const artifactContract = await loadArtifactContract();
@@ -20,32 +21,50 @@ async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, c
   const declaration = inlineEncoderDeclaration(config, encoder);
   const vocabText = await fs.readFile(vocabPath, 'utf8');
   const weightBytes = await fs.readFile(weightsPath);
-  if (!Array.isArray(declaration.testVectors) || declaration.testVectors.length === 0) {
-    // Contract section 4.4 mode 1: an inline encoder carries verification
-    // vectors, so any reader can prove its kernel reproduces this build's
-    // encoder before serving. One probe exceeds the kernel window to pin
-    // the windowed mean-pool path.
-    const embedder = await createInlineTransformerEmbedder({
-      declaration,
-      vocabText,
-      blob: weightBytes,
-      createEncoder: await loadInlineEncoderKernel(),
-    });
-    try {
-      declaration.testVectors = await buildInlineTestVectors(embedder);
-    } finally {
-      embedder.dispose();
+  // One embedder serves both the declaration's verification vectors and
+  // abstention calibration; created on first need, disposed after both.
+  let embedder = null;
+  const getEmbedder = async () => {
+    if (!embedder) {
+      embedder = await createInlineTransformerEmbedder({
+        declaration,
+        vocabText,
+        blob: weightBytes,
+        createEncoder: await loadInlineEncoderKernel(),
+      });
     }
-    log(`Embedded ${declaration.testVectors.length} encoder verification vectors in the declaration`);
+    return embedder;
+  };
+  let calibrationBytes = null;
+  try {
+    if (!Array.isArray(declaration.testVectors) || declaration.testVectors.length === 0) {
+      // Contract section 4.4 mode 1: an inline encoder carries verification
+      // vectors, so any reader can prove its kernel reproduces this build's
+      // encoder before serving. One probe exceeds the kernel window to pin
+      // the windowed mean-pool path.
+      declaration.testVectors = await buildInlineTestVectors(await getEmbedder());
+      log(`Embedded ${declaration.testVectors.length} encoder verification vectors in the declaration`);
+    }
+    if (encoder.calibrationPath) {
+      calibrationBytes = await fs.readFile(path.resolve(projectDir, encoder.calibrationPath));
+    } else if (runtime.calibration === 'auto') {
+      const embedQuery = async (text) => (await (await getEmbedder()).embed(`${declaration.prefixPolicy?.query || ''}${text}`)).vector;
+      const calibrated = await calibrateRetrievalAbstention({ Pancake, chunks, vectors, config, embedQuery, log });
+      if (calibrated) {
+        calibrationBytes = Buffer.from(JSON.stringify(calibrated.calibrationJson), 'utf8');
+        const { verifiedPositiveQueries, foreignNegativeQueries, syntheticGibberishQueries, weakQueries, auc } = calibrated.summary;
+        log(`Calibrated abstention: ${verifiedPositiveQueries} answerable / ${foreignNegativeQueries} off-domain / ${syntheticGibberishQueries} gibberish / ${weakQueries} weak queries, AUC ${auc}`);
+      }
+    }
+  } finally {
+    embedder?.dispose();
   }
   const inlineEncoderBytes = buildInlineTransformerEncoderSegment({
     declaration,
     vocabBytes: Buffer.from(vocabText, 'utf8'),
     weightBytes,
   });
-  const calibrationBytes = encoder.calibrationPath
-    ? await fs.readFile(path.resolve(projectDir, encoder.calibrationPath))
-    : Buffer.from(JSON.stringify({ kind: 'retrieval-signals-v1', asset: null, vocabBloomBase64: '' }), 'utf8');
+  calibrationBytes ??= Buffer.from(JSON.stringify({ kind: 'retrieval-signals-v1', asset: null, vocabBloomBase64: '' }), 'utf8');
   const provisionalSketch = artifactContract.buildSketchArtifactBytes(snapshot, {
     sketchDims: runtime.sketchDims,
     sketchBits: runtime.sketchBits,

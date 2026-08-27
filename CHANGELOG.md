@@ -27,6 +27,22 @@ first.
   Takes `--name`, `--max-pages`, `--include`/`--exclude`, `--force`.
   Exercised by the scaffold e2e (compile → open → query, plus the
   `--runtime complete` rejection).
+- **compile self-calibrates abstention** (`src/calibrate.mjs`), so compiled
+  artifacts answer `matchQuality` strong/weak/none out of the box instead
+  of "unscored". Positives are templated title questions plus content-word
+  queries, each verified by retrieval before it counts; negatives are a
+  built-in off-domain bank (overlap-dropped against the positive median
+  d0) and bloom-checked gibberish; the fit is the wiki calibrator's
+  logistic model over (d0, margin, mean10, known_frac) with its threshold
+  placement, except that with no weak band the hard threshold hugs the
+  negative ceiling — a false abstain hides results, a false weak shows
+  them with a caveat. Skips with a logged reason (and ships unscored)
+  when positives or negatives run short or the fit misses its 0.85 AUC
+  gate; the embedded asset records method, query counts, and AUC. New
+  flags: `--calibration <file>` embeds a prebuilt retrieval-signals-v1
+  asset, `--skip-calibration` opts out. The Docusaurus plugin default is
+  unchanged (auto-calibration is opt-in via `runtime.calibration: 'auto'`
+  outside compile).
 
 ## pancake-wasm 0.5.0 / create-pancake-search 0.5.0 — 2026-08-26
 

@@ -131,6 +131,13 @@ console.log('\n--- compile ---');
     const out = await search.query('how does bread rise without yeast', { k: 2 });
     ok(out.results[0]?.sourcePath?.includes('sourdough') || out.results[0]?.title?.includes('sourdough'),
       'compiled artifact answers a natural-language query with no host encoder', JSON.stringify(out.results[0] || {}).slice(0, 200));
+    ok(out.matchQuality === 'strong', 'on-topic query scores strong via the self-calibrated abstention model', `got ${out.matchQuality} conf ${out.confidence}`);
+    const offDomain = await search.query('medicare part d formulary exception', { k: 2 });
+    ok(offDomain.matchQuality === 'none' && offDomain.results.length === 0,
+      'off-domain query abstains with no results', `got ${offDomain.matchQuality} with ${offDomain.results.length} results`);
+    const gibberish = await search.query('xqzvw plorth grimbleflax snorp', { k: 2 });
+    ok(gibberish.matchQuality === 'none' && gibberish.results.length === 0,
+      'gibberish query abstains with no results', `got ${gibberish.matchQuality} with ${gibberish.results.length} results`);
   } finally {
     await search.close();
   }
