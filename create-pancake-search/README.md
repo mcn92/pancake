@@ -53,7 +53,9 @@ const out = await search.query('how do I configure auth', { k: 5 });
 
 Passage embedding runs locally through the same inline encoder the artifact
 carries (the ~24 MiB weight blob is fetched once, digest-pinned, when the
-package copy is absent — registry installs ship without it). `compile`
+package copy is absent — registry installs ship without it), on a worker
+pool sized to your cores — roughly 3 minutes for a ~570-chunk docs site on
+8 cores (`PANCAKE_SEARCH_EMBED_WORKERS` overrides the pool size). `compile`
 accepts `--source` (folder or URL), `--out`, `--name` (corpus name recorded
 in the artifact), `--max-pages`, `--include`/`--exclude`, and `--force` to
 overwrite the output file. The scaffold-only flags (`--mode`, `--runtime`,

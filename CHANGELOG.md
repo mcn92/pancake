@@ -46,6 +46,13 @@ first.
   asset, `--skip-calibration` opts out. The Docusaurus plugin default is
   unchanged (auto-calibration is opt-in via `runtime.calibration: 'auto'`
   outside compile).
+- **Inline-transformer passage embedding runs on a worker pool** past 32
+  chunks (one WASM kernel + weight blob per worker, chunks dealt by index
+  so builds stay deterministic — pool and sequential builds return
+  bit-identical distances). 571 chunks: 13 min → 3 min on 8 cores.
+  `PANCAKE_SEARCH_EMBED_WORKERS` overrides the worker count (0/1 forces
+  sequential); environments without worker support fall back to the
+  sequential path with a logged reason.
 
 ## pancake-wasm 0.5.0 / create-pancake-search 0.5.0 — 2026-08-26
 

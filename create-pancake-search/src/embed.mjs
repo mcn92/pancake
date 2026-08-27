@@ -3,6 +3,7 @@
 
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { sha256, loadCompleteModules, STUDENT_TRAINER, MODEL_MAP, CliError } from './common.mjs';
@@ -101,14 +102,100 @@ async function trainStudentVectors(chunks, embeddingConfig, log, projectDir) {
   return vectors;
 }
 
+// Passage embedding is CPU-bound single-threaded WASM (~1.4 s per 256-token
+// chunk), so corpora past a few dozen chunks embed on a worker pool — one
+// kernel + weight blob per worker, chunks dealt by index so output order (and
+// the artifact) is byte-identical to the sequential path. Workers only win
+// once the corpus outweighs their ~1 s startup each; below the threshold, or
+// when threads are unavailable (e.g. jiti's CJS transform breaking
+// import.meta.url under the Docusaurus plugin), embedding falls back to the
+// sequential path below.
+function inlineEmbedWorkerCount(chunkCount) {
+  const env = process.env.PANCAKE_SEARCH_EMBED_WORKERS;
+  if (env !== undefined) {
+    const parsed = parseInt(env, 10);
+    if (!Number.isInteger(parsed) || parsed < 0) throw new CliError('PANCAKE_SEARCH_EMBED_WORKERS must be a non-negative integer');
+    return Math.max(1, Math.min(parsed, chunkCount));
+  }
+  if (chunkCount < 32) return 1;
+  const cores = typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length;
+  return Math.max(1, Math.min(cores - 1, 8, chunkCount));
+}
+
+async function embedWithInlineWorkerPool(chunks, declaration, { vocabPath, weightsPath }, workerCount, log) {
+  const { Worker } = await import('node:worker_threads');
+  const workerUrl = new URL('./embed-worker.mjs', import.meta.url);
+  const prefix = declaration.prefixPolicy?.passage || '';
+  const vectors = new Array(chunks.length);
+  let windowed = 0;
+  let completed = 0;
+  let next = 0;
+  let maxSeq = null;
+  log(`Embedding ${chunks.length} chunks with ${workerCount} inline-transformer workers`);
+  const workers = [];
+  try {
+    await Promise.all(Array.from({ length: workerCount }, () => new Promise((resolve, reject) => {
+      const worker = new Worker(workerUrl, { workerData: { declaration, vocabPath, weightsPath } });
+      workers.push(worker);
+      const fail = (error) => reject(error instanceof Error ? error : new Error(String(error)));
+      worker.on('error', fail);
+      worker.on('exit', (code) => {
+        if (code !== 0 && completed < chunks.length) fail(new Error(`embed worker exited with code ${code}`));
+      });
+      const dispatch = () => {
+        if (next >= chunks.length) {
+          worker.postMessage({ done: true });
+          resolve();
+          return;
+        }
+        const idx = next++;
+        worker.postMessage({ idx, text: `${prefix}${chunks[idx].text}` });
+      };
+      worker.on('message', (msg) => {
+        if (msg.ready) {
+          maxSeq = msg.maxSeq;
+          dispatch();
+          return;
+        }
+        if (msg.error) {
+          fail(new Error(msg.error));
+          return;
+        }
+        vectors[msg.idx] = msg.vector;
+        if (msg.windows > 1) windowed++;
+        completed++;
+        if (completed % 16 === 0 || completed === chunks.length) {
+          log(`Embedded ${completed}/${chunks.length} chunks with inline transformer`);
+        }
+        dispatch();
+      });
+    })));
+  } finally {
+    await Promise.all(workers.map((worker) => worker.terminate().catch(() => {})));
+  }
+  if (vectors.some((v) => !v)) throw new Error('embed worker pool returned incomplete results');
+  if (windowed > 0) {
+    log(`${windowed}/${chunks.length} chunks exceeded the ${maxSeq}-token encoder window and were mean-pooled across windows`);
+  }
+  return vectors;
+}
+
 async function embedChunksWithInlineTransformer(chunks, config, log, projectDir) {
   const { encoder, vocabPath, weightsPath } = await resolveInlineEncoderInputs(config, projectDir);
+  const declaration = inlineEncoderDeclaration(config, encoder);
+  const workerCount = inlineEmbedWorkerCount(chunks.length);
+  if (workerCount > 1) {
+    try {
+      return await embedWithInlineWorkerPool(chunks, declaration, { vocabPath, weightsPath }, workerCount, log);
+    } catch (error) {
+      log(`Inline-transformer worker pool unavailable (${error.message}); embedding on the main thread`);
+    }
+  }
   const { builder, reader } = await loadCompleteModules();
   // loadInlineEncoderKernel uses the web glue with an explicit wasmBinary,
   // not encoder.node.mjs: when the Docusaurus plugin runs this module it is
   // loaded through jiti's CJS transform, which breaks the node glue's
   // createRequire bootstrap ("require is not a function").
-  const declaration = inlineEncoderDeclaration(config, encoder);
   const embedder = await reader.createInlineTransformerEmbedder({
     declaration,
     vocabText: await fs.readFile(vocabPath, 'utf8'),
