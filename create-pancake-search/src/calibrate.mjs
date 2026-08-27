@@ -339,38 +339,38 @@ export async function calibrateRetrievalAbstention({ Pancake, chunks, vectors, c
       return skip(`fit separates answerable from off-domain at AUC ${auc === null ? 'n/a' : auc.toFixed(3)} (< ${MIN_AUC})`);
     }
 
-    // Threshold placement, as in the wiki calibrator: hard between the
-    // negative ceiling and the answerable/weak floor, weak between the weak
-    // ceiling and the answerable floor when a weak band exists.
+    // Threshold placement diverges from the wiki calibrator, which places
+    // hard between the raw negative ceiling and the raw answerable/weak
+    // floor. Both extremes are fragile here: the queries are auto-generated,
+    // so a single junk positive that happens to verify (or a weak row that
+    // retrieves with near-zero probability) drags a raw min/max to an
+    // extreme, and the logistic saturates on clean separation so geometric
+    // means of near-zero values collapse the thresholds. Percentiles make
+    // placement robust to the tails: 5% of generated positives may fall
+    // below hard and 5% of negatives above it, which measured far better
+    // than protecting every outlier. Between the two bounds, hard sits a
+    // quarter of the way up — the costs are asymmetric (a false abstain
+    // hides results, a false weak shows them with a caveat), so the weak
+    // verdict owns most of the uncertain band.
+    const quantile = (values, q) => {
+      const sorted = [...values].sort((a, b) => a - b);
+      return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
+    };
     const pos = positives.map((r) => r.p);
     const neg = negatives.map((r) => r.p);
-    const minPos = Math.min(...pos);
-    const maxNeg = Math.max(...neg);
-    // A weak row scoring near the negative ceiling is indistinguishable from
-    // a negative — protecting it would drag the hard threshold toward zero
-    // and give off-domain queries a weak verdict instead of abstaining
-    // (observed on a docs corpus whose auto-generated weak queries retrieve
-    // with near-zero probability: the floor collapsed and gibberish scored
-    // "weak"). The fit saturates when separation is clean, so "near" needs
-    // an absolute floor as well as the relative one: a weak row the model
-    // scores below 5% answerable is unanswerable in all but name.
+    const posFloor = quantile(pos, 0.05);
+    const negCeil = quantile(neg, 0.95);
+    // Weak rows scoring under 5% answerable are negatives in all but name;
+    // they must not shape the weak threshold.
     const allWeakP = rows.filter((r) => r.label === -1).map((r) => r.p);
-    const weakP = allWeakP.filter((p) => p > Math.max(maxNeg, 0.05));
-    const minWeak = weakP.length ? Math.min(...weakP) : minPos;
-    const maxWeak = weakP.length ? Math.max(...weakP) : 0;
-    const floor = Math.min(minPos, minWeak);
-    const hardOverlap = maxNeg >= floor;
-    // With a weak band the floor sits low and the wiki calibrator's geometric
-    // mean places hard well; without one (small corpora) the floor is the
-    // weakest *verified* positive — still an easy query once the logistic
-    // saturates — and the geometric mean abstains on honest paraphrases that
-    // score between the negatives and it. The costs are asymmetric: a false
-    // abstain hides results, a false weak shows them with a caveat. So hard
-    // hugs the negative ceiling and the weak verdict owns the uncertain band.
-    const hard = hardOverlap ? floor * 0.5
-      : weakP.length ? Math.sqrt(maxNeg * floor)
-        : maxNeg + 0.1 * (floor - maxNeg);
-    const weak = weakP.length && maxWeak > 0 && maxWeak < minPos ? Math.sqrt(maxWeak * minPos) : minPos * 0.9;
+    const weakP = allWeakP.filter((p) => p > Math.max(negCeil, 0.05));
+    const hardOverlap = negCeil >= posFloor;
+    const hard = hardOverlap ? posFloor * 0.5 : negCeil + 0.25 * (posFloor - negCeil);
+    const weakCeil = weakP.length ? quantile(weakP, 0.9) : 0;
+    const weak = Math.max(
+      weakCeil > hard && weakCeil < posFloor ? Math.sqrt(weakCeil * posFloor) : posFloor * 0.9,
+      hard,
+    );
 
     const summary = {
       method: 'self-templates-v1',

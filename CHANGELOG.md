@@ -33,10 +33,13 @@ first.
   queries, each verified by retrieval before it counts; negatives are a
   built-in off-domain bank (overlap-dropped against the positive median
   d0) and bloom-checked gibberish; the fit is the wiki calibrator's
-  logistic model over (d0, margin, mean10, known_frac) with its threshold
-  placement, except that with no weak band the hard threshold hugs the
-  negative ceiling — a false abstain hides results, a false weak shows
-  them with a caveat. Skips with a logged reason (and ships unscored)
+  logistic model over (d0, margin, mean10, known_frac). Thresholds are
+  placed on percentiles (5th of positives, 95th of negatives) rather than
+  the wiki calibrator's raw extremes — auto-generated queries put junk in
+  both tails and the saturated fit collapses geometric means of them —
+  with hard a quarter of the way up the gap: a false abstain hides
+  results, a false weak shows them with a caveat, so the weak verdict
+  owns the uncertain band. Skips with a logged reason (and ships unscored)
   when positives or negatives run short or the fit misses its 0.85 AUC
   gate; the embedded asset records method, query counts, and AUC. New
   flags: `--calibration <file>` embeds a prebuilt retrieval-signals-v1
