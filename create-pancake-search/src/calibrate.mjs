@@ -307,36 +307,57 @@ export async function calibrateRetrievalAbstention({ Pancake, chunks, vectors, c
     // the same optimizer, weighting, and regularization as the wiki
     // calibrator so the two assets stay comparable.
     const fit = rows.filter((r) => r.label >= 0);
-    const fitWeights = fit.map((r) => (r.negativeKind === 'synthetic-gibberish' ? 0.25 : 1));
-    const weightSum = fitWeights.reduce((a, c) => a + c, 0);
-    const mean = {}, std = {};
-    for (const f of FEATS) {
-      mean[f] = fit.reduce((sum, r, i) => sum + r[f] * fitWeights[i], 0) / weightSum;
-      std[f] = Math.sqrt(fit.reduce((sum, r, i) => sum + ((r[f] - mean[f]) ** 2) * fitWeights[i], 0) / weightSum) || 1;
-    }
-    const xs = fit.map((r) => FEATS.map((f) => (r[f] - mean[f]) / std[f]));
-    const ys = fit.map((r) => r.label);
-    let w = FEATS.map(() => 0);
-    let b = 0;
-    for (let epoch = 0; epoch < 4000; epoch++) {
-      const gw = FEATS.map(() => 0);
-      let gb = 0;
-      for (let i = 0; i < xs.length; i++) {
-        const z = xs[i].reduce((s, v, j) => s + v * w[j], b);
-        const p = 1 / (1 + Math.exp(-z));
-        const err = (p - ys[i]) * fitWeights[i];
-        xs[i].forEach((v, j) => { gw[j] += err * v; });
-        gb += err;
+    const scorerFor = (fitRows) => {
+      const weights = fitRows.map((r) => (r.negativeKind === 'synthetic-gibberish' ? 0.25 : 1));
+      const weightSum = weights.reduce((a, c) => a + c, 0);
+      const mean = {}, std = {};
+      for (const f of FEATS) {
+        mean[f] = fitRows.reduce((sum, r, i) => sum + r[f] * weights[i], 0) / weightSum;
+        std[f] = Math.sqrt(fitRows.reduce((sum, r, i) => sum + ((r[f] - mean[f]) ** 2) * weights[i], 0) / weightSum) || 1;
       }
-      w = w.map((wj, j) => wj - 0.1 * (gw[j] / weightSum + 1e-3 * wj));
-      b -= 0.1 * (gb / weightSum);
-    }
-    const prob = (r) => 1 / (1 + Math.exp(-(FEATS.reduce((s, f, j) => s + ((r[f] - mean[f]) / std[f]) * w[j], b))));
-    for (const r of rows) r.p = prob(r);
+      const xs = fitRows.map((r) => FEATS.map((f) => (r[f] - mean[f]) / std[f]));
+      const ys = fitRows.map((r) => r.label);
+      let w = FEATS.map(() => 0);
+      let b = 0;
+      for (let epoch = 0; epoch < 4000; epoch++) {
+        const gw = FEATS.map(() => 0);
+        let gb = 0;
+        for (let i = 0; i < xs.length; i++) {
+          const z = xs[i].reduce((s, v, j) => s + v * w[j], b);
+          const p = 1 / (1 + Math.exp(-z));
+          const err = (p - ys[i]) * weights[i];
+          xs[i].forEach((v, j) => { gw[j] += err * v; });
+          gb += err;
+        }
+        w = w.map((wj, j) => wj - 0.1 * (gw[j] / weightSum + 1e-3 * wj));
+        b -= 0.1 * (gb / weightSum);
+      }
+      return { mean, std, w, b, prob: (r) => 1 / (1 + Math.exp(-(FEATS.reduce((s, f, j) => s + ((r[f] - mean[f]) / std[f]) * w[j], b)))) };
+    };
+    const model = scorerFor(fit);
+    const { mean, std, w, b } = model;
+    for (const r of rows) r.p = model.prob(r);
 
-    const auc = aucFor(rows.filter((r) => r.label === 1), negatives);
-    if (auc === null || auc < MIN_AUC) {
-      return skip(`fit separates answerable from off-domain at AUC ${auc === null ? 'n/a' : auc.toFixed(3)} (< ${MIN_AUC})`);
+    // The fit AUC is computed on the same rows the regression was fit on —
+    // in-sample, and reported as such. The gate uses a deterministic 5-fold
+    // cross-validation instead: refit on 4/5 of the rows, score the held-out
+    // fold, pool the held-out probabilities into one AUC. The embeds and
+    // searches are already done, so the extra fits cost milliseconds.
+    const fitAuc = aucFor(rows.filter((r) => r.label === 1), negatives);
+    const shuffled = sample(fit, fit.length, SEED ^ 0xcf01d);
+    const FOLDS = 5;
+    const heldout = [];
+    for (let fold = 0; fold < FOLDS; fold++) {
+      const test = shuffled.filter((_, i) => i % FOLDS === fold);
+      const train = shuffled.filter((_, i) => i % FOLDS !== fold);
+      if (!train.some((r) => r.label === 1) || !train.some((r) => r.label === 0)) continue;
+      const foldModel = scorerFor(train);
+      for (const r of test) heldout.push({ label: r.label, p: foldModel.prob(r) });
+    }
+    const cvAuc = aucFor(heldout.filter((r) => r.label === 1), heldout.filter((r) => r.label === 0));
+    const gateAuc = cvAuc ?? fitAuc;
+    if (gateAuc === null || gateAuc < MIN_AUC) {
+      return skip(`${cvAuc === null ? 'fit' : 'cross-validated'} AUC ${gateAuc === null ? 'n/a' : gateAuc.toFixed(3)} < ${MIN_AUC} separating answerable from off-domain`);
     }
 
     // Threshold placement diverges from the wiki calibrator, which places
@@ -385,7 +406,11 @@ export async function calibrateRetrievalAbstention({ Pancake, chunks, vectors, c
       syntheticGibberishFitWeight: 0.25,
       weakQueries: weakP.length,
       weakDroppedAsIndistinguishableFromNegatives: allWeakP.length - weakP.length,
-      auc: +auc.toFixed(6),
+      // fitAuc is in-sample (scored on the rows the regression was fit on);
+      // cvAuc is the pooled held-out AUC from the deterministic 5-fold
+      // cross-validation and is what the acceptance gate uses.
+      fitAuc: fitAuc === null ? null : +fitAuc.toFixed(6),
+      cvAuc: cvAuc === null ? null : +cvAuc.toFixed(6),
       hardThresholdOverlap: hardOverlap,
       vocab: { uniqueWords, keptWords, minCount },
     };

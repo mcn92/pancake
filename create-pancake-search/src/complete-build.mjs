@@ -52,8 +52,9 @@ async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, c
       const calibrated = await calibrateRetrievalAbstention({ Pancake, chunks, vectors, config, embedQuery, log });
       if (calibrated) {
         calibrationBytes = Buffer.from(JSON.stringify(calibrated.calibrationJson), 'utf8');
-        const { verifiedPositiveQueries, foreignNegativeQueries, syntheticGibberishQueries, weakQueries, auc } = calibrated.summary;
-        log(`Calibrated abstention: ${verifiedPositiveQueries} answerable / ${foreignNegativeQueries} off-domain / ${syntheticGibberishQueries} gibberish / ${weakQueries} weak queries, AUC ${auc}`);
+        const { verifiedPositiveQueries, foreignNegativeQueries, syntheticGibberishQueries, weakQueries, fitAuc, cvAuc } = calibrated.summary;
+        log(`Calibrated abstention: ${verifiedPositiveQueries} answerable / ${foreignNegativeQueries} off-domain / ${syntheticGibberishQueries} gibberish / ${weakQueries} weak queries, `
+          + `5-fold CV AUC ${cvAuc ?? 'n/a'} (fit AUC ${fitAuc}, in-sample)`);
       }
     }
   } finally {
