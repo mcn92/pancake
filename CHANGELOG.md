@@ -15,6 +15,14 @@ first.
   Worker templates only serve snapshot and artifact runtimes; `complete`
   passed validation but was dropped by the config builder). The error
   points at the new command below.
+- **`--include`/`--exclude` against a URL source now error** instead of
+  being silently ignored (they never applied to crawls). URL sources get
+  their own filters: `--include-url`/`--exclude-url`, matched against the
+  URL path with `*` as the only wildcard, and aggregate pages such as
+  mdBook's `print.html` are excluded from crawls by default (they
+  duplicate a whole site's content past exact-text chunk dedupe).
+  `--include-url`/`--exclude-url` against a folder source error
+  symmetrically.
 
 ### Added
 
@@ -40,8 +48,11 @@ first.
   with hard a quarter of the way up the gap: a false abstain hides
   results, a false weak shows them with a caveat, so the weak verdict
   owns the uncertain band. Skips with a logged reason (and ships unscored)
-  when positives or negatives run short or the fit misses its 0.85 AUC
-  gate; the embedded asset records method, query counts, and AUC. New
+  when positives or negatives run short or the cross-validated AUC misses
+  the 0.85 gate — the gate uses a deterministic 5-fold cross-validation
+  over the generated queries, since the fit AUC is in-sample; the embedded
+  asset records method, query counts, and both numbers (`fitAuc`,
+  `cvAuc`). New
   flags: `--calibration <file>` embeds a prebuilt retrieval-signals-v1
   asset, `--skip-calibration` opts out. The Docusaurus plugin default is
   unchanged (auto-calibration is opt-in via `runtime.calibration: 'auto'`

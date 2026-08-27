@@ -11,7 +11,14 @@ This guide focuses on the current supported flows:
 - Snapshot export / restore in Node.js
 - Running the reference Cloudflare Worker example from a repository checkout
 
-Pancake is an ANN library. It does not embed raw documents for you, and it is not a hosted search service. Bring your own embedding model or embedding pipeline, then feed the resulting vectors into Pancake.
+This guide covers the engine layer, where you bring your own embedding model
+or pipeline and feed the resulting vectors into Pancake. If you want to go
+straight from documents to working search — embedding included — use the
+compile command instead (`npx create-pancake-search compile --source ./docs
+--out search.pancake`, documented in
+[create-pancake-search/README.md](create-pancake-search/README.md)); it emits
+one `.pancake` file answering natural-language queries via
+`pancake-wasm/complete`. Pancake is not a hosted search service either way.
 
 ## Install
 

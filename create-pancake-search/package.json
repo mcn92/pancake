@@ -1,7 +1,7 @@
 {
   "name": "create-pancake-search",
   "version": "0.5.0",
-  "description": "Scaffold a Pancake-backed Cloudflare Worker search app.",
+  "description": "Compile docs into a complete .pancake search artifact, or scaffold a Pancake-backed search app.",
   "type": "module",
   "bin": {
     "create-pancake-search": "./bin/create-pancake-search.mjs"

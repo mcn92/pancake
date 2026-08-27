@@ -1,12 +1,35 @@
 # create-pancake-search
 
-Scaffold the product version of the Pancake demo path: ingest docs, build the
-search assets offline, ship them with a Worker/UI shell, and serve retrieval at
-the edge. The lower-level `/examples` directory shows the same lifecycle piece
-by piece; this package is the fast path when you want the story to become a
-deployable app.
+Turn a documentation site into search: either one complete `.pancake` file
+you can query from any JavaScript runtime, or a deployable Worker + UI app.
 
-The 15-second version:
+The 15-second version — compile a folder or a live site into one file:
+
+```bash
+npx create-pancake-search compile --source ./docs --out search.pancake
+# or point it at a site:
+npx create-pancake-search compile --source https://docs.helix-editor.com --out search.pancake
+```
+
+```js
+import { openPancakeFile } from 'pancake-wasm/complete';
+const search = await openPancakeFile('search.pancake');
+const out = await search.query('how do I remap keys', { k: 5 });
+// out.results, out.matchQuality ('strong' | 'weak' | 'none'), out.confidence
+```
+
+The file carries the corpus records, sketch index, inline MiniLM query
+encoder, calibrated abstention, and evaluation data — no service, no model
+host, no Cloudflare. Off-domain queries return `matchQuality: "none"` with
+zero results instead of confidently wrong ones. See
+[Compiling a complete `.pancake` artifact](#compiling-a-complete-pancake-artifact)
+for the details.
+
+## Scaffolding a search app
+
+When you want a deployed app instead of a file, the scaffold path ingests
+your docs, builds the search assets offline, and ships them with a
+Worker/UI shell serving retrieval at the edge:
 
 ```bash
 npm create pancake-search -- --name my-docs-search --source ./docs --no-deploy --yes
@@ -55,12 +78,19 @@ Passage embedding runs locally through the same inline encoder the artifact
 carries (the ~24 MiB weight blob is fetched once, digest-pinned, when the
 package copy is absent — registry installs ship without it), on a worker
 pool sized to your cores — roughly 3 minutes for a ~570-chunk docs site on
-8 cores (`PANCAKE_SEARCH_EMBED_WORKERS` overrides the pool size). `compile`
-accepts `--source` (folder or URL), `--out`, `--name` (corpus name recorded
-in the artifact), `--max-pages`, `--include`/`--exclude`, and `--force` to
-overwrite the output file. The scaffold-only flags (`--mode`, `--runtime`,
-`--artifact`, deploy and student options) are rejected: compile always
-builds the complete kind-3 profile.
+8 cores. Each worker holds its own kernel and weight copy, so the pool
+trades a few hundred MB of build-time memory for the near-linear speedup;
+`PANCAKE_SEARCH_EMBED_WORKERS` overrides the pool size (0 forces
+sequential). `compile` accepts `--source` (folder or URL), `--out`,
+`--name` (corpus name recorded in the artifact), and `--force` to
+overwrite the output file. Folder sources take `--include`/`--exclude`
+filesystem globs; URL sources take `--max-pages` and
+`--include-url`/`--exclude-url` (URL-path patterns with `*` as the
+wildcard — mixing the two families is an error, not a silent no-op), and
+aggregate pages like mdBook's `print.html` are excluded by default so a
+book's content is not crawled twice. The scaffold-only flags (`--mode`,
+`--runtime`, `--artifact`, deploy and student options) are rejected:
+compile always builds the complete kind-3 profile.
 
 Abstention is calibrated from the corpus at build time, so queries the
 artifact cannot answer return `matchQuality: "none"` with no results
@@ -69,10 +99,13 @@ queries from chunk titles and content words (each verified by retrieval
 before it counts), scores them against a built-in bank of off-domain
 queries and out-of-vocabulary gibberish, and fits the same
 retrieval-signals model the wiki pack ships — the asset records its
-method, query counts, and AUC for inspection. When the corpus cannot
-support a trustworthy fit (too few verified positives, or the fit fails
-its AUC gate) the build logs why and ships unscored rather than
-miscalibrated. `--calibration <file>` embeds a prebuilt
+method, query counts, in-sample fit AUC, and the cross-validated AUC for
+inspection. The acceptance gate uses the cross-validated number (a
+deterministic 5-fold split over the generated queries), since the fit AUC
+is measured on the rows the regression was fit on. When the corpus cannot
+support a trustworthy fit (too few verified positives, or the
+cross-validated AUC lands under 0.85) the build logs why and ships
+unscored rather than miscalibrated. `--calibration <file>` embeds a prebuilt
 retrieval-signals-v1 asset instead; `--skip-calibration` ships unscored
 deliberately.
 

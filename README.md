@@ -52,8 +52,12 @@ Three layers, bottom to top:
      [spec/COMPLETE_PROFILE.md](spec/COMPLETE_PROFILE.md).
 
 3. **Products and compilers**
-   - `create-pancake-search/`: the fast path. One command ingests your docs
-     and scaffolds a deployable search app:
+   - `create-pancake-search/`: the fast path. One command compiles a docs
+     folder or a live site into a complete `.pancake` file:
+     ```bash
+     npx create-pancake-search compile --source ./docs --out search.pancake
+     ```
+     or scaffolds a deployable search app:
      ```bash
      npm create pancake-search -- --name my-docs-search --source ./docs --no-deploy --yes
      ```
@@ -295,7 +299,8 @@ const restored = await Pancake.loadSnapshotFile('index.pnck', {
 ## Complete Artifact Quick Start
 
 Use the complete reader when you want a file that is itself the search
-application data plane.
+application data plane. To build one from your own docs, see the compile
+command above (`npx create-pancake-search compile`).
 
 ```js
 import { openPancakeFile } from 'pancake-wasm/complete'; // or './complete/index.mjs' in a checkout
