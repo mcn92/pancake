@@ -472,9 +472,17 @@ export async function openPancakeFile(input, options = {}) {
         const retrievalScorer = () => {
             const scorer = createAbstentionScorer(calibrationJson.asset, base64Bytes(calibrationJson.vocabBloomBase64));
             const VERDICTS = { answer: 'strong', weak: 'weak', abstain: 'none' };
-            return (hits, context) => {
+            return async (hits, context) => {
                 if (!scorer) return { match_quality: 'unscored' };
-                const scored = scorer.score(context.text, hits);
+                // The coverage term grounds the verdict in the top passage's
+                // text, so that record hydrates before scoring. When the
+                // query is answered the page is already hot for result
+                // hydration; an abstained query costs this one extra read.
+                // Hydration failures propagate — on format 2 a record that
+                // fails its digest must fail the query, not skew its verdict.
+                const topText = scorer.usesPassage && hits.length
+                    ? (await hydrate(hits[0].id))?.text : undefined;
+                const scored = scorer.score(context.text, hits, topText);
                 return { match_quality: VERDICTS[scored.verdict] || scored.verdict, confidence: scored.p };
             };
         };
@@ -741,7 +749,7 @@ export async function openPancakeFile(input, options = {}) {
                         maxRangeBytes: queryOptions.maxRangeBytes ?? options.rerankMaxRangeBytes,
                     })).results;
                 }
-                const quality = pre || scoreQuality(hits, context);
+                const quality = pre || await scoreQuality(hits, context);
                 const returned = quality.match_quality === 'none' ? [] : hits;
                 // The search's id and distance are authoritative: they are
                 // written last so a corpus record carrying its own `id` or

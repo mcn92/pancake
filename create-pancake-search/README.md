@@ -103,9 +103,15 @@ matters: **in-domain questions the corpus does not answer**. They come
 from held-out documents (whole documents excluded from the calibration
 searches, then asked about — in-domain vocabulary, unanswerable by
 construction) and from cross-chunk recombinations (corpus words no single
-document contains together). The asset records its method, per-class
-query counts, in-sample fit AUC, and cross-validated AUCs — pooled and
-against the hard class alone — for inspection. The acceptance gates use
+document contains together). Alongside the distance signals the model
+fits a grounding feature: the fraction of the query's content words that
+appear in the top retrieved passage's text. Distances measure whether the
+corpus discusses the area; grounding measures whether the returned
+passage contains the question's own terms — the axis that separates
+"topically adjacent" from "actually answers". The asset records its
+method, per-class query counts, in-sample fit AUC, and cross-validated
+AUCs — pooled, against the hard class alone, and per hard-negative kind —
+for inspection. The acceptance gates use
 the cross-validated numbers (a deterministic 5-fold split): pooled AUC
 under 0.85, hard-negative AUC under 0.75, or too few verified positives
 or hard negatives all log why and ship unscored rather than

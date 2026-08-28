@@ -52,6 +52,35 @@ first.
 
 ### Added
 
+- **The abstention model gains a grounding feature** (`self-templates-v3`):
+  the fraction of the query's content words present in the top retrieved
+  passage's text, fit as a fifth term in the same logistic model. Every
+  prior feature measures topic similarity (three distances plus membership
+  in a corpus-wide bloom), so "the corpus discusses this area" and "this
+  passage answers this question" were indistinguishable by construction —
+  a query can retrieve topically-adjacent content at a closer distance
+  than genuine controls while none of its terms appear in the returned
+  passage. The term is serialized as a supplemental `asset.coverage` field
+  rather than a `features[]` entry, so readers that predate it score the
+  topic-only model against the same thresholds (a conservative
+  degradation) instead of feeding an unknown feature name NaN into the
+  logistic — and the reader now degrades any non-finite score to
+  `unscored` rather than letting NaN compare false against both
+  thresholds and answer everything. Scoring an artifact that carries the
+  term hydrates the top-1 record before the verdict (the page is hot for
+  result hydration when answered; an abstained query costs one extra
+  read); word rules ship in the asset so builder and reader cannot drift.
+  Measured on the hard-negative repro corpus: hard-negative CV AUC 0.772
+  → 0.808, recombination-kind AUC 0.891, all five same-field near-domain
+  probes now abstain outright, and the calibration summary adds
+  `cvAucHardByKind`. A/B-verified on a second, structurally opposite
+  corpus (250 distinct-topic wiki articles, low vocabulary overlap):
+  hard-negative CV AUC 0.853 without the term → 0.907 with it, pooled
+  0.903 → 0.937, with paraphrased no-title-word controls staying strong
+  under both. Known residual limits: a single-content-word query can be
+  spuriously grounded by a topically adjacent passage containing that
+  word, and attribute questions about present entities (entity words
+  grounded, attribute absent) still score strong under both models.
 - **compile's self-calibration now trains against hard negatives**
   (`self-templates-v2`), fixing artifacts that confidently answered
   unanswerable in-domain questions. The v1 calibrator's negatives were all

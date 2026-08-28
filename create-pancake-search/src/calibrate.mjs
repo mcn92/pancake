@@ -33,7 +33,20 @@
 // ships the unscored placeholder, which is strictly safer than a bad model.
 
 const SEED = 424242;
-const FEATS = ['d0', 'margin', 'mean10', 'known_frac'];
+// The four base features all measure topic similarity — distances plus
+// membership in a corpus-wide bloom — so "the corpus discusses this area"
+// and "this passage answers this question" are indistinguishable by them.
+// coverage1 is the grounding feature that separates the two: the fraction
+// of the query's content words present in the top retrieved passage's text
+// (known_frac's question, asked of the passage instead of the corpus). It
+// joins the logistic fit as a fifth feature but is serialized as a
+// supplemental asset term (asset.coverage), not a features[] entry, so
+// readers that predate it score the topic-only model instead of an unknown
+// feature name (see complete/retrieval-abstention.mjs).
+const BASE_FEATS = ['d0', 'margin', 'mean10', 'known_frac'];
+const COVERAGE_FEAT = 'coverage1';
+const FEATS = [...BASE_FEATS, COVERAGE_FEAT];
+const COVERAGE_MIN_WORD_LEN = 3;
 const BLOOM_SEEDS = [0, 0x9e3779b9];
 const MAX_POSITIVES = 96;
 const GIBBERISH_QUERIES = 24;
@@ -171,6 +184,24 @@ function contentWordQuestions(chunks, n, seed, eligiblePos = null) {
 }
 
 const tokenize = (text) => (text.toLowerCase().match(/[a-z0-9']+/g) || []);
+
+// Coverage ignores question/template scaffolding on top of the base
+// stopwords: "how does X work" should be grounded by X's words appearing in
+// the passage, not by "how"/"does"/"work". The list ships in the asset so
+// the reader's mirror cannot drift.
+const COVERAGE_STOPWORDS = new Set([...STOPWORDS,
+  'what', 'how', 'who', 'why', 'where', 'when', 'do', 'does', 'did', 'me',
+  'tell', 'about', 'explain', 'explained', 'facts', 'information',
+  'overview', 'history', 'definition', 'important', 'work', 'works']);
+
+function coverageFrac(text, passageText) {
+  const words = tokenize(text).filter((w) => w.length >= COVERAGE_MIN_WORD_LEN && !COVERAGE_STOPWORDS.has(w));
+  if (!words.length) return 0;
+  const passage = new Set(tokenize(passageText || ''));
+  const present = (w) => passage.has(w) || passage.has(`${w}s`) || passage.has(`${w}es`)
+    || (w.endsWith('s') && passage.has(w.slice(0, -1)));
+  return words.filter(present).length / words.length;
+}
 
 function fnv1a(str, seed, bits) {
   let h = 0x811c9dc5 ^ seed;
@@ -353,7 +384,13 @@ export async function calibrateRetrievalAbstention({ Pancake, chunks, vectors, c
     const d0 = top.length ? top[0].distance : 1;
     const margin = top.length > 1 ? top[Math.min(4, top.length - 1)].distance - d0 : 0;
     const mean10 = top.length ? top.reduce((s, r) => s + r.distance, 0) / top.length : 1;
-    return { d0, margin, mean10, known_frac: knownFrac(text, bloom, bits) };
+    return {
+      d0,
+      margin,
+      mean10,
+      known_frac: knownFrac(text, bloom, bits),
+      [COVERAGE_FEAT]: coverageFrac(text, top.length ? chunks[top[0].id]?.text : ''),
+    };
   };
 
   const index = await Pancake.create({
@@ -498,7 +535,7 @@ export async function calibrateRetrievalAbstention({ Pancake, chunks, vectors, c
       const train = shuffled.filter((_, i) => i % FOLDS !== fold);
       if (!train.some((r) => r.label === 1) || !train.some((r) => r.label === 0)) continue;
       const foldModel = scorerFor(train);
-      for (const r of test) heldout.push({ label: r.label, negClass: r.negClass, p: foldModel.prob(r) });
+      for (const r of test) heldout.push({ label: r.label, negClass: r.negClass, negativeKind: r.negativeKind, p: foldModel.prob(r) });
     }
     const heldoutPos = heldout.filter((r) => r.label === 1);
     const cvAuc = aucFor(heldoutPos, heldout.filter((r) => r.label === 0));
@@ -508,6 +545,13 @@ export async function calibrateRetrievalAbstention({ Pancake, chunks, vectors, c
     // exact blindness), so the gate checks the hard class on its own.
     const cvAucEasy = aucFor(heldoutPos, heldout.filter((r) => r.negClass === 'easy'));
     const cvAucHard = aucFor(heldoutPos, heldout.filter((r) => r.negClass === 'hard'));
+    // Per-kind hard AUCs diagnose the two hard classes separately: the
+    // grounding feature could plausibly separate held-out-doc questions yet
+    // fail recombinations (retrieval can surface a recombination's source
+    // chunk, granting partial coverage), and a pooled hard AUC would hide
+    // which class regressed.
+    const cvAucHeldOutDoc = aucFor(heldoutPos, heldout.filter((r) => r.negativeKind === 'held-out-doc'));
+    const cvAucRecombination = aucFor(heldoutPos, heldout.filter((r) => r.negativeKind === 'recombination'));
     const gateAuc = cvAuc ?? fitAuc;
     if (gateAuc === null || gateAuc < MIN_AUC) {
       return skip(`${cvAuc === null ? 'fit' : 'cross-validated'} AUC ${gateAuc === null ? 'n/a' : gateAuc.toFixed(3)} < ${MIN_AUC} separating answerable from off-domain`);
@@ -572,7 +616,7 @@ export async function calibrateRetrievalAbstention({ Pancake, chunks, vectors, c
     // thresholds would answer is the asset's stated hard-negative exposure.
     const evalOnlyRows = rows.filter((r) => r.evalOnly);
     const summary = {
-      method: 'self-templates-v2',
+      method: 'self-templates-v3',
       seed: SEED,
       searchConfig: { k: K },
       heldOut: { titles: heldOut.titles.size, chunks: heldOut.chunks },
@@ -599,18 +643,35 @@ export async function calibrateRetrievalAbstention({ Pancake, chunks, vectors, c
       cvAuc: cvAuc === null ? null : +cvAuc.toFixed(6),
       cvAucEasy: cvAucEasy === null ? null : +cvAucEasy.toFixed(6),
       cvAucHard: cvAucHard === null ? null : +cvAucHard.toFixed(6),
+      cvAucHardByKind: {
+        heldOutDoc: cvAucHeldOutDoc === null ? null : +cvAucHeldOutDoc.toFixed(6),
+        recombination: cvAucRecombination === null ? null : +cvAucRecombination.toFixed(6),
+      },
       hardThresholdOverlap: hardOverlap,
       vocab: { uniqueWords, keptWords, minCount },
     };
+    // features[]/weights[] carry only the base topic features; the coverage
+    // term rides in asset.coverage so a reader that predates it scores the
+    // topic-only model against the same thresholds (conservative — it lacks
+    // a term that is positive for answerable queries) instead of feeding an
+    // unknown feature name NaN into the logistic.
     const asset = {
       version: 1,
       corpus: config.name,
       searchConfig: { k: K },
       calibration: summary,
-      features: FEATS,
+      features: BASE_FEATS,
       standardize: { mean, std },
-      weights: w,
+      weights: w.slice(0, BASE_FEATS.length),
       bias: b,
+      coverage: {
+        weight: w[BASE_FEATS.length],
+        mean: mean[COVERAGE_FEAT],
+        std: std[COVERAGE_FEAT],
+        minWordLen: COVERAGE_MIN_WORD_LEN,
+        stopwords: [...COVERAGE_STOPWORDS],
+        topK: 1,
+      },
       thresholds: { hard: +hard.toFixed(6), weak: +weak.toFixed(6) },
       vocabBloom: { bits, hashes: ['fnv1a:0', 'fnv1a:0x9e3779b9'], minCount },
     };
