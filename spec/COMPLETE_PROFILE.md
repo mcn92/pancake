@@ -40,12 +40,16 @@ missing between the components.
    segment and a version, because calibration may consume the encoder's
    feature stream and hidden state, not only its output vector. They cannot
    version independently.
-4. **Two query-interpretation kinds** (added 2026-08-14 for the wiki-scale
-   compile): inline student encoders (kind 1) and pinned external encoders
-   with verification vectors (kind 2, contract section 4.4 mode 2). The
-   product direction favors kind 1; kind 2 exists because real corpora
-   (the wiki pack) currently interpret queries with a full teacher model
-   the host executes.
+4. **Three query-interpretation kinds.** Kinds 1 and 2 were added
+   2026-08-14 for the wiki-scale compile: inline student encoders (kind 1)
+   and pinned external encoders with verification vectors (kind 2,
+   contract section 4.4 mode 2). Kind 3 (inline transformer, section 3.6)
+   followed and is the product default — `create-pancake-search compile`
+   emits it. The three are not generations of one idea but corners of a
+   trade-off: each picks two of self-contained, small, and teacher-quality
+   (kind 3 gives up small — its encoder bytes are ~25 MB; kind 1 gives up
+   teacher quality; kind 2 gives up self-contained). A conforming reader
+   supports all three.
 
 ## 3. File layout
 

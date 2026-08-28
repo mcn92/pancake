@@ -40,13 +40,20 @@ Three layers, bottom to top:
    - Immutable, integrity-checked files built from indexes and corpus data,
      range-readable from local files, R2, S3, CDNs — anything that serves
      byte ranges.
-   - Profiles:
-     - `.pnck`: engine snapshot envelope.
-     - `.pancake-range`: range-readable index/corpus profile.
-     - `.pancake-sketch`: resident sketch plus lazy rerank rows; format 2
-       (the builder's default) interleaves per-row digests with the rows,
-       so every row a query fetches is verified on that read.
-     - `.pancake`: the complete one-file search artifact.
+   - One product format, one index layer beneath it:
+     - `.pancake`: the complete one-file search artifact — the product.
+     - `.pancake-sketch`: its index segment (resident sketch plus lazy
+       rerank rows), also usable standalone; format 2 (the builder's
+       default) interleaves per-row digests with the rows, so every row a
+       query fetches is verified on that read.
+   - Two adjacent formats that are not search artifacts in the contract
+     sense:
+     - `.pnck`: the engine's snapshot envelope (`export()`/`restore()`
+       serialization), consumed by the compilers and by layer-1 users.
+     - `.pancake-range`: **deprecated** range-readable index profile. The
+       sketch geometry replaced it (5x faster over real networks at a
+       third of the size); readers stay supported for existing artifacts,
+       but no new ones should be built.
    - Specs: [spec/SEARCH_ARTIFACT_CONTRACT.md](spec/SEARCH_ARTIFACT_CONTRACT.md),
      [spec/SKETCH_PROFILE.md](spec/SKETCH_PROFILE.md), and
      [spec/COMPLETE_PROFILE.md](spec/COMPLETE_PROFILE.md).
@@ -101,22 +108,30 @@ The reader verifies the manifest and eager segments, opens the sketch index
 against a range source, and hydrates only the records the final results
 need.
 
-Query interpretation comes in three kinds:
+Query interpretation comes in three kinds. Each picks two of
+**self-contained**, **small**, and **teacher-quality**, and gives up the
+third — that trade-off, not history, is why all three exist:
 
-- **kind 1: `student-inline-v1`** — a small corpus-distilled student
-  encoder, inline in JavaScript.
-- **kind 2: `external-transformers-v1`** — the artifact declares an
-  external host-supplied encoder and verifies it against embedded test
-  vectors before serving.
-- **kind 3: `inline-transformer-v1`** — the artifact carries the WordPiece
-  vocab and quantized MiniLM teacher weights as verified data; the reader
-  ships the execution kernels.
+- **kind 3: `inline-transformer-v1`** — self-contained + teacher quality.
+  The artifact carries the WordPiece vocab and quantized MiniLM teacher
+  weights as verified data; the reader ships the execution kernels. Costs
+  ~25 MB of encoder no matter how small the corpus. This is the default:
+  `create-pancake-search compile` builds kind 3.
+- **kind 1: `student-inline-v1`** — self-contained + small. A
+  corpus-distilled student encoder (~1 MiB), pure-JS execution. The only
+  way a small docs corpus compiles to a file measured in single-digit MB;
+  quality is bounded by the distillation.
+- **kind 2: `external-transformers-v1`** — small + teacher quality, but
+  not self-contained: the artifact pins a host-supplied encoder (model id,
+  pooling, normalization, max tokens) and verifies it against embedded
+  test vectors before serving. The escape hatch for encoders too big to
+  inline and hosts that already run one.
 
-Kind 3 is the interesting one: the file carries the corpus, index,
-tokenizer, encoder weights, calibration, and evaluation data — the reader
-supplies code, the artifact supplies everything else. Ask it about
-volcanoes and no service, model host, or network dependency is involved
-beyond range reads of the file itself.
+Kind 3 is the flagship: the file carries the corpus, index, tokenizer,
+encoder weights, calibration, and evaluation data — the reader supplies
+code, the artifact supplies everything else. Ask it about volcanoes and no
+service, model host, or network dependency is involved beyond range reads
+of the file itself.
 
 ```bash
 cd examples/05-one-file-search
@@ -209,8 +224,9 @@ import Pancake from 'pancake-wasm';
 import Pancake from 'pancake-wasm/node';
 import Pancake from 'pancake-wasm/web';
 
-// Search Artifact layer (range + sketch readers/builders)
-import { PancakeRangeArtifact, buildRangeArtifact } from 'pancake-wasm/artifact';
+// Search Artifact layer (sketch readers/builders; the deprecated
+// .pancake-range reader stays exported for existing artifacts)
+import { PancakeSketchArtifact, buildSketchArtifact } from 'pancake-wasm/artifact';
 
 // Complete one-file profile: reader (any runtime) and builder (Node)
 import { openPancakeFile } from 'pancake-wasm/complete';

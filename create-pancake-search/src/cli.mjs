@@ -80,7 +80,11 @@ Flags:
                         aggregate pages like mdBook's print.html are always
                         excluded
   --runtime snapshot|artifact
-  --artifact <file>     Optional prebuilt .pancake-range artifact for --runtime artifact
+                        artifact is deprecated: it serves the retired
+                        .pancake-range profile; prefer the default snapshot
+                        runtime or 'compile' for a complete .pancake
+  --artifact <file>     Deprecated with --runtime artifact: prebuilt
+                        .pancake-range artifact
   --out <file>          compile only: output .pancake path (default search.pancake)
   --deploy / --no-deploy
   --yes

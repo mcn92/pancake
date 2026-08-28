@@ -90,8 +90,9 @@ the caller's responsibility.
 
 One sibling of `pancake-core.js` is deliberately absent from the diagram
 above: `pancake-artifact.js`, the Search Artifact layer. It implements the
-range-readable (`.pancake-range`) and sketch (`.pancake-sketch`) readers and
-builders in pure JS on top of a `read(offset, length)` source abstraction —
+sketch (`.pancake-sketch`) and deprecated range-readable (`.pancake-range`)
+readers and builders in pure JS on top of a `read(offset, length)` source
+abstraction —
 it uses the WASM engine only optionally (the sketch scan kernel). Its
 behavioral contract is `spec/SEARCH_ARTIFACT_CONTRACT.md`, its sketch byte
 layout `spec/SKETCH_PROFILE.md`, and every entrypoint bundles it

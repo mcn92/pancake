@@ -38,12 +38,10 @@ npm run dev
 ```
 
 The generated project contains a bundled Pancake snapshot, corpus metadata, a
-Workers AI search worker, and a static UI. For a pure Search Artifact demo that
-matches the artifact examples more directly, use:
-
-```bash
-npm create pancake-search -- --name my-docs-search --source ./docs --runtime artifact --no-deploy --yes
-```
+Workers AI search worker, and a static UI. A second runtime,
+`--runtime artifact`, serves the deprecated `.pancake-range` profile; it
+still works, but new projects should use the default snapshot runtime, or
+`compile` (below) when the deliverable is a complete `.pancake` file.
 
 In both runtimes, the story is the same: the expensive work happens at build
 time; query-time code embeds the query, searches Pancake, and hydrates result
@@ -52,8 +50,9 @@ corpus-distilled encoder with `--mode student` (see below), which removes the
 Cloudflare AI dependency entirely. For workers-ai projects, `LOCAL_STUB_AI=1`
 can exercise the endpoint mechanics locally without Workers AI.
 
-You can also provide a prebuilt `.pancake-range` file with `--artifact`. External
-artifacts must have dimension, count, and IDs that match the generated corpus.
+In the deprecated artifact runtime, a prebuilt `.pancake-range` file can be
+supplied with `--artifact`; external artifacts must have dimension, count,
+and IDs that match the generated corpus.
 
 ## Compiling a complete `.pancake` artifact
 
@@ -142,7 +141,7 @@ milliseconds, the generated `wrangler.toml` has no `[ai]` binding, and
 `wrangler dev` runs fully local with no Cloudflare account:
 
 ```bash
-npm create pancake-search -- --name my-docs-search --source ./docs --runtime artifact --mode student --no-deploy --yes
+npm create pancake-search -- --name my-docs-search --source ./docs --mode student --no-deploy --yes
 ```
 
 Training requires a Python 3 environment with `torch` and `transformers`
@@ -236,6 +235,8 @@ directory, trains a corpus-specific teacher-student distilled encoder for those
 rendered chunks, then writes static artifact assets into `build/pancake-search/`:
 
 - `index.pancake-range` — range-readable Pancake Search Artifact
+  (deprecated profile; the `completeProfile` plugin option emits a complete
+  `search.pancake` instead and is the recommended configuration)
 - `corpus.json` — result metadata and snippets
 - `manifest.json` — embedding/index/runtime metadata and URLs
 - `student-model.bin` — the PSTU student encoder used by browser queries

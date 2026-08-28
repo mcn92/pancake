@@ -141,9 +141,10 @@ Closed lines (do not reopen without new evidence):
 
 ## Track B: Contract and formats
 
-1. Write the byte-layout specification for `.pancake-range` v2. It currently
-   exists only as code in `pancake-artifact.js`; the contract requires each
-   graph profile to declare its traversal semantics explicitly.
+1. ~~Write the byte-layout specification for `.pancake-range` v2.~~
+   Superseded: the profile is deprecated (contract §9.2, 2026-08-28) — the
+   sketch geometry replaced it, so no further range format revisions are
+   planned and the reader-only support needs no new spec.
 2. Package the conformance kit from the fixtures named in contract §5.4
    (golden snapshots, search oracles, abstention goldens, encoder parity).
    Designate the reference reader and build target per profile and record its

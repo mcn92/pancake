@@ -252,12 +252,16 @@ float brute force.
 
 ## 6. Relationship to other profiles
 
-| | Snapshot (`.pnck`) | Range (`.pancake-range`) | Sketch (`.pancake-sketch`) |
+| | Snapshot (`.pnck`) | Range (`.pancake-range`, deprecated) | Sketch (`.pancake-sketch`) |
 | --- | --- | --- | --- |
 | Execution | full restore, in-memory HNSW | resident router + lazy graph traversal | resident scan + one-round rerank |
 | Sequential fetch rounds | n/a | ~24 cold (measured) | 1 |
 | Stores graph | yes | yes | no |
 | Best regime | corpus fits in memory | warm caches, small corpora | cold/remote, large corpora |
+
+The range profile is deprecated (contract section 9.2): the sketch's depth-1
+geometry beat traversal in every measured regime, so readers stay supported
+but no new range artifacts should be built.
 
 All three are produced from the same quantized index build; the sketch
 artifact is derivable from a snapshot (or from a range artifact) without

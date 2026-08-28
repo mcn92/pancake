@@ -634,9 +634,19 @@ export interface PancakeApi {
  */
 export interface NodePancakeApi extends PancakeApi {
   readonly NodeFileRangeSource: NodeFileRangeSourceConstructor;
-  /** Build a range-readable Search Artifact from a uint8 Pancake snapshot. */
+  /**
+   * Build a range-readable Search Artifact from a uint8 Pancake snapshot.
+   * @deprecated The `.pancake-range` profile is deprecated
+   * (spec/SEARCH_ARTIFACT_CONTRACT.md 9.2); build a `.pancake-sketch`
+   * artifact instead. Readers stay supported for existing artifacts.
+   */
   buildRangeArtifact(snapshot: Uint8Array | ArrayBufferLike, outPath: string, opts?: RangeArtifactBuildOptions): RangeArtifactBuildManifest;
-  /** Build a range-readable Search Artifact from a uint8 Pancake snapshot file. */
+  /**
+   * Build a range-readable Search Artifact from a uint8 Pancake snapshot file.
+   * @deprecated The `.pancake-range` profile is deprecated
+   * (spec/SEARCH_ARTIFACT_CONTRACT.md 9.2); build a `.pancake-sketch`
+   * artifact instead. Readers stay supported for existing artifacts.
+   */
   buildRangeArtifactFile(snapshotPath: string, outPath: string, opts?: RangeArtifactBuildOptions): RangeArtifactBuildManifest;
   /** Open a range-readable Search Artifact from a local file. */
   openRangeArtifactFile(filePath: string, opts?: RangeArtifactOpenOptions): Promise<PancakeRangeArtifact>;

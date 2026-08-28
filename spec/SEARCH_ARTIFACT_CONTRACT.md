@@ -45,9 +45,10 @@ context of one corpus.
 
 **Artifact**  
 An immutable package of bytes and metadata that declares a search contract.
-Current Pancake artifacts include `.pnck` snapshots and `.pancake-range`
-range-readable artifacts. Future complete artifacts may bundle more segments
-than current formats do.
+Current Pancake artifacts are the complete `.pancake` profile and the
+`.pancake-sketch` index profile it embeds. `.pnck` snapshots (engine
+serialization) and the deprecated `.pancake-range` profile predate the
+contract and cover fewer layers; see section 9.
 
 **Reader**  
 Software that opens an artifact and executes the behavior declared by the
@@ -406,7 +407,14 @@ Snapshots carry no integrity digests: readers validate them structurally
 committed hash. Identity as defined in 4.1 is not yet implemented for this
 profile; hosts that need integrity must hash the snapshot externally.
 
-### 9.2 Range Artifact Profile (`.pancake-range`)
+### 9.2 Range Artifact Profile (`.pancake-range`) — deprecated
+
+**Status: deprecated (2026-08-28).** The sketch profile (9.3) supersedes this
+profile for every measured regime: depth-1 execution beat graph traversal
+~5x end-to-end over real networks at roughly a third of the artifact size
+(ROADMAP Track A, SIFT1M). Readers remain supported so existing
+`.pancake-range` artifacts stay openable; producers should not emit new
+ones, and no further format revisions are planned.
 
 The range artifact profile carries a range-readable Pancake index that separates
 resident routing data from lazily materialized node records.
@@ -451,8 +459,11 @@ The complete profile is the target contract: corpus, index, encoder,
 evaluation, and calibration are all carried by or content-addressed from one
 artifact identity.
 
-This profile is not fully implemented yet. It is the product direction that
-turns Pancake from a vector-search library into an artifact compiler and reader.
+This profile is implemented and shipping: byte layout and reader obligations
+are specified in `COMPLETE_PROFILE.md` (Draft 2), the reader and builder
+ship in `pancake-wasm/complete`, and `create-pancake-search compile` emits
+it. It is the profile that turns Pancake from a vector-search library into
+an artifact compiler and reader.
 
 ## 10. Open Decisions
 

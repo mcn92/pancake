@@ -69,6 +69,7 @@ async function buildAssets(projectDir, config, options = {}) {
   let artifact = null;
   let artifactInfo = null;
   if (config.runtime?.mode === 'artifact') {
+    log('Warning: the artifact runtime builds the deprecated .pancake-range profile. Prefer the snapshot runtime, or `create-pancake-search compile` for a complete .pancake file.');
     if (artifactPath && !fssync.existsSync(artifactPath)) {
       throw new CliError(`Configured Search Artifact not found: ${artifactPath}\nNext: update runtime.artifactPath in pancake.config.json or rebuild with --artifact <file>.`, 2);
     }

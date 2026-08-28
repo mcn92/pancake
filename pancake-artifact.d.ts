@@ -64,12 +64,22 @@ export declare function createSketchScanner(
   options?: SketchScannerOptions
 ): Promise<SketchScanner>;
 
+/**
+ * @deprecated The `.pancake-range` profile is deprecated
+ * (spec/SEARCH_ARTIFACT_CONTRACT.md 9.2); build a `.pancake-sketch`
+ * artifact instead. Readers stay supported for existing artifacts.
+ */
 export declare function buildRangeArtifact(
   snapshot: Uint8Array | ArrayBufferLike,
   outPath: string,
   opts?: RangeArtifactBuildOptions
 ): RangeArtifactBuildManifest;
 
+/**
+ * @deprecated The `.pancake-range` profile is deprecated
+ * (spec/SEARCH_ARTIFACT_CONTRACT.md 9.2); build a `.pancake-sketch`
+ * artifact instead. Readers stay supported for existing artifacts.
+ */
 export declare function buildRangeArtifactFile(
   snapshotPath: string,
   outPath: string,

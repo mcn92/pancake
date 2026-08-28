@@ -23,6 +23,19 @@ first.
   duplicate a whole site's content past exact-text chunk dedupe).
   `--include-url`/`--exclude-url` against a folder source error
   symmetrically.
+- **The `.pancake-range` profile is deprecated** (contract §9.2). The
+  sketch profile superseded it in every measured regime — depth-1
+  execution ~5x faster end-to-end over real networks at roughly a third
+  of the artifact size — and the complete `.pancake` profile is the
+  product surface. Nothing breaks in this release: readers
+  (`PancakeRangeArtifact`, `openRangeArtifactFile`) stay supported for
+  existing artifacts, and the scaffold's `--runtime artifact` still
+  works. The builders (`buildRangeArtifact[File]`) are marked
+  `@deprecated` in the type declarations, the scaffold logs a deprecation
+  warning when the artifact runtime builds, and no further range format
+  revisions are planned. The Docusaurus plugin's default output still
+  uses the profile; its `completeProfile` option is the recommended
+  configuration.
 - **Crawler fixes from a five-site independent-docs sweep** (Sphinx,
   MkDocs Material, Docusaurus, VitePress, Jekyll): URL filters now gate
   the queue instead of the dequeue, so filtered links no longer consume
