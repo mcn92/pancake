@@ -92,19 +92,24 @@ book's content is not crawled twice. The scaffold-only flags (`--mode`,
 compile always builds the complete kind-3 profile.
 
 Abstention is calibrated from the corpus at build time, so queries the
-artifact cannot answer return `matchQuality: "none"` with no results
-instead of confidently wrong ones. The calibrator generates answerable
-queries from chunk titles and content words (each verified by retrieval
-before it counts), scores them against a built-in bank of off-domain
-queries and out-of-vocabulary gibberish, and fits the same
-retrieval-signals model the wiki pack ships — the asset records its
-method, query counts, in-sample fit AUC, and the cross-validated AUC for
-inspection. The acceptance gate uses the cross-validated number (a
-deterministic 5-fold split over the generated queries), since the fit AUC
-is measured on the rows the regression was fit on. When the corpus cannot
-support a trustworthy fit (too few verified positives, or the
-cross-validated AUC lands under 0.85) the build logs why and ships
-unscored rather than miscalibrated. `--calibration <file>` embeds a prebuilt
+artifact cannot answer return `matchQuality: "none"` (or `"weak"`, shown
+with a caveat) instead of confidently wrong ones. The calibrator generates
+answerable queries from chunk titles and content words (each verified by
+retrieval before it counts) and fits the same retrieval-signals model the
+wiki pack ships against two classes of negatives. Easy negatives — a
+built-in off-domain bank and out-of-vocabulary gibberish — teach the model
+what foreign queries look like. Hard negatives teach it the case that
+matters: **in-domain questions the corpus does not answer**. They come
+from held-out documents (whole documents excluded from the calibration
+searches, then asked about — in-domain vocabulary, unanswerable by
+construction) and from cross-chunk recombinations (corpus words no single
+document contains together). The asset records its method, per-class
+query counts, in-sample fit AUC, and cross-validated AUCs — pooled and
+against the hard class alone — for inspection. The acceptance gates use
+the cross-validated numbers (a deterministic 5-fold split): pooled AUC
+under 0.85, hard-negative AUC under 0.75, or too few verified positives
+or hard negatives all log why and ship unscored rather than
+miscalibrated. `--calibration <file>` embeds a prebuilt
 retrieval-signals-v1 asset instead; `--skip-calibration` ships unscored
 deliberately.
 

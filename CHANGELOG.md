@@ -52,6 +52,29 @@ first.
 
 ### Added
 
+- **compile's self-calibration now trains against hard negatives**
+  (`self-templates-v2`), fixing artifacts that confidently answered
+  unanswerable in-domain questions. The v1 calibrator's negatives were all
+  easy — off-domain bank and gibberish, low known-token fraction, distant
+  retrieval — so the fitted model handed the vocabulary feature a dominant
+  weight (+4.1 standardized) and scored any in-domain query answerable:
+  measured on a docs corpus, 6 of 8 unanswerable in-domain probes returned
+  `strong` at p 0.75–0.94 while the pooled CV AUC read 0.998. v2 adds two
+  hard-negative classes with high known-token fractions: held-out
+  documents (excluded from calibration searches via `searchFiltered`, then
+  asked about — the wiki calibrator's held-out-shard trick made
+  corpus-generic) and cross-chunk recombinations (corpus words no single
+  document lexically supports). Hard-negative labels are verified by
+  retrieval (a held-out topic covered by a near-duplicate document is
+  dropped, not mislearned); overlapping off-domain queries are kept as
+  eval-only rows and reported instead of silently discarded. The gate now
+  also requires hard-negative CV AUC ≥ 0.75 — the pooled number is
+  dominated by the easy classes and cannot see this failure — and the
+  `weak` threshold rises to the hard-negative ceiling, so overlapped
+  queries surface with a caveat instead of full confidence. Same probes
+  after the change: 0 of 8 unanswerable queries score `strong` (6 weak,
+  2 none), answerable controls unchanged at `strong`. The calibration
+  summary adds per-class counts and `cvAucEasy`/`cvAucHard`.
 - **`create-pancake-search compile`** builds a complete kind-3 `.pancake`
   artifact from `--source <path|url>` and stops — no project, no Worker,
   no Cloudflare. It chunks and embeds the corpus with the packaged inline
