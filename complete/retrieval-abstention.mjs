@@ -23,15 +23,40 @@ export function createAbstentionScorer(asset, bloomBytes) {
         ? asset.coverage : null;
     const coverageStopwords = coverageCfg ? new Set(coverageCfg.stopwords || []) : null;
     const coverageMinLen = coverageCfg ? (coverageCfg.minWordLen || 3) : 3;
+    // Words the corpus uses everywhere ground any query that mentions them,
+    // so they are excluded from coverage; the builder ships them as a bloom.
+    const commonBloom = coverageCfg?.commonBloom?.base64
+        ? (typeof Buffer !== 'undefined'
+            ? new Uint8Array(Buffer.from(coverageCfg.commonBloom.base64, 'base64'))
+            : Uint8Array.from(atob(coverageCfg.commonBloom.base64), (c) => c.charCodeAt(0)))
+        : null;
+    const commonBits = coverageCfg?.commonBloom?.bits;
+    const isCommon = commonBloom ? (w) => SEEDS.every((seed) => {
+        let h = 0x811c9dc5 ^ seed;
+        for (let i = 0; i < w.length; i++) { h ^= w.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+        const bit = (h >>> 0) % commonBits;
+        return (commonBloom[bit >> 3] >> (bit & 7)) & 1;
+    }) : null;
 
-    function coverageFrac(text, passageText) {
-        const words = (String(text).toLowerCase().match(/[a-z0-9']+/g) || [])
+    // Max over the scored passages, with corpus-common words counted at
+    // reduced weight — mirrors create-pancake-search/src/calibrate.mjs
+    // coverageFrac exactly (the weight ships in the asset).
+    const commonWordWeight = coverageCfg?.commonWordWeight ?? 1 / 3;
+    function coverageFrac(text, passageTexts) {
+        const content = (String(text).toLowerCase().match(/[a-z0-9']+/g) || [])
             .filter((w) => w.length >= coverageMinLen && !coverageStopwords.has(w));
-        if (!words.length) return 0;
-        const passage = new Set(String(passageText || '').toLowerCase().match(/[a-z0-9']+/g) || []);
-        const present = (w) => passage.has(w) || passage.has(`${w}s`) || passage.has(`${w}es`)
-            || (w.endsWith('s') && passage.has(w.slice(0, -1)));
-        return words.filter(present).length / words.length;
+        if (!content.length) return 0;
+        const weights = content.map((w) => (isCommon && isCommon(w) ? commonWordWeight : 1));
+        const weightSum = weights.reduce((a, c) => a + c, 0);
+        let best = 0;
+        for (const passageText of passageTexts || []) {
+            const passage = new Set(String(passageText || '').toLowerCase().match(/[a-z0-9']+/g) || []);
+            const present = (w) => passage.has(w) || passage.has(`${w}s`) || passage.has(`${w}es`)
+                || (w.endsWith('s') && passage.has(w.slice(0, -1)));
+            const grounded = content.reduce((sum, w, i) => sum + (present(w) ? weights[i] : 0), 0);
+            best = Math.max(best, grounded / weightSum);
+        }
+        return best;
     }
     const bloom = new Uint8Array(bloomBytes);
     const bits = asset.vocabBloom.bits;
@@ -61,10 +86,12 @@ export function createAbstentionScorer(asset, bloomBytes) {
     }
 
     return {
-        // The caller must hydrate the top result's text before scoring when
-        // this is true; the coverage term reads it.
+        // The caller must hydrate the top passagesNeeded results' text
+        // before scoring when usesPassage is true; the coverage term reads
+        // them (older assets scored one passage; topK now defaults to it).
         usesPassage: !!coverageCfg,
-        score(queryText, results, topPassageText) {
+        passagesNeeded: coverageCfg ? (coverageCfg.topK || 1) : 0,
+        score(queryText, results, passageTexts) {
             const d0 = results.length ? results[0].distance : 1;
             const margin = results.length > 1
                 ? results[Math.min(4, results.length - 1)].distance - d0 : 0;
@@ -76,7 +103,7 @@ export function createAbstentionScorer(asset, bloomBytes) {
                 z += ((signals[f] - asset.standardize.mean[f]) / asset.standardize.std[f]) * asset.weights[j];
             });
             if (coverageCfg) {
-                signals.coverage1 = coverageFrac(queryText, topPassageText);
+                signals.coverage1 = coverageFrac(queryText, Array.isArray(passageTexts) ? passageTexts : [passageTexts]);
                 z += ((signals.coverage1 - coverageCfg.mean) / (coverageCfg.std || 1)) * coverageCfg.weight;
             }
             // A malformed asset (unknown feature name, non-numeric term) must

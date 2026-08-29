@@ -63,6 +63,17 @@ first.
   instead of consuming page budget as an empty document. Exercised by a
   new scaffold-e2e check against a local server chaining a 301 into a
   meta refresh.
+- **Grounding coverage weighs word informativeness and scores more
+  passages**: corpus-common words (chunk document frequency above ~5%,
+  shipped as a bloom in `asset.coverage.commonBloom`) count at 1/3 weight
+  — a docs corpus's "templates"/"support" no longer ground a query on
+  their own, which was letting roadmap-style questions score strong — and
+  coverage is the max over the top 5 passages instead of the top 1, so a
+  paraphrased query gets more chances to find the passage sharing its
+  vocabulary while recombination negatives' source chunks still each
+  ground only their own half. Hard-negative CV AUC across the three test
+  corpora: docs repro 0.808 → 0.831, wiki 0.918 → 0.924, Astro docs
+  crawl 0.877 → 0.887, with recombination-kind AUCs at 0.91–0.98.
 - **The abstention model gains a grounding feature** (`self-templates-v3`):
   the fraction of the query's content words present in the top retrieved
   passage's text, fit as a fifth term in the same logistic model. Every

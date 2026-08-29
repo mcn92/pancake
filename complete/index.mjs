@@ -474,15 +474,17 @@ export async function openPancakeFile(input, options = {}) {
             const VERDICTS = { answer: 'strong', weak: 'weak', abstain: 'none' };
             return async (hits, context) => {
                 if (!scorer) return { match_quality: 'unscored' };
-                // The coverage term grounds the verdict in the top passage's
-                // text, so that record hydrates before scoring. When the
-                // query is answered the page is already hot for result
-                // hydration; an abstained query costs this one extra read.
+                // The coverage term grounds the verdict in the top passages'
+                // text, so those records hydrate before scoring. When the
+                // query is answered the pages are already hot for result
+                // hydration; an abstained query costs these extra reads.
                 // Hydration failures propagate — on format 2 a record that
                 // fails its digest must fail the query, not skew its verdict.
-                const topText = scorer.usesPassage && hits.length
-                    ? (await hydrate(hits[0].id))?.text : undefined;
-                const scored = scorer.score(context.text, hits, topText);
+                const topTexts = scorer.usesPassage && hits.length
+                    ? (await Promise.all(hits.slice(0, scorer.passagesNeeded || 1)
+                        .map((hit) => hydrate(hit.id)))).map((record) => record?.text)
+                    : [];
+                const scored = scorer.score(context.text, hits, topTexts);
                 return { match_quality: VERDICTS[scored.verdict] || scored.verdict, confidence: scored.p };
             };
         };

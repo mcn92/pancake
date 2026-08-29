@@ -47,6 +47,7 @@ const BASE_FEATS = ['d0', 'margin', 'mean10', 'known_frac'];
 const COVERAGE_FEAT = 'coverage1';
 const FEATS = [...BASE_FEATS, COVERAGE_FEAT];
 const COVERAGE_MIN_WORD_LEN = 3;
+const COVERAGE_TOP_PASSAGES = 5;
 const BLOOM_SEEDS = [0, 0x9e3779b9];
 const MAX_POSITIVES = 96;
 const GIBBERISH_QUERIES = 24;
@@ -194,13 +195,56 @@ const COVERAGE_STOPWORDS = new Set([...STOPWORDS,
   'tell', 'about', 'explain', 'explained', 'facts', 'information',
   'overview', 'history', 'definition', 'important', 'work', 'works']);
 
-function coverageFrac(text, passageText) {
-  const words = tokenize(text).filter((w) => w.length >= COVERAGE_MIN_WORD_LEN && !COVERAGE_STOPWORDS.has(w));
-  if (!words.length) return 0;
-  const passage = new Set(tokenize(passageText || ''));
-  const present = (w) => passage.has(w) || passage.has(`${w}s`) || passage.has(`${w}es`)
-    || (w.endsWith('s') && passage.has(w.slice(0, -1)));
-  return words.filter(present).length / words.length;
+// Coverage weights words by informativeness: a word the corpus uses
+// everywhere ("templates", "support" in a docs corpus) grounds any query
+// that mentions it, so corpus-common words (chunk-level document frequency
+// over ~5% of the corpus, shipped as a bloom) count at reduced weight
+// rather than full — and rather than zero, which measured as punishing
+// honest paraphrases whose only grounded words are common ones. A query of
+// only common words degrades to plain coverage by construction (uniform
+// weights cancel).
+//
+// The score is the MAX over the top COVERAGE_TOP_PASSAGES passages, not the
+// union: a paraphrased query gets several chances to find the passage that
+// shares its vocabulary, while a recombination negative's two source chunks
+// each ground only their own half — a union would merge them to full
+// coverage and erase the class.
+const COVERAGE_COMMON_WORD_WEIGHT = 1 / 3;
+function coverageFrac(text, passageTexts, isCommon) {
+  const content = tokenize(text).filter((w) => w.length >= COVERAGE_MIN_WORD_LEN && !COVERAGE_STOPWORDS.has(w));
+  if (!content.length) return 0;
+  const weights = content.map((w) => (isCommon && isCommon(w) ? COVERAGE_COMMON_WORD_WEIGHT : 1));
+  const weightSum = weights.reduce((a, c) => a + c, 0);
+  let best = 0;
+  for (const passageText of passageTexts) {
+    const passage = new Set(tokenize(passageText || ''));
+    const present = (w) => passage.has(w) || passage.has(`${w}s`) || passage.has(`${w}es`)
+      || (w.endsWith('s') && passage.has(w.slice(0, -1)));
+    const grounded = content.reduce((sum, w, i) => sum + (present(w) ? weights[i] : 0), 0);
+    best = Math.max(best, grounded / weightSum);
+  }
+  return best;
+}
+
+function buildCommonWordsBloom(chunks) {
+  const df = new Map();
+  for (const chunk of chunks) {
+    for (const w of new Set(tokenize(chunk.text))) df.set(w, (df.get(w) || 0) + 1);
+  }
+  const dfCap = Math.max(4, Math.round(chunks.length * 0.05));
+  const common = [...df.entries()]
+    .filter(([w, c]) => c > dfCap && w.length >= COVERAGE_MIN_WORD_LEN && !COVERAGE_STOPWORDS.has(w))
+    .map(([w]) => w);
+  let bits = 1 << 12;
+  while (bits < common.length * 32 && bits < (1 << 18)) bits <<= 1;
+  const bloom = new Uint8Array(bits / 8);
+  for (const w of common) {
+    for (const seed of BLOOM_SEEDS) {
+      const bit = fnv1a(w, seed, bits);
+      bloom[bit >> 3] |= 1 << (bit & 7);
+    }
+  }
+  return { bloom, bits, dfCap, commonWords: common.length };
 }
 
 function fnv1a(str, seed, bits) {
@@ -364,6 +408,11 @@ export async function calibrateRetrievalAbstention({ Pancake, chunks, vectors, c
   // known_frac high against it is the point: that is the profile of a real
   // in-domain unanswerable query.
   const { bloom, bits, minCount, keptWords, uniqueWords } = buildVocabBloom(chunks);
+  const commonWords = buildCommonWordsBloom(chunks);
+  const isCommon = (w) => BLOOM_SEEDS.every((seed) => {
+    const bit = fnv1a(w, seed, commonWords.bits);
+    return (commonWords.bloom[bit >> 3] >> (bit & 7)) & 1;
+  });
 
   // All calibration searches run against the retained chunks only
   // (searchFiltered over one full index — ids stay chunk positions). The
@@ -389,7 +438,11 @@ export async function calibrateRetrievalAbstention({ Pancake, chunks, vectors, c
       margin,
       mean10,
       known_frac: knownFrac(text, bloom, bits),
-      [COVERAGE_FEAT]: coverageFrac(text, top.length ? chunks[top[0].id]?.text : ''),
+      [COVERAGE_FEAT]: coverageFrac(
+        text,
+        top.slice(0, COVERAGE_TOP_PASSAGES).map((h) => chunks[h.id]?.text || ''),
+        isCommon,
+      ),
     };
   };
 
@@ -649,6 +702,7 @@ export async function calibrateRetrievalAbstention({ Pancake, chunks, vectors, c
       },
       hardThresholdOverlap: hardOverlap,
       vocab: { uniqueWords, keptWords, minCount },
+      coverage: { topPassages: COVERAGE_TOP_PASSAGES, commonWords: commonWords.commonWords, commonDfCap: commonWords.dfCap },
     };
     // features[]/weights[] carry only the base topic features; the coverage
     // term rides in asset.coverage so a reader that predates it scores the
@@ -670,7 +724,14 @@ export async function calibrateRetrievalAbstention({ Pancake, chunks, vectors, c
         std: std[COVERAGE_FEAT],
         minWordLen: COVERAGE_MIN_WORD_LEN,
         stopwords: [...COVERAGE_STOPWORDS],
-        topK: 1,
+        topK: COVERAGE_TOP_PASSAGES,
+        commonWordWeight: COVERAGE_COMMON_WORD_WEIGHT,
+        commonBloom: {
+          bits: commonWords.bits,
+          hashes: ['fnv1a:0', 'fnv1a:0x9e3779b9'],
+          dfCap: commonWords.dfCap,
+          base64: Buffer.from(commonWords.bloom).toString('base64'),
+        },
       },
       thresholds: { hard: +hard.toFixed(6), weak: +weak.toFixed(6) },
       vocabBloom: { bits, hashes: ['fnv1a:0', 'fnv1a:0x9e3779b9'], minCount },
