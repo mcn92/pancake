@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Manual re-trigger: GitHub occasionally drops workflow-run creation for a
+  # push event (observed 2026-08-29 — the push triggered CodeQL but no CI
+  # run object was ever created for the sha). This gives the Actions tab a
+  # "Run workflow" button for exactly that case.
+  workflow_dispatch:
 
 env:
   # Browser binaries are only needed by test:browser, which has its own job.
