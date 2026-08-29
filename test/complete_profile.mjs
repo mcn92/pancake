@@ -25,9 +25,10 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import {
     buildCorpusSegment, buildCorpusSegmentFromBuffers, buildQueryInterpSegment,
-    assemblePancakeFile, PROFILE_V1, PROFILE_V2, sha256, canonicalJson,
+    assemblePancakeFile, buildLexicalSegment, PROFILE_V1, PROFILE_V2, sha256, canonicalJson,
 } from '../complete/builder.mjs';
 import { openPancakeFile, verifyHostEncoder } from '../complete/index.mjs';
+import { openLexicalIndex } from '../complete/lexical.mjs';
 
 const require = createRequire(import.meta.url);
 const Pancake = require('../pancake.js');
@@ -834,6 +835,52 @@ console.log('\nC. kind-1 student-inline artifact compiled from examples/03 asset
         return src && src.title === r.title && src.text === r.text && src.sourcePath === r.sourcePath;
     }));
     await search.close();
+}
+
+// ---------------------------------------------------------------------------
+// D. lexical segment (kind 5) and hybrid retrieval
+// ---------------------------------------------------------------------------
+console.log('\nD. lexical segment and hybrid retrieval');
+{
+    const lexical = buildLexicalSegment(RECORDS.map((b) => JSON.parse(b.toString('utf8')).text));
+    const lx = openLexicalIndex(lexical.bytes);
+    check('lexical index counts match the corpus', lx.docCount === COUNT && lx.termCount > 0 && lexical.meta.docCount === COUNT);
+    const direct = lx.search('record number 17', 5);
+    check('BM25 ranks the record holding the rare token first', direct[0]?.id === 17, JSON.stringify(direct.slice(0, 3)));
+    check('BM25 finds nothing for unindexed tokens', lx.search('zzqqxxvv', 5).length === 0);
+
+    const H = buildSynthetic({
+        name: 'hybrid',
+        extraSegments: [{ kind: 'lexical', bytes: lexical.bytes }],
+        manifestPatch: (m) => { m.lexical = lexical.meta; },
+    });
+    const search = await openPancakeFile(memorySource(H.bytes), { encodeQuery: hostEncode });
+    check('info reports the lexical segment', search.info().lexical?.terms === lexical.meta.terms
+        && search.info().lexical?.docCount === COUNT);
+    // hostEncode('record number 17') is deterministic noise unrelated to
+    // hostEncode('rec 17'), so pure vector search cannot find record 17.
+    // The lexical candidates bring it into the exact rerank and RRF
+    // surfaces it — the mechanism that rescues known-item lookups.
+    const hybrid = await search.query('record number 17', { k: 3 });
+    check('hybrid query surfaces the lexical match vector search cannot find',
+        hybrid.results.some((r) => r.id === 17), JSON.stringify(hybrid.results.map((r) => r.id)));
+    check('hybrid results carry finite vector distances',
+        hybrid.results.length === 3 && hybrid.results.every((r) => Number.isFinite(r.distance)));
+    await search.close();
+
+    const vectorOnly = await openPancakeFile(memorySource(A.bytes), { encodeQuery: hostEncode });
+    const control = await vectorOnly.query('record number 17', { k: 3 });
+    check('vector-only artifact misses the same known-item lookup (control)',
+        !control.results.some((r) => r.id === 17), JSON.stringify(control.results.map((r) => r.id)));
+    check('vector-only artifact reports no lexical index', vectorOnly.info().lexical === null);
+    await vectorOnly.close();
+
+    const tampered = Buffer.from(H.bytes);
+    const seg = layoutOf(tampered).segments.lexical;
+    tampered[seg.offset + Math.floor(seg.length / 2)] ^= 0xff;
+    await rejects('tampered lexical segment fails hash verification at open',
+        () => openPancakeFile(memorySource(tampered), { encodeQuery: hostEncode }),
+        /lexical segment failed hash/);
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

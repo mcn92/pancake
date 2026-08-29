@@ -123,7 +123,7 @@ fields MUST be ignored by readers (and are covered by the identity digest).
 
 | Offset | Type | Field |
 | ---: | --- | --- |
-| 0 | u32 | kind (`1` index, `2` corpus, `3` query-interp, `4` evaluation) |
+| 0 | u32 | kind (`1` index, `2` corpus, `3` query-interp, `4` evaluation, `5` lexical) |
 | 4 | u32 | reserved (zero) |
 | 8 | u64 | offset (16-byte aligned) |
 | 16 | u64 | bytes |
@@ -131,6 +131,7 @@ fields MUST be ignored by readers (and are covered by the identity digest).
 
 Exactly one segment of each kind 1–3 is REQUIRED; evaluation (kind 4) is
 REQUIRED for conformance but a reader MAY serve queries without reading it.
+At most one lexical segment (kind 5, section 3.8) MAY be present.
 Unknown kinds MUST be skipped (they are still committed via the manifest).
 
 ### 3.4 Index segment (kind 1)
@@ -286,6 +287,48 @@ labels, recall-vs-C measurements for the embedded sketch geometry, and
 teacher/student fidelity metrics. The golden queries double as the
 conformance fixtures for readers (section 5).
 
+### 3.8 Lexical index segment (kind 5, OPTIONAL)
+
+A static BM25 inverted index over the corpus records, for hybrid
+retrieval. At most one lexical segment MAY be present; readers that
+predate the kind skip it (section 3.3) and serve vector-only queries from
+the same file. Layout `bm25-v1`:
+
+```
+[0,4)   u32 version = 1
+[4,8)   u32 docCount        MUST equal manifest corpus.records
+[8,12)  u32 termCount
+[12,20) u64 totalTokens
+[20,24) u32 doclenOffset    absolute within the segment (= 64)
+[24,28) u32 termTableOffset
+[28,32) u32 postingsOffset
+[32,40) u64 postingsBytes
+[40,64) reserved, zero
+doclens    u32[docCount]     indexed tokens per record
+termTable  termCount x 24 B  u32 hashLo, u32 hashHi, u64 postingsOffset
+                             (relative), u32 postingsBytes, u32 df —
+                             sorted by (hashHi, hashLo)
+postings   per term          varint docId (first absolute, then deltas),
+                             varint tf, repeated df times
+```
+
+Terms are addressed by hash only — fnv1a-32 of the lowercase token with
+seeds `0` and `0x9e3779b9` — so a reader binary-searches the fixed-width
+table without materializing term strings, and a range-reading opener can
+serve the segment lazily without a format revision (the phase-1 reference
+reader loads it eagerly and verifies the whole-segment digest at open).
+Hash collisions merge two terms' postings; over realistic vocabularies the
+probability is negligible and the failure mode is a slightly-wrong lexical
+score, never corruption. Builders tokenize on lowercase `[a-z0-9']+`,
+keep tokens of 2–32 characters, and MAY skip function words; readers need
+no knowledge of the builder's stopword list, because an unindexed query
+token simply finds no postings. BM25 parameters are fixed: k1 = 1.2,
+b = 0.75, idf = ln(1 + (N − df + 0.5)/(df + 0.5)).
+
+The regions MUST tile the segment exactly in the order above; a reader
+MUST reject a segment whose offsets disagree with its counts, whose
+postings run past `postingsBytes`, or whose doc ids reach `docCount`.
+
 ## 4. Execution semantics
 
 `open(source)`:
@@ -321,13 +364,22 @@ a partial success. u64 fields above `2^53 - 1` are rejected.
 1. Encode: text → vector + feature stream (pre-search abstention MAY answer
    here without touching the index).
 2. Search: sketch scan + one parallel rerank fetch round (SKETCH_PROFILE.md
-   section 3).
+   section 3). When the artifact carries a lexical segment (3.8), the BM25
+   top matches join the rerank as extra candidates — scored by true vector
+   distance like any candidate, which is what recovers a known-item lookup
+   the sketch scan's top-C missed — and the final result order fuses the
+   distance ranking with the BM25 ranking by reciprocal rank (RRF,
+   constant 60). Lexical hits scoring under a third of the best lexical
+   score are dropped before fusion: idf collapses common query terms to
+   near-tied scores that carry no ranking information.
 3. Hydrate: one range read per result id via the corpus offsets; on layout
    v2, verify the record against its digest (fetching and verifying that
    digest's page on first use). A record that fails verification fails the
    query rather than being returned.
-4. Calibrate: score match quality from hits + feature stream; a `none`
-   verdict returns zero results with the score.
+4. Calibrate: score match quality from hits + feature stream, where hits
+   are the distance-sorted top-k (fusion affects the returned order, not
+   the calibrated signals); a `none` verdict returns zero results with the
+   score.
 
 Result shape: `{ matchQuality, confidence, results: [{ id, distance,
 title, text, sourcePath, ... }] }` — ids, distances, and hydrated records

@@ -21,6 +21,7 @@
 import { loadStudentModel, embedTextWithStudent } from './student-embedder.mjs';
 import { computeMatchQuality, computePreSearchAbstention } from './student-abstention.mjs';
 import { createAbstentionScorer } from './retrieval-abstention.mjs';
+import { openLexicalIndex } from './lexical.mjs';
 import { PancakeSketchArtifact } from '../pancake-artifact.js';
 import { MAGIC, HEADER_BYTES, TABLE_ENTRY_BYTES, KINDS, KIND_NAMES } from './format.mjs';
 
@@ -59,6 +60,10 @@ const RECORD_CACHE = 256;
 // The embedded index is a .pancake-sketch artifact (SKETCH_PROFILE.md);
 // its fixed-size header is what format 2 commits to in the manifest.
 const SKETCH_HEADER_BYTES = 256;
+// Hybrid retrieval: BM25 candidates fetched from the lexical segment per
+// query, and the reciprocal-rank-fusion constant (the standard untuned 60).
+const LEXICAL_CANDIDATES = 24;
+const RRF_K = 60;
 const METRIC_NAMES = { 0: 'l2', 1: 'cosine' };
 
 const decoder = new TextDecoder();
@@ -418,7 +423,7 @@ export async function openPancakeFile(input, options = {}) {
         // reads of its own), and the corpus tables fetch as one concurrent
         // wave instead of dependent rounds — at 100 ms/request that is most
         // of the open time.
-        const [qiBytes, sketch, tables] = await Promise.all([
+        const [qiBytes, sketch, tables, lexicalBytes] = await Promise.all([
             (async () => {
                 const bytes = await readChecked(source, qi.offset, qi.length, 'query-interp segment', maxReadBytes, fileBytes);
                 if (await sha256hex(bytes) !== qi.sha256) {
@@ -428,6 +433,17 @@ export async function openPancakeFile(input, options = {}) {
             })(),
             PancakeSketchArtifact.open(windowSource(source, idx.offset, idx.length), { maxReadBytes }),
             readChecked(source, corpus.offset, tablesBytes, 'corpus tables', maxReadBytes, fileBytes),
+            // Lexical index (kind 5, OPTIONAL): eager whole-segment read,
+            // verified against the manifest digest like the query-interp
+            // segment. Readers that predate the kind skip it (spec 3.3).
+            segments.has('lexical') ? (async () => {
+                const seg = segments.get('lexical');
+                const bytes = await readChecked(source, seg.offset, seg.length, 'lexical segment', maxReadBytes, fileBytes);
+                if (await sha256hex(bytes) !== seg.sha256) {
+                    throw new Error('.pancake lexical segment failed hash verification');
+                }
+                return bytes;
+            })() : null,
             perRecord ? (async () => {
                 const headerBytes = await readChecked(source, idx.offset, SKETCH_HEADER_BYTES, 'index header', maxReadBytes, fileBytes);
                 if (await sha256hex(headerBytes) !== manifest.index.headerSha256) {
@@ -435,6 +451,11 @@ export async function openPancakeFile(input, options = {}) {
                 }
             })() : null,
         ]);
+
+        const lexicalIndex = lexicalBytes ? openLexicalIndex(lexicalBytes) : null;
+        if (lexicalIndex && lexicalIndex.docCount !== declaredRecords) {
+            throw new Error(`.pancake lexical segment covers ${lexicalIndex.docCount} records, corpus declares ${declaredRecords}`);
+        }
 
         // Query interpretation: version word, kind, two length-prefixed
         // regions that must tile the segment exactly.
@@ -720,6 +741,9 @@ export async function openPancakeFile(input, options = {}) {
                     // unverified until a full vectors pass.
                     indexRowIntegrity: sketch.formatVersion >= 2 && sketch.verifyRows !== false
                         ? 'per-row-sha256' : 'segment-sha256',
+                    lexical: lexicalIndex
+                        ? { terms: lexicalIndex.termCount, docCount: lexicalIndex.docCount }
+                        : null,
                     sampleQueries: Array.isArray(manifest.sampleQueries) ? manifest.sampleQueries : [],
                 };
             },
@@ -743,16 +767,54 @@ export async function openPancakeFile(input, options = {}) {
                 const context = await embed(trimmed);
                 const pre = preScore(context);
                 let hits = [];
+                let fused = null;
                 if (!pre) {
-                    hits = (await sketch.search(context.vector, k, {
+                    // Hybrid retrieval when the artifact carries a lexical
+                    // segment: the BM25 top matches join the sketch's exact
+                    // rerank as extra candidates (scored by true vector
+                    // distance like any candidate — this is what recovers
+                    // known-item lookups the sketch scan's top-C missed),
+                    // and the final ordering fuses the distance ranking
+                    // with the BM25 ranking by reciprocal rank (RRF, k=60,
+                    // untuned). Abstention still scores the distance-sorted
+                    // top-k exactly as calibrated; fusion affects result
+                    // order only. fullRerankOutput returns every reranked
+                    // candidate (all already fetched and exactly scored) so
+                    // fusion sees the true distance of every lexical match.
+                    // Common query terms give every matching document a
+                    // small, near-tied BM25 score (idf collapses them);
+                    // that flat mass carries no ranking information and
+                    // dilutes rank fusion. Keep only hits within a factor
+                    // of the best lexical score — for a known-item lookup
+                    // that is typically the one document holding the rare
+                    // terms.
+                    const lexicalRaw = lexicalIndex ? lexicalIndex.search(trimmed, LEXICAL_CANDIDATES) : [];
+                    const lexicalHits = lexicalRaw.filter((h) => h.score >= lexicalRaw[0].score / 3);
+                    const searched = (await sketch.search(context.vector, k, {
                         rerank: queryOptions.rerank,
                         parallelism: queryOptions.parallelism ?? queryOptions.rerankParallelism ?? options.rerankParallelism,
                         gap: queryOptions.gap ?? queryOptions.rerankGap ?? options.rerankGap,
                         maxRangeBytes: queryOptions.maxRangeBytes ?? options.rerankMaxRangeBytes,
+                        ...(lexicalHits.length ? {
+                            extraCandidates: lexicalHits.map((h) => h.id),
+                            fullRerankOutput: true,
+                        } : {}),
                     })).results;
+                    hits = searched.slice(0, k);
+                    if (lexicalHits.length) {
+                        const lexRank = new Map(lexicalHits.map((h, i) => [h.id, i]));
+                        fused = searched
+                            .map((hit, vRank) => ({
+                                hit,
+                                score: 1 / (RRF_K + vRank) + (lexRank.has(hit.id) ? 1 / (RRF_K + lexRank.get(hit.id)) : 0),
+                            }))
+                            .sort((a, b) => (b.score - a.score) || (a.hit.distance - b.hit.distance))
+                            .slice(0, k)
+                            .map((entry) => entry.hit);
+                    }
                 }
                 const quality = pre || await scoreQuality(hits, context);
-                const returned = quality.match_quality === 'none' ? [] : hits;
+                const returned = quality.match_quality === 'none' ? [] : (fused || hits);
                 // The search's id and distance are authoritative: they are
                 // written last so a corpus record carrying its own `id` or
                 // `distance` field cannot overwrite them (reserved names).

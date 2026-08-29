@@ -49,6 +49,135 @@ export function buildQueryInterpSegment(kind, encoderBytes, calibrationBytes) {
   return out;
 }
 
+// Lexical index segment (kind 5, OPTIONAL), layout bm25-v1: a static
+// inverted index over the corpus records for hybrid retrieval. Terms are
+// addressed by a 64-bit hash (two fnv1a-32 passes, seeds 0 and 0x9e3779b9)
+// in a fixed-width table sorted by (hashHi, hashLo), so a reader can binary
+// search without materializing term strings — lazy-friendly by
+// construction, even though the phase-1 reader loads the segment eagerly.
+// Postings are (docIdDelta, tf) varint pairs. Document length (indexed
+// tokens per record) and the corpus token total ship for BM25
+// normalization. Hash collisions merge two terms' postings; at 64 bits over
+// realistic vocabularies the probability is negligible and the failure mode
+// is one slightly-wrong lexical score, not corruption.
+//
+//   [0,4)   u32 version = 1
+//   [4,8)   u32 docCount
+//   [8,12)  u32 termCount
+//   [12,20) u64 totalTokens
+//   [20,24) u32 doclenOffset          absolute within the segment
+//   [24,28) u32 termTableOffset
+//   [28,32) u32 postingsOffset
+//   [32,40) u64 postingsBytes
+//   [40,64) reserved, zero
+//   doclens   u32[docCount]
+//   termTable termCount x 24 bytes: u32 hashLo, u32 hashHi,
+//             u64 postingsOffset (relative to postingsOffset), u32 bytes,
+//             u32 df
+//   postings  per term: varint docId (first absolute, then deltas),
+//             varint tf, repeated df times
+//
+// Indexing tokenizes on [a-z0-9']+ lowercased, keeps tokens of 2..32 chars,
+// and skips a small function-word stopword list — readers need no
+// coordination with the list, because an unindexed query token simply finds
+// no postings.
+const LEXICAL_LAYOUT = 'bm25-v1';
+const LEXICAL_STOPWORDS = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'of', 'to', 'in', 'on', 'at', 'by', 'for', 'with', 'from', 'into', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'it', 'its', 'this', 'that', 'these', 'those', 'as', 'their', 'they', 'them', 'his', 'her', 'has', 'have', 'had', 'not', 'can', 'will', 'if', 'we', 'you', 'your', 'i']);
+const lexTokenize = (text) => (String(text).toLowerCase().match(/[a-z0-9']+/g) || [])
+  .filter((w) => w.length >= 2 && w.length <= 32 && !LEXICAL_STOPWORDS.has(w));
+
+function fnv1a32(str, seed) {
+  let h = 0x811c9dc5 ^ seed;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+function varintBytes(n) {
+  const out = [];
+  let v = n >>> 0;
+  do {
+    let b = v & 0x7f;
+    v >>>= 7;
+    if (v) b |= 0x80;
+    out.push(b);
+  } while (v);
+  return out;
+}
+
+export function buildLexicalSegment(texts) {
+  const docCount = texts.length;
+  const doclens = new Uint32Array(docCount);
+  const byTerm = new Map(); // term -> Map(docId -> tf)
+  let totalTokens = 0;
+  for (let id = 0; id < docCount; id++) {
+    const tokens = lexTokenize(texts[id]);
+    doclens[id] = tokens.length;
+    totalTokens += tokens.length;
+    for (const t of tokens) {
+      let docs = byTerm.get(t);
+      if (!docs) byTerm.set(t, (docs = new Map()));
+      docs.set(id, (docs.get(id) || 0) + 1);
+    }
+  }
+  const terms = [...byTerm.keys()].map((t) => ({
+    hashLo: fnv1a32(t, 0),
+    hashHi: fnv1a32(t, 0x9e3779b9),
+    docs: byTerm.get(t),
+  })).sort((a, b) => (a.hashHi - b.hashHi) || (a.hashLo - b.hashLo));
+
+  const postings = [];
+  let postingsCursor = 0;
+  for (const term of terms) {
+    const ids = [...term.docs.keys()].sort((a, b) => a - b);
+    const bytes = [];
+    let prev = 0;
+    for (let i = 0; i < ids.length; i++) {
+      bytes.push(...varintBytes(i === 0 ? ids[0] : ids[i] - prev));
+      bytes.push(...varintBytes(term.docs.get(ids[i])));
+      prev = ids[i];
+    }
+    term.postingsOffset = postingsCursor;
+    term.postingsBytes = bytes.length;
+    term.df = ids.length;
+    postings.push(Buffer.from(bytes));
+    postingsCursor += bytes.length;
+  }
+
+  const doclenOffset = 64;
+  const termTableOffset = doclenOffset + 4 * docCount;
+  const postingsOffset = termTableOffset + 24 * terms.length;
+  const out = Buffer.alloc(postingsOffset + postingsCursor);
+  out.writeUInt32LE(1, 0);
+  out.writeUInt32LE(docCount, 4);
+  out.writeUInt32LE(terms.length, 8);
+  out.writeBigUInt64LE(BigInt(totalTokens), 12);
+  out.writeUInt32LE(doclenOffset, 20);
+  out.writeUInt32LE(termTableOffset, 24);
+  out.writeUInt32LE(postingsOffset, 28);
+  out.writeBigUInt64LE(BigInt(postingsCursor), 32);
+  for (let id = 0; id < docCount; id++) out.writeUInt32LE(doclens[id], doclenOffset + 4 * id);
+  terms.forEach((term, i) => {
+    const entry = termTableOffset + 24 * i;
+    out.writeUInt32LE(term.hashLo, entry);
+    out.writeUInt32LE(term.hashHi, entry + 4);
+    out.writeBigUInt64LE(BigInt(term.postingsOffset), entry + 8);
+    out.writeUInt32LE(term.postingsBytes, entry + 16);
+    out.writeUInt32LE(term.df, entry + 20);
+  });
+  let cursor = postingsOffset;
+  for (const chunk of postings) {
+    chunk.copy(out, cursor);
+    cursor += chunk.length;
+  }
+  return {
+    bytes: out,
+    meta: { layout: LEXICAL_LAYOUT, terms: terms.length, docCount, totalTokens },
+  };
+}
+
 // Corpus layout v1 (format 1, profile pancake-complete-v1): count + offsets +
 // records, integrity by whole-segment digest only. Kept for producing
 // format-1 files (compatibility fixtures, readers that predate format 2);

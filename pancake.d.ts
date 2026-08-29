@@ -382,6 +382,20 @@ export interface SketchArtifactSearchOptions {
   /** Concurrent range reads per fetch round. Default: 8. */
   parallelism?: number;
   /**
+   * Row ids that join the exact rerank alongside the sketch scan's
+   * selection (e.g. a lexical index's matches in a hybrid query). Scored
+   * by true distance like any candidate. Ids must be integers in
+   * [0, count).
+   */
+  extraCandidates?: readonly number[];
+  /**
+   * Return every reranked candidate in distance order instead of the top
+   * k. The candidates are already fetched and exactly scored; this
+   * changes only the output slice. Hybrid callers use it so rank fusion
+   * sees the true distance of every lexical candidate.
+   */
+  fullRerankOutput?: boolean;
+  /**
    * Split coalesced row runs at this many bytes (row-aligned, floor one
    * row) so no single range read grows unbounded. Default: 16 MiB.
    */

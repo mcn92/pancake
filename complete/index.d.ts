@@ -89,6 +89,13 @@ export interface CompleteSearch {
      * per read.
      */
     vectorsVerified: boolean;
+    /**
+     * Present when the artifact carries a lexical index segment (kind 5):
+     * queries run hybrid (BM25 candidates join the exact rerank; result
+     * order fuses distance and BM25 rankings by reciprocal rank). Null on
+     * vector-only artifacts.
+     */
+    lexical: { terms: number; docCount: number } | null;
     sampleQueries: string[];
   };
   /**

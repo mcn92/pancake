@@ -18,6 +18,7 @@ reader.
 query text
   -> artifact-carried query interpreter
   -> vector search over compressed sketch/index data
+     + BM25 over the embedded lexical index, rank-fused
   -> lazy range reads for records
   -> calibrated hydrated results
 ```
@@ -102,6 +103,8 @@ corpus      JSON records behind an offsets table
 encoder     query interpreter declaration or inline model data
 calibration abstention / match-quality model
 evaluation  golden queries and expected behavior
+lexical     BM25 inverted index for hybrid retrieval (optional; readers
+            that predate it serve vector-only from the same file)
 ```
 
 The reader verifies the manifest and eager segments, opens the sketch index

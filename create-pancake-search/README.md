@@ -54,6 +54,14 @@ In the deprecated artifact runtime, a prebuilt `.pancake-range` file can be
 supplied with `--artifact`; external artifacts must have dimension, count,
 and IDs that match the generated corpus.
 
+Compiled `.pancake` artifacts also carry a BM25 lexical index (a few
+hundred KiB at docs scale), and queries run hybrid: the lexical matches
+join the vector rerank as candidates — so exact identifiers, config
+options, and title lookups land even when embedding similarity alone would
+miss them — and the final ordering fuses the two rankings by reciprocal
+rank. Readers that predate the segment serve vector-only from the same
+file.
+
 ## Compiling a complete `.pancake` artifact
 
 When you want the search *file* rather than a search *app*, `compile` builds

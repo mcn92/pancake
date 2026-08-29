@@ -52,6 +52,33 @@ first.
 
 ### Added
 
+- **Hybrid search: complete artifacts carry a BM25 lexical index**
+  (segment kind 5, layout `bm25-v1`, spec §3.8) and the reader fuses
+  lexical and vector retrieval. The builder writes a static inverted
+  index over the corpus records (hash-addressed fixed-width term table,
+  varint postings, ~113 KiB for a 132-record docs corpus); `compile`
+  includes it by default. At query time the BM25 top matches join the
+  sketch's exact rerank as extra candidates — scored by true vector
+  distance, which is what rescues known-item lookups the sketch scan's
+  top-C misses — and the final result order fuses the distance and BM25
+  rankings by reciprocal rank (RRF, constant 60, untuned). Lexical hits
+  under a third of the best lexical score are dropped before fusion: idf
+  collapses common query terms into a near-tied mass that carries no
+  ranking information. Abstention is unaffected — it scores the
+  distance-sorted top-k exactly as calibrated; fusion changes result
+  order only. Readers that predate the segment kind skip it (spec §3.3)
+  and serve vector-only queries from the same file; artifacts without
+  the segment behave exactly as before (`info().lexical` reports which).
+  `PancakeSketchArtifact.search` gains `extraCandidates` (external row
+  ids joining the exact rerank) and `fullRerankOutput` (return every
+  reranked candidate, not the top k) to support this. The format is
+  lazy-friendly by construction (absolute offsets, hash-sorted
+  fixed-width term table) so a range-reading opener for wiki-scale packs
+  needs no format revision; the phase-1 reader loads the segment eagerly
+  and verifies its digest at open. Covered by 9 new conformance checks
+  including a deterministic rescue case (a known-item query whose
+  encoder vector is pure noise still surfaces the right record) and
+  lexical-segment tamper rejection.
 - **The crawler follows the seed's own redirects** — HTTP and meta-refresh,
   bounded at 5 hops, each hop logged — and the final URL defines the crawl
   origin. Sites routinely send their root to a canonical host or localized

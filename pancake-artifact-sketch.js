@@ -868,6 +868,28 @@ class PancakeSketchArtifact {
             for (let j = 0; j < C; j++) if (candId[j] >= 0) ids.push(candId[j]);
         }
 
+        // Externally supplied candidates (e.g. a lexical index's matches in
+        // a hybrid query) join the exact rerank alongside the sketch scan's
+        // selection: they are scored by true distance like any candidate,
+        // so a lexically-found row that is also a near neighbor surfaces
+        // even when the resident scan's top-C missed it.
+        if (options.extraCandidates !== undefined) {
+            if (!Array.isArray(options.extraCandidates)) {
+                throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'extraCandidates must be an array of row ids');
+            }
+            if (!Array.isArray(ids)) ids = Array.from(ids); // a custom scanner may return a typed array
+            const have = new Set(ids);
+            for (const id of options.extraCandidates) {
+                if (!Number.isInteger(id) || id < 0 || id >= count) {
+                    throw pancakeError(PANCAKE_ERROR_CODES.INVALID_ARGUMENT, 'extraCandidates ids must be integers in [0, count)', { id, count });
+                }
+                if (!have.has(id)) {
+                    have.add(id);
+                    ids.push(id);
+                }
+            }
+        }
+
         const rows = await this.fetchRows(ids, options);
 
         const exact = [];
@@ -891,8 +913,14 @@ class PancakeSketchArtifact {
         // Rerank accumulates squared L2; the API contract (README "Distance
         // values") reports Euclidean, matching PancakeIndex.search.
         const sqrtL2 = this.metric !== 1;
+        // fullRerankOutput returns every reranked candidate in distance
+        // order instead of the top k — the candidates are already fetched
+        // and exactly scored, so this changes only the output slice. Hybrid
+        // callers use it so rank fusion sees the true distance of every
+        // lexical candidate.
+        const selected = options.fullRerankOutput ? exact : exact.slice(0, k);
         return {
-            results: exact.slice(0, k).map(([distance, id]) => ({ id, distance: sqrtL2 ? Math.sqrt(distance) : distance })),
+            results: selected.map(([distance, id]) => ({ id, distance: sqrtL2 ? Math.sqrt(distance) : distance })),
             rerank: ids.length,
             tier: tier.name,
         };

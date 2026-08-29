@@ -12,7 +12,7 @@ async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, c
   const artifactContract = await loadArtifactContract();
   const {
     assemblePancakeFile, buildCorpusSegment, buildInlineTransformerEncoderSegment, PROFILE_V2,
-    buildQueryInterpSegment, measureRecommendedRerank, loadInlineEncoderKernel,
+    buildQueryInterpSegment, buildLexicalSegment, measureRecommendedRerank, loadInlineEncoderKernel,
   } = (await loadCompleteModules()).builder;
   const { createInlineTransformerEmbedder, buildInlineTestVectors } = (await loadCompleteModules()).reader;
   const runtime = config.runtime || {};
@@ -95,6 +95,11 @@ async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, c
   }), 'utf8');
   const outPath = path.join(assetsDir, runtime.fileName || 'search.pancake');
   const corpusSegment = buildCorpusSegment(records);
+  // Lexical index for hybrid retrieval (kind 5): BM25 candidates join the
+  // sketch rerank at query time so known-item lookups survive the sketch
+  // scan's candidate cutoff. Older readers skip the segment.
+  const lexical = buildLexicalSegment(chunks.map((chunk) => chunk.text || ''));
+  log(`Built lexical index: ${lexical.meta.terms.toLocaleString()} terms over ${lexical.meta.docCount.toLocaleString()} records (${(lexical.bytes.length / 1024).toFixed(0)} KiB)`);
   const result = assemblePancakeFile({
     profile: PROFILE_V2,
     corpus: { ...corpusSegment.corpus, provenance: { source: config.source.type, name: config.name } },
@@ -108,12 +113,14 @@ async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, c
       maxTokens: declaration.maxTokens,
     },
     recommendedRerank: rerankSweep.recommendedRerank,
+    lexical: lexical.meta,
     sampleQueries: runtime.sampleQueries || [],
   }, [
     { kind: 'index', bytes: Buffer.from(sketch.bytes) },
     { kind: 'corpus', bytes: corpusSegment.bytes },
     { kind: 'query-interp', bytes: buildQueryInterpSegment(3, inlineEncoderBytes, calibrationBytes) },
     { kind: 'evaluation', bytes: evaluation },
+    { kind: 'lexical', bytes: lexical.bytes },
   ], outPath);
   return {
     profile: PROFILE_V2,
