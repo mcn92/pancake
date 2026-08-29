@@ -158,6 +158,31 @@ console.log('\n--- compile ---');
   ok(scoped('https://docs.example.com/guide/setup.html') && !scoped('https://docs.example.com/blog/post.html')
     && !scoped('https://docs.example.com/guide/draft-new.html'),
     'include-url and exclude-url patterns scope the crawl frontier');
+  // Seed redirects are followed (bounded); mid-crawl redirects stay skipped.
+  const { resolveSeedUrl } = await import(path.join(CPS_DIR, 'src', 'ingest.mjs'));
+  const http = await import('node:http');
+  const redirectPort = await freePort();
+  const redirectSrv = http.createServer((req, res) => {
+    if (req.url === '/') { res.writeHead(301, { location: '/hop/' }); res.end(); return; }
+    if (req.url === '/hop/') {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<!DOCTYPE html>\n<meta http-equiv="refresh" content="0;url=/en/start/">');
+      return;
+    }
+    if (req.url === '/en/start/') { res.writeHead(200, { 'content-type': 'text/html' }); res.end('<html><body>start</body></html>'); return; }
+    res.writeHead(404); res.end();
+  });
+  await new Promise((resolve) => redirectSrv.listen(redirectPort, '127.0.0.1', resolve));
+  try {
+    const hops = [];
+    const resolved = await resolveSeedUrl(new URL(`http://127.0.0.1:${redirectPort}/`), (m) => hops.push(m));
+    ok(resolved.pathname === '/en/start/'
+      && hops.some((m) => m.includes('seed redirected:'))
+      && hops.some((m) => m.includes('meta refresh')),
+      'seed follows HTTP and meta-refresh redirects to its target', `${resolved.href} ${hops.join(';')}`);
+  } finally {
+    redirectSrv.close();
+  }
   const globOnUrl = spawnSync(process.execPath,
     [CPS_BIN, 'compile', '--source', 'https://docs.example.com', '--exclude', '*print*', '--out', path.join(work, 'x.pancake')],
     { encoding: 'utf8', cwd: CPS_DIR });

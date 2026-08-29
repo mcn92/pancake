@@ -133,9 +133,14 @@ project's layout.
 ### URL ingestion trust boundary
 
 `--source <url>` crawls a website from your machine at build time. The
-crawler runs locally under your account, follows the URL *you* typed, keeps
-the crawl frontier on that URL's origin, skips redirects, enforces timeouts
-and per-page/body caps, and never runs at query time — the deployed Worker
+crawler runs locally under your account and follows the URL *you* typed —
+including through the seed's own redirects (HTTP and meta-refresh, bounded
+at 5 hops), since sites routinely send their root to a canonical host or a
+localized landing page. The final seed URL defines the crawl origin; every
+other fetch skips redirects (contentless meta-refresh pages are followed
+through the normal frontier filters instead of wasting page budget). It
+keeps the crawl frontier on that origin, enforces timeouts and
+per-page/body caps, and never runs at query time — the deployed Worker
 makes no outbound fetches at all. It deliberately does not block
 private-network addresses: it is a local developer tool, and pointing it at
 your own intranet docs is a supported use. Do not lift the crawl code into a

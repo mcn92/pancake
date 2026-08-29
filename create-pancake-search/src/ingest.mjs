@@ -85,8 +85,71 @@ function urlCrawlFilter(source) {
   };
 }
 
+// A pure redirect page: HTTP 200 whose HTML is a meta refresh
+// (docs.astro.build's root is `<meta http-equiv="refresh"
+// content="0;url=/en/getting-started/">` and nothing else).
+function metaRefreshTarget(html, baseHref) {
+  const meta = html.match(/<meta[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>/i);
+  if (!meta) return null;
+  const url = meta[0].match(/content\s*=\s*["']?[^"'>]*?url\s*=\s*([^"'>\s;]+)/i);
+  if (!url) return null;
+  try { return new URL(url[1], baseHref); } catch { return null; }
+}
+
+// The seed the user typed is followed through redirects (bounded) before
+// the crawl starts — both HTTP redirects and meta-refresh pages: sites
+// routinely send their root to a canonical host or a localized landing page
+// (docs.astro.build -> /en/getting-started/ via meta refresh), and a crawl
+// seeded on the pre-redirect URL discovers one empty page, then fails with
+// an error that blames the content. The final URL defines the crawl origin.
+// Every other fetch keeps the strict redirect-skip: mid-crawl redirects are
+// moved or aliased pages whose targets the crawl discovers through links.
+async function resolveSeedUrl(seed, log) {
+  let current = seed;
+  for (let hop = 0; hop < 5; hop++) {
+    let response;
+    try {
+      response = await fetch(current.href, {
+        headers: { 'User-Agent': 'create-pancake-search/0.1.0' },
+        redirect: 'manual',
+        signal: AbortSignal.timeout(15000),
+      });
+    } catch {
+      return current; // the crawl loop will surface the fetch error itself
+    }
+    const location = response.headers.get('location');
+    if (response.status >= 300 && response.status < 400 && location) {
+      await response.body?.cancel?.().catch(() => {});
+      const next = new URL(location, current);
+      log(`seed redirected: ${current.href} -> ${next.href}`);
+      current = next;
+      continue;
+    }
+    const type = response.headers.get('content-type') || '';
+    if (response.ok && type.includes('text/html')) {
+      let html = '';
+      try {
+        html = await readLimitedText(response, MAX_CRAWL_BODY_BYTES);
+      } catch {
+        return current;
+      }
+      const refresh = metaRefreshTarget(html, current.href);
+      if (refresh && refresh.href !== current.href) {
+        log(`seed redirected (meta refresh): ${current.href} -> ${refresh.href}`);
+        current = refresh;
+        continue;
+      }
+      return current;
+    }
+    await response.body?.cancel?.().catch(() => {});
+    return current;
+  }
+  log(`warn: seed still redirecting after 5 hops; crawling ${current.href}`);
+  return current;
+}
+
 async function ingestUrl(source, log) {
-  const seed = new URL(source.url);
+  const seed = await resolveSeedUrl(new URL(source.url), log);
   const seen = new Set();
   const queue = [seed.href];
   const docs = [];
@@ -121,6 +184,23 @@ async function ingestUrl(source, log) {
       continue;
     }
     const extracted = extractHtml(html);
+    // A contentless meta-refresh page is a redirect wearing a 200: skip it
+    // as a document (it would waste page budget as an empty doc) and follow
+    // its target through the normal frontier filters. Pages with real
+    // content and an incidental refresh tag are kept as documents.
+    const refresh = metaRefreshTarget(html, href);
+    if (refresh && extracted.text.split(/\s+/).filter(Boolean).length < 25) {
+      log(`warn: ${href} is a meta-refresh redirect page -> ${refresh.href}`);
+      if (refresh.origin === seed.origin && !seen.has(refresh.href)) {
+        if (!allowed(refresh.href)) {
+          seen.add(refresh.href);
+          filtered++;
+        } else if (queue.length + docs.length < (source.maxPages || 500)) {
+          queue.push(refresh.href);
+        }
+      }
+      continue;
+    }
     docs.push({ id: docs.length, url: href, title: extracted.title || href, text: extracted.text });
     // Filters gate the queue, not the dequeue: a filtered link must never
     // occupy page budget (queue.length counts toward maxPages), or a large
@@ -362,6 +442,7 @@ export {
   matchesSource,
   globMatch,
   ingestUrl,
+  resolveSeedUrl,
   urlCrawlFilter,
   readLimitedText,
   extractByExtension,

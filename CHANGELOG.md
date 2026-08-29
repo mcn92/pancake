@@ -52,6 +52,17 @@ first.
 
 ### Added
 
+- **The crawler follows the seed's own redirects** — HTTP and meta-refresh,
+  bounded at 5 hops, each hop logged — and the final URL defines the crawl
+  origin. Sites routinely send their root to a canonical host or localized
+  landing page (docs.astro.build's root is an HTTP 200 whose only content
+  is `<meta http-equiv="refresh" ...>`); the crawl previously discovered
+  one empty page and failed with an error blaming the content. Every other
+  fetch keeps the strict redirect-skip, and a contentless meta-refresh
+  page found mid-crawl is now followed through the normal frontier filters
+  instead of consuming page budget as an empty document. Exercised by a
+  new scaffold-e2e check against a local server chaining a 301 into a
+  meta refresh.
 - **The abstention model gains a grounding feature** (`self-templates-v3`):
   the fraction of the query's content words present in the top retrieved
   passage's text, fit as a fifth term in the same logistic model. Every
