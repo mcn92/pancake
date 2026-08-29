@@ -19,7 +19,7 @@ async function ingestFolder(root, source, log) {
     try {
       const text = await fs.readFile(file, 'utf8');
       const extracted = extractByExtension(text, file);
-      if (extracted.text.trim()) docs.push({ id: docs.length, sourcePath: rel, title: extracted.title || path.basename(file), slug: extracted.slug || null, text: extracted.text });
+      if (extracted.text.trim()) docs.push({ id: docs.length, sourcePath: rel, title: extracted.title || path.basename(file), slug: extracted.slug || null, text: extracted.text, sections: extracted.sections });
     } catch (error) {
       log(`warn: skipped unreadable file ${rel}: ${error.message}`);
     }
@@ -201,7 +201,7 @@ async function ingestUrl(source, log) {
       }
       continue;
     }
-    docs.push({ id: docs.length, url: href, title: extracted.title || href, text: extracted.text });
+    docs.push({ id: docs.length, url: href, title: extracted.title || href, text: extracted.text, sections: extracted.sections });
     // Filters gate the queue, not the dequeue: a filtered link must never
     // occupy page budget (queue.length counts toward maxPages), or a large
     // excluded section starves discovery of the pages the crawl is for.
@@ -268,6 +268,89 @@ function extractByExtension(text, file) {
   return { title, text: stripMarkdown(text) };
 }
 
+// GitHub-style heading slugs, deduplicated per document with -1/-2 suffixes.
+function makeSlugger() {
+  const used = new Map();
+  return (heading) => {
+    const base = String(heading || '')
+      .toLowerCase()
+      .replace(/`([^`]*)`/g, '$1')
+      .replace(/\[([^\]]+)]\([^)]*\)/g, '$1')
+      .replace(/[^a-z0-9\s_-]/g, '')
+      .trim()
+      .replace(/\s+/g, '-');
+    const n = used.get(base) || 0;
+    used.set(base, n + 1);
+    return n === 0 ? base : `${base}-${n}`;
+  };
+}
+
+// Strip inline markdown from a heading for display and path purposes.
+const cleanHeading = (heading) => normalizeText(String(heading || '')
+  .replace(/`([^`]*)`/g, '$1')
+  .replace(/\[([^\]]+)]\([^)]*\)/g, '$1')
+  .replace(/[*_~]/g, ''));
+
+// Split a markdown body into heading-delimited sections. Heading lines are
+// recognized only outside code fences, so a `# comment` inside a fenced
+// shell block never splits a section. Content before the first heading
+// becomes a depth-0 preamble section.
+function markdownSections(body) {
+  const sections = [];
+  let fence = null;
+  let current = { depth: 0, heading: null, customId: null, lines: [] };
+  for (const line of String(body).split('\n')) {
+    const f = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+    if (f) {
+      if (!fence) fence = f[1];
+      else if (f[1][0] === fence[0] && f[1].length >= fence.length) fence = null;
+      current.lines.push(line);
+      continue;
+    }
+    const h = !fence && line.match(/^(#{1,6})\s+(.+?)\s*$/);
+    if (h) {
+      sections.push(current);
+      let heading = h[2].replace(/\s+#+\s*$/, '');
+      // Explicit heading ids ({#custom-id}, Docusaurus/Astro style) win
+      // over the derived slug.
+      const custom = heading.match(/\s*\{#([A-Za-z0-9_-]+)\}\s*$/);
+      if (custom) heading = heading.slice(0, custom.index);
+      current = { depth: h[1].length, heading: cleanHeading(heading), customId: custom ? custom[1] : null, lines: [] };
+      continue;
+    }
+    current.lines.push(line);
+  }
+  sections.push(current);
+  return sections.map((s) => ({ ...s, body: s.lines.join('\n') }));
+}
+
+// Assign heading paths and anchors to raw sections. The path includes the
+// section's own heading; a leading h1 that carries the document title is
+// structural rather than sectional and stays out of the paths.
+function sectionize(rawSections, title, textOf) {
+  const slugger = makeSlugger();
+  const stack = [];
+  const out = [];
+  let sawH1Title = false;
+  for (const s of rawSections) {
+    if (s.depth === 0) {
+      const text = textOf(s);
+      if (text) out.push({ headingPath: [], anchor: '', text });
+      continue;
+    }
+    const anchor = s.customId || slugger(s.heading);
+    const isTitleH1 = s.depth === 1 && !sawH1Title && title
+      && s.heading.toLowerCase() === String(title).toLowerCase();
+    if (s.depth === 1 && !sawH1Title) sawH1Title = true;
+    while (stack.length && stack[stack.length - 1].depth >= s.depth) stack.pop();
+    const headingPath = isTitleH1 ? [] : [...stack.map((e) => e.heading).filter(Boolean), s.heading];
+    stack.push({ depth: s.depth, heading: isTitleH1 ? null : s.heading });
+    const text = textOf(s);
+    if (text || s.heading) out.push({ headingPath, anchor, heading: s.heading, text });
+  }
+  return out;
+}
+
 function extractMarkdown(text) {
   let body = String(text || '').replace(/\r/g, '');
   let slug = null;
@@ -282,22 +365,43 @@ function extractMarkdown(text) {
     .replace(/^import\s[^\n]*$/gm, ' ')
     .replace(/^export\s[^\n]*$/gm, ' ')
     .replace(/<\/?[A-Z][A-Za-z0-9.]*(?:\s[^>]*?)?\/?>/g, ' ');
-  if (!title) title = (body.match(/^#\s+(.+)$/m) || [])[1];
-  return { title, slug, text: stripMarkdown(body) };
+  if (!title) title = cleanHeading((body.match(/^#\s+(.+)$/m) || [])[1]) || null;
+  // Sections carry their own heading text as the first line so retrieval
+  // (embedding and lexical alike) sees what the section is about.
+  const sections = sectionize(markdownSections(body), title,
+    (s) => stripMarkdown(s.heading ? `${s.heading}\n${s.body}` : s.body).trim());
+  return { title, slug, text: stripMarkdown(body), sections };
 }
 
 function extractHtml(html) {
-  const title = decodeEntities((html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || '');
+  const title = normalizeText(decodeEntities((html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || ''));
   let body = (html.match(/<(main|article)[^>]*>([\s\S]*?)<\/\1>/i) || [])[2]
     || (html.match(/<body[^>]*>([\s\S]*?)<\/body>/i) || [])[1]
     || html;
-  body = body
-    .replace(/<(script|style|nav|header|footer|aside)[^>]*>[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<h([1-3])[^>]*>/gi, '\n### ')
+  body = body.replace(/<(script|style|nav|header|footer|aside)[^>]*>[\s\S]*?<\/\1>/gi, ' ');
+  const flattenHtml = (fragment) => normalizeText(decodeEntities(String(fragment)
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n\n')
-    .replace(/<[^>]+>/g, ' ');
-  return { title, text: normalizeText(decodeEntities(body)) };
+    .replace(/<\/(p|li|div|tr|pre)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')));
+  // Heading tags delimit sections; an id attribute on the heading (or, as
+  // fallback, on an anchor/element wrapping it) is the section anchor —
+  // matching what the site's own anchor links use — with a derived slug
+  // when none exists.
+  const raw = [];
+  let cursor = 0;
+  let last = { depth: 0, heading: null, customId: null };
+  for (const m of body.matchAll(/<h([1-6])([^>]*)>([\s\S]*?)<\/h\1>/gi)) {
+    raw.push({ ...last, body: body.slice(cursor, m.index) });
+    const attrId = (m[2].match(/\bid=["']([^"']+)["']/i) || [])[1]
+      || (m[3].match(/\bid=["']([^"']+)["']/i) || [])[1] || null;
+    last = { depth: Number(m[1]), heading: normalizeText(decodeEntities(m[3].replace(/<[^>]+>/g, ' '))), customId: attrId };
+    cursor = m.index + m[0].length;
+  }
+  raw.push({ ...last, body: body.slice(cursor) });
+  const pageTitle = title.split(/\s*[|·–—-]\s+/)[0] || title;
+  const sections = sectionize(raw, pageTitle,
+    (s) => (s.heading ? `${s.heading}\n${flattenHtml(s.body)}` : flattenHtml(s.body)).trim());
+  return { title, text: flattenHtml(body), sections };
 }
 
 function extractLinks(html, baseHref, origin) {
@@ -334,42 +438,103 @@ function normalizeText(text) {
   return String(text || '').replace(/\r/g, '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 }
 
+// Section-aware chunking: a section stays one chunk when it fits (up to
+// 1.6x the target, since splitting a coherent section costs more retrieval
+// quality than a modestly long chunk), subdivides at paragraph boundaries
+// when it does not, and falls back to token windows only inside a single
+// oversized paragraph. Every chunk carries the section's heading path and
+// anchor; subdivided pieces share their section's anchor. Sections under
+// 25 tokens merge into the previous chunk of the same document (their
+// content is preserved; their anchor is not a retrieval target). Documents
+// without sections (plain .txt) keep the flat token windows.
 function chunkDocs(docs, options) {
   const chunks = [];
   chunks.dropped = [];
+  const target = options.targetTokens || 256;
+  const overlap = Math.floor(target * ((options.overlapPercent || 15) / 100));
   for (const doc of docs) {
-    const tokens = tokenize(doc.text);
-    if (tokens.length < 25) {
+    const docTokens = tokenize(doc.text);
+    if (docTokens.length < 25) {
       chunks.dropped.push({
         id: doc.id,
         title: doc.title,
         sourcePath: doc.sourcePath,
         url: doc.url,
-        tokens: tokens.length,
+        tokens: docTokens.length,
       });
       continue;
     }
-    const target = options.targetTokens || 256;
-    const overlap = Math.floor(target * ((options.overlapPercent || 15) / 100));
-    for (let start = 0; start < tokens.length; start += Math.max(1, target - overlap)) {
-      const slice = tokens.slice(start, start + target);
-      if (slice.length < 25 && chunks.length) {
-        chunks[chunks.length - 1].text += ` ${slice.join(' ')}`;
+    const base = () => ({
+      id: chunks.length,
+      docId: doc.id,
+      title: doc.title,
+      headingPath: [],
+      url: doc.url || doc.sourcePath,
+      anchor: '',
+      sourcePath: doc.sourcePath || doc.url,
+      slug: doc.slug || null,
+      text: '',
+    });
+    if (!Array.isArray(doc.sections) || !doc.sections.length) {
+      for (let start = 0; start < docTokens.length; start += Math.max(1, target - overlap)) {
+        const slice = docTokens.slice(start, start + target);
+        if (slice.length < 25 && chunks.length) {
+          chunks[chunks.length - 1].text += ` ${slice.join(' ')}`;
+          continue;
+        }
+        chunks.push({ ...base(), text: slice.join(' ') });
+        if (start + target >= docTokens.length) break;
+      }
+      continue;
+    }
+    const docStart = chunks.length;
+    const keepMax = Math.floor(target * 1.6);
+    const push = (section, text) => chunks.push({
+      ...base(),
+      headingPath: section.headingPath,
+      anchor: section.anchor || '',
+      text: normalizeText(text),
+    });
+    for (const section of doc.sections) {
+      const tokens = tokenize(section.text);
+      if (!tokens.length) continue;
+      if (tokens.length < 25) {
+        if (chunks.length > docStart) chunks[chunks.length - 1].text += `\n${normalizeText(section.text)}`;
+        else push(section, section.text);
         continue;
       }
-      chunks.push({
-        id: chunks.length,
-        docId: doc.id,
-        title: doc.title,
-        headingPath: [],
-        url: doc.url || doc.sourcePath,
-        anchor: '',
-        sourcePath: doc.sourcePath || doc.url,
-        slug: doc.slug || null,
-        text: slice.join(' '),
-      });
-      if (start + target >= tokens.length) break;
+      if (tokens.length <= keepMax) {
+        push(section, section.text);
+        continue;
+      }
+      let piece = [];
+      let pieceTokens = 0;
+      const flushPiece = () => {
+        if (pieceTokens > 0) push(section, piece.join('\n\n'));
+        piece = [];
+        pieceTokens = 0;
+      };
+      for (const para of section.text.split(/\n{2,}/)) {
+        const paraTokens = tokenize(para).length;
+        if (!paraTokens) continue;
+        if (paraTokens > keepMax) {
+          flushPiece();
+          const words = tokenize(para);
+          for (let start = 0; start < words.length; start += Math.max(1, target - overlap)) {
+            push(section, words.slice(start, start + target).join(' '));
+            if (start + target >= words.length) break;
+          }
+          continue;
+        }
+        if (pieceTokens + paraTokens > target && pieceTokens > 0) flushPiece();
+        piece.push(para);
+        pieceTokens += paraTokens;
+      }
+      flushPiece();
     }
+    // A document whose sections were all tiny still needs its 25-token
+    // floor honored: merge a lone undersized chunk forward is impossible,
+    // so it simply stays (the document itself passed the floor above).
   }
   return chunks;
 }

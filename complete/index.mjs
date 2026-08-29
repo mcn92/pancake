@@ -788,7 +788,18 @@ export async function openPancakeFile(input, options = {}) {
                     // of the best lexical score — for a known-item lookup
                     // that is typically the one document holding the rare
                     // terms.
-                    const lexicalRaw = lexicalIndex ? lexicalIndex.search(trimmed, LEXICAL_CANDIDATES) : [];
+                    // retrieval: 'hybrid' (default when the artifact
+                    // carries a lexical segment) | 'vector' | 'lexical' —
+                    // the last two exist for measurement and debugging
+                    // (retrieval-quality bakeoffs run all three on one
+                    // artifact). Abstention scores the distance-sorted
+                    // top-k identically in every mode.
+                    const retrieval = queryOptions.retrieval ?? 'hybrid';
+                    if (!['hybrid', 'vector', 'lexical'].includes(retrieval)) {
+                        throw new Error(`query() retrieval must be hybrid, vector, or lexical, got ${retrieval}`);
+                    }
+                    const lexicalRaw = lexicalIndex && retrieval !== 'vector'
+                        ? lexicalIndex.search(trimmed, LEXICAL_CANDIDATES) : [];
                     const lexicalHits = lexicalRaw.filter((h) => h.score >= lexicalRaw[0].score / 3);
                     const searched = (await sketch.search(context.vector, k, {
                         rerank: queryOptions.rerank,
@@ -801,7 +812,10 @@ export async function openPancakeFile(input, options = {}) {
                         } : {}),
                     })).results;
                     hits = searched.slice(0, k);
-                    if (lexicalHits.length) {
+                    if (retrieval === 'lexical') {
+                        const byId = new Map(searched.map((hit) => [hit.id, hit]));
+                        fused = lexicalHits.map((h) => byId.get(h.id)).filter(Boolean).slice(0, k);
+                    } else if (lexicalHits.length) {
                         const lexRank = new Map(lexicalHits.map((h, i) => [h.id, i]));
                         fused = searched
                             .map((hit, vRank) => ({

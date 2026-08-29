@@ -106,6 +106,14 @@ export interface CompleteSearch {
   verifyVectors(options?: { chunkBytes?: number }): Promise<true>;
   query(text: string, options?: {
     k?: number;
+    /**
+     * Retrieval mode on artifacts carrying a lexical segment: 'hybrid'
+     * (default — BM25 candidates join the rerank, RRF result order),
+     * 'vector' (ignore the lexical index), 'lexical' (BM25 ranking only).
+     * The single-mode variants exist for measurement and debugging;
+     * abstention scores identically in every mode.
+     */
+    retrieval?: 'hybrid' | 'vector' | 'lexical';
     rerank?: number;
     parallelism?: number;
     gap?: number;

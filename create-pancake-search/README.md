@@ -60,7 +60,16 @@ join the vector rerank as candidates — so exact identifiers, config
 options, and title lookups land even when embedding similarity alone would
 miss them — and the final ordering fuses the two rankings by reciprocal
 rank. Readers that predate the segment serve vector-only from the same
-file.
+file. `query()` also takes `retrieval: 'vector' | 'lexical'` for
+measurement (`scripts/bakeoff-retrieval.mjs` in the main repo compares
+all three modes over a labeled query set).
+
+Ingestion is section-aware: Markdown/MDX parses into its heading
+structure (code fences respected, `{#custom-id}` heading ids honored) and
+HTML crawls section on `h1`–`h6` with the page's own `id` anchors, so a
+section stays one chunk when it fits and every result carries
+`headingPath` and `anchor` — deep links to the exact section, not the
+page.
 
 ## Compiling a complete `.pancake` artifact
 

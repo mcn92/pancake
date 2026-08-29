@@ -52,6 +52,34 @@ first.
 
 ### Added
 
+- **Section-aware ingestion and chunking.** Markdown/MDX documents are
+  parsed into their heading structure before chunking — heading lines are
+  recognized only outside code fences, explicit `{#custom-id}` heading ids
+  win over derived slugs, and duplicate headings get GitHub-style `-1`
+  suffixes — and HTML crawls section on `h1`–`h6` tags, preserving the
+  page's own `id` anchors. Chunking keeps a section together when it fits
+  (up to 1.6x the target size), subdivides at paragraph boundaries when it
+  does not, and merges sub-25-token sections into their neighbor. Every
+  chunk now carries the fields the corpus schema always reserved but
+  nothing populated: `headingPath` (ancestor headings ending in the
+  section's own) and `anchor`, so results deep-link to the exact section
+  (`Routing > Dynamic routes > Rest parameters`, `#rest-parameters`)
+  instead of pointing at a page. A leading h1 that restates the document
+  title stays out of heading paths. Plain-text files keep the flat token
+  windows.
+- **Retrieval modes and a retrieval-quality bakeoff.** `query()` accepts
+  `retrieval: 'hybrid' | 'vector' | 'lexical'` (hybrid remains the
+  default; the single-signal modes exist for measurement and debugging —
+  abstention scores identically in every mode), and
+  `scripts/bakeoff-retrieval.mjs` runs a query set with expected sections
+  through all three modes, reporting success@1/@3 and MRR@5 split into
+  semantic questions and exact lookups. Measured on a 120-page Astro docs
+  crawl (2,123 section chunks, 24 queries): exact lookups score
+  success@3 0.67 vector-only vs 1.00 BM25-only vs 0.92 hybrid; semantic
+  questions 0.75 / 0.67 / 0.83 — hybrid is the only mode competitive on
+  both classes. A 9-doc repo-docs corpus agrees on exact lookups (hybrid
+  success@1 0.71 vs 0.57 for either single mode) with semantic within
+  noise at that sample size.
 - **Hybrid search: complete artifacts carry a BM25 lexical index**
   (segment kind 5, layout `bm25-v1`, spec §3.8) and the reader fuses
   lexical and vector retrieval. The builder writes a static inverted
