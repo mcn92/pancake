@@ -40,7 +40,11 @@ package; this mapping only works cleanly for an unscoped name — see §12, Q1 r
 - R2-backed snapshot serving for large corpora (the `examples/reference-worker` restore-from-R2 pattern) —
   this is the designated v1.1 path past the bundle ceiling; v1 hard-fails with guidance instead.
 - Sitemap ingestion, multi-domain crawling, JS-rendered pages (no headless browser).
-- Hybrid BM25 + vector scoring.
+- ~~Hybrid BM25 + vector scoring.~~ Shipped since: compiled `.pancake`
+  artifacts carry a lexical index segment (spec/COMPLETE_PROFILE.md §3.8)
+  and queries run hybrid retrieval by default — BM25 candidates join the
+  vector rerank, result order fused by reciprocal rank
+  (`query({ retrieval })` selects a single-signal mode for measurement).
 - PDF/docx ingestion.
 - Non-Cloudflare deploy targets.
 

@@ -1,0 +1,28 @@
+{
+  "recordedAt": "2026-08-29",
+  "corpus": {
+    "source": "https://nodejs.org/api/",
+    "maxPages": 30,
+    "docs": 27,
+    "records": 2062,
+    "lexicalTerms": 7690,
+    "artifactIdentity": "53eb5c80c97872a8e9ac02898fd1b4015d660772a935ff92cfa29a64b436ffa5",
+    "note": "nodejs.org v26.8.1 docs at recording time; content drifts with releases"
+  },
+  "k": 5,
+  "metrics": {
+    "vector": {
+      "exact": { "success@1": 0.48, "success@3": 0.84, "mrr@5": 0.643 },
+      "semantic": { "success@1": 0.48, "success@3": 0.56, "mrr@5": 0.541 }
+    },
+    "lexical": {
+      "exact": { "success@1": 0.44, "success@3": 0.8, "mrr@5": 0.616 },
+      "semantic": { "success@1": 0.36, "success@3": 0.52, "mrr@5": 0.451 }
+    },
+    "hybrid": {
+      "exact": { "success@1": 0.52, "success@3": 0.88, "mrr@5": 0.695 },
+      "semantic": { "success@1": 0.44, "success@3": 0.56, "mrr@5": 0.511 }
+    }
+  },
+  "reading": "hybrid leads every exact metric and is never the worst mode; vector edges semantic success@1 by one query; lexical-only trails on semantic. Expectations are section-exact anchors among hundreds of near-identical sibling API entries, which is why absolute semantic numbers sit lower than on narrative docs corpora."
+}

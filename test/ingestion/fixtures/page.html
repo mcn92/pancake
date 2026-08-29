@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head><title>Widgets | Example Docs</title></head>
+<body>
+<nav><a href="/">Home</a><a href="/widgets">Widgets</a></nav>
+<main>
+<h1>Widgets</h1>
+<p>Widgets are the composable rendering unit of the system, and this page
+walks through creating one, mounting it into a host container, and the
+reference list of every supported lifecycle attribute on the element.</p>
+<h2 id="creating-widgets">Creating widgets</h2>
+<p>Create a widget by registering its tag name with the runtime and
+providing a render function; the runtime instantiates it lazily the first
+time the tag appears in a container it controls anywhere on the page.</p>
+<h3>widget:mount</h3>
+<p>The mount event fires exactly once per instance after the first render
+completes, and handlers registered for it receive the host element so they
+can wire up observers or timers that the unmount event later disposes.</p>
+<h2 id="API_reference">API_reference</h2>
+<p>The reference section keeps its authored id attribute with an
+underscore and mixed case, because that string is what the site's own
+table of contents links to and the search result must match it exactly.</p>
+</main>
+<footer>Copyright</footer>
+</body>
+</html>

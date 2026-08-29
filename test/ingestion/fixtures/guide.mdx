@@ -1,0 +1,32 @@
+---
+title: Getting Started
+slug: /start-here
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+export const answer = 42;
+
+<Tabs groupId="os">
+  <TabItem value="mac" label="macOS" />
+</Tabs>
+
+# Getting Started
+
+This introduction sits between MDX component blocks and the first real
+section, and its words must survive extraction while the JSX wrappers and
+the import and export statements around it disappear completely.
+
+## Install
+
+<CodeBlock language="bash">npm create thing@latest</CodeBlock>
+
+Install the package with your package manager of choice, run the generated
+project once to verify the toolchain works end to end, and only then start
+editing configuration so failures stay attributable to your changes.
+
+## Configure {#configuration}
+
+The explicit id on this heading is what the framework renders, so the
+generated anchor must use it verbatim rather than deriving a slug from the
+heading text, or every existing deep link to this section silently breaks.

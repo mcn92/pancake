@@ -268,17 +268,26 @@ function extractByExtension(text, file) {
   return { title, text: stripMarkdown(text) };
 }
 
-// GitHub-style heading slugs, deduplicated per document with -1/-2 suffixes.
+// GitHub-style heading slugs, deduplicated per document with -1/-2
+// suffixes. Mirrors github-slugger — what Docusaurus and GitHub render —
+// so Pancake's anchors match the framework's actual rendered ids: trim,
+// lowercase, strip everything that is not a letter/number/space/hyphen/
+// underscore (Unicode letters survive: "Über uns" -> "über-uns"), then
+// replace EACH space with a dash without collapsing runs ("C++ & C#" ->
+// "c--c", exactly as github-slugger emits). Inline code and link syntax
+// are unwrapped first, approximating the rendered heading text the
+// framework slugs. Verified against the real github-slugger by
+// test/ingestion/anchors.test.mjs.
 function makeSlugger() {
   const used = new Map();
   return (heading) => {
     const base = String(heading || '')
-      .toLowerCase()
       .replace(/`([^`]*)`/g, '$1')
       .replace(/\[([^\]]+)]\([^)]*\)/g, '$1')
-      .replace(/[^a-z0-9\s_-]/g, '')
       .trim()
-      .replace(/\s+/g, '-');
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N} _-]/gu, '')
+      .replace(/ /g, '-');
     const n = used.get(base) || 0;
     used.set(base, n + 1);
     return n === 0 ? base : `${base}-${n}`;
@@ -286,10 +295,13 @@ function makeSlugger() {
 }
 
 // Strip inline markdown from a heading for display and path purposes.
+// Underscores stay: snake_case identifiers (ACTION_QUERY_PARAMS) are far
+// more common in developer-doc headings than _underscore emphasis_, and
+// github-slugger keeps them.
 const cleanHeading = (heading) => normalizeText(String(heading || '')
   .replace(/`([^`]*)`/g, '$1')
   .replace(/\[([^\]]+)]\([^)]*\)/g, '$1')
-  .replace(/[*_~]/g, ''));
+  .replace(/[*~]/g, ''));
 
 // Split a markdown body into heading-delimited sections. Heading lines are
 // recognized only outside code fences, so a `# comment` inside a fenced
@@ -310,18 +322,35 @@ function markdownSections(body) {
     const h = !fence && line.match(/^(#{1,6})\s+(.+?)\s*$/);
     if (h) {
       sections.push(current);
-      let heading = h[2].replace(/\s+#+\s*$/, '');
-      // Explicit heading ids ({#custom-id}, Docusaurus/Astro style) win
-      // over the derived slug.
-      const custom = heading.match(/\s*\{#([A-Za-z0-9_-]+)\}\s*$/);
-      if (custom) heading = heading.slice(0, custom.index);
-      current = { depth: h[1].length, heading: cleanHeading(heading), customId: custom ? custom[1] : null, lines: [] };
+      current = { ...headingParts(h[2], h[1].length), lines: [] };
       continue;
+    }
+    // Setext headings: a line of === (depth 1) or --- (depth 2, two or
+    // more so a stray list dash cannot promote its neighbor) directly
+    // under a non-blank text line, outside fences.
+    const setext = !fence && line.match(/^\s{0,3}(=+|-{2,})\s*$/);
+    if (setext) {
+      const prev = current.lines[current.lines.length - 1];
+      if (prev && prev.trim() && !/^\s{0,3}(#|>|[-*+]\s|\d+[.)]\s)/.test(prev)) {
+        current.lines.pop();
+        sections.push(current);
+        current = { ...headingParts(prev.trim(), setext[1][0] === '=' ? 1 : 2), lines: [] };
+        continue;
+      }
     }
     current.lines.push(line);
   }
   sections.push(current);
   return sections.map((s) => ({ ...s, body: s.lines.join('\n') }));
+}
+
+// Split a raw heading into display text, depth, and an explicit id when
+// present ({#custom-id}, Docusaurus/Astro style — it wins over the slug).
+function headingParts(rawHeading, depth) {
+  let heading = rawHeading.replace(/\s+#+\s*$/, '');
+  const custom = heading.match(/\s*\{#([A-Za-z0-9_-]+)\}\s*$/);
+  if (custom) heading = heading.slice(0, custom.index);
+  return { depth, heading: cleanHeading(heading), customId: custom ? custom[1] : null };
 }
 
 // Assign heading paths and anchors to raw sections. The path includes the
@@ -365,10 +394,13 @@ function extractMarkdown(text) {
     .replace(/^import\s[^\n]*$/gm, ' ')
     .replace(/^export\s[^\n]*$/gm, ' ')
     .replace(/<\/?[A-Z][A-Za-z0-9.]*(?:\s[^>]*?)?\/?>/g, ' ');
-  if (!title) title = cleanHeading((body.match(/^#\s+(.+)$/m) || [])[1]) || null;
+  const rawSections = markdownSections(body);
+  // Title fallback: the first level-1 heading, whichever syntax wrote it
+  // (ATX or setext) — the section parser already normalized both.
+  if (!title) title = rawSections.find((s) => s.depth === 1)?.heading || null;
   // Sections carry their own heading text as the first line so retrieval
   // (embedding and lexical alike) sees what the section is about.
-  const sections = sectionize(markdownSections(body), title,
+  const sections = sectionize(rawSections, title,
     (s) => stripMarkdown(s.heading ? `${s.heading}\n${s.body}` : s.body).trim());
   return { title, slug, text: stripMarkdown(body), sections };
 }
@@ -392,8 +424,7 @@ function extractHtml(html) {
   let last = { depth: 0, heading: null, customId: null };
   for (const m of body.matchAll(/<h([1-6])([^>]*)>([\s\S]*?)<\/h\1>/gi)) {
     raw.push({ ...last, body: body.slice(cursor, m.index) });
-    const attrId = (m[2].match(/\bid=["']([^"']+)["']/i) || [])[1]
-      || (m[3].match(/\bid=["']([^"']+)["']/i) || [])[1] || null;
+    const attrId = attrValue(m[2], 'id') || attrValue(m[3], 'id') || null;
     last = { depth: Number(m[1]), heading: normalizeText(decodeEntities(m[3].replace(/<[^>]+>/g, ' '))), customId: attrId };
     cursor = m.index + m[0].length;
   }
@@ -404,11 +435,18 @@ function extractHtml(html) {
   return { title, text: flattenHtml(body), sections };
 }
 
+// Attribute values may be unquoted (minified HTML — nodejs.org's API docs
+// serve href=fs.html); accept double-quoted, single-quoted, or bare.
+const attrValue = (tag, name) => {
+  const m = tag.match(new RegExp(`\\b${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s"'<>=\`]+))`, 'i'));
+  return m ? (m[2] ?? m[3] ?? m[4]) : null;
+};
+
 function extractLinks(html, baseHref, origin) {
   const links = [];
-  for (const match of html.matchAll(/href=["']([^"']+)["']/gi)) {
+  for (const match of html.matchAll(/href\s*=\s*("([^"]*)"|'([^']*)'|([^\s"'<>=`]+))/gi)) {
     try {
-      const url = new URL(match[1], baseHref);
+      const url = new URL(match[2] ?? match[3] ?? match[4], baseHref);
       url.hash = '';
       if (url.origin === origin && /^https?:$/.test(url.protocol)) links.push(url.href);
     } catch {}

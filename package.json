@@ -109,7 +109,7 @@
     "demo:artifact:browser:build": "vite build examples/legacy/range-artifact-demo/static",
     "demo:artifact:browser": "vite preview examples/legacy/range-artifact-demo/static --host 127.0.0.1",
     "build:pages-demo": "node examples/03-edge-docs-search/pages-ui/build.mjs",
-    "test": "node run_tests.js && node test/model_c_loader.js && node test/sketch_profile.js && node test/sketch_staged.js && node test/sketch_row_integrity.js && node test/artifact_hardening.js && node test/complete_profile.mjs && npm run test:types",
+    "test": "node run_tests.js && node test/model_c_loader.js && node test/sketch_profile.js && node test/sketch_staged.js && node test/sketch_row_integrity.js && node test/artifact_hardening.js && node test/complete_profile.mjs && node test/ingestion/run.mjs && npm run test:types",
     "test:types": "tsc -p test/types/tsconfig.json",
     "test:browser": "node test/browser_smoke.js",
     "test:worker-web": "node test/test_worker_web_entry.js",

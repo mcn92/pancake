@@ -52,6 +52,31 @@ first.
 
 ### Added
 
+- **Ingestion/anchor conformance suite** (`test/ingestion/`, in npm
+  test): fixture corpora covering nested and duplicate headings, explicit
+  `{#custom-id}` anchors, headings inside fenced code, Unicode and setext
+  headings, inline code/links in headings, snake_case identifiers,
+  frontmatter titles/slugs, MDX components around headings, oversized
+  section splitting, and HTML pages with authored `id` attributes — each
+  asserting the full chain a search result depends on: document URL,
+  headingPath, anchor, final href, chunk text. Anchor generation is
+  parity-tested against the real github-slugger (the library Docusaurus
+  renders with) via a recorded 26-heading battery plus a live comparison
+  when the library is installed; two divergences are documented as
+  deliberate (multi-space heading runs, JSX tags stripped by MDX).
+  Building the suite surfaced and fixed four real defects: the slugger
+  was ASCII-only (github-slugger keeps Unicode letters — "Über uns" must
+  slug to "über-uns"), dash runs were wrongly collapsed ("C++ & C#" slugs
+  to "c--c"), heading underscores were stripped (destroying snake_case
+  identifiers like ACTION_QUERY_PARAMS), and setext headings
+  (`Title\n===`) were not recognized at all. Compiling nodejs.org's API
+  docs surfaced a fifth: minified HTML with unquoted attributes
+  (`href=fs.html`, `id=fsreadfilesync…`) was invisible to the link and
+  anchor extractors — the crawl found 2 pages of 30.
+- **The v1 spec no longer lists hybrid search as a non-goal**:
+  docs/CREATE_PANCAKE_SEARCH_SPEC.md's non-goals entry for "Hybrid BM25 +
+  vector scoring" is struck through with a pointer to the shipped lexical
+  segment (spec §3.8) and the `query({ retrieval })` modes.
 - **Section-aware ingestion and chunking.** Markdown/MDX documents are
   parsed into their heading structure before chunking — heading lines are
   recognized only outside code fences, explicit `{#custom-id}` heading ids
