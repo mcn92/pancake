@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildQueryInterpSegment, buildCorpusSegment, assemblePancakeFile, PROFILE_V2 } from '../../complete/builder.mjs';
+import { buildQueryInterpSegment, buildCorpusSegment, buildLexicalSegment, assemblePancakeFile, PROFILE_V2 } from '../../complete/builder.mjs';
 import { inspect } from './compile.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -35,7 +35,7 @@ function buildWikiCorpusSegment() {
         records[i] = corpusBytes.subarray(packOffsets[i], packOffsets[i + 1]);
     }
     const built = buildCorpusSegment(records);
-    return { segment: built.bytes, corpus: built.corpus, count };
+    return { segment: built.bytes, corpus: built.corpus, count, records };
 }
 
 // kind 3: the teacher compiled in — declaration + vocab + weight blob as
@@ -137,7 +137,7 @@ function buildWikiQueryInterp(packManifest) {
 }
 
 const packManifest = JSON.parse(fs.readFileSync(path.join(DATA, 'pack-manifest.json'), 'utf8'));
-const { segment: corpusSegment, corpus: corpusFields, count } = buildWikiCorpusSegment();
+const { segment: corpusSegment, corpus: corpusFields, count, records: corpusRecords } = buildWikiCorpusSegment();
 if (count !== packManifest.chunks) {
     throw new Error(`corpus count ${count} != pack manifest chunks ${packManifest.chunks}`);
 }
@@ -151,9 +151,22 @@ const evaluationSegment = Buffer.from(JSON.stringify({
 const inline = process.argv.includes('--inline-encoder');
 const args = process.argv.slice(2).filter((a) => a !== '--inline-encoder');
 
+// Lexical index for hybrid retrieval (kind 5): BM25 candidates join the
+// sketch rerank so known-item title lookups survive the scan's top-C
+// cutoff — the measured recall gap at this scale. Built from the record
+// texts; the wiki-scale reader opens it lazily.
+console.log('building lexical index...');
+const lexicalTexts = corpusRecords.map((r) => {
+    const row = JSON.parse(r.toString('utf8'));
+    return `${row.title || ''}\n${row.text || ''}`;
+});
+const lexical = buildLexicalSegment(lexicalTexts);
+console.log(`  ${lexical.meta.terms.toLocaleString()} terms over ${lexical.meta.docCount.toLocaleString()} records (${(lexical.bytes.length / 1048576).toFixed(1)} MiB)`);
+
 const segments = [
     { kind: 'index', bytes: fs.readFileSync(path.join(DATA, 'wiki.pancake-sketch')) },
     { kind: 'corpus', bytes: corpusSegment },
+    { kind: 'lexical', bytes: lexical.bytes },
     {
         kind: 'query-interp',
         bytes: inline ? await buildInlineQueryInterp(packManifest) : buildWikiQueryInterp(packManifest),
@@ -179,6 +192,7 @@ const result = assemblePancakeFile({
         maxTokens: inline ? 128 : packManifest.maxTokens,
     },
     recommendedRerank: packManifest.recommendedRerank,
+    lexical: lexical.meta,
     sampleQueries: ['who was the first person on the moon', 'how do volcanoes form'],
 }, segments, outPath);
 

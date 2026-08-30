@@ -107,74 +107,124 @@ function varintBytes(n) {
   return out;
 }
 
+// Counting-sort construction over typed arrays: the obvious
+// Map-of-Maps build dies around tens of millions of posting entries
+// (a 456k-chunk wiki corpus has ~30M), so terms are interned to dense
+// indexes on a first tokenize pass (df counted per term), entry arrays
+// are preallocated exactly, and a second tokenize pass scatters
+// (docId, tf) pairs into per-term slots. Entries land doc-ascending per
+// term by construction, which is what the delta varints need. Output
+// bytes are identical to the original builder's.
 export function buildLexicalSegment(texts) {
   const docCount = texts.length;
   const doclens = new Uint32Array(docCount);
-  const byTerm = new Map(); // term -> Map(docId -> tf)
+  const termIndex = new Map(); // "hashHi:hashLo" -> dense index
+  const hashLoArr = [];
+  const hashHiArr = [];
+  const dfArr = [];
   let totalTokens = 0;
-  for (let id = 0; id < docCount; id++) {
-    const tokens = lexTokenize(texts[id]);
-    doclens[id] = tokens.length;
-    totalTokens += tokens.length;
-    for (const t of tokens) {
-      let docs = byTerm.get(t);
-      if (!docs) byTerm.set(t, (docs = new Map()));
-      docs.set(id, (docs.get(id) || 0) + 1);
-    }
-  }
-  const terms = [...byTerm.keys()].map((t) => ({
-    hashLo: fnv1a32(t, 0),
-    hashHi: fnv1a32(t, 0x9e3779b9),
-    docs: byTerm.get(t),
-  })).sort((a, b) => (a.hashHi - b.hashHi) || (a.hashLo - b.hashLo));
+  let entryCount = 0;
 
-  const postings = [];
-  let postingsCursor = 0;
-  for (const term of terms) {
-    const ids = [...term.docs.keys()].sort((a, b) => a - b);
-    const bytes = [];
-    let prev = 0;
-    for (let i = 0; i < ids.length; i++) {
-      bytes.push(...varintBytes(i === 0 ? ids[0] : ids[i] - prev));
-      bytes.push(...varintBytes(term.docs.get(ids[i])));
-      prev = ids[i];
+  const tallyDoc = (id, onTerm) => {
+    const tokens = lexTokenize(texts[id]);
+    const tf = new Map(); // dense term index -> tf within this doc
+    for (const t of tokens) {
+      const key = `${fnv1a32(t, 0x9e3779b9)}:${fnv1a32(t, 0)}`;
+      let idx = termIndex.get(key);
+      if (idx === undefined) {
+        idx = hashLoArr.length;
+        termIndex.set(key, idx);
+        hashLoArr.push(fnv1a32(t, 0));
+        hashHiArr.push(fnv1a32(t, 0x9e3779b9));
+        dfArr.push(0);
+      }
+      tf.set(idx, (tf.get(idx) || 0) + 1);
     }
-    term.postingsOffset = postingsCursor;
-    term.postingsBytes = bytes.length;
-    term.df = ids.length;
-    postings.push(Buffer.from(bytes));
-    postingsCursor += bytes.length;
+    for (const [idx, count] of tf) onTerm(idx, count);
+    return tokens.length;
+  };
+
+  for (let id = 0; id < docCount; id++) {
+    const tokens = tallyDoc(id, (idx) => { dfArr[idx] += 1; entryCount += 1; });
+    doclens[id] = tokens;
+    totalTokens += tokens;
   }
+
+  const termCount = hashLoArr.length;
+  // Per-term slot offsets in the entry arrays (prefix sums of df).
+  const slotStart = new Uint32Array(termCount + 1);
+  for (let i = 0; i < termCount; i++) slotStart[i + 1] = slotStart[i] + dfArr[i];
+  const cursor = slotStart.slice(0, termCount);
+  const eDoc = new Uint32Array(entryCount);
+  const eTf = new Uint32Array(entryCount);
+  for (let id = 0; id < docCount; id++) {
+    tallyDoc(id, (idx, tf) => {
+      const at = cursor[idx]++;
+      eDoc[at] = id;
+      eTf[at] = tf;
+    });
+  }
+
+  // Serialize in (hashHi, hashLo) order. Sizes first, then one fill pass.
+  const order = Array.from({ length: termCount }, (_, i) => i)
+    .sort((a, b) => (hashHiArr[a] - hashHiArr[b]) || (hashLoArr[a] - hashLoArr[b]));
+  const varintLen = (n) => (n < 0x80 ? 1 : n < 0x4000 ? 2 : n < 0x200000 ? 3 : n < 0x10000000 ? 4 : 5);
+  let postingsCursor = 0;
+  const termPostingsOffset = new Float64Array(termCount); // by sorted position
+  const termPostingsBytes = new Uint32Array(termCount);
+  order.forEach((idx, pos) => {
+    let bytes = 0;
+    let prev = 0;
+    for (let at = slotStart[idx]; at < slotStart[idx + 1]; at++) {
+      bytes += varintLen(at === slotStart[idx] ? eDoc[at] : eDoc[at] - prev) + varintLen(eTf[at]);
+      prev = eDoc[at];
+    }
+    termPostingsOffset[pos] = postingsCursor;
+    termPostingsBytes[pos] = bytes;
+    postingsCursor += bytes;
+  });
 
   const doclenOffset = 64;
   const termTableOffset = doclenOffset + 4 * docCount;
-  const postingsOffset = termTableOffset + 24 * terms.length;
+  const postingsOffset = termTableOffset + 24 * termCount;
   const out = Buffer.alloc(postingsOffset + postingsCursor);
   out.writeUInt32LE(1, 0);
   out.writeUInt32LE(docCount, 4);
-  out.writeUInt32LE(terms.length, 8);
+  out.writeUInt32LE(termCount, 8);
   out.writeBigUInt64LE(BigInt(totalTokens), 12);
   out.writeUInt32LE(doclenOffset, 20);
   out.writeUInt32LE(termTableOffset, 24);
   out.writeUInt32LE(postingsOffset, 28);
   out.writeBigUInt64LE(BigInt(postingsCursor), 32);
   for (let id = 0; id < docCount; id++) out.writeUInt32LE(doclens[id], doclenOffset + 4 * id);
-  terms.forEach((term, i) => {
-    const entry = termTableOffset + 24 * i;
-    out.writeUInt32LE(term.hashLo, entry);
-    out.writeUInt32LE(term.hashHi, entry + 4);
-    out.writeBigUInt64LE(BigInt(term.postingsOffset), entry + 8);
-    out.writeUInt32LE(term.postingsBytes, entry + 16);
-    out.writeUInt32LE(term.df, entry + 20);
+  const writeVarint = (value, at) => {
+    let v = value >>> 0;
+    do {
+      let b = v & 0x7f;
+      v >>>= 7;
+      if (v) b |= 0x80;
+      out[at++] = b;
+    } while (v);
+    return at;
+  };
+  order.forEach((idx, pos) => {
+    const entry = termTableOffset + 24 * pos;
+    out.writeUInt32LE(hashLoArr[idx], entry);
+    out.writeUInt32LE(hashHiArr[idx], entry + 4);
+    out.writeBigUInt64LE(BigInt(termPostingsOffset[pos]), entry + 8);
+    out.writeUInt32LE(termPostingsBytes[pos], entry + 16);
+    out.writeUInt32LE(dfArr[idx], entry + 20);
+    let at = postingsOffset + termPostingsOffset[pos];
+    let prev = 0;
+    for (let slot = slotStart[idx]; slot < slotStart[idx + 1]; slot++) {
+      at = writeVarint(slot === slotStart[idx] ? eDoc[slot] : eDoc[slot] - prev, at);
+      at = writeVarint(eTf[slot], at);
+      prev = eDoc[slot];
+    }
   });
-  let cursor = postingsOffset;
-  for (const chunk of postings) {
-    chunk.copy(out, cursor);
-    cursor += chunk.length;
-  }
   return {
     bytes: out,
-    meta: { layout: LEXICAL_LAYOUT, terms: terms.length, docCount, totalTokens },
+    meta: { layout: LEXICAL_LAYOUT, terms: termCount, docCount, totalTokens },
   };
 }
 

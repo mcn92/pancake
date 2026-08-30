@@ -881,6 +881,22 @@ console.log('\nD. lexical segment and hybrid retrieval');
     await rejects('tampered lexical segment fails hash verification at open',
         () => openPancakeFile(memorySource(tampered), { encodeQuery: hostEncode }),
         /lexical segment failed hash/);
+
+    // The lazy opener (wiki-scale path: interpolation search over remote
+    // ranges) must score identically to the eager reader on the same
+    // segment bytes.
+    const { openLexicalIndexLazy } = await import('../complete/lexical.mjs');
+    const lazyIdx = await openLexicalIndexLazy(
+        async (off, len) => lexical.bytes.subarray(off, off + len), lexical.bytes.length);
+    check('lazy opener reports the same counts and marks itself lazy',
+        lazyIdx.docCount === COUNT && lazyIdx.termCount === lx.termCount && lazyIdx.lazy === true);
+    for (const q of ['record number 17', 'carries some text', 'zzqqxxvv', 'record 250 tampering']) {
+        const eager = lx.search(q, 8);
+        const lazyHits = await lazyIdx.search(q, 8);
+        check(`lazy search matches eager for ${JSON.stringify(q)}`,
+            JSON.stringify(lazyHits) === JSON.stringify(eager),
+            `${JSON.stringify(lazyHits.slice(0, 3))} vs ${JSON.stringify(eager.slice(0, 3))}`);
+    }
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

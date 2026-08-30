@@ -29,7 +29,7 @@ if (!artifactPath || !queriesPath) {
   process.exit(1);
 }
 const queries = JSON.parse(fs.readFileSync(queriesPath, 'utf8'));
-const MODES = ['vector', 'lexical', 'hybrid'];
+const MODES = ['vector', 'lexical', 'augmented', 'hybrid'];
 const K = 5;
 
 function matches(record, expect) {

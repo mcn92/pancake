@@ -69,7 +69,11 @@ export interface CompleteSearch {
      * Kind 2: true when the host encoder passed the declaration's verification
      * vectors, false when served unverified (verifyEncoder:false or
      * allowUnverifiedEncoder), null when no host encoder was supplied.
-     * Kind 3: whether the inline encoder verified against its own vectors.
+     * Kind 3: whether the inline encoder verified against its own vectors —
+     * null while a lazily-opened encoder has not arrived yet (unknown, not
+     * unverified; it resolves before the first query completes). While
+     * deferred, `encoder` serves the identity-verified manifest declaration
+     * with `deferred: true`, replaced by the full declaration on arrival.
      * Kind 1: null (inline student encoder, nothing external to verify).
      */
     encoderVerified: boolean | null;
@@ -95,7 +99,7 @@ export interface CompleteSearch {
      * order fuses distance and BM25 rankings by reciprocal rank). Null on
      * vector-only artifacts.
      */
-    lexical: { terms: number; docCount: number } | null;
+    lexical: { terms: number; docCount: number; lazy?: true } | null;
     sampleQueries: string[];
   };
   /**
@@ -109,11 +113,15 @@ export interface CompleteSearch {
     /**
      * Retrieval mode on artifacts carrying a lexical segment: 'hybrid'
      * (default — BM25 candidates join the rerank, RRF result order),
-     * 'vector' (ignore the lexical index), 'lexical' (BM25 ranking only).
-     * The single-mode variants exist for measurement and debugging;
-     * abstention scores identically in every mode.
+     * 'vector' (ignore the lexical index), 'lexical' (BM25 ranking only),
+     * 'augmented' (BM25 candidates join the exact rerank but results stay
+     * in pure distance order — the mode for workloads scored against
+     * exact nearest neighbors, where RRF's reordering reads as loss by
+     * definition; measured on the 456k wiki eval it lifts recall@10 from
+     * 82.8% to 85.3% while RRF-ordered hybrid scores 45.9% on that
+     * metric). Abstention scores identically in every mode.
      */
-    retrieval?: 'hybrid' | 'vector' | 'lexical';
+    retrieval?: 'hybrid' | 'vector' | 'lexical' | 'augmented';
     rerank?: number;
     parallelism?: number;
     gap?: number;
@@ -141,6 +149,16 @@ export declare function openPancakeFile(
     allowUnverifiedEncoder?: boolean;
     /** Verify each hydrated record against its digest on format 2. Default true. */
     verifyRecords?: boolean;
+    /**
+     * Kind-3 artifacts open lazily: the ~25 MiB inline-encoder region is not
+     * read at open, and by default starts downloading in the background the
+     * moment open resolves (the first query awaits it; the whole segment is
+     * digest-verified on arrival, and the header/calibration slices used at
+     * open are byte-compared against it before any result is returned).
+     * Set false to defer the transfer entirely to the first query. Default
+     * true.
+     */
+    prefetchEncoder?: boolean;
     /**
      * Fully verify the index's lazy vector rows at open (one streamed pass
      * against the identity-anchored vectorsSha256). Default false: without

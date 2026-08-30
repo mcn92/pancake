@@ -52,6 +52,72 @@ first.
 
 ### Added
 
+- **Wiki-scale hybrid search: the lexical path now works at 456k chunks,
+  with an `augmented` retrieval mode that lifts the pack's headline
+  recall.** Three pieces:
+  - `buildLexicalSegment` is rebuilt as a counting-sort over typed arrays
+    (terms interned to dense indexes, entry arrays preallocated from df
+    prefix sums, one scatter pass) — the Map-of-Maps build died in the
+    tens of millions of posting entries; the wiki corpus (456,153
+    records, ~30M postings, 784,693 terms, 71.2 MiB segment) now builds
+    in one pass without heap pressure. Output bytes are unchanged.
+  - Lexical segments above 8 MiB open lazily (`openLexicalIndexLazy`):
+    only the 64-byte header and the doclen array (4 bytes/record) become
+    resident, and term lookup exploits the format's own structure — fnv
+    hashes are uniform and the table is sorted by them, so it is an
+    implicit interpolation index: predict the entry position from the
+    hash, read one ~512-entry window, re-aim for the rare tail. A query
+    term costs ~1 window read plus 1 postings read, parallel across
+    terms. Verified equivalent to the eager reader entry-for-entry in
+    conformance. Lazy reads carry the transitional integrity stance
+    (committed via the manifest digest, not individually verified — the
+    format-1 sketch-row stance); `info().lexical.lazy` reports it.
+  - `retrieval: 'augmented'` joins the mode set: BM25 candidates enter
+    the exact rerank but results keep pure distance order. Measured on
+    the wiki pack's 200-query pre-registered eval (456k records, exact
+    fp32 ground truth): vector 82.8% recall@10 (titles 80.8%), augmented
+    **85.3%** (titles 83.6%) — a new best on that eval at identical
+    latency — while RRF-ordered hybrid scores 45.9% on this metric, by
+    definition: RRF deliberately promotes lexical matches over exact
+    nearest neighbors (reciprocal ranks make lexical-rank-8 outscore
+    vector-rank-9), which labeled-relevance bakeoffs reward and
+    exact-NN-overlap metrics punish. On the docs-scale bakeoffs
+    augmented is identical to vector (the sketch's top-C misses nothing
+    at 2k chunks), confirming the decomposition: candidate augmentation
+    is what pays at scale, rank fusion is what pays on
+    keyword-vs-semantic relevance. `hybrid` remains the default;
+    `compile-wiki.mjs` now builds the lexical segment into wiki
+    artifacts. Range-storage at 456k over loopback HTTP with 25 ms
+    injected delay: the 597 MiB artifact opens on 30.0 MiB in 10 range
+    GETs (lazy lexical keeps its 71 MiB out of open); first-pass hybrid
+    queries fetch ~680 KiB in ~436 ranges (p50 746 ms at parallelism
+    64), repeat queries 62 KiB / 5.9 ranges with p50 ~320 ms dominated
+    by the pure-JS sketch scan — wiring the WASM sketch scanner into the
+    complete reader is the identified next lever.
+- **Kind-3 artifacts open lazily: the inline encoder no longer blocks (or
+  bloats) open.** The first range-storage measurements showed cold open
+  transferring ~25 MiB in every kind-3 artifact regardless of corpus size
+  — the eagerly-read inline-encoder region — which at docs scale meant
+  open was effectively a full download. The reader now defers a
+  query-interpretation segment above 4 MiB: the 16-byte header and the
+  small calibration region are read at open, the encoder region
+  downloads in the background from the moment open resolves
+  (`prefetchEncoder: false` defers it to the first query), and the first
+  query awaits it. Integrity stance is unchanged in substance: the
+  whole-segment digest is verified when the bytes arrive, and the
+  header/calibration slices used at open are byte-compared against the
+  verified segment before any query can return — a mismatch fails every
+  query. Until then `info().encoder` serves the identity-verified
+  manifest declaration (marked `deferred`) and `encoderVerified` is null
+  (unknown, not unverified). Kinds 1/2 and small segments keep the
+  eager one-read path byte for byte; the spec's open semantics (§4)
+  document the deferral. Measured over loopback HTTP with 25 ms
+  injected delay: open drops from 25.15 MiB / ~860 ms to 0.63 MiB /
+  ~200 ms, with the encoder's ~25 MiB paid by the first query (~900 ms)
+  or overlapped with user think-time under the default prefetch.
+  Retroactive: every published kind-3 artifact benefits without
+  recompiling. The bench gains `--no-prefetch-encoder` and a first-query
+  line so the open/first-query split is visible.
 - **HTTP range-storage benchmark** (`npm run bench:range-storage`):
   serves an artifact from a loopback server implementing HEAD + byte
   ranges and opens it through `httpRangeSource()` — the same 206 path a

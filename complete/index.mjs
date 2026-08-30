@@ -21,7 +21,7 @@
 import { loadStudentModel, embedTextWithStudent } from './student-embedder.mjs';
 import { computeMatchQuality, computePreSearchAbstention } from './student-abstention.mjs';
 import { createAbstentionScorer } from './retrieval-abstention.mjs';
-import { openLexicalIndex } from './lexical.mjs';
+import { openLexicalIndex, openLexicalIndexLazy } from './lexical.mjs';
 import { PancakeSketchArtifact } from '../pancake-artifact.js';
 import { MAGIC, HEADER_BYTES, TABLE_ENTRY_BYTES, KINDS, KIND_NAMES } from './format.mjs';
 
@@ -64,6 +64,21 @@ const SKETCH_HEADER_BYTES = 256;
 // query, and the reciprocal-rank-fusion constant (the standard untuned 60).
 const LEXICAL_CANDIDATES = 24;
 const RRF_K = 60;
+// Query-interpretation segments above this size open lazily (kind 3's
+// inline encoder is ~25 MiB); smaller ones keep the one-read eager path.
+const LAZY_QI_BYTES = 4 * 1024 * 1024;
+// Lexical segments above this size open lazily too (a wiki-scale inverted
+// index runs to tens of MiB): only the header and doclen array become
+// resident, term lookups interpolate into the remote table. Lazy reads are
+// committed via the manifest digest but not individually verified — the
+// transitional stance format-1 sketch rows carry.
+const LAZY_LEXICAL_BYTES = 8 * 1024 * 1024;
+
+function bytesEqual(a, b) {
+    if (!a || !b || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+}
 const METRIC_NAMES = { 0: 'l2', 1: 'cosine' };
 
 const decoder = new TextDecoder();
@@ -280,6 +295,12 @@ export async function openPancakeFile(input, options = {}) {
     // Declared outside the try so a failure after the encoder is created
     // (count mismatch, bad corpus tables, ...) still releases its buffers.
     let disposeEncoder = () => {};
+    // Kind-3 lazy encoder: the pending fetch+init promise. close() settles
+    // it before disposing so an in-flight prefetch cannot leak its kernel.
+    let encoderPending = null;
+    const settleEncoder = async () => {
+        if (encoderPending) { try { await encoderPending; } catch { /* surfaced to queries */ } }
+    };
     try {
         // Header: the only read whose bounds come from nowhere but the spec.
         const header = await readChecked(source, 0, HEADER_BYTES, 'header', maxReadBytes);
@@ -423,8 +444,22 @@ export async function openPancakeFile(input, options = {}) {
         // reads of its own), and the corpus tables fetch as one concurrent
         // wave instead of dependent rounds — at 100 ms/request that is most
         // of the open time.
-        const [qiBytes, sketch, tables, lexicalBytes] = await Promise.all([
+        // A large query-interpretation segment (kind 3's inline encoder is
+        // ~25 MiB) is not read at open: only its 16-byte header joins the
+        // wave, the calibration region follows as one small dependent read,
+        // and the encoder bytes arrive lazily — prefetched in the background
+        // by default, awaited by the first query. The whole-segment digest
+        // is verified when those bytes arrive, and the header/calibration
+        // slices used at open are byte-compared against the verified
+        // segment before any query can complete, so nothing unverified ever
+        // influences a returned result. Small segments (kinds 1/2) keep the
+        // one-read eager path unchanged.
+        const qiDeferrable = qi.length > LAZY_QI_BYTES;
+        const [qiFirst, sketch, tables, lexicalBytes] = await Promise.all([
             (async () => {
+                if (qiDeferrable) {
+                    return readChecked(source, qi.offset, Math.min(16, qi.length), 'query-interp header', maxReadBytes, fileBytes);
+                }
                 const bytes = await readChecked(source, qi.offset, qi.length, 'query-interp segment', maxReadBytes, fileBytes);
                 if (await sha256hex(bytes) !== qi.sha256) {
                     throw new Error('.pancake query-interp segment failed hash verification');
@@ -433,16 +468,23 @@ export async function openPancakeFile(input, options = {}) {
             })(),
             PancakeSketchArtifact.open(windowSource(source, idx.offset, idx.length), { maxReadBytes }),
             readChecked(source, corpus.offset, tablesBytes, 'corpus tables', maxReadBytes, fileBytes),
-            // Lexical index (kind 5, OPTIONAL): eager whole-segment read,
-            // verified against the manifest digest like the query-interp
-            // segment. Readers that predate the kind skip it (spec 3.3).
+            // Lexical index (kind 5, OPTIONAL). Small segments: eager
+            // whole-segment read, digest-verified like the query-interp
+            // segment. Wiki-scale segments open lazily — header + doclens
+            // resident, term table and postings remote (see
+            // LAZY_LEXICAL_BYTES for the integrity stance). Readers that
+            // predate the kind skip it (spec 3.3).
             segments.has('lexical') ? (async () => {
                 const seg = segments.get('lexical');
+                if (seg.length > LAZY_LEXICAL_BYTES) {
+                    const lexRead = (off, len) => readChecked(source, seg.offset + off, len, 'lexical segment', maxReadBytes, fileBytes);
+                    return { lazyIndex: await openLexicalIndexLazy(lexRead, seg.length) };
+                }
                 const bytes = await readChecked(source, seg.offset, seg.length, 'lexical segment', maxReadBytes, fileBytes);
                 if (await sha256hex(bytes) !== seg.sha256) {
                     throw new Error('.pancake lexical segment failed hash verification');
                 }
-                return bytes;
+                return { bytes };
             })() : null,
             perRecord ? (async () => {
                 const headerBytes = await readChecked(source, idx.offset, SKETCH_HEADER_BYTES, 'index header', maxReadBytes, fileBytes);
@@ -452,7 +494,9 @@ export async function openPancakeFile(input, options = {}) {
             })() : null,
         ]);
 
-        const lexicalIndex = lexicalBytes ? openLexicalIndex(lexicalBytes) : null;
+        const lexicalIndex = lexicalBytes
+            ? (lexicalBytes.lazyIndex || openLexicalIndex(lexicalBytes.bytes))
+            : null;
         if (lexicalIndex && lexicalIndex.docCount !== declaredRecords) {
             throw new Error(`.pancake lexical segment covers ${lexicalIndex.docCount} records, corpus declares ${declaredRecords}`);
         }
@@ -460,7 +504,7 @@ export async function openPancakeFile(input, options = {}) {
         // Query interpretation: version word, kind, two length-prefixed
         // regions that must tile the segment exactly.
         if (qi.length < 16) throw new Error('.pancake query-interp segment is too short');
-        const qiView = viewOf(qiBytes);
+        const qiView = viewOf(qiFirst);
         const qiVersion = qiView.getUint32(0, true);
         if (qiVersion !== 1) throw new Error(`unsupported query-interpretation version ${qiVersion}`);
         const qiKind = qiView.getUint32(4, true);
@@ -469,9 +513,27 @@ export async function openPancakeFile(input, options = {}) {
         if (16 + encoderLen + calibrationLen !== qi.length) {
             throw new Error('.pancake query-interp segment layout is inconsistent');
         }
-        const encoderBytes = qiBytes.subarray(16, 16 + encoderLen);
+        // Laziness only pays for kind 3 (the deferrable bulk IS the
+        // encoder); a large segment of any other kind falls back to the
+        // eager whole-segment read and verification, one dependent round.
+        let qiBytes = qiFirst;
+        let qiDeferred = qiDeferrable;
+        if (qiDeferrable && qiKind !== 3) {
+            qiBytes = await readChecked(source, qi.offset, qi.length, 'query-interp segment', maxReadBytes, fileBytes);
+            if (await sha256hex(qiBytes) !== qi.sha256) {
+                throw new Error('.pancake query-interp segment failed hash verification');
+            }
+            qiDeferred = false;
+        }
+        // Deferred path: the calibration region arrives now (small), the
+        // encoder region stays remote. Both header and calibration are
+        // unverified until the full segment fetch cross-checks them.
+        const calibrationRegion = qiDeferred
+            ? await readChecked(source, qi.offset + 16 + encoderLen, calibrationLen, 'calibration region', maxReadBytes, fileBytes)
+            : qiBytes.subarray(16 + encoderLen);
+        const encoderBytes = qiDeferred ? null : qiBytes.subarray(16, 16 + encoderLen);
         let calibrationJson;
-        try { calibrationJson = JSON.parse(decoder.decode(qiBytes.subarray(16 + encoderLen))); } catch (err) {
+        try { calibrationJson = JSON.parse(decoder.decode(calibrationRegion)); } catch (err) {
             throw new Error('.pancake calibration is not valid JSON', { cause: err });
         }
         if (!calibrationJson || typeof calibrationJson !== 'object') {
@@ -572,15 +634,53 @@ export async function openPancakeFile(input, options = {}) {
                     { cause: err });
                 }
             }
-            const { declaration, vocabText, blob } = parseInlineTransformerEncoder(encoderBytes);
-            encoderInfo = declaration;
-            if (declaration.dim !== undefined && declaration.dim !== dim) {
-                throw new Error(`.pancake kind-3 declaration dim ${declaration.dim} disagrees with manifest dim ${dim}`);
+            const openHeader = qiDeferred ? qiFirst.slice(0, 16) : null;
+            const loadEmbedder = async () => {
+                let encBytes = encoderBytes;
+                if (qiDeferred) {
+                    const full = await readChecked(source, qi.offset, qi.length, 'query-interp segment', maxReadBytes, fileBytes);
+                    if (await sha256hex(full) !== qi.sha256) {
+                        throw new Error('.pancake query-interp segment failed hash verification');
+                    }
+                    // The header and calibration slices used at open were
+                    // unverified; the digest-verified segment must contain
+                    // them byte for byte, or the open state is poisoned and
+                    // every query must fail.
+                    if (!bytesEqual(full.subarray(0, 16), openHeader)
+                        || !bytesEqual(full.subarray(16 + encoderLen), calibrationRegion)) {
+                        throw new Error('.pancake query-interp segment bytes changed between open and encoder fetch');
+                    }
+                    encBytes = full.subarray(16, 16 + encoderLen);
+                }
+                const { declaration, vocabText, blob } = parseInlineTransformerEncoder(encBytes);
+                if (declaration.dim !== undefined && declaration.dim !== dim) {
+                    throw new Error(`.pancake kind-3 declaration dim ${declaration.dim} disagrees with manifest dim ${dim}`);
+                }
+                const embedder = await createInlineTransformerEmbedder({ declaration, vocabText, blob, createEncoder, verify: verifyEncoder });
+                encoderInfo = declaration;
+                encoderVerified = verifyEncoder && Array.isArray(declaration.testVectors) && declaration.testVectors.length > 0;
+                disposeEncoder = () => embedder.dispose();
+                return { embedder, declaration };
+            };
+            const ensureEmbedder = () => (encoderPending ??= loadEmbedder());
+            // Until the encoder arrives, info() serves the identity-verified
+            // manifest declaration; encoderVerified stays null (unknown, not
+            // unverified) and flips once test vectors have run.
+            encoderInfo = {
+                ...(manifest.encoder && typeof manifest.encoder === 'object' ? manifest.encoder : {}),
+                kind: 'inline-transformer-v1',
+                ...(qiDeferred ? { deferred: true } : {}),
+            };
+            if (!qiDeferred) {
+                await ensureEmbedder();
+            } else if (options.prefetchEncoder !== false) {
+                // Background prefetch: the ~25 MiB encoder downloads while
+                // the caller renders/collects input; failures are held and
+                // surface on the first query, which awaits this promise.
+                ensureEmbedder().catch(() => {});
             }
-            const embedder = await createInlineTransformerEmbedder({ declaration, vocabText, blob, createEncoder, verify: verifyEncoder });
-            encoderVerified = verifyEncoder && Array.isArray(declaration.testVectors) && declaration.testVectors.length > 0;
-            disposeEncoder = () => embedder.dispose();
             embed = async (text) => {
+                const { embedder, declaration } = await ensureEmbedder();
                 const { vector } = await embedder.embed(`${declaration.prefixPolicy?.query || ''}${text}`);
                 return { vector: toFloat32(vector, dim, 'inline transformer encoder'), text };
             };
@@ -742,7 +842,11 @@ export async function openPancakeFile(input, options = {}) {
                     indexRowIntegrity: sketch.formatVersion >= 2 && sketch.verifyRows !== false
                         ? 'per-row-sha256' : 'segment-sha256',
                     lexical: lexicalIndex
-                        ? { terms: lexicalIndex.termCount, docCount: lexicalIndex.docCount }
+                        ? {
+                            terms: lexicalIndex.termCount,
+                            docCount: lexicalIndex.docCount,
+                            ...(lexicalIndex.lazy ? { lazy: true } : {}),
+                        }
                         : null,
                     sampleQueries: Array.isArray(manifest.sampleQueries) ? manifest.sampleQueries : [],
                 };
@@ -794,12 +898,16 @@ export async function openPancakeFile(input, options = {}) {
                     // (retrieval-quality bakeoffs run all three on one
                     // artifact). Abstention scores the distance-sorted
                     // top-k identically in every mode.
+                    // 'augmented' unions the lexical candidates into the
+                    // exact rerank but keeps pure distance order — the mode
+                    // for workloads scored against exact nearest neighbors,
+                    // where RRF's reordering reads as loss by definition.
                     const retrieval = queryOptions.retrieval ?? 'hybrid';
-                    if (!['hybrid', 'vector', 'lexical'].includes(retrieval)) {
-                        throw new Error(`query() retrieval must be hybrid, vector, or lexical, got ${retrieval}`);
+                    if (!['hybrid', 'vector', 'lexical', 'augmented'].includes(retrieval)) {
+                        throw new Error(`query() retrieval must be hybrid, vector, lexical, or augmented, got ${retrieval}`);
                     }
                     const lexicalRaw = lexicalIndex && retrieval !== 'vector'
-                        ? lexicalIndex.search(trimmed, LEXICAL_CANDIDATES) : [];
+                        ? await lexicalIndex.search(trimmed, LEXICAL_CANDIDATES) : [];
                     const lexicalHits = lexicalRaw.filter((h) => h.score >= lexicalRaw[0].score / 3);
                     const searched = (await sketch.search(context.vector, k, {
                         rerank: queryOptions.rerank,
@@ -812,7 +920,9 @@ export async function openPancakeFile(input, options = {}) {
                         } : {}),
                     })).results;
                     hits = searched.slice(0, k);
-                    if (retrieval === 'lexical') {
+                    if (retrieval === 'augmented') {
+                        fused = null; // distance order, candidates already augmented
+                    } else if (retrieval === 'lexical') {
                         const byId = new Map(searched.map((hit) => [hit.id, hit]));
                         fused = lexicalHits.map((h) => byId.get(h.id)).filter(Boolean).slice(0, k);
                     } else if (lexicalHits.length) {
@@ -877,12 +987,14 @@ export async function openPancakeFile(input, options = {}) {
             async close() {
                 if (closed) return;
                 closed = true;
+                await settleEncoder();
                 disposeEncoder();
                 await sketch.close();
                 if (owned) await source.close();
             },
         };
     } catch (err) {
+        await settleEncoder();
         try { disposeEncoder(); } catch { /* already released */ }
         if (owned && source.close) await source.close().catch(() => {});
         throw err;

@@ -313,10 +313,14 @@ postings   per term          varint docId (first absolute, then deltas),
 ```
 
 Terms are addressed by hash only — fnv1a-32 of the lowercase token with
-seeds `0` and `0x9e3779b9` — so a reader binary-searches the fixed-width
-table without materializing term strings, and a range-reading opener can
-serve the segment lazily without a format revision (the phase-1 reference
-reader loads it eagerly and verifies the whole-segment digest at open).
+seeds `0` and `0x9e3779b9` — so a reader searches the fixed-width table
+without materializing term strings. The sorted uniform hashes make the
+table an implicit interpolation index, which is how the reference reader
+serves segments above 8 MiB lazily: header and doclens resident, term
+windows and postings fetched per query. Lazily read regions carry the
+transitional integrity stance (committed via the manifest segment digest,
+not individually verified); the eager opener for smaller segments verifies
+the whole-segment digest at open.
 Hash collisions merge two terms' postings; over realistic vocabularies the
 probability is negligible and the failure mode is a slightly-wrong lexical
 score, never corruption. Builders tokenize on lowercase `[a-z0-9']+`,
@@ -340,7 +344,18 @@ postings run past `postingsBytes`, or whose doc ids reach `docCount`.
    table/manifest agreement (kinds, packed 16-byte-aligned offsets within
    file, byte lengths, one segment per known kind, unknown kinds skipped),
    and the profile/layout against the header version.
-3. Read the query-interpretation segment (one read, ~1.2 MB today), verify
+3. Read the query-interpretation segment and verify its digest. A reader
+   MAY defer a large kind-3 encoder region instead of reading it at open
+   (the reference reader defers above 4 MiB): it reads the 16-byte
+   segment header and the calibration region eagerly, fetches the full
+   segment before the first query needs the encoder (prefetching in the
+   background by default), verifies the whole-segment digest then, and
+   MUST byte-compare the header and calibration slices it used at open
+   against the verified segment before any query result is returned — a
+   mismatch fails every query, never degrades one. Until the encoder
+   arrives, `info()` serves the identity-verified manifest declaration
+   and reports encoder verification as unknown. Eager readers read the
+   segment in one request and verify
    its digest; check its version word; load encoder + calibration; for
    kind 2 with a host encoder, verify the host encoder (section 3.6).
 4. Open the index segment with the sketch reader (staged or full); read the
@@ -371,7 +386,11 @@ a partial success. u64 fields above `2^53 - 1` are rejected.
    distance ranking with the BM25 ranking by reciprocal rank (RRF,
    constant 60). Lexical hits scoring under a third of the best lexical
    score are dropped before fusion: idf collapses common query terms to
-   near-tied scores that carry no ranking information.
+   near-tied scores that carry no ranking information. Readers SHOULD
+   also offer an augmented mode — lexical candidates join the rerank but
+   results keep pure distance order — for workloads scored against exact
+   nearest neighbors, where rank fusion's reordering registers as loss by
+   construction.
 3. Hydrate: one range read per result id via the corpus offsets; on layout
    v2, verify the record against its digest (fetching and verifying that
    digest's page on first use). A record that fails verification fails the
