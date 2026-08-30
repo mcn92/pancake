@@ -52,6 +52,25 @@ first.
 
 ### Added
 
+- **HTTP range-storage benchmark** (`npm run bench:range-storage`):
+  serves an artifact from a loopback server implementing HEAD + byte
+  ranges and opens it through `httpRangeSource()` — the same 206 path a
+  CDN or object store serves — measuring what the storage model actually
+  costs, separate from retrieval relevance. Reports per artifact: open
+  transfer (bytes/ranges/time before the first query), first-pass
+  per-query bytes, range counts, and latency percentiles, a repeat pass
+  isolating cache effects, and RSS/heap deltas; each artifact runs in a
+  fresh child process so memory numbers do not accumulate across corpus
+  sizes, `--server-delay-ms` injects a fixed per-response delay as a
+  rough RTT model, and the server cross-checks that bytes requested by
+  the range source equal bytes served. `--json`/`--csv` emit
+  machine-readable results. First measurements (kind-3 docs artifacts,
+  20 queries, hybrid): open transfer is ~25 MiB in 9 range GETs
+  regardless of corpus size — the eager inline-encoder segment dominates
+  cold start; first-pass queries cost 40–127 KiB in 5–16 parallel
+  ranges (p50 78–100 ms with 25 ms injected delay, so roughly 2–3
+  sequential request waves); repeat queries transfer zero bytes — the
+  row/record caches absorb everything, p50 ~20 ms of pure compute.
 - **Ingestion/anchor conformance suite** (`test/ingestion/`, in npm
   test): fixture corpora covering nested and duplicate headings, explicit
   `{#custom-id}` anchors, headings inside fenced code, Unicode and setext
