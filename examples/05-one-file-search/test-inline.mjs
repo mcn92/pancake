@@ -11,11 +11,14 @@ import { fileURLToPath } from 'node:url';
 import { openPancakeFile } from './pancake-file-reader.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const DATA = path.join(here, '..', '04-static-wiki-pack', 'data-full');
+// data-perm is the canonical pack layout (cluster-ordered rows, 192-dim
+// sketch); its eval ground truth is in permuted id space, matching the
+// artifact. data-full is the unpermuted source and its GT does not match.
+const DATA = path.join(here, '..', '04-static-wiki-pack', 'data-perm');
 const pancakePath = path.join(here, 'pancake-wiki-inline.pancake');
-const artifactUrl = 'https://github.com/mcn92/pancake/releases/download/artifact-wiki-inline-v2/pancake-wiki-inline.pancake';
-const expectedIdentity = 'b25ff90d074fe889f02f6249ca5d4ce95099f2e1b04b9c1f71bd23f6d61b3828';
-const expectedBytes = 562737657;
+const artifactUrl = 'https://github.com/mcn92/pancake/releases/download/artifact-wiki-inline-v3/pancake-wiki-inline.pancake';
+const expectedIdentity = '1b180adf4c6cebb2dcd5615256df6a25dac5fda8738dbbc11d60af86046f97f3';
+const expectedBytes = 680029254;
 const HEADER_BYTES = 64;
 
 let passed = 0;
@@ -120,10 +123,16 @@ console.log(`opened ${path.basename(pancakePath)} in ${(openMs / 1000).toFixed(1
 
 check('reader reports the same identity', info.identity === expectedIdentity, info.identity);
 check('opens with zero options (self-contained)', info.encoder.kind === 'inline-transformer-v1');
-check('declaration carries provenance', info.encoder.model === 'sentence-transformers/all-MiniLM-L6-v2'
-    && info.encoder.license === 'apache-2.0' && !!info.encoder.attribution);
-
 const probe = await search.query('how do volcanoes form', { k: 5 });
+// The encoder opens lazily: until the first query forces (or the prefetch
+// finishes) its fetch, info().encoder serves the identity-verified manifest
+// declaration. After a query, the full declaration is in place — provenance
+// checks belong here.
+const loadedInfo = search.info();
+check('declaration carries provenance once the encoder is loaded',
+    loadedInfo.encoder.model === 'sentence-transformers/all-MiniLM-L6-v2'
+    && loadedInfo.encoder.license === 'apache-2.0' && !!loadedInfo.encoder.attribution);
+check('inline encoder verified against its test vectors', loadedInfo.encoderVerified === true);
 check('natural-language query answers with hydrated results',
     probe.matchQuality === 'strong' && probe.results.length === 5
     && probe.results.every((r) => r.title && r.text && r.url),
@@ -145,17 +154,23 @@ if (fs.existsSync(evalQueryPath) && fs.existsSync(evalGtPath)) {
     const t0 = performance.now();
     let hits = 0;
     for (let i = 0; i < evalQueries.length; i++) {
-        const out = await search.query(evalQueries[i].text, { k: 10 });
+        // augmented mode: lexical candidates join the exact rerank, results
+        // stay in distance order — the mode this exact-NN metric measures.
+        // Default hybrid (RRF ordering) deliberately trades exact-NN overlap
+        // for keyword relevance and scores ~46% here by construction.
+        const out = await search.query(evalQueries[i].text, { k: 10, retrieval: 'augmented' });
         const truth = new Set(groundTruth[i]);
         hits += out.results.filter((r) => truth.has(r.id)).length;
     }
     const perQuery = (performance.now() - t0) / evalQueries.length;
     const recall = hits / (evalQueries.length * 10);
-    console.log(`  recall@10 over ${evalQueries.length} queries: ${(recall * 100).toFixed(1)}% `
-        + `(kernel harness measured 82.4%; fp32 teacher 82.8%); ${perQuery.toFixed(0)} ms/query end to end`);
-    check('recall matches the verified inline-encoder number (>= 82%)', recall >= 0.82, recall.toFixed(4));
+    console.log(`  augmented recall@10 over ${evalQueries.length} queries: ${(recall * 100).toFixed(1)}% `
+        + `(fp32 harness measured 95.2% at the recommended C=200; the correct 192-dim 2:1 sketch geometry — `
+        + `the pre-v4 82.8% era embedded a 96-dim 4:1 sketch the pack's own measurements had rejected); `
+        + `${perQuery.toFixed(0)} ms/query end to end`);
+    check('augmented recall matches the verified inline-encoder number (>= 94%)', recall >= 0.94, recall.toFixed(4));
 } else {
-    console.log('  recall sweep skipped: local data-full eval query files are not present');
+    console.log('  recall sweep skipped: local data-perm eval query files are not present');
     console.log('  smoke/provenance/identity checks above only need the downloaded release artifact');
 }
 

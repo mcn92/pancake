@@ -912,7 +912,14 @@ export async function openPancakeFile(input, options = {}) {
                     const searched = (await sketch.search(context.vector, k, {
                         rerank: queryOptions.rerank,
                         parallelism: queryOptions.parallelism ?? queryOptions.rerankParallelism ?? options.rerankParallelism,
-                        gap: queryOptions.gap ?? queryOptions.rerankGap ?? options.rerankGap,
+                        // The identity-verified manifest may carry a fetch
+                        // hint: cluster-ordered layouts only coalesce at a
+                        // gap matched to their cluster geometry (the wiki
+                        // pack's k-means layout needs ~16 KiB; the default
+                        // 2 KiB squanders it — measured 440 vs 200
+                        // requests/query at C=600).
+                        gap: queryOptions.gap ?? queryOptions.rerankGap ?? options.rerankGap
+                            ?? (Number.isFinite(manifest.recommendedGap) ? manifest.recommendedGap : undefined),
                         maxRangeBytes: queryOptions.maxRangeBytes ?? options.rerankMaxRangeBytes,
                         ...(lexicalHits.length ? {
                             extraCandidates: lexicalHits.map((h) => h.id),

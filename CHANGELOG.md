@@ -52,6 +52,45 @@ first.
 
 ### Added
 
+- **The wiki pack's layout and sketch geometry are recovered — recall@10
+  rises from 82.8% to 95.2% and requests/query drop from ~458 to ~127.**
+  The pack pipeline's blessed build directory (`data-perm`: k-means
+  cluster-ordered rows, 192-dim 2:1-pooled sketch) had been deleted from
+  disk, and `compile-wiki.mjs` was written against `data-full` — whose
+  sketch was 96-dim 4:1 pooling, the geometry the pack's own measurements
+  had rejected (−11pt candidate capture). Every complete wiki artifact
+  since 2026-08-14 embedded the degraded sketch in unpermuted row order;
+  the range-storage ledger's request-count column exposed it. Recovered
+  by regenerating `data-perm` from the surviving `layout-perm.npy`
+  (ground truth mapped through the inverse permutation and
+  lockstep-verified), rebuilding the pack (format-2 sketch, measured
+  `recommendedRerank: 200`), and rebuilding the inline artifact. Three
+  causes, three fixes:
+  1. `compile-wiki.mjs` now prefers `data-perm` and warns loudly when
+     building from the unpermuted source;
+  2. the correct sketch geometry reaches target recall at C=200 instead
+     of C=600 — the same root cause was suppressing recall and inflating
+     request counts;
+  3. cluster-ordered rows only coalesce at a gap matched to the cluster
+     geometry, which nothing ever passed (even the original demo ran at
+     the 2 KiB default): the manifest MAY now carry `recommendedGap`
+     (spec §4 fetch hints) and the reader honors it unless the caller
+     overrides — the wiki artifact ships 16 KiB.
+  Measured on the rebuilt artifact (identity `1b180adf…`): augmented
+  recall@10 95.2% at C=200 / 97.0% at C=600 (titles 94.8%, hand-written
+  98.5%), inline kernel now equal to the fp32 harness; ~127 range
+  requests/query over HTTP (≈ 88 sketch + 24 lexical + scoring), cutting
+  R2 cost from ~$165 to ~$46 per million queries. Verified along the
+  way: a reverse-Cuthill-McKee ordering extracted from the real graph is
+  equal-or-worse than plain corpus order for the rerank access pattern
+  in every (C, gap) cell — RCM served only the deprecated traversal
+  profile and is not worth porting forward. Honest regressions of the
+  correct geometry: open transfer grows to ~52 MiB (the true resident
+  sketch) and warm-query p50 roughly doubles to ~500 ms (192-dim
+  pure-JS scan — the WASM-scanner integration is now the top follow-up).
+  The augmented-vs-vector recall gap shrinks to +0.3pt: correct
+  candidate geometry absorbed most of what lexical rescue had been
+  compensating for.
 - **Search ledger benchmark** (`scripts/benchmark-search-ledger.mjs`):
   renders artifact performance on the axes a general audience can price —
   time to first answer from nothing, per-query requests/KiB and dollars

@@ -15,7 +15,20 @@ import { buildQueryInterpSegment, buildCorpusSegment, buildLexicalSegment, assem
 import { inspect } from './compile.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const DATA = path.join(here, '..', '04-static-wiki-pack', 'data-full');
+// The canonical pack layout is data-perm (k-means cluster order — a
+// query's rerank candidates land physically adjacent; see the pack README's
+// layout section). data-full is the unpermuted source; building from it
+// silently forfeits the layout, which is exactly what happened to every
+// complete artifact before 2026-08-31 (~440 scattered requests/query
+// instead of ~200 at the recommended gap).
+const PERM = path.join(here, '..', '04-static-wiki-pack', 'data-perm');
+const FULL = path.join(here, '..', '04-static-wiki-pack', 'data-full');
+const DATA = fs.existsSync(path.join(PERM, 'wiki.pancake-sketch')) ? PERM : FULL;
+if (DATA === FULL) {
+    console.warn('WARNING: building from data-full (unpermuted layout) — rerank candidates will be physically scattered; build the pack in data-perm first (pack README steps 3-4)');
+} else {
+    console.log('building from data-perm (cluster-ordered layout)');
+}
 
 function buildWikiCorpusSegment() {
     // The pack already stores the corpus as JSONL bytes plus a u32
@@ -192,6 +205,9 @@ const result = assemblePancakeFile({
         maxTokens: inline ? 128 : packManifest.maxTokens,
     },
     recommendedRerank: packManifest.recommendedRerank,
+    // Cluster-ordered rows only coalesce at a gap matched to the cluster
+    // geometry; readers honor this hint unless the caller overrides.
+    recommendedGap: 16384,
     lexical: lexical.meta,
     sampleQueries: ['who was the first person on the moon', 'how do volcanoes form'],
 }, segments, outPath);

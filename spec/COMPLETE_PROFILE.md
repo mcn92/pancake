@@ -379,7 +379,12 @@ a partial success. u64 fields above `2^53 - 1` are rejected.
 1. Encode: text → vector + feature stream (pre-search abstention MAY answer
    here without touching the index).
 2. Search: sketch scan + one parallel rerank fetch round (SKETCH_PROFILE.md
-   section 3). When the artifact carries a lexical segment (3.8), the BM25
+   section 3). The manifest MAY carry fetch hints (`recommendedRerank`,
+   `recommendedGap`) that readers SHOULD apply when the caller does not
+   override: a producer that laid rows out in cluster order chooses the
+   coalescing gap that matches its cluster geometry, and a reader using an
+   unmatched gap forfeits the layout's request savings. When the artifact
+   carries a lexical segment (3.8), the BM25
    top matches join the rerank as extra candidates — scored by true vector
    distance like any candidate, which is what recovers a known-item lookup
    the sketch scan's top-C missed — and the final result order fuses the
