@@ -40,13 +40,10 @@ const config = {
         assetBase: 'pancake-search',
         sourcePath: 'docs',
         sourceRouteBase: 'docs',
-        completeProfile: {
-          enabled: true,
-          vocab: '../create-pancake-search/src/inline-encoder/vocab.txt',
-          weights: '../create-pancake-search/src/inline-encoder/encoder-weights.bin',
-          model: 'sentence-transformers/all-MiniLM-L6-v2',
-          maxTokens: 128,
-        },
+        // No completeProfile block: the complete kind-3 .pancake is the
+        // plugin default as of 0.7.0, staging the packaged encoder assets
+        // (weights digest-pinned, fetched once) — this site exercises the
+        // zero-config path.
         chunking: {
           targetTokens: 256,
           overlapPercent: 15,

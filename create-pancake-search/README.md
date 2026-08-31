@@ -263,23 +263,29 @@ export default {
 };
 ```
 
-On `docusaurus build`, the plugin indexes the rendered HTML in the build output
-directory, trains a corpus-specific teacher-student distilled encoder for those
-rendered chunks, then writes static artifact assets into `build/pancake-search/`:
+On `docusaurus build`, the plugin indexes the rendered HTML in the build
+output directory and, by default, compiles it into a complete kind-3
+`search.pancake` in `build/pancake-search/` — hybrid retrieval, calibrated
+abstention, section anchors, one file. The widget serves it over HTTP
+range reads (opening on a fraction of the file, prefetching the inline
+encoder in the background from the moment the search panel first opens)
+and degrades to a bounded download-once on hosts that ignore `Range`.
+Zero configuration: the packaged encoder assets stage automatically
+(weights digest-pinned, fetched once). Opt-outs: `mode: 'student'` keeps
+the small Python-trained student encoder with the range-artifact runtime;
+`mode: 'artifact'` keeps the deprecated `.pancake-range` output; both log
+a deprecation note for the range format.
 
-- `index.pancake-range` — range-readable Pancake Search Artifact
-  (deprecated profile; the `completeProfile` plugin option emits a complete
-  `search.pancake` instead and is the recommended configuration)
-- `corpus.json` — result metadata and snippets
-- `manifest.json` — embedding/index/runtime metadata and URLs
-- `student-model.bin` — the PSTU student encoder used by browser queries
-- `student-abstention.json` — the generated match-quality scorer
-
-That means docs, blog posts, pages, and rendered MDX all flow through the same
-folder ingestion, chunking, teacher-vector indexing, and Search Artifact builder
-as the CLI, without generating or deploying a Worker. The teacher model runs at
-build time; the built site only serves the compact student model for browser
-query vectors and abstention scorer.
+That means docs, blog posts, pages, and rendered MDX all flow through the
+same folder ingestion, section-aware chunking, and complete-artifact builder
+as the CLI's `compile`, without generating or deploying a Worker. The output
+is `build/pancake-search/search.pancake` (plus `corpus.json` and
+`manifest.json`). The widget defers all loading until the first time the
+panel opens; results carry section heading-path breadcrumbs, and raw
+distances only render when the mount element sets
+`data-pancake-debug="1"`. Because the artifact is range-read, the host must
+honor `Range` — check with `create-pancake-search doctor <url>` (the widget
+degrades to a bounded one-time download when a host ignores it).
 
 By default, the plugin injects a floating, draggable search panel into the page
 and exposes `window.PancakeDocusaurusSearch` for custom UI code. The panel's JS
@@ -291,11 +297,48 @@ UI, disable the default mount:
 [pancakeSearch, { assetBase: 'pancake-search', mount: false }]
 ```
 
-The default build expects a Python environment with `torch` and `transformers`.
-Set `trainStudent.python` if Docusaurus should call a specific interpreter:
+The `completeProfile` block tunes the default output when the packaged
+assets are not what you want:
 
 ```js
-[pancakeSearch, { trainStudent: { python: '.venv/bin/python', epochs: 60 } }]
+[
+  pancakeSearch,
+  {
+    assetBase: 'pancake-search',
+    sourcePath: 'docs',              // index markdown/MDX sources instead of built HTML
+    sourceRouteBase: 'docs',
+    completeProfile: {
+      vocab: './my-vocab.txt',                     // default: packaged vocab
+      weights: './pancake-search/encoder-weights.bin', // default: fetched, digest-pinned
+      maxTokens: 128,
+      // vectors: './docs-vectors.f32',       // optional precomputed document vectors
+      // calibration: './calibration.json',   // optional abstention calibration
+    },
+  },
+]
+```
+
+Paths resolve against the site directory. `vocab.txt` ships in this package
+(`src/inline-encoder/vocab.txt`) and is used when no `vocab` is configured.
+The 24.3 MiB `encoder-weights.bin` does not ship: when it is absent (or a
+configured path with that basename is missing), the plugin (and the CLI's
+`runtime.mode: "complete"` path) downloads it once from the
+`inline-encoder-v1` GitHub release, verifies the pinned SHA-256, and caches
+it for reuse. Set `PANCAKE_ENCODER_WEIGHTS_URL` to fetch from a mirror;
+custom-named weights are never fetched. Without `vectors`, the build embeds
+every chunk through the packaged encoder at build time (inputs longer than
+`maxTokens` are windowed and mean-pooled, and the build logs how many).
+
+### Student mode (deprecated range profile)
+
+`mode: 'student'` (or configuring any `studentModel`/`trainStudent` option)
+keeps the previous default: a `.pancake-range` artifact plus a
+corpus-distilled student encoder trained at build time. It needs a Python
+environment with `torch` and `transformers`; set `trainStudent.python` if
+Docusaurus should call a specific interpreter:
+
+```js
+[pancakeSearch, { mode: 'student', trainStudent: { python: '.venv/bin/python', epochs: 60 } }]
 ```
 
 Advanced users can provide pre-trained assets, but the model has to travel with
@@ -315,52 +358,9 @@ the matching teacher document vectors for the rendered corpus:
 `studentModel` is query-side only. The plugin refuses to build passages from a
 bare student model because that silently changes the index geometry. A
 Wikipedia-trained student is only useful for smoke testing the mechanics; it is
-not a general-purpose docs encoder.
-
-### Complete profile (one `search.pancake` file, query-interp kind 3)
-
-`completeProfile.enabled` switches the plugin from the range artifact plus
-student encoder to the complete profile: a single `search.pancake` that
-carries the corpus, index, WordPiece vocab, quantized MiniLM encoder weights,
-calibration, and evaluation data, read in the browser by the kind-3 reader
-from `pancake-wasm/complete`. No student training, no Python, no hosted
-encoder — the reader supplies kernels, the file supplies data.
-
-```js
-[
-  pancakeSearch,
-  {
-    assetBase: 'pancake-search',
-    sourcePath: 'docs',              // index markdown/MDX sources instead of built HTML
-    sourceRouteBase: 'docs',
-    completeProfile: {
-      enabled: true,
-      vocab: 'node_modules/create-pancake-search/src/inline-encoder/vocab.txt',
-      weights: './pancake-search/encoder-weights.bin',   // fetched here on first build
-      model: 'sentence-transformers/all-MiniLM-L6-v2',
-      maxTokens: 128,
-      // vectors: './docs-vectors.f32',       // optional precomputed document vectors
-      // calibration: './calibration.json',   // optional abstention calibration
-    },
-  },
-]
-```
-
-Paths resolve against the site directory. `vocab.txt` ships in this package
-(`src/inline-encoder/vocab.txt`). The 24.3 MiB `encoder-weights.bin` does
-not: when the configured path is missing
-and its basename is `encoder-weights.bin`, the plugin (and the CLI's
-`runtime.mode: "complete"` path) downloads it once from the
-`inline-encoder-v1` GitHub release, verifies the pinned SHA-256, and writes
-it to that path for reuse. Set `PANCAKE_ENCODER_WEIGHTS_URL` to fetch from a
-mirror; custom-named weights are never fetched. Without `vectors`, the build
-embeds every chunk through the packaged encoder at build time (inputs longer
-than `maxTokens` are windowed and mean-pooled, and the build logs how many).
-
-The output is `build/pancake-search/search.pancake` (plus `corpus.json` and
-`manifest.json`);
-the plugin's search panel opens it over HTTP range reads, so the host must
-honor `Range` — check with `create-pancake-search doctor <url>`.
+not a general-purpose docs encoder. `mode: 'artifact'` keeps the range
+artifact without any student training (queries need an external embedding
+path). Both modes log a deprecation note for the `.pancake-range` format.
 
 ## Limitations
 

@@ -6,6 +6,28 @@ Release notes for the two published packages in this repository,
 pre-1.0: a minor bump may carry breaking changes, and each entry lists them
 first.
 
+## Unreleased
+
+### Breaking / compatibility
+
+- **The Docusaurus plugin's default output is now the complete kind-3
+  `.pancake`**, served by the widget over genuine HTTP range reads — the
+  sketch profile's execution model, verified in a real browser (zero
+  search bytes until the panel opens, then 206 range responses with the
+  kind-3 encoder prefetched in the background). Previously the default
+  was the deprecated `.pancake-range` plus a Python-trained student
+  encoder; the flagship integration shipped the geometry the project's
+  own measurements had retired, and the complete-profile mode downloaded
+  the whole artifact into memory. Zero-config installs now stage the
+  packaged encoder assets (vocab shipped, weights digest-pinned and
+  fetched once) — no Python in the toolchain. Opting out: `mode:
+  'student'` (or any student option) keeps the small-footprint student
+  path, `mode: 'artifact'` keeps the deprecated range output, and both
+  log what they are. The widget defers all loading to the first panel
+  open, renders section heading-path breadcrumbs on results, and hides
+  raw distances unless `data-pancake-debug="1"` is set. The in-repo
+  docs-site now exercises the zero-config default.
+
 ## pancake-wasm 0.6.0 / create-pancake-search 0.6.0 — 2026-08-31
 
 ### Breaking / compatibility

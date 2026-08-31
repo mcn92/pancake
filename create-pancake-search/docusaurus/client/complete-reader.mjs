@@ -1,12 +1,38 @@
 // Thin adapter over the packaged one-file reader (pancake-wasm/complete).
-// The widget downloads the whole artifact once and hands the bytes here; we
-// serve them through a memory range source. The plugin's webpack alias
-// points the bare specifier at the site-resolved module (the repo root when
-// building inside the pancake monorepo), exactly like pancake-wasm/artifact.
-// This file used to be a second implementation of the PSF1 reader; keeping
-// it as an adapter preserves the openCompletePancake(bytes) API the widget
-// calls while the format logic lives in one place.
-import { openPancakeFile } from 'pancake-wasm/complete';
+// The primary path range-reads the artifact over HTTP 206 — the sketch
+// profile's execution model, with the reader's own graceful fallback to a
+// bounded full download when a host ignores Range (the Cloudflare Pages
+// lesson) — and defers the kind-3 encoder region to a background prefetch
+// so the panel is interactive on a fraction of the file. The memory-bytes
+// variant stays for callers that already hold the artifact. The plugin's
+// webpack alias points the bare specifier at the site-resolved module (the
+// repo root when building inside the pancake monorepo), exactly like
+// pancake-wasm/artifact. This file used to be a second implementation of
+// the PSF1 reader; keeping it as an adapter preserves the widget's API
+// while the format logic lives in one place.
+import { openPancakeFile, httpRangeSource } from 'pancake-wasm/complete';
+
+export async function openCompletePancakeUrl(url, options = {}) {
+  const source = httpRangeSource(url, {
+    // Bound the ignores-Range fallback well above docs-scale artifacts;
+    // wiki-scale files should fail loudly rather than pull 600 MiB.
+    maxFullFallbackBytes: options.maxFullFallbackBytes ?? 96 * 1024 * 1024,
+  });
+  await source.init();
+  const search = await openPancakeFile(source, {
+    rerankParallelism: options.rerankParallelism,
+    rerankGap: options.rerankGap,
+    prefetchEncoder: options.prefetchEncoder,
+  });
+  return {
+    info: () => search.info(),
+    stats: () => ({ ...source.stats }),
+    query(text, queryOptions = {}) {
+      return search.query(text, { k: 8, rerank: options.rerank, ...queryOptions });
+    },
+    close: () => search.close(),
+  };
+}
 
 function memorySource(bytes) {
   return {

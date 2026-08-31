@@ -48,14 +48,18 @@ function htmlEscape(value) {
     .replace(/"/g, '&quot;');
 }
 
-function renderRows(results, corpusById) {
+function renderRows(results, corpusById, { debug = false } = {}) {
   if (!results.length) return '<p class="pancake-search-empty">No results</p>';
   return `<ol class="pancake-search-results">${results.map((hit) => {
     const chunk = corpusById?.get(hit.id) || hit;
+    const crumb = Array.isArray(chunk?.headingPath) && chunk.headingPath.length
+      ? `<span class="pancake-search-crumb">${htmlEscape(chunk.headingPath.join(' › '))}</span>`
+      : '';
     return `<li>
       <a href="${htmlEscape(resultUrl(chunk))}">${htmlEscape(chunk?.title || `Chunk ${hit.id}`)}</a>
+      ${crumb}
       <p>${htmlEscape(chunk?.preview || chunk?.text || '')}</p>
-      <span>${hit.distance.toFixed(4)}</span>
+      ${debug ? `<span>${hit.distance.toFixed(4)}</span>` : ''}
     </li>`;
   }).join('')}</ol>`;
 }
@@ -149,12 +153,13 @@ class PancakeDocusaurusSearch {
       abstentionUrl: `${this.assetBase}/student-abstention.json`,
     };
     if (urls.completeArtifactUrl) {
-      const { openCompletePancake } = await import('./complete-reader.mjs');
-      const bytes = await fetch(urls.completeArtifactUrl).then((r) => {
-        if (!r.ok) throw new Error(`Complete artifact fetch failed: ${r.status}`);
-        return r.arrayBuffer();
-      });
-      const completeSearch = await openCompletePancake(bytes);
+      // Range-read execution: the reader opens on the manifest, resident
+      // sketch, corpus tables, and lexical index — a fraction of the file —
+      // and prefetches the kind-3 encoder in the background from the moment
+      // the panel opens. Hosts that ignore Range degrade to a bounded
+      // download-once inside httpRangeSource itself.
+      const { openCompletePancakeUrl } = await import('./complete-reader.mjs');
+      const completeSearch = await openCompletePancakeUrl(urls.completeArtifactUrl);
       this.state = {
         manifest,
         completeSearch,
@@ -260,23 +265,26 @@ function mountSearch() {
   const output = root.querySelector('.pancake-search-output');
 
   enableDrag(root, handle);
+  // Nothing loads until the panel first opens: page load costs zero search
+  // bytes, and opening the panel starts the small range-read open (plus,
+  // for kind-3 artifacts, the background encoder prefetch) while the user
+  // types their first query.
   launcher.addEventListener('click', () => {
     card.hidden = false;
     launcher.hidden = true;
     clampPanel(root);
     input.focus();
+    search.load()
+      .then((state) => {
+        const count = state.completeInfo?.records ?? state.artifact.count;
+        status.textContent = `Ready - ${count.toLocaleString()} chunks`;
+      })
+      .catch((error) => { status.textContent = error.message || String(error); });
   });
   close.addEventListener('click', () => {
     card.hidden = true;
     launcher.hidden = false;
   });
-
-  search.load()
-    .then((state) => {
-      const count = state.completeInfo?.records ?? state.artifact.count;
-      status.textContent = `Ready - ${count.toLocaleString()} chunks`;
-    })
-    .catch((error) => { status.textContent = error.message || String(error); });
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -291,7 +299,7 @@ function mountSearch() {
         ? ` - ${result.match_quality}`
         : '';
       status.textContent = `${result.results.length} results${quality} in ${(performance.now() - t0).toFixed(0)} ms`;
-      output.innerHTML = renderRows(result.results, search.state.corpusById);
+      output.innerHTML = renderRows(result.results, search.state.corpusById, { debug: root.dataset.pancakeDebug === '1' });
     } catch (error) {
       status.textContent = error.message || String(error);
     } finally {

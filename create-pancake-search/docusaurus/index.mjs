@@ -27,6 +27,20 @@ function joinSitePath(baseUrl, ...parts) {
 
 function normalizeOptions(options = {}) {
   const completeProfile = options.completeProfile || {};
+  // Default output is the complete kind-3 .pancake (sketch-backed, hybrid
+  // lexical, range-readable, no Python in the toolchain). Student mode is
+  // the small-footprint opt-in (mode: 'student', or any student option);
+  // the deprecated .pancake-range output needs mode: 'artifact' or an
+  // explicit completeProfile.enabled: false.
+  if (options.mode !== undefined && !['complete', 'student', 'artifact'].includes(options.mode)) {
+    throw new Error(`pancake-search mode must be complete, student, or artifact, got ${options.mode}`);
+  }
+  const studentRequested = options.mode === 'student'
+    || !!options.studentModel
+    || options.trainStudent === true
+    || (options.trainStudent && typeof options.trainStudent === 'object');
+  const completeEnabled = completeProfile.enabled
+    ?? (options.mode === 'complete' || !(studentRequested || options.mode === 'artifact'));
   return {
     enabled: options.enabled !== false,
     assetBase: trimSlashes(options.assetBase || 'pancake-search'),
@@ -43,7 +57,7 @@ function normalizeOptions(options = {}) {
     studentVectors: options.studentVectors || null,
     studentAbstention: options.studentAbstention || null,
     completeProfile: {
-      enabled: completeProfile.enabled === true,
+      enabled: completeEnabled,
       vectors: completeProfile.vectors || null,
       vocab: completeProfile.vocab || null,
       weights: completeProfile.weights || null,
@@ -52,7 +66,7 @@ function normalizeOptions(options = {}) {
       maxTokens: completeProfile.maxTokens || 128,
     },
     trainStudent: {
-      enabled: completeProfile.enabled === true ? false : options.trainStudent !== false && !options.studentModel,
+      enabled: completeEnabled ? false : options.trainStudent !== false && !options.studentModel,
       python: options.trainStudent?.python,
       teacher: options.trainStudent?.teacher,
       teacherRevision: options.trainStudent?.teacherRevision,
@@ -219,28 +233,34 @@ async function stageExternalStudentModel(options, context, workDir) {
 
 async function stageCompleteProfileInputs(options, context, workDir) {
   if (!options.completeProfile.enabled) return;
-  const copyRequired = async (source, targetRel, label) => {
-    if (!source) throw new Error(`Pancake completeProfile.${label} is required`);
-    const sourcePath = path.resolve(context.siteDir, source);
+  const copyFrom = async (sourcePath, targetRel, label) => {
     if (!fssync.existsSync(sourcePath)) throw new Error(`Pancake completeProfile.${label} not found: ${sourcePath}`);
     const targetPath = path.join(workDir, targetRel);
     await fs.mkdir(path.dirname(targetPath), { recursive: true });
     await fs.copyFile(sourcePath, targetPath);
   };
-  if (options.completeProfile.vectors) await copyRequired(options.completeProfile.vectors, 'docs-vectors.f32', 'vectors');
-  await copyRequired(options.completeProfile.vocab, path.join('inline-encoder', 'vocab.txt'), 'vocab');
-  // The packaged default weight blob is not shipped in npm tarballs; fetch
-  // it into the configured path (digest-pinned) so later builds reuse it,
-  // then stage it like any other input. Custom-named weights never fetch.
-  if (options.completeProfile.weights) {
-    const weightsSource = path.resolve(context.siteDir, options.completeProfile.weights);
-    if (!fssync.existsSync(weightsSource) && path.basename(weightsSource) === 'encoder-weights.bin') {
-      await fetchInlineEncoderWeights(weightsSource);
-    }
+  if (options.completeProfile.vectors) {
+    await copyFrom(path.resolve(context.siteDir, options.completeProfile.vectors), 'docs-vectors.f32', 'vectors');
   }
-  await copyRequired(options.completeProfile.weights, path.join('inline-encoder', 'encoder-weights.bin'), 'weights');
+  // Zero-config default: the packaged inline-encoder assets — the same
+  // vocab the CLI's compile command ships, and the digest-pinned weight
+  // blob fetched once into the package directory (it is deliberately not
+  // in npm tarballs). Explicit vocab/weights options override; custom-named
+  // weight paths never auto-fetch.
+  const packagedDir = path.join(here, '..', 'src', 'inline-encoder');
+  const vocabSource = options.completeProfile.vocab
+    ? path.resolve(context.siteDir, options.completeProfile.vocab)
+    : path.join(packagedDir, 'vocab.txt');
+  await copyFrom(vocabSource, path.join('inline-encoder', 'vocab.txt'), 'vocab');
+  const weightsSource = options.completeProfile.weights
+    ? path.resolve(context.siteDir, options.completeProfile.weights)
+    : path.join(packagedDir, 'encoder-weights.bin');
+  if (!fssync.existsSync(weightsSource) && path.basename(weightsSource) === 'encoder-weights.bin') {
+    await fetchInlineEncoderWeights(weightsSource);
+  }
+  await copyFrom(weightsSource, path.join('inline-encoder', 'encoder-weights.bin'), 'weights');
   if (options.completeProfile.calibration) {
-    await copyRequired(options.completeProfile.calibration, path.join('inline-encoder', 'calibration.json'), 'calibration');
+    await copyFrom(path.resolve(context.siteDir, options.completeProfile.calibration), path.join('inline-encoder', 'calibration.json'), 'calibration');
   }
 }
 
@@ -383,6 +403,11 @@ export default function pancakeDocusaurusPlugin(context, rawOptions = {}) {
 
     async postBuild({ outDir }) {
       if (!options.enabled) return;
+      if (!options.completeProfile.enabled) {
+        console.warn('[pancake-search] building the deprecated .pancake-range output (student/artifact mode); '
+          + 'the default complete .pancake profile serves hybrid retrieval over range reads — '
+          + 'remove the student/artifact options to adopt it');
+      }
       const resolvedOutDir = path.resolve(outDir);
       if (!fssync.existsSync(resolvedOutDir)) {
         throw new Error(`Docusaurus output directory not found: ${resolvedOutDir}`);
