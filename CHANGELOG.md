@@ -28,6 +28,33 @@ first.
   raw distances unless `data-pancake-debug="1"` is set. The in-repo
   docs-site now exercises the zero-config default.
 
+### Added
+
+- **The complete reader's resident scan accelerates through the engine's
+  SIMD scan kernel — warm-query p50 at the 456k wiki scale drops from
+  ~540 ms to ~129 ms** (measured A/B on a local file source; ~110 ms/query
+  end to end in the kind-3 acceptance run). This closes the honest
+  regression the 0.6.0 wiki-recovery entry named: the correct 192-dim
+  sketch geometry made the pure-JS `O(count × sketchDims)` scan the warm
+  bottleneck. `openPancakeFile` gains `sketchScanner`: undefined (the
+  default) auto-stages `createSketchScanner` in the background in Node
+  when the corpus crosses ~16M sketch cells — docs-scale artifacts scan
+  in single-digit milliseconds and never load the engine; `false` forces
+  the pure-JS scan; a scanner object or async factory
+  `(sketchArtifact) => scanner` is the injection point for browsers,
+  where the reader cannot import the Node engine entrypoint (the wiki
+  web demo injects one — Vite splits the engine glue and wasm into lazy
+  assets fetched only when the factory runs, verified staging in a real
+  browser). Queries never wait on staging: the JS scan serves until the
+  kernel is ready, and permanently if loading fails — acceleration only
+  ever changes speed, never results (conformance asserts identical
+  `[id, distance]` output, and the wiki recall gates reproduce 96.0% /
+  95.2% exactly with the scanner active). `info().residentScan` reports
+  `'engine'` or `'js'`. Hardening in the sketch reader: a query whose
+  candidate pool C exceeds a scanner's creation-time buffers
+  (`maxRerank`) falls back to the JS scan for that query instead of
+  silently truncating the pool.
+
 ## pancake-wasm 0.6.0 / create-pancake-search 0.6.0 — 2026-08-31
 
 ### Breaking / compatibility

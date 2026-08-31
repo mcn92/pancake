@@ -1,9 +1,12 @@
 // The one-file reader: open a .pancake (spec/COMPLETE_PROFILE.md) and query
 // it. Environment-neutral — the same module runs in Node (file path or
 // range source) and the browser (HTTP range source, via a bundler for the
-// CJS sketch-reader dependency). The query path is pure JS: encoder, sketch
-// reference scan, hydration, and calibration all run without the core HNSW
-// engine; kind-3 artifacts load the reader-owned transformer WASM kernels.
+// CJS sketch-reader dependency). The query path needs no core HNSW engine:
+// encoder, sketch reference scan, hydration, and calibration all run in
+// pure JS; kind-3 artifacts load the reader-owned transformer WASM kernels,
+// and at scale the resident scan optionally accelerates through the
+// engine's SIMD scan kernel (options.sketchScanner — auto-staged in Node,
+// injected in browsers), which only ever changes speed, never results.
 //
 //   const search = await openPancakeFile('pancake-docs.pancake');   // Node
 //   const search = await openPancakeFile(httpRangeSource(url));     // browser
@@ -73,6 +76,17 @@ const LAZY_QI_BYTES = 4 * 1024 * 1024;
 // committed via the manifest digest but not individually verified — the
 // transitional stance format-1 sketch rows carry.
 const LAZY_LEXICAL_BYTES = 8 * 1024 * 1024;
+// The resident sketch scan is O(count * sketchDims) per query in pure JS —
+// ~500 ms at wiki scale (456k rows x 192 dims). At or above this many
+// cells the reader loads the engine's SIMD scan kernel in the background
+// (Node only; browser bundles inject one via options.sketchScanner) and
+// serves queries from it once staged. Below it, docs-scale corpora scan in
+// single-digit milliseconds and the engine load costs more than it saves.
+const SCANNER_AUTO_CELLS = 16 * 1024 * 1024;
+// The scanner's candidate output buffers are sized once at creation; the
+// sketch reader falls back to the JS scan for any query whose C exceeds
+// this, so an oversized rerank degrades speed, never recall.
+const SCANNER_MAX_RERANK = 4096;
 
 function bytesEqual(a, b) {
     if (!a || !b || a.length !== b.length) return false;
@@ -300,6 +314,16 @@ export async function openPancakeFile(input, options = {}) {
     let encoderPending = null;
     const settleEncoder = async () => {
         if (encoderPending) { try { await encoderPending; } catch { /* surfaced to queries */ } }
+    };
+    // WASM sketch scanner: staged in the background like the encoder, used
+    // by queries only once ready (never awaited — the JS scan serves until
+    // then, and permanently if staging fails). Reader-created scanners are
+    // disposed on close; a caller-supplied scanner object stays caller-owned.
+    let scanner = null;
+    let scannerPending = null;
+    let disposeScanner = () => {};
+    const settleScanner = async () => {
+        if (scannerPending) { try { await scannerPending; } catch { /* JS scan remains */ } }
     };
     try {
         // Header: the only read whose bounds come from nowhere but the spec.
@@ -709,6 +733,56 @@ export async function openPancakeFile(input, options = {}) {
             await sketch.verifyVectors();
         }
 
+        // Resident-scan acceleration. options.sketchScanner:
+        //   false      — pure JS scan always (the pre-0.7 behavior);
+        //   an object  — a ready scanner (createSketchScanner's shape),
+        //                caller-owned, used as-is;
+        //   a function — async factory (sketchArtifact) => scanner, invoked
+        //                in the background once the sketch is fully resident
+        //                (the injection point for browser bundles, which
+        //                cannot load the Node engine entrypoint);
+        //   undefined  — auto: in Node, when the corpus is large enough
+        //                that the JS scan dominates query time, stage the
+        //                engine's SIMD scan kernel in the background.
+        // Staging failures are silent by design: every query the scanner
+        // would have served is answered identically (and identically
+        // correctly) by the JS scan, just slower.
+        const scannerOption = options.sketchScanner;
+        if (scannerOption !== undefined && scannerOption !== false
+            && typeof scannerOption !== 'object' && typeof scannerOption !== 'function') {
+            throw new Error('options.sketchScanner must be false, a scanner object, or a factory function');
+        }
+        if (scannerOption && typeof scannerOption === 'object') {
+            scanner = scannerOption;
+        } else if (typeof scannerOption === 'function') {
+            scannerPending = (async () => {
+                await sketch.fullyResident;
+                const created = await scannerOption(sketch);
+                if (!created || typeof created.scan !== 'function') {
+                    throw new Error('sketchScanner factory must resolve to an object with scan()');
+                }
+                disposeScanner = () => { if (typeof created.dispose === 'function') created.dispose(); };
+                scanner = created;
+            })();
+            scannerPending.catch(() => {});
+        } else if (scannerOption === undefined
+            && sketch.count * (sketch.sketchDims || 0) >= SCANNER_AUTO_CELLS
+            && globalThis.process?.versions?.node) {
+            scannerPending = (async () => {
+                // Hidden from bundlers like the node encoder kernels: the
+                // web entrypoint's ?url wasm imports would break a browser
+                // build that statically pulled this in.
+                const { default: Pancake } = await import(/* webpackIgnore: true */ /* @vite-ignore */ '../pancake.node.mjs');
+                await sketch.fullyResident;
+                const created = await Pancake.createSketchScanner(sketch, {
+                    maxRerank: Math.min(sketch.count, SCANNER_MAX_RERANK),
+                });
+                disposeScanner = () => created.dispose();
+                scanner = created;
+            })();
+            scannerPending.catch(() => {});
+        }
+
         // Corpus tables: cross-check the segment's own words, then the
         // offsets — monotonic, starting exactly where the tables end, ending
         // inside the segment — and for layout v2 the page table's digest.
@@ -841,6 +915,10 @@ export async function openPancakeFile(input, options = {}) {
                     // unverified until a full vectors pass.
                     indexRowIntegrity: sketch.formatVersion >= 2 && sketch.verifyRows !== false
                         ? 'per-row-sha256' : 'segment-sha256',
+                    // 'engine' once a WASM scan kernel serves the resident
+                    // scan (auto-staged or injected); 'js' before staging
+                    // resolves and forever if it fails or was disabled.
+                    residentScan: scanner ? 'engine' : 'js',
                     lexical: lexicalIndex
                         ? {
                             terms: lexicalIndex.termCount,
@@ -921,6 +999,10 @@ export async function openPancakeFile(input, options = {}) {
                         gap: queryOptions.gap ?? queryOptions.rerankGap ?? options.rerankGap
                             ?? (Number.isFinite(manifest.recommendedGap) ? manifest.recommendedGap : undefined),
                         maxRangeBytes: queryOptions.maxRangeBytes ?? options.rerankMaxRangeBytes,
+                        // Present once background staging finished; the
+                        // sketch reader ignores it for any query whose C
+                        // exceeds the scanner's buffers.
+                        ...(scanner ? { scanner } : {}),
                         ...(lexicalHits.length ? {
                             extraCandidates: lexicalHits.map((h) => h.id),
                             fullRerankOutput: true,
@@ -996,6 +1078,8 @@ export async function openPancakeFile(input, options = {}) {
                 closed = true;
                 await settleEncoder();
                 disposeEncoder();
+                await settleScanner();
+                disposeScanner();
                 await sketch.close();
                 if (owned) await source.close();
             },
@@ -1003,6 +1087,8 @@ export async function openPancakeFile(input, options = {}) {
     } catch (err) {
         await settleEncoder();
         try { disposeEncoder(); } catch { /* already released */ }
+        await settleScanner();
+        try { disposeScanner(); } catch { /* already released */ }
         if (owned && source.close) await source.close().catch(() => {});
         throw err;
     }

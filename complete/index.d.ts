@@ -100,6 +100,12 @@ export interface CompleteSearch {
      * vector-only artifacts.
      */
     lexical: { terms: number; docCount: number; lazy?: true } | null;
+    /**
+     * 'engine' once a WASM scan kernel serves the resident scan
+     * (auto-staged or injected via options.sketchScanner); 'js' before
+     * background staging resolves and forever if it fails or was disabled.
+     */
+    residentScan: 'engine' | 'js';
     sampleQueries: string[];
   };
   /**
@@ -177,6 +183,20 @@ export declare function openPancakeFile(
     maxRecordBytes?: number;
     /** Override the kind-3 wasm kernel loader. */
     createEncoder?: () => Promise<unknown> | unknown;
+    /**
+     * Resident-scan acceleration. Default (undefined): in Node, when the
+     * corpus is large enough that the pure-JS sketch scan dominates query
+     * time (~16M sketch cells), the engine's SIMD scan kernel is staged in
+     * the background and serves queries once ready — the JS scan answers
+     * identically until then and permanently if staging fails. Pass false
+     * to force the JS scan; a ready scanner object (createSketchScanner's
+     * shape — caller-owned, not disposed by close()); or an async factory
+     * (sketchArtifact) => scanner, invoked once the sketch is fully
+     * resident (the injection point for browser bundles, which cannot load
+     * the Node engine entrypoint).
+     */
+    sketchScanner?: false | { scan: (pooledQuery: unknown, c: number) => unknown }
+      | ((sketch: unknown) => unknown | Promise<unknown>);
     rerankParallelism?: number;
     rerankGap?: number;
     rerankMaxRangeBytes?: number;

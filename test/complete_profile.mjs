@@ -899,6 +899,58 @@ console.log('\nD. lexical segment and hybrid retrieval');
     }
 }
 
+{
+    // --- WASM sketch scanner (options.sketchScanner) ---
+    // The engine's SIMD scan kernel must select the same candidates the JS
+    // scan does — the exact rerank then scores both sets identically, so
+    // any divergence shows up as differing [id, distance] pairs.
+    const js = await openPancakeFile(memorySource(A.bytes), { encodeQuery: hostEncode, sketchScanner: false });
+    check('sketchScanner:false reports residentScan js', js.info().residentScan === 'js');
+    const wasm = await openPancakeFile(memorySource(A.bytes), {
+        encodeQuery: hostEncode,
+        sketchScanner: (sk) => Pancake.createSketchScanner(sk, { maxRerank: 64 }),
+    });
+    // Staging is background by design; poll until the reader reports it.
+    for (let i = 0; i < 400 && wasm.info().residentScan !== 'engine'; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    check('injected scanner factory reaches residentScan engine', wasm.info().residentScan === 'engine');
+    for (const q of ['rec 17', 'rec 250', 'which treaty ended the first world war']) {
+        const a = await js.query(q, { k: 5 });
+        const b = await wasm.query(q, { k: 5 });
+        check(`scanner parity for ${JSON.stringify(q)}`,
+            JSON.stringify(a.results.map((r) => [r.id, r.distance]))
+                === JSON.stringify(b.results.map((r) => [r.id, r.distance])),
+            `js ${JSON.stringify(a.results.map((r) => r.id))} vs engine ${JSON.stringify(b.results.map((r) => r.id))}`);
+    }
+    // A rerank beyond the scanner's creation-time buffers (maxRerank 64)
+    // must fall back to the JS scan for that query — same results as the
+    // scanner-less reader, never a silently truncated candidate pool.
+    const wideJs = await js.query('rec 17', { k: 5, rerank: 100 });
+    const wideWasm = await wasm.query('rec 17', { k: 5, rerank: 100 });
+    check('rerank beyond scanner maxRerank falls back to the JS scan',
+        JSON.stringify(wideJs.results.map((r) => [r.id, r.distance]))
+            === JSON.stringify(wideWasm.results.map((r) => [r.id, r.distance])));
+    await wasm.close();
+    await js.close();
+
+    // A factory that fails must leave the reader serving the JS scan, not
+    // poison queries.
+    const broken = await openPancakeFile(memorySource(A.bytes), {
+        encodeQuery: hostEncode,
+        sketchScanner: () => { throw new Error('no engine here'); },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const survived = await broken.query('rec 17', { k: 3 });
+    check('failed scanner factory leaves the JS scan serving queries',
+        broken.info().residentScan === 'js' && survived.results.some((r) => r.id === 17));
+    await broken.close();
+
+    await rejects('a non-scanner sketchScanner option is rejected',
+        () => openPancakeFile(memorySource(A.bytes), { encodeQuery: hostEncode, sketchScanner: 42 }),
+        /sketchScanner must be false/);
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\nComplete-profile reader conformance: ${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

@@ -818,6 +818,10 @@ class PancakeSketchArtifact {
         let scanner = options.scanner || null;
         if (scanner && scanner.sketchDims !== undefined && scanner.sketchDims !== tierDims) scanner = null;
         if (!scanner && options.microScanner && options.microScanner.sketchDims === tierDims) scanner = options.microScanner;
+        // A scanner's output buffers are sized at creation (maxRerank); a
+        // C beyond them would silently shrink the candidate pool — recall
+        // loss, not an error. Fall back to the JS scan for that query.
+        if (scanner && scanner.maxRerank !== undefined && C > scanner.maxRerank) scanner = null;
         if (scanner) {
             // A scanner scores the resident sketches itself, so it must
             // implement this artifact's metric. Cosine requires an explicit

@@ -155,8 +155,9 @@ recall@10: 95.2% at the recommended rerank (97.0% at C=600), against exact
   lookups (augmented retrieval: hybrid candidates, distance order)
 serves over HTTP range reads: opens on ~52 MiB of the file, ~127 range
   requests per query (cluster-ordered row layout + manifest fetch hints)
-natural-language query with no host encoder option, ~540 ms/query end to
-  end locally on the pure-JS sketch scan
+natural-language query with no host encoder option, ~110 ms/query end to
+  end locally (the resident scan auto-stages the engine's SIMD kernel at
+  this scale; ~540 ms on the pure-JS scan it falls back to)
 ```
 
 Release asset (v4 — recovers the pack's canonical build: k-means

@@ -43,9 +43,10 @@ compile-wiki builds from `data-perm` — the pack's canonical layout
 loudly if only the unpermuted `data-full` source is present: building
 from it forfeits the layout and, historically, embedded a rejected
 96-dim sketch geometry that cost ~12 points of recall (the 82.8% era).
-Mean query time on the pure-JS scan is ~500 ms at the recovered 192-dim
-geometry; the WASM sketch scanner is the known ~18x cut when latency
-matters.
+At this scale the reader auto-stages the engine's SIMD scan kernel in the
+background (`info().residentScan` flips to `'engine'`), cutting mean query
+time from ~540 ms on the pure-JS scan to ~110 ms; results are identical
+either way, and the JS scan keeps serving if staging fails.
 
 ## Inline wiki artifact
 

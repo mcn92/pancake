@@ -26,9 +26,24 @@ const resultsEl = document.getElementById('results');
 const source = httpRangeSource(FILE_URL);
 await source.init();
 const openStart = performance.now();
-const search = await openPancakeFile(source);
+const search = await openPancakeFile(source, {
+    // Resident-scan acceleration: at wiki scale the pure-JS sketch scan is
+    // ~500 ms of every warm query. The factory runs in the background after
+    // open — the engine entrypoint (and its wasm, a lazy Vite asset) only
+    // downloads then, queries serve from the JS scan until it's staged, and
+    // a load failure just leaves the JS scan serving. Docs-scale artifacts
+    // scan in single-digit ms either way; the reader uses whatever arrives.
+    sketchScanner: async (sketch) => {
+        const { default: Pancake } = await import('../../../pancake.web.mjs');
+        return Pancake.createSketchScanner(sketch, { maxRerank: 4096 });
+    },
+});
 const openMs = performance.now() - openStart;
 const info = search.info();
+// Devtools affordance: poke the live reader from the console —
+// pancakeSearchDemo.search.info().residentScan shows whether the WASM
+// scanner has staged ('engine') or the JS scan is serving ('js').
+window.pancakeSearchDemo = { search, source };
 
 statusEl.textContent = `${(info.fileBytes / 1048576).toFixed(2)} MiB file - `
     + `open ${openMs.toFixed(0)} ms, ${source.stats.requests} requests / ${(source.stats.bytes / 1024).toFixed(0)} KiB - `
