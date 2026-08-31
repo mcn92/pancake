@@ -52,6 +52,20 @@ first.
 
 ### Added
 
+- **Search ledger benchmark** (`scripts/benchmark-search-ledger.mjs`):
+  renders artifact performance on the axes a general audience can price —
+  time to first answer from nothing, per-query requests/KiB and dollars
+  per million queries on parameterized object-store pricing (R2 and S3
+  defaults), queries per GB of egress, storage cost, warm-session
+  latency, and an infrastructure column that reads zero. Composes
+  benchmark-range-storage across named distance presets
+  (city/continent/world as injected per-response delays, labeled as a
+  model) and emits a Markdown report with the reproduction commands
+  embedded. Steady-state economics exclude the first query's one-time
+  costs (the deferred encoder download) — charging those to every query
+  overstated cost ~50× in the first draft. Representative output at
+  docs scale: 42 KiB and 6 requests per query — $2.19 per million
+  queries on R2, 23,375 queries per GB, $0.0004/month to store.
 - **Wiki-scale hybrid search: the lexical path now works at 456k chunks,
   with an `augmented` retrieval mode that lifts the pack's headline
   recall.** Three pieces:
