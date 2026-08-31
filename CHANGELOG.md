@@ -6,7 +6,7 @@ Release notes for the two published packages in this repository,
 pre-1.0: a minor bump may carry breaking changes, and each entry lists them
 first.
 
-## Unreleased
+## pancake-wasm 0.6.0 / create-pancake-search 0.6.0 — 2026-08-31
 
 ### Breaking / compatibility
 
@@ -78,7 +78,10 @@ first.
      overrides — the wiki artifact ships 16 KiB.
   Measured on the rebuilt artifact (identity `1b180adf…`): augmented
   recall@10 95.2% at C=200 / 97.0% at C=600 (titles 94.8%, hand-written
-  98.5%), inline kernel now equal to the fp32 harness; ~127 range
+  98.5%) with the artifact's own inline kernel — the true fp32 reference
+  is 96.0% (kind-2, precomputed vectors; `options.encodeQuery` is
+  ignored on kind-3 artifacts, so kernel-vs-fp32 comparisons need the
+  kind-2 build), a ~0.8pt quantization tax; ~127 range
   requests/query over HTTP (≈ 88 sketch + 24 lexical + scoring), cutting
   R2 cost from ~$165 to ~$46 per million queries. Verified along the
   way: a reverse-Cuthill-McKee ordering extracted from the real graph is

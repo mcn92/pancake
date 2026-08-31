@@ -1,6 +1,6 @@
 {
   "name": "pancake-wasm",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "HNSW vector search in WebAssembly. Runs in Node.js, browsers, and Cloudflare Workers with no native dependencies.",
   "main": "pancake.js",
   "types": "pancake.d.ts",
