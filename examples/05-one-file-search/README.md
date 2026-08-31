@@ -33,20 +33,24 @@ mode 2) rather than embedded, and calibration is the pack's
 retrieval-signal abstention model, bloom vocabulary included.
 
 ```bash
-node compile-wiki.mjs                 # data-full -> pancake-wiki.pancake (512 MiB)
+node compile-wiki.mjs                 # data-perm -> pancake-wiki.pancake
 node compile.mjs --inspect pancake-wiki.pancake
 node test-wiki.mjs                    # 200 eval queries vs exact ground truth
 ```
 
-Measured 2026-08-14: open 0.3 s with 27.8 MiB resident; recall@10 82.8%
-at the recommended rerank vs the pack manifest's published 82.9%; mean
-273 ms/query on the pure-JS scan (the WASM sketch scanner is the known
-~18x cut on the wiki sketch when latency matters).
+compile-wiki builds from `data-perm` — the pack's canonical layout
+(k-means cluster-ordered rows, 192-dim 2:1-pooled sketch) — and warns
+loudly if only the unpermuted `data-full` source is present: building
+from it forfeits the layout and, historically, embedded a rejected
+96-dim sketch geometry that cost ~12 points of recall (the 82.8% era).
+Mean query time on the pure-JS scan is ~500 ms at the recovered 192-dim
+geometry; the WASM sketch scanner is the known ~18x cut when latency
+matters.
 
 ## Inline wiki artifact
 
 The kind-3 inline transformer artifact is published as a GitHub release asset,
-not committed to git. Run one command; if the 537 MiB file is missing locally,
+not committed to git. Run one command; if the 649 MiB file is missing locally,
 the test downloads it into this ignored directory, verifies the manifest
 identity, and runs the self-contained query path:
 
@@ -57,11 +61,12 @@ node test-inline.mjs
 Expected manifest identity:
 
 ```text
-b25ff90d074fe889f02f6249ca5d4ce95099f2e1b04b9c1f71bd23f6d61b3828
+1b180adf4c6cebb2dcd5615256df6a25dac5fda8738dbbc11d60af86046f97f3
 ```
 
-If the local `data-full` eval query files are present, the same command also
-runs the full 200-query recall sweep. Otherwise it runs the release-artifact
+If the local `data-perm` eval query files are present (permuted id space,
+matching the artifact), the same command also runs the full 200-query
+augmented-recall sweep (gate: >= 94%). Otherwise it runs the release-artifact
 smoke, provenance, identity, abstention, and embedded-evaluation checks.
 
 ## Files

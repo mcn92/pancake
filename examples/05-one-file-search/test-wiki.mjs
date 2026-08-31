@@ -4,14 +4,16 @@
 // host encoder, so the whole container path — manifest verify, embedded
 // sketch at offset, corpus hydration, retrieval-signal abstention — is
 // exercised without loading a model. Pass bar: reproduce the pack
-// manifest's published recall@10 at the recommended rerank (0.829).
+// fp32 augmented recall@10 at the recommended rerank (0.960).
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { openPancakeFile } from './pancake-file-reader.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
-const DATA = path.join(here, '..', '04-static-wiki-pack', 'data-full');
+// data-perm: the pack's canonical cluster-ordered layout; its eval ground
+// truth is in permuted id space, matching artifacts compiled from it.
+const DATA = path.join(here, '..', '04-static-wiki-pack', 'data-perm');
 const pancakePath = path.join(here, 'pancake-wiki.pancake');
 
 let passed = 0;
@@ -59,7 +61,10 @@ const t0 = performance.now();
 let hits10 = 0;
 let answered = 0;
 for (let i = 0; i < evalQueries.length; i++) {
-    const out = await search.query(evalQueries[i].text, { k: 10 });
+    // augmented: lexical candidates join the exact rerank, distance order —
+    // the mode this exact-NN metric measures (RRF-ordered hybrid trades
+    // exact-NN overlap for keyword relevance by construction).
+    const out = await search.query(evalQueries[i].text, { k: 10, retrieval: 'augmented' });
     const truth = new Set(groundTruth[i]);
     for (const r of out.results) if (truth.has(r.id)) hits10++;
     if (out.matchQuality !== 'none') answered++;
@@ -67,8 +72,8 @@ for (let i = 0; i < evalQueries.length; i++) {
 const queryMs = (performance.now() - t0) / evalQueries.length;
 const recall = hits10 / (evalQueries.length * 10);
 console.log(`  recall@10 over ${evalQueries.length} queries: ${(recall * 100).toFixed(1)}% `
-    + `(pack manifest claims 82.9% at C=600); mean ${queryMs.toFixed(0)} ms/query`);
-check('recall@10 reproduces the pack evaluation (>= 0.82)', recall >= 0.82, recall.toFixed(4));
+    + `(fp32 reference 96.0% augmented at the recommended C=200); mean ${queryMs.toFixed(0)} ms/query`);
+check('recall@10 reproduces the pack evaluation (>= 0.95)', recall >= 0.95, recall.toFixed(4));
 check('in-domain queries are answered, not abstained', answered >= evalQueries.length * 0.95,
     `${answered}/${evalQueries.length}`);
 

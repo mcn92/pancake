@@ -165,7 +165,7 @@ if (fs.existsSync(evalQueryPath) && fs.existsSync(evalGtPath)) {
     const perQuery = (performance.now() - t0) / evalQueries.length;
     const recall = hits / (evalQueries.length * 10);
     console.log(`  augmented recall@10 over ${evalQueries.length} queries: ${(recall * 100).toFixed(1)}% `
-        + `(fp32 harness measured 95.2% at the recommended C=200; the correct 192-dim 2:1 sketch geometry — `
+        + `(verified 95.2% inline kernel; fp32 reference 96.0% — ~0.8pt encoder quantization tax; the correct 192-dim 2:1 sketch geometry — `
         + `the pre-v4 82.8% era embedded a 96-dim 4:1 sketch the pack's own measurements had rejected); `
         + `${perQuery.toFixed(0)} ms/query end to end`);
     check('augmented recall matches the verified inline-encoder number (>= 94%)', recall >= 0.94, recall.toFixed(4));

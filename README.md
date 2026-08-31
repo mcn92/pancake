@@ -147,17 +147,24 @@ Where the inline wiki artifact currently stands:
 
 ```text
 456,153 records
-~537 MiB complete artifact (562,737,657 bytes)
-manifest identity: b25ff90d074fe889f02f6249ca5d4ce95099f2e1b04b9c1f71bd23f6d61b3828
-recall@10: 82.4% over the 200-query pre-registered eval set, against brute-force ground truth
-natural-language query served with no host encoder option, ~228 ms/query end to end locally
+~649 MiB complete artifact (680,029,254 bytes)
+manifest identity: 1b180adf4c6cebb2dcd5615256df6a25dac5fda8738dbbc11d60af86046f97f3
+recall@10: 95.2% at the recommended rerank (97.0% at C=600), against exact
+  fp32 brute-force ground truth on the 200-query pre-registered eval —
+  98.5% on hand-written natural-language questions, 94.8% on single-title
+  lookups (augmented retrieval: hybrid candidates, distance order)
+serves over HTTP range reads: opens on ~52 MiB of the file, ~127 range
+  requests per query (cluster-ordered row layout + manifest fetch hints)
+natural-language query with no host encoder option, ~540 ms/query end to
+  end locally on the pure-JS sketch scan
 ```
 
-Release asset (v2 — the declaration states the kernel's real
-`maxTokens: 128` and carries verification vectors; index, corpus, and
-evaluation bytes are identical to v1, which stays published for older
-checkouts):
-`https://github.com/mcn92/pancake/releases/download/artifact-wiki-inline-v2/pancake-wiki-inline.pancake`
+Release asset (v4 — recovers the pack's canonical build: k-means
+cluster-ordered rows and the 192-dim 2:1-pooled sketch, where v1–v3
+embedded a 96-dim 4:1 sketch in unpermuted order and measured 82.4%; adds
+the hybrid BM25 lexical segment and a format-2 sketch with per-row read
+verification; earlier versions stay published for older checkouts):
+`https://github.com/mcn92/pancake/releases/download/artifact-wiki-inline-v4/pancake-wiki-inline.pancake`
 
 `node test-inline.mjs` downloads that file automatically when it is missing
 locally, verifies the manifest identity, and then runs the acceptance
