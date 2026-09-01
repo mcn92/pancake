@@ -25,11 +25,11 @@
 // stdout carries only protocol frames (the MCP stdio contract); all
 // logging goes to stderr.
 
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline';
 
 const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
-const SERVER_INFO = { name: 'pancake-knowledge-packs', version: '0.7.0-dev' };
 // Result text is chunk-sized by construction (compile targets ~256
 // tokens); k stays small so one tool result cannot flood a context window.
 const MAX_K = 20;
@@ -63,6 +63,21 @@ function toolDefinitions(packs) {
         + 'pack manifest — cite it to pin the exact knowledge state an answer used), record '
         + 'count, encoder, and sample queries the pack was built to answer.',
       inputSchema: { type: 'object', properties: {} },
+    },
+    {
+      name: 'verify_pack',
+      description: 'Run the tests a pack carries inside itself: golden queries (each verified '
+        + 'at build time to retrieve its source) and abstention probes (queries the pack must '
+        + 'answer or must refuse). Reports pass/fail per test plus the pack\'s encoder and '
+        + 'integrity verification state — an audit of the knowledge source, from the knowledge '
+        + 'source. Use it to establish trust in a newly attached pack.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          pack: { type: 'string', description: 'Pack to verify (optional when only one pack is mounted).' },
+          limit: { type: 'number', description: 'Max tests to run per category (default 24).' },
+        },
+      },
     },
     {
       name: 'get_record',
@@ -154,6 +169,65 @@ async function callGetRecord(packs, args) {
   return shaped;
 }
 
+async function callVerifyPack(packs, args) {
+  const names = resolvePack(packs, args?.pack, 'verify_pack');
+  if (names.length !== 1) {
+    throw new Error('verify_pack: pack is required when more than one pack is mounted');
+  }
+  let limit = 24;
+  if (args?.limit !== undefined) {
+    if (!Number.isSafeInteger(args.limit) || args.limit < 1 || args.limit > 200) {
+      throw new Error('verify_pack: limit must be an integer between 1 and 200');
+    }
+    limit = args.limit;
+  }
+  const mounted = packs.get(names[0]);
+  const evaluation = await mounted.search.evaluation().catch(() => null);
+  const goldens = Array.isArray(evaluation?.goldenQueries) ? evaluation.goldenQueries.slice(0, limit) : [];
+  const probes = Array.isArray(evaluation?.abstentionProbes) ? evaluation.abstentionProbes.slice(0, limit) : [];
+  const goldenResults = [];
+  for (const golden of goldens) {
+    if (typeof golden?.text !== 'string') continue;
+    const out = await mounted.search.query(golden.text, { k: 10 });
+    const pass = golden.expectId !== undefined
+      ? out.results.some((r) => r.id === golden.expectId)
+      : golden.expectTitle !== undefined
+        ? out.results.some((r) => (r.title || '').trim() === golden.expectTitle)
+        : golden.expectedTopId !== undefined
+          ? out.results[0]?.id === golden.expectedTopId
+          : out.results.length > 0;
+    goldenResults.push({ text: golden.text, pass, ...(pass ? {} : { got: out.results.slice(0, 3).map((r) => ({ id: r.id, title: r.title })) }) });
+  }
+  const probeResults = [];
+  for (const probe of probes) {
+    if (typeof probe?.text !== 'string') continue;
+    const out = await mounted.search.query(probe.text, { k: 5 });
+    const answered = out.matchQuality !== 'none';
+    const pass = probe.expect === 'abstain' ? !answered : answered;
+    probeResults.push({ text: probe.text, expect: probe.expect, got: out.matchQuality, pass });
+  }
+  const goldenPassed = goldenResults.filter((g) => g.pass).length;
+  const probesPassed = probeResults.filter((g) => g.pass).length;
+  // Read info after the queries: a deferred kind-3 encoder verifies its
+  // test vectors on first load, so encoderVerified is only meaningful now.
+  const info = mounted.search.info();
+  return {
+    pack: names[0],
+    packIdentity: mounted.identity,
+    encoderVerified: info.encoderVerified,
+    corpusIntegrity: info.corpusIntegrity,
+    indexRowIntegrity: info.indexRowIntegrity,
+    goldenQueries: { total: goldenResults.length, passed: goldenPassed, results: goldenResults },
+    abstentionProbes: { total: probeResults.length, passed: probesPassed, results: probeResults },
+    ...(goldenResults.length === 0 && probeResults.length === 0
+      ? { note: 'This pack embeds no runnable tests (older build, or calibration was skipped); encoder and integrity state above still apply.' }
+      : {}),
+    verdict: goldenPassed === goldenResults.length && probesPassed === probeResults.length
+      ? (goldenResults.length + probeResults.length > 0 ? 'pass' : 'no-tests')
+      : 'fail',
+  };
+}
+
 function callListPacks(packs) {
   return {
     packs: [...packs.entries()].map(([name, mounted]) => {
@@ -164,6 +238,8 @@ function callListPacks(packs) {
         file: mounted.file,
         records: info.records,
         encoder: info.encoder?.model ?? info.encoder?.kind ?? null,
+        license: info.license,
+        remote: mounted.remote === true,
         hybridLexical: info.lexical !== null,
         sampleQueries: info.sampleQueries.slice(0, 5),
       };
@@ -171,35 +247,174 @@ function callListPacks(packs) {
   };
 }
 
+async function mountPack(packs, spec, { openPancakeFile, httpRangeSource, log }) {
+  const isUrl = /^https?:\/\//i.test(spec.location);
+  // URL packs are the format's native habitat: range-read off dumb HTTP,
+  // nothing downloaded but the resident slice and per-query ranges. The
+  // reader's own bounded full-download fallback covers hosts that ignore
+  // Range (`create-pancake-search doctor <url>` certifies a host).
+  const search = isUrl
+    ? await (async () => {
+      const source = httpRangeSource(spec.location);
+      await source.init();
+      return openPancakeFile(source);
+    })()
+    : await openPancakeFile(path.resolve(spec.location));
+  const info = search.info();
+  if (spec.identity && info.identity !== spec.identity) {
+    await search.close();
+    throw new Error(`${spec.location}: identity mismatch — expected ${spec.identity}, got ${info.identity}. `
+      + 'The pack at this location is not the knowledge state the mount pinned; refusing to serve it.');
+  }
+  if (info.encoder && info.encoder.kind === 'external-transformers-v1') {
+    await search.close();
+    throw new Error(`${spec.location}: kind-2 packs need a host encoder and cannot be mounted self-contained; `
+      + 'compile packs with the inline encoder (the compile default) to serve them over MCP');
+  }
+  let name = spec.name || info.name
+    || path.basename(isUrl ? new URL(spec.location).pathname : spec.location).replace(/\.pancake$/, '');
+  // Names address packs in every tool call; collisions get a stable
+  // numeric suffix rather than silently shadowing an earlier mount.
+  if (packs.has(name)) {
+    let n = 2;
+    while (packs.has(`${name}-${n}`)) n += 1;
+    name = `${name}-${n}`;
+  }
+  packs.set(name, { search, identity: info.identity, file: isUrl ? spec.location : path.resolve(spec.location), remote: isUrl });
+  log(`mounted ${name} (${info.records} records, identity ${info.identity.slice(0, 12)}…, ${spec.identity ? 'identity-pinned' : 'unpinned'}) from ${spec.location}`);
+}
+
+
+/**
+ * Write (or merge) an MCP client config entry that launches this server —
+ * turns the documentation page into a verb. Supported clients:
+ * 'claude-code' (./.mcp.json in the current project) and 'claude-desktop'
+ * (the per-platform Claude Desktop config file). Existing config is
+ * preserved; an existing server of the same name is only replaced with
+ * force.
+ */
+export async function installMcpConfig({ packPaths, shelf, client = 'claude-code', serverName = 'knowledge-packs', force = false, homedir = undefined, cwd = undefined }) {
+  const os = await import('node:os');
+  const home = homedir || os.homedir();
+  const base = cwd || process.cwd();
+  if ((!Array.isArray(packPaths) || packPaths.length === 0) && !shelf) {
+    throw new Error('mcp install requires at least one --pack <file-or-url> or a --shelf');
+  }
+  let configPath;
+  let hint;
+  if (client === 'claude-code') {
+    configPath = path.join(base, '.mcp.json');
+    hint = 'Claude Code picks it up on the next session in this project.';
+  } else if (client === 'claude-desktop') {
+    const platform = process.platform;
+    configPath = platform === 'darwin'
+      ? path.join(home, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json')
+      : platform === 'win32'
+        ? path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'Claude', 'claude_desktop_config.json')
+        : path.join(home, '.config', 'Claude', 'claude_desktop_config.json');
+    hint = 'Restart Claude Desktop to load it.';
+  } else {
+    throw new Error(`mcp install: unknown --client ${client} (use claude-code or claude-desktop)`);
+  }
+  const args = ['-y', 'create-pancake-search', 'mcp'];
+  for (const raw of packPaths || []) {
+    // Local paths are pinned absolute so the config works from any cwd;
+    // URLs (and #identity pins) pass through untouched.
+    const hash = /^(.*)#([0-9a-f]{64})$/i.exec(raw);
+    const location = hash ? hash[1] : raw;
+    const suffix = hash ? `#${hash[2].toLowerCase()}` : '';
+    args.push('--pack', /^https?:\/\//i.test(location) ? `${location}${suffix}` : `${path.resolve(base, location)}${suffix}`);
+  }
+  if (shelf) args.push('--shelf', /^https?:\/\//i.test(shelf) ? shelf : path.resolve(base, shelf));
+
+  let existing = {};
+  try {
+    existing = JSON.parse(await fs.readFile(configPath, 'utf8'));
+    if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
+      throw new Error(`${configPath} exists but is not a JSON object; refusing to overwrite it`);
+    }
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+  const servers = existing.mcpServers && typeof existing.mcpServers === 'object' ? existing.mcpServers : {};
+  if (servers[serverName] && !force) {
+    throw new Error(`${configPath} already has an mcpServers entry named ${JSON.stringify(serverName)}; rerun with --force to replace it or choose --server-name`);
+  }
+  const merged = { ...existing, mcpServers: { ...servers, [serverName]: { command: 'npx', args } } };
+  await fs.mkdir(path.dirname(configPath), { recursive: true });
+  await fs.writeFile(configPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
+  return { configPath, serverName, hint };
+}
+
+/**
+ * A shelf is a registry that is also just a file: a static JSON listing of
+ * packs — { packs: [{ name?, url|path, identity?, description? }] }.
+ * Relative paths resolve against the shelf's own location. Entries with an
+ * identity are pinned at mount.
+ */
+export async function loadShelf(location) {
+  const isUrl = /^https?:\/\//i.test(location);
+  let text;
+  if (isUrl) {
+    const response = await fetch(location, { redirect: 'follow' });
+    if (!response.ok) throw new Error(`shelf ${location}: HTTP ${response.status}`);
+    text = await response.text();
+  } else {
+    text = await fs.readFile(path.resolve(location), 'utf8');
+  }
+  let shelf;
+  try { shelf = JSON.parse(text); } catch (err) {
+    throw new Error(`shelf ${location} is not valid JSON: ${err.message}`);
+  }
+  if (!Array.isArray(shelf?.packs) || shelf.packs.length === 0) {
+    throw new Error(`shelf ${location} must be a JSON object with a non-empty "packs" array`);
+  }
+  return shelf.packs.map((entry, i) => {
+    const target = entry.url ?? entry.path;
+    if (typeof target !== 'string' || !target) throw new Error(`shelf ${location} entry ${i} needs a url or path`);
+    if (entry.identity !== undefined && !/^[0-9a-f]{64}$/i.test(entry.identity)) {
+      throw new Error(`shelf ${location} entry ${i}: identity must be a sha256 hex string`);
+    }
+    let resolved;
+    if (/^https?:\/\//i.test(target)) resolved = target;
+    else if (isUrl) resolved = new URL(target, location).href;
+    else resolved = path.resolve(path.dirname(path.resolve(location)), target);
+    return {
+      location: resolved,
+      ...(entry.identity ? { identity: entry.identity.toLowerCase() } : {}),
+      ...(typeof entry.name === 'string' && entry.name ? { name: entry.name } : {}),
+    };
+  });
+}
+
 /**
  * Mount packs and serve MCP on stdio until stdin closes. `openPack` is
  * injected (the CLI passes pancake-wasm/complete's openPancakeFile) so
  * tests can stub it.
  */
-export async function runMcpServer({ packPaths, openPancakeFile, stdin = process.stdin, stdout = process.stdout, log = (line) => process.stderr.write(`${line}\n`) }) {
+export async function runMcpServer({ packPaths, openPancakeFile, httpRangeSource, serverVersion = '0.0.0', stdin = process.stdin, stdout = process.stdout, log = (line) => process.stderr.write(`${line}\n`) }) {
   if (!Array.isArray(packPaths) || packPaths.length === 0) {
     throw new Error('mcp requires at least one --pack <file.pancake>');
   }
   const packs = new Map();
-  for (const packPath of packPaths) {
-    const resolved = path.resolve(packPath);
-    const search = await openPancakeFile(resolved);
-    const info = search.info();
-    if (info.encoder && info.encoder.kind === 'external-transformers-v1') {
-      await search.close();
-      throw new Error(`${packPath}: kind-2 packs need a host encoder and cannot be mounted self-contained; `
-        + 'compile packs with the inline encoder (the compile default) to serve them over MCP');
-    }
-    let name = info.name || path.basename(resolved).replace(/\.pancake$/, '');
-    // Names address packs in every tool call; collisions get a stable
-    // numeric suffix rather than silently shadowing an earlier mount.
-    if (packs.has(name)) {
-      let n = 2;
-      while (packs.has(`${name}-${n}`)) n += 1;
-      name = `${name}-${n}`;
-    }
-    packs.set(name, { search, identity: info.identity, file: resolved });
-    log(`mounted ${name} (${info.records} records, identity ${info.identity.slice(0, 12)}…) from ${resolved}`);
+  const specs = [];
+  for (const raw of packPaths) {
+    if (raw && typeof raw === 'object') { specs.push(raw); continue; }
+    // `location#<sha256>` pins the pack's manifest identity at the mount:
+    // the shape a shelf entry, a README, or a lockfile can carry.
+    const hash = /^(.*)#([0-9a-f]{64})$/i.exec(raw);
+    specs.push(hash ? { location: hash[1], identity: hash[2].toLowerCase() } : { location: raw });
+  }
+  for (const spec of specs) {
+    await mountPack(packs, spec, { openPancakeFile, httpRangeSource, log });
+  }
+  // Warm every pack in the background so the first tool call pays for
+  // retrieval, not for staging: the query forces the deferred encoder,
+  // kernel init, and (URL mounts) the first rerank round trips. Failures
+  // surface on real queries, not here.
+  for (const [, mounted] of packs) {
+    const probe = mounted.search.info().sampleQueries[0] || 'what is this about';
+    mounted.warmup = mounted.search.query(probe, { k: 1 }).catch(() => {});
   }
 
   const send = (message) => stdout.write(`${JSON.stringify(message)}\n`);
@@ -224,7 +439,7 @@ export async function runMcpServer({ packPaths, openPancakeFile, stdin = process
         reply(id, {
           protocolVersion: PROTOCOL_VERSIONS.includes(requested) ? requested : PROTOCOL_VERSIONS[0],
           capabilities: { tools: {} },
-          serverInfo: SERVER_INFO,
+          serverInfo: { name: 'pancake-knowledge-packs', version: serverVersion },
         });
       } else if (method === 'ping') {
         if (isRequest) reply(id, {});
@@ -237,6 +452,7 @@ export async function runMcpServer({ packPaths, openPancakeFile, stdin = process
         if (toolName === 'search') result = await callSearch(packs, args);
         else if (toolName === 'list_packs') result = callListPacks(packs);
         else if (toolName === 'get_record') result = await callGetRecord(packs, args);
+        else if (toolName === 'verify_pack') result = await callVerifyPack(packs, args);
         else throw new Error(`unknown tool ${JSON.stringify(toolName)}`);
         reply(id, { content: [{ type: 'text', text: JSON.stringify(result, null, 1) }] });
       } else if (typeof method === 'string' && method.startsWith('notifications/')) {

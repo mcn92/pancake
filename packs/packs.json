@@ -1,0 +1,12 @@
+{
+  "$comment": "A pancake shelf: a static listing of knowledge packs. No service, no accounts - the registry is also just a file. Mount everything on it with: npx create-pancake-search mcp --shelf <path-or-url-to-this-file>. Entries: name (optional mount name), url or path (relative paths resolve against this file's location), identity (optional sha256 manifest identity - mounts refuse a pack that does not match), description, license.",
+  "packs": [
+    {
+      "name": "simple-wikipedia",
+      "url": "https://github.com/mcn92/pancake/releases/download/artifact-wiki-inline-v4/pancake-wiki-inline.pancake",
+      "identity": "1b180adf4c6cebb2dcd5615256df6a25dac5fda8738dbbc11d60af86046f97f3",
+      "description": "Simple English Wikipedia, 456,153 passages with inline MiniLM encoder, hybrid retrieval, and calibrated abstention. ~649 MiB served by range reads: mounting transfers ~52 MiB and each question costs ~127 range requests - nothing downloads the whole file.",
+      "license": "CC-BY-SA-4.0"
+    }
+  ]
+}

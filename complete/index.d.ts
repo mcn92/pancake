@@ -21,6 +21,8 @@ export interface HttpRangeSourceStats {
   acceptRanges: string | null;
   etag: string | null;
   fullFallback: boolean;
+  /** Transient-status (429/502/503/504) retries issued, across all reads. */
+  retries: number;
 }
 
 export interface HttpRangeSource extends CompleteRangeSource {
@@ -40,6 +42,12 @@ export declare function httpRangeSource(url: string, options?: {
    * range reads then share the unmodified URL.
    */
   cacheKeyParam?: string | null | false;
+  /**
+   * Retries per read for transient statuses (429/502/503/504), with capped
+   * exponential backoff (Retry-After honored when sane). Default 4; 0
+   * disables. CDNs rate-limit the parallel range bursts a query issues.
+   */
+  maxRetries?: number;
 }): HttpRangeSource;
 
 export interface CompleteQueryResult {
@@ -67,6 +75,11 @@ export interface CompleteSearch {
      * builder recorded none.
      */
     name: string | null;
+    /**
+     * Content license recorded at compile (SPDX id or free text) under
+     * corpus.provenance.license; null when the builder recorded none.
+     */
+    license: string | null;
     records: number;
     dim: number;
     metric: string | number;

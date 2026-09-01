@@ -1,6 +1,21 @@
 export function httpRangeSource(url, options = {}) {
-    const stats = { requests: 0, bytes: 0, acceptRanges: null, etag: null, fullFallback: false };
+    const stats = { requests: 0, bytes: 0, acceptRanges: null, etag: null, fullFallback: false, retries: 0 };
     const maxFullFallbackBytes = options.maxFullFallbackBytes ?? 64 * 1024 * 1024;
+    // Transient statuses are retried with capped exponential backoff
+    // (Retry-After honored when sane): CDNs rate-limit the parallel range
+    // bursts this reader legitimately issues — GitHub release assets answer
+    // 429 under an open's prefetch + first-query fan-out — and failing a
+    // whole query over a pressure signal wastes everything already fetched.
+    const maxRetries = options.maxRetries ?? 6;
+    const RETRYABLE = new Set([429, 502, 503, 504]);
+    const retryDelayMs = (attempt, response) => {
+        // GitHub's release CDN answers rate-limited range bursts with 429
+        // and a Retry-After of up to a minute; honoring it (capped) beats
+        // guessing. Without one, exponential backoff capped at 15 s.
+        const after = Number(response.headers.get('retry-after'));
+        if (Number.isFinite(after) && after >= 0 && after <= 90) return after * 1000;
+        return Math.min(15000, 250 * 2 ** attempt);
+    };
     const cacheKeyParam = options.cacheKeyParam === undefined ? 'r'
         : (options.cacheKeyParam === null || options.cacheKeyParam === false) ? null
             : String(options.cacheKeyParam);
@@ -40,7 +55,12 @@ export function httpRangeSource(url, options = {}) {
             const target = cacheKeyParam
                 ? `${url}${url.includes('?') ? '&' : '?'}${cacheKeyParam}=${offset}-${end}`
                 : url;
-            const response = await fetch(target, { headers });
+            let response = await fetch(target, { headers });
+            for (let attempt = 0; RETRYABLE.has(response.status) && attempt < maxRetries; attempt++) {
+                stats.retries += 1;
+                await new Promise((resolve) => setTimeout(resolve, retryDelayMs(attempt, response)));
+                response = await fetch(target, { headers });
+            }
 
             if (response.status === 206) {
                 // A 206 must be the range we asked for, and must say so: a

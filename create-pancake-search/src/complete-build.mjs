@@ -36,6 +36,7 @@ async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, c
     return embedder;
   };
   let calibrationBytes = null;
+  let goldenQueries = [];
   try {
     if (!Array.isArray(declaration.testVectors) || declaration.testVectors.length === 0) {
       // Contract section 4.4 mode 1: an inline encoder carries verification
@@ -52,6 +53,10 @@ async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, c
       const calibrated = await calibrateRetrievalAbstention({ Pancake, chunks, vectors, config, embedQuery, log });
       if (calibrated) {
         calibrationBytes = Buffer.from(JSON.stringify(calibrated.calibrationJson), 'utf8');
+        // Retrieval-verified positives double as golden queries: embedded
+        // in the evaluation segment, so any later reader can re-run the
+        // pack's own tests from inside the file (mcp verify_pack).
+        goldenQueries = calibrated.goldenQueries || [];
         const { verifiedPositiveQueries, foreignNegativeQueries, syntheticGibberishQueries, heldOutNegativeQueries, recombinationNegativeQueries, weakQueries, fitAuc, cvAuc, cvAucHard } = calibrated.summary;
         log(`Calibrated abstention: ${verifiedPositiveQueries} answerable / ${heldOutNegativeQueries + recombinationNegativeQueries} hard in-domain (${heldOutNegativeQueries} held-out-doc, ${recombinationNegativeQueries} recombination) / `
           + `${foreignNegativeQueries} off-domain / ${syntheticGibberishQueries} gibberish / ${weakQueries} weak queries, `
@@ -89,6 +94,9 @@ async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, c
     kind: 'docs-site-build-v1',
     generatedAt: new Date().toISOString(),
     querySet: runtime.evaluation?.queries || [],
+    // Each verified at build time to retrieve its source; expectId names a
+    // chunk id, expectTitle any chunk of the titled document.
+    goldenQueries,
     // COMPLETE_PROFILE.md section 5.4: the recall-vs-C measurements behind
     // this artifact's recommendedRerank.
     rerankSweep,
@@ -102,7 +110,17 @@ async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, c
   log(`Built lexical index: ${lexical.meta.terms.toLocaleString()} terms over ${lexical.meta.docCount.toLocaleString()} records (${(lexical.bytes.length / 1024).toFixed(0)} KiB)`);
   const result = assemblePancakeFile({
     profile: PROFILE_V2,
-    corpus: { ...corpusSegment.corpus, provenance: { source: config.source.type, name: config.name } },
+    corpus: {
+      ...corpusSegment.corpus,
+      provenance: {
+        source: config.source.type,
+        name: config.name,
+        // SPDX identifier (or free text) for the compiled content — set
+        // with compile --license; packs meant for redistribution should
+        // carry one.
+        ...(config.license ? { license: config.license } : {}),
+      },
+    },
     dim: config.embedding.dims,
     metric: config.index.metric,
     encoder: {

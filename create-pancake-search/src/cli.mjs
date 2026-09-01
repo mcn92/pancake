@@ -25,12 +25,34 @@ export async function main(argv) {
     return;
   }
   if (parsed.positionals[0] === 'mcp') {
-    const { runMcpServer } = await import('./mcp.mjs');
-    const { loadCompleteModules } = await import('./common.mjs');
+    const { runMcpServer, loadShelf, installMcpConfig } = await import('./mcp.mjs');
+    const { loadCompleteModules, CLI_VERSION } = await import('./common.mjs');
+    // Positional pack paths (and URLs, optionally `#sha256`-pinned)
+    // compose with repeated --pack; --shelf mounts a static pack listing.
+    const positionalPacks = parsed.positionals.slice(1).filter((p) => p !== 'install');
+    const packPaths = [...(parsed.flags.pack || []), ...positionalPacks];
+    if (parsed.positionals[1] === 'install') {
+      const written = await installMcpConfig({
+        packPaths,
+        shelf: parsed.flags.shelf,
+        client: parsed.flags.client || 'claude-code',
+        serverName: parsed.flags['server-name'] || 'knowledge-packs',
+        force: parsed.flags.force === true,
+      });
+      console.log(`Wrote MCP server "${written.serverName}" to ${written.configPath}`);
+      console.log(written.hint);
+      return;
+    }
+    if (parsed.flags.shelf) {
+      packPaths.push(...await loadShelf(parsed.flags.shelf));
+    }
     const { reader } = await loadCompleteModules();
-    // Positional pack paths after `mcp` compose with repeated --pack.
-    const packPaths = [...(parsed.flags.pack || []), ...parsed.positionals.slice(1)];
-    await runMcpServer({ packPaths, openPancakeFile: reader.openPancakeFile });
+    await runMcpServer({
+      packPaths,
+      openPancakeFile: reader.openPancakeFile,
+      httpRangeSource: reader.httpRangeSource,
+      serverVersion: CLI_VERSION,
+    });
     return;
   }
   const command = ['rebuild', 'compile'].includes(parsed.positionals[0]) ? parsed.positionals[0] : 'create';
@@ -57,14 +79,20 @@ Usage:
   create-pancake-search compile --source <path|url> --out search.pancake
   create-pancake-search rebuild --yes
   create-pancake-search doctor <url>   # probe artifact hosting: Range/206, cache-key ranges, h2, ETag, RTT
-  create-pancake-search mcp --pack <file.pancake> [--pack <file2.pancake> ...]
+  create-pancake-search mcp --pack <file-or-url> [--pack ... | --shelf <file-or-url>]
+  create-pancake-search mcp install --pack <file-or-url> [--client claude-code|claude-desktop]
 
-mcp serves the given knowledge packs over the Model Context Protocol on
-stdio, so an MCP client (Claude Code, Claude Desktop, an agent framework)
-can attach them as a retrieval tool: search (per-pack results with
-provenance and calibrated abstention), list_packs (names + immutable
-identities for citation pinning), get_record. Packs are self-contained —
-the server needs no vector database, embedding service, or network.
+mcp serves knowledge packs over the Model Context Protocol on stdio, so an
+MCP client (Claude Code, Claude Desktop, an agent framework) can attach
+them as a retrieval tool: search (per-pack results with provenance and
+calibrated abstention), list_packs (names + immutable identities for
+citation pinning), get_record, verify_pack (runs the golden queries and
+abstention probes stored inside the pack). --pack takes a local file or an
+HTTP(S) URL — URL packs are range-read, never downloaded whole — and
+either form takes '#<sha256>' to pin the manifest identity (mismatches
+refuse to serve). --shelf mounts every pack on a static packs.json listing
+(see packs/README.md). mcp install writes the MCP client config instead of
+running the server (--server-name names the entry, --force replaces it).
 
 compile builds a complete kind-3 .pancake artifact from the source and stops:
 no project, no Worker, no Cloudflare. The file carries the corpus, index,
@@ -301,6 +329,10 @@ async function compileArtifact(flags) {
     $schema: CONFIG_SCHEMA_URL,
     version: 1,
     name,
+    // Recorded in the artifact manifest (corpus.provenance.license) and
+    // surfaced by mcp list_packs; packs meant for redistribution should
+    // carry one.
+    ...(flags.license ? { license: String(flags.license) } : {}),
     source: isUrl
       ? {
           type: 'url',

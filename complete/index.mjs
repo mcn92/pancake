@@ -902,6 +902,10 @@ export async function openPancakeFile(input, options = {}) {
                     name: typeof manifest.corpus?.provenance?.name === 'string'
                         ? manifest.corpus.provenance.name
                         : (typeof manifest.name === 'string' ? manifest.name : null),
+                    // Content license recorded at compile (SPDX id or free
+                    // text); null when the builder recorded none.
+                    license: typeof manifest.corpus?.provenance?.license === 'string'
+                        ? manifest.corpus.provenance.license : null,
                     records: recordCount,
                     dim,
                     metric: manifest.metric,

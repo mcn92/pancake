@@ -472,7 +472,7 @@ export async function calibrateRetrievalAbstention({ Pancake, chunks, vectors, c
       const found = sourceId !== undefined
         ? hits.some((h) => h.id === sourceId)
         : hits.some((h) => (chunks[h.id]?.title || '').trim() === sourceTitle);
-      if (found) rows.push({ text, label: 1, ...signalsFor(text, hits) });
+      if (found) rows.push({ text, label: 1, sourceTitle, sourceId, ...signalsFor(text, hits) });
       else droppedPositives++;
     }
     const positives = rows.filter((r) => r.label === 1);
@@ -668,6 +668,21 @@ export async function calibrateRetrievalAbstention({ Pancake, chunks, vectors, c
     // scored by the final model and reported: how many the shipped
     // thresholds would answer is the asset's stated hard-negative exposure.
     const evalOnlyRows = rows.filter((r) => r.evalOnly);
+    // A deterministic sample of the verified positives, exported as golden
+    // queries the artifact can embed: each was checked above to actually
+    // retrieve its source, so a reader can re-run them later (verify_pack,
+    // acceptance tests) as tests stored inside the file. Spread evenly so
+    // both title and content-word templates are represented.
+    const goldenSample = (() => {
+      const cap = 24;
+      if (positives.length <= cap) return positives;
+      const step = positives.length / cap;
+      return Array.from({ length: cap }, (_, i) => positives[Math.floor(i * step)]);
+    })();
+    const goldenQueries = goldenSample.map((r) => ({
+      text: r.text,
+      ...(r.sourceId !== undefined ? { expectId: r.sourceId } : { expectTitle: r.sourceTitle }),
+    }));
     const summary = {
       method: 'self-templates-v3',
       seed: SEED,
@@ -743,6 +758,7 @@ export async function calibrateRetrievalAbstention({ Pancake, chunks, vectors, c
         vocabBloomBase64: Buffer.from(bloom).toString('base64'),
       },
       summary,
+      goldenQueries,
     };
   } finally {
     index.dispose();

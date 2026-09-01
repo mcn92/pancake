@@ -189,8 +189,8 @@ console.log('\n--- compile ---');
       send({ jsonrpc: '2.0', method: 'notifications/initialized' });
       send({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
       const tools = (await waitFor(2)).result.tools.map((t) => t.name).sort();
-      ok(JSON.stringify(tools) === JSON.stringify(['get_record', 'list_packs', 'search']),
-        'mcp lists the three pack tools', tools.join(','));
+      ok(JSON.stringify(tools) === JSON.stringify(['get_record', 'list_packs', 'search', 'verify_pack']),
+        'mcp lists the four pack tools', tools.join(','));
 
       const packs = (await callTool(3, 'list_packs', {})).body.packs;
       ok(packs.length === 2 && packs[0].name !== packs[1].name
@@ -220,10 +220,95 @@ console.log('\n--- compile ---');
       ok(badTool === null || badTool.isError === true, 'unknown tool is reported as an error');
       const ambiguous = await callTool(9, 'get_record', { id: 0 });
       ok(ambiguous.isError === true, 'get_record without pack errors when multiple packs are mounted');
+
+      // verify_pack: the compiled fixture embeds retrieval-verified golden
+      // queries (calibration positives), runnable as tests from inside the
+      // file.
+      const verify = (await callTool(10, 'verify_pack', { pack: packName })).body;
+      ok(verify.verdict === 'pass' && verify.goldenQueries.total > 0
+        && verify.goldenQueries.passed === verify.goldenQueries.total
+        && verify.encoderVerified === true && verify.corpusIntegrity === 'per-record-sha256',
+        'verify_pack runs the embedded goldens and they pass', JSON.stringify({ verdict: verify.verdict, goldens: verify.goldenQueries.total, enc: verify.encoderVerified }));
     } finally {
       child.stdin.end();
       await new Promise((resolve) => child.on('close', resolve));
     }
+
+    // URL mount with identity pinning: range-served over local HTTP, the
+    // wrong pin refused, the right pin served.
+    const http = await import('node:http');
+    const packBytes = fs.statSync(outFile).size;
+    const rangeSrv = http.createServer((req, res) => {
+      const r = req.headers.range && /^bytes=(\d+)-(\d+)?$/.exec(req.headers.range);
+      if (r) {
+        const start = +r[1];
+        const end = r[2] !== undefined ? Math.min(+r[2], packBytes - 1) : packBytes - 1;
+        res.writeHead(206, { 'accept-ranges': 'bytes', 'content-range': `bytes ${start}-${end}/${packBytes}`, 'content-length': end - start + 1 });
+        fs.createReadStream(outFile, { start, end }).pipe(res);
+        return;
+      }
+      res.writeHead(req.method === 'HEAD' ? 200 : 200, { 'accept-ranges': 'bytes', 'content-length': packBytes });
+      if (req.method === 'HEAD') res.end();
+      else fs.createReadStream(outFile).pipe(res);
+    });
+    await new Promise((resolve) => rangeSrv.listen(0, '127.0.0.1', resolve));
+    const packUrl = `http://127.0.0.1:${rangeSrv.address().port}/search.pancake`;
+    const { openPancakeFile: openForIdentity } = await import(path.join(ROOT, 'complete', 'index.mjs'));
+    const identityReader = await openForIdentity(outFile);
+    const packIdentity = identityReader.info().identity;
+    await identityReader.close();
+    // Async spawn, not spawnSync: the child's background encoder prefetch
+    // reads from rangeSrv in THIS process — a synchronous wait deadlocks.
+    const badPin = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [CPS_BIN, 'mcp', '--pack', `${packUrl}#${'f'.repeat(64)}`],
+        { cwd: CPS_DIR, stdio: ['pipe', 'ignore', 'pipe'] });
+      let stderr = '';
+      child.stderr.on('data', (d) => { stderr += d; });
+      child.stdin.end();
+      child.on('close', (status) => resolve({ status, stderr }));
+    });
+    ok(badPin.status !== 0 && badPin.stderr.includes('identity mismatch'),
+      'a wrong identity pin refuses the mount', badPin.stderr.slice(0, 160));
+    {
+      const urlChild = spawn(process.execPath, [CPS_BIN, 'mcp', '--pack', `${packUrl}#${packIdentity}`],
+        { cwd: CPS_DIR, stdio: ['pipe', 'pipe', 'pipe'] });
+      const urlLines = [];
+      let urlBuf = '';
+      urlChild.stdout.on('data', (d) => {
+        urlBuf += d;
+        let idx;
+        while ((idx = urlBuf.indexOf('\n')) >= 0) { urlLines.push(JSON.parse(urlBuf.slice(0, idx))); urlBuf = urlBuf.slice(idx + 1); }
+      });
+      urlChild.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'list_packs', arguments: {} } })}\n`);
+      const listed = await new Promise((resolve, reject) => {
+        const deadline = Date.now() + 120000;
+        const timer = setInterval(() => {
+          const hit = urlLines.find((l) => l.id === 1);
+          if (hit) { clearInterval(timer); resolve(hit); }
+          else if (Date.now() > deadline) { clearInterval(timer); reject(new Error('url mount timed out')); }
+        }, 20);
+      });
+      const urlPacks = JSON.parse(listed.result.content[0].text).packs;
+      ok(urlPacks.length === 1 && urlPacks[0].remote === true && urlPacks[0].identity === packIdentity,
+        'a URL pack mounts over range reads with the pinned identity', JSON.stringify(urlPacks[0]));
+      urlChild.stdin.end();
+      await new Promise((resolve) => urlChild.on('close', resolve));
+    }
+    rangeSrv.close();
+
+    // mcp install: writes the client config as a file operation, no server.
+    const installDir = path.join(work, 'install-target');
+    fs.mkdirSync(installDir, { recursive: true });
+    const { installMcpConfig } = await import(path.join(CPS_DIR, 'src', 'mcp.mjs'));
+    const written = await installMcpConfig({ packPaths: [outFile], client: 'claude-code', cwd: installDir });
+    const config = JSON.parse(fs.readFileSync(written.configPath, 'utf8'));
+    const entry = config.mcpServers['knowledge-packs'];
+    ok(written.configPath === path.join(installDir, '.mcp.json') && entry.command === 'npx'
+      && entry.args.includes('--pack') && entry.args.includes(outFile),
+      'mcp install writes a claude-code .mcp.json with absolute pack paths', JSON.stringify(entry));
+    const refused = await installMcpConfig({ packPaths: [outFile], client: 'claude-code', cwd: installDir }).catch((e) => e);
+    ok(refused instanceof Error && /--force/.test(refused.message),
+      'mcp install refuses to replace an existing entry without --force');
   }
 
   // URL crawl filters: pattern semantics and the folder-glob/URL-pattern

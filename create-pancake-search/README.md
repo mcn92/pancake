@@ -151,20 +151,45 @@ npx create-pancake-search compile --source https://docs.astro.build --out astro.
 npx create-pancake-search mcp --pack astro.pancake --pack team-handbook.pancake
 ```
 
-As a Claude Code / Claude Desktop MCP entry:
+`--pack` also takes a URL — packs are range-read off dumb HTTP, never
+downloaded whole. One line attaches 456k passages of Simple English
+Wikipedia; mounting transfers a ~52 MiB resident slice and each question
+costs ~127 range requests against the 649 MiB file:
+
+```bash
+npx create-pancake-search mcp --pack https://github.com/mcn92/pancake/releases/download/artifact-wiki-inline-v4/pancake-wiki-inline.pancake
+```
+
+Either form takes `#<sha256>` to pin the pack's manifest identity — a
+mount that finds different bytes at that location refuses to serve. And
+`--shelf <file-or-url>` mounts every pack on a static `packs.json`
+listing (see `packs/README.md` in the main repo): a registry that is also
+just a file. Transient CDN pressure (429/502/503/504 on range bursts) is
+retried with backoff by the reader.
+
+Instead of running the server by hand, write your MCP client's config:
+
+```bash
+npx create-pancake-search mcp install --pack astro.pancake --client claude-code
+```
+
+(`claude-code` writes `./.mcp.json`, `claude-desktop` the platform's
+Claude Desktop config; `--server-name` names the entry, `--force`
+replaces an existing one.) The equivalent JSON, if you'd rather write it
+yourself:
 
 ```json
 {
   "mcpServers": {
     "knowledge-packs": {
       "command": "npx",
-      "args": ["create-pancake-search", "mcp", "--pack", "astro.pancake", "--pack", "team-handbook.pancake"]
+      "args": ["-y", "create-pancake-search", "mcp", "--pack", "astro.pancake", "--pack", "team-handbook.pancake"]
     }
   }
 }
 ```
 
-The model gets three tools. `search` queries one pack or all of them;
+The model gets four tools. `search` queries one pack or all of them;
 results stay grouped per pack (distances are only comparable within one
 pack's encoder and corpus) and every result carries its provenance —
 pack name, the pack's immutable manifest identity (sha256), title,
@@ -174,9 +199,15 @@ citation survives pack rebuilds detectably. Calibrated abstention
 crosses the protocol intact: a pack that cannot answer says
 `matchQuality: "none"` with zero results, and the tool result tells the
 model to say so rather than guess — the property a grounding layer needs
-most. `list_packs` reports names, identities, record counts, and each
-pack's sample queries; `get_record` hydrates one full chunk
+most. `list_packs` reports names, identities, record counts, licenses,
+and each pack's sample queries; `get_record` hydrates one full chunk
 (integrity-verified from the pack) by the id a search result reported.
+`verify_pack` runs the tests the pack carries inside itself — golden
+queries, each verified at build time to retrieve its source (compile
+embeds a sample of the calibration's retrieval-verified positives), and
+abstention probes the pack must answer or refuse — so an agent can audit
+a newly attached knowledge source with tests stored in the file it is
+auditing.
 
 Because packs are just files, they share like files: copy one to a
 laptop, publish it on GitHub Releases or object storage, version it,
@@ -184,7 +215,10 @@ pin it by identity. The recipient attaches the finished object — not
 30,000 documents and instructions for rebuilding your retrieval stack.
 Packs compiled with the inline encoder (the `compile` default) are fully
 self-contained; kind-2 packs, which need a host encoder, are refused at
-mount with an explanation.
+mount with an explanation. Set `compile --license <SPDX-id>` on anything
+meant for redistribution — it is recorded in the pack manifest, surfaced
+by `list_packs`, and result provenance carries attribution through to
+answers.
 
 ## Where this sits
 

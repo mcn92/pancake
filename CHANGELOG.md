@@ -53,8 +53,38 @@ first.
   live against real packs (docs.astro.build + nodejs.org mounted
   together: cross-pack grouping, off-domain abstention, honest
   `unscored` from a pack whose calibration failed its gate) and covered
-  by nine new scaffold-e2e checks driving the compiled fixture pack
-  through the actual protocol.
+  by scaffold-e2e checks driving the compiled fixture pack through the
+  actual protocol.
+- **`--pack` takes a URL** — the format's native habitat, wired into the
+  mount: a URL pack is range-read off dumb HTTP, never downloaded whole.
+  One line attaches the 456k-passage Wikipedia pack; mounting transfers
+  the ~52 MiB resident slice (measured 6–8 s over the real internet,
+  identity-pinned) and each question costs ~127 range requests against
+  the 649 MiB file. Both URL and file mounts take `#<sha256>` to pin the
+  manifest identity — a mount that finds different bytes refuses to
+  serve. `--shelf <file-or-url>` mounts every pack on a static
+  `packs.json` listing (`packs/` in this repo — a registry that is also
+  just a file: name, location, identity, license per entry, no service,
+  no accounts). All packs warm in the background at mount (encoder,
+  kernels, first rerank round trips) so the first tool call pays for
+  retrieval, not staging. `httpRangeSource` now retries transient
+  statuses (429/502/503/504) with capped backoff honoring `Retry-After`
+  — GitHub's release CDN rate-limits sustained per-IP range bursts, and
+  failing a query over a pressure signal wasted everything already
+  fetched; `stats.retries` counts them. New `verify_pack` tool runs the
+  tests a pack carries inside itself: `compile` now embeds a sample of
+  the calibration's retrieval-verified positives as golden queries
+  (`evaluation.goldenQueries`), and the wiki pack's abstention probes
+  run the same way — an agent audits a newly attached knowledge source
+  with tests stored in the file it is auditing (24/24 on the fixture
+  pack, over HTTP). `mcp install --client claude-code|claude-desktop`
+  writes the client config (merge-safe, `--force` to replace) instead of
+  documenting it. `compile --license <SPDX-id>` records a content
+  license in the pack manifest (`corpus.provenance.license`), surfaced
+  by `list_packs` and `info().license` — packs meant for redistribution
+  should carry one. Scaffold e2e grows to 46 checks (verify_pack
+  goldens, URL mount over a local range server, wrong-pin refusal,
+  install round-trip).
 - **The complete reader's resident scan accelerates through the engine's
   SIMD scan kernel — warm-query p50 at the 456k wiki scale drops from
   ~540 ms to ~129 ms** (measured A/B on a local file source; ~110 ms/query
@@ -79,6 +109,21 @@ first.
   candidate pool C exceeds a scanner's creation-time buffers
   (`maxRerank`) falls back to the JS scan for that query instead of
   silently truncating the pool.
+
+### Fixed
+
+- **Both benchmark-reproduction defects a fresh clone would hit are
+  fixed.** `test-inline.mjs` still pointed its download URL at the
+  never-uploaded `artifact-wiki-inline-v3` release asset (its identity
+  and size pins were already v4) — a fresh clone's acceptance run
+  deleted nothing but 404'd; the URL now matches the pins. And the
+  committed churn decay curve (`benchmark_results/churn_scale_100k.json`,
+  measured 2026-07-11) still showed recall collapsing 96% → 7.2% over
+  five population turnovers — behavior the churn-recovery work of
+  2026-08-07 eliminated. Re-measured on the current engine: recall holds
+  92.0–96.8% through all five turnovers with a full top-10 at every
+  round (compaction 98.8%, fresh-build reference 96.8%); the committed
+  result set and its README paragraph now describe the engine as it is.
 
 ## pancake-wasm 0.6.0 / create-pancake-search 0.6.0 — 2026-08-31
 
