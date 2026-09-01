@@ -38,13 +38,15 @@ Each result set includes:
 
 `churn_scale_100k.json` records a deterministic 100K-vector clustered cosine
 run with five complete population turnovers (`M=8`, `efConstruction=100`,
-`efSearch=200`). Recall@10 fell from 96.0% at baseline to 7.2% at 83.3%
-deleted nodes, with only 4.8 results returned on average. The high-deletion
-rebuild compaction took 17.6s and restored 99.2% recall with a full top-10; a
-fresh index over the identical final population reached 97.2%. The WASM heap
-was 171.6 MB immediately before and after compaction, confirming that the
-replacement graph reused released engine allocations rather than retaining a
-two-graph peak. Reproduce with `node benchmarks/churn_scale.js`.
+`efSearch=200`), re-measured 2026-09-01 on the current engine. Recall@10
+holds between 92.0% and 96.8% through all five turnovers (95.6% baseline)
+with a full top-10 at every round; the high-deletion rebuild compaction
+took 17.2s and reached 98.8%, matching a fresh index over the identical
+final population (96.8%). An earlier committed run (2026-07-11) showed
+recall collapsing to 7.2% at 83.3% deleted nodes — that decay was
+eliminated by the churn-recovery work of 2026-08-07 ("Cache WASM modules
+and recover recall after heavy churn"), and this result set replaces the
+pre-fix curve. Reproduce with `node benchmarks/churn_scale.js`.
 
 ## DBpedia-50K (50,000 x 1536D, L2)
 
