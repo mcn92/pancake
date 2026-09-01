@@ -1,5 +1,5 @@
 export function httpRangeSource(url, options = {}) {
-    const stats = { requests: 0, bytes: 0, acceptRanges: null, etag: null, fullFallback: false, retries: 0 };
+    const stats = { requests: 0, bytes: 0, acceptRanges: null, etag: null, fullFallback: false, retries: 0, redirects: 0 };
     const maxFullFallbackBytes = options.maxFullFallbackBytes ?? 64 * 1024 * 1024;
     // Transient statuses are retried with capped exponential backoff
     // (Retry-After honored when sane): CDNs rate-limit the parallel range
@@ -21,6 +21,59 @@ export function httpRangeSource(url, options = {}) {
             : String(options.cacheKeyParam);
     let full = null;
 
+    // Redirect memoization. A host that answers with a redirect (GitHub
+    // release assets: github.com 302s every hit to a signed CDN URL) would
+    // otherwise charge its rate-limited front door once per range read —
+    // ~130 hits for one wiki query, and github.com's frontend throttling,
+    // not the CDN, is what 429s the burst; the blob host behind the
+    // redirect serves parallel 206s happily. Resolve the chain once, pin
+    // the final URL, and re-resolve only when it stops being accepted
+    // (401/403 — signed URLs expire). Browsers cannot read Location from a
+    // cross-origin redirect (opaqueredirect), so resolution degrades to
+    // the un-pinned auto-follow behavior there.
+    let resolvedTarget = null; // { target, viaRedirect } | null (unresolved or unresolvable)
+    let resolving = null;
+    let sizeFromHead = null;
+    const resolveTarget = async () => {
+        if (resolvedTarget) return resolvedTarget;
+        resolving ??= (async () => {
+            let target = url;
+            let viaRedirect = false;
+            try {
+                for (let hop = 0; hop < 5; hop++) {
+                    const probe = await fetch(target, { method: 'HEAD', redirect: 'manual' });
+                    const location = probe.headers.get('location');
+                    if (probe.status >= 300 && probe.status < 400 && location) {
+                        target = new URL(location, target).href;
+                        viaRedirect = true;
+                        stats.redirects += 1;
+                        continue;
+                    }
+                    if (probe.type === 'opaqueredirect' || probe.status === 0) {
+                        // Browser CORS: the chain is invisible; let fetch
+                        // auto-follow per read as before.
+                        target = url;
+                        viaRedirect = false;
+                    } else if (probe.ok) {
+                        const len = Number(probe.headers.get('content-length'));
+                        if (Number.isFinite(len) && len > 0) sizeFromHead = len;
+                        stats.acceptRanges = probe.headers.get('accept-ranges');
+                        stats.etag = probe.headers.get('etag');
+                    }
+                    break;
+                }
+            } catch {
+                // HEAD unsupported or blocked: fall back to auto-follow.
+                target = url;
+                viaRedirect = false;
+            }
+            resolvedTarget = { target, viaRedirect };
+            resolving = null;
+            return resolvedTarget;
+        })();
+        return resolving;
+    };
+
     return {
         stats,
         size: undefined,
@@ -28,13 +81,8 @@ export function httpRangeSource(url, options = {}) {
         preferredGapBytes: options.preferredGapBytes ?? 16 * 1024,
 
         async init() {
-            const head = await fetch(url, { method: 'HEAD' });
-            if (head.ok) {
-                const len = Number(head.headers.get('content-length'));
-                if (Number.isFinite(len) && len > 0) this.size = len;
-                stats.acceptRanges = head.headers.get('accept-ranges');
-                stats.etag = head.headers.get('etag');
-            }
+            await resolveTarget();
+            if (sizeFromHead !== null) this.size = sizeFromHead;
         },
 
         async read(offset, length) {
@@ -46,20 +94,30 @@ export function httpRangeSource(url, options = {}) {
             const end = offset + length - 1;
             const headers = { Range: `bytes=${offset}-${end}` };
             if (stats.etag) headers['If-Range'] = stats.etag;
+            const pinned = await resolveTarget();
             // The per-range cache-key query defeats Chromium's same-URL
             // cache-entry lock (concurrent fetches of one cacheable URL
             // serialize on it). Hosts that sign the full query string
             // (S3 presigned URLs and similar) can turn it off with
             // options.cacheKeyParam: null — range reads then share the
-            // unmodified URL.
-            const target = cacheKeyParam
-                ? `${url}${url.includes('?') ? '&' : '?'}${cacheKeyParam}=${offset}-${end}`
-                : url;
-            let response = await fetch(target, { headers });
+            // unmodified URL. A redirect-pinned target never gets the
+            // param: signed URLs sign their query string, and appending
+            // anything invalidates them.
+            const targetFor = ({ target, viaRedirect }) => (cacheKeyParam && !viaRedirect
+                ? `${target}${target.includes('?') ? '&' : '?'}${cacheKeyParam}=${offset}-${end}`
+                : target);
+            let response = await fetch(targetFor(pinned), { headers });
+            if ((response.status === 401 || response.status === 403) && pinned.viaRedirect) {
+                // The pinned signed URL expired; resolve a fresh one once
+                // and retry. Concurrent reads share the re-resolution.
+                if (resolvedTarget === pinned) resolvedTarget = null;
+                stats.retries += 1;
+                response = await fetch(targetFor(await resolveTarget()), { headers });
+            }
             for (let attempt = 0; RETRYABLE.has(response.status) && attempt < maxRetries; attempt++) {
                 stats.retries += 1;
                 await new Promise((resolve) => setTimeout(resolve, retryDelayMs(attempt, response)));
-                response = await fetch(target, { headers });
+                response = await fetch(targetFor(resolvedTarget || pinned), { headers });
             }
 
             if (response.status === 206) {

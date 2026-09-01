@@ -67,11 +67,20 @@ first.
   just a file: name, location, identity, license per entry, no service,
   no accounts). All packs warm in the background at mount (encoder,
   kernels, first rerank round trips) so the first tool call pays for
-  retrieval, not staging. `httpRangeSource` now retries transient
-  statuses (429/502/503/504) with capped backoff honoring `Retry-After`
-  — GitHub's release CDN rate-limits sustained per-IP range bursts, and
-  failing a query over a pressure signal wasted everything already
-  fetched; `stats.retries` counts them. New `verify_pack` tool runs the
+  retrieval, not staging. `httpRangeSource` learned two things the wiki
+  mount taught the hard way. First, redirect memoization: github.com
+  302s every release-asset hit to a signed CDN URL, so ~130 range reads
+  per query were charging GitHub's rate-limited web front door ~130
+  times — the actual source of the 429 storms, while the blob CDN
+  behind the redirect served parallel 206s happily. The reader now
+  resolves the redirect chain once, pins the final URL (never appending
+  the cache-key param to a signed query string), and re-resolves
+  automatically when the signed URL expires (401/403); the front door
+  is charged per mount, not per read, and the live wiki demo went from
+  unable to finish one query to 6 s mount + ~1 s warm queries on the
+  same rate-limited IP. Second, transient statuses (429/502/503/504)
+  retry with capped backoff honoring `Retry-After`; `stats.retries` and
+  `stats.redirects` count both mechanisms. New `verify_pack` tool runs the
   tests a pack carries inside itself: `compile` now embeds a sample of
   the calibration's retrieval-verified positives as golden queries
   (`evaluation.goldenQueries`), and the wiki pack's abstention probes

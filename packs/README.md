@@ -23,11 +23,13 @@ range requests; the file is never downloaded whole.
 
 ## Adding a pack
 
-Compile one and host it anywhere that serves HTTP ranges — R2, S3, any
-CDN; `create-pancake-search doctor <url>` certifies a host. GitHub
-release assets work but rate-limit sustained range bursts (HTTP 429)
-under heavy per-IP use; the reader retries with backoff, but a
-high-traffic shelf entry belongs on object storage or a CDN:
+Compile one and host it anywhere that serves HTTP ranges — GitHub
+release assets, R2, S3, any CDN; `create-pancake-search doctor <url>`
+certifies a host. Redirecting hosts are fine: the reader resolves the
+redirect once and pins the target, so GitHub's rate-limited front door
+is charged once per mount while range reads go straight to its CDN
+(measured on the Wikipedia pack: 6 s mount, ~1 s warm queries), and
+transient 429/5xx pressure is retried with backoff:
 
 ```bash
 npx create-pancake-search compile --source https://docs.example.com \

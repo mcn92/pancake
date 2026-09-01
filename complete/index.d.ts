@@ -23,6 +23,13 @@ export interface HttpRangeSourceStats {
   fullFallback: boolean;
   /** Transient-status (429/502/503/504) retries issued, across all reads. */
   retries: number;
+  /**
+   * Redirect hops resolved while pinning the final URL. A redirecting host
+   * (GitHub release assets) is resolved once and range reads go straight
+   * to the target, so its rate-limited front door is charged per mount,
+   * not per read; expired signed URLs (401/403) re-resolve automatically.
+   */
+  redirects: number;
 }
 
 export interface HttpRangeSource extends CompleteRangeSource {

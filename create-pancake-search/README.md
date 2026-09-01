@@ -164,8 +164,11 @@ Either form takes `#<sha256>` to pin the pack's manifest identity — a
 mount that finds different bytes at that location refuses to serve. And
 `--shelf <file-or-url>` mounts every pack on a static `packs.json`
 listing (see `packs/README.md` in the main repo): a registry that is also
-just a file. Transient CDN pressure (429/502/503/504 on range bursts) is
-retried with backoff by the reader.
+just a file. Redirecting hosts are handled the cheap way: the reader
+resolves the redirect once and pins the signed target, so GitHub's
+rate-limited front door is charged per mount rather than per range read
+(and expired signed URLs re-resolve automatically); transient CDN
+pressure (429/502/503/504) is retried with backoff.
 
 Instead of running the server by hand, write your MCP client's config:
 

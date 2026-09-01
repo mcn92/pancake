@@ -900,6 +900,65 @@ console.log('\nD. lexical segment and hybrid retrieval');
 }
 
 {
+    // --- httpRangeSource redirect memoization ---
+    // A redirecting host (GitHub release assets: every hit to the front
+    // door 302s to a signed URL) must be charged once, not per range read;
+    // the pinned signed target must never get the cache-key param
+    // (signed query strings); and an expired pin (403) must re-resolve.
+    const http = await import('node:http');
+    const { httpRangeSource } = await import('../complete/sources.mjs');
+    const payload = Buffer.from(A.bytes);
+    let frontDoorHits = 0;
+    let signedHits = 0;
+    let paramOnSigned = 0;
+    let token = 'sig-1';
+    const host = http.createServer((req, res) => {
+        const u = new URL(req.url, 'http://x');
+        if (u.pathname === '/front/pack.pancake') {
+            frontDoorHits += 1;
+            res.writeHead(302, { location: `/signed/pack.pancake?token=${token}` });
+            res.end();
+            return;
+        }
+        if (u.pathname !== '/signed/pack.pancake') { res.writeHead(404); res.end(); return; }
+        if (u.searchParams.get('token') !== token) { res.writeHead(403); res.end(); return; }
+        signedHits += 1;
+        if (u.searchParams.has('r')) paramOnSigned += 1;
+        const range = req.headers.range && /^bytes=(\d+)-(\d+)$/.exec(req.headers.range);
+        if (!range) {
+            res.writeHead(200, { 'accept-ranges': 'bytes', 'content-length': payload.length });
+            res.end(req.method === 'HEAD' ? undefined : payload);
+            return;
+        }
+        const from = Number(range[1]);
+        const to = Math.min(Number(range[2]), payload.length - 1);
+        res.writeHead(206, { 'content-range': `bytes ${from}-${to}/${payload.length}`, 'content-length': to - from + 1 });
+        res.end(payload.subarray(from, to + 1));
+    });
+    await new Promise((resolve) => host.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${host.address().port}`;
+    const src = httpRangeSource(`${base}/front/pack.pancake`);
+    await src.init();
+    check('redirect resolution finds the size through the pinned target', src.size === payload.length,
+        `size ${src.size}`);
+    for (let i = 0; i < 6; i++) {
+        const got = await src.read(16 * i, 16);
+        check(`redirected read ${i} returns the right bytes`,
+            Buffer.compare(Buffer.from(got), payload.subarray(16 * i, 16 * i + 16)) === 0);
+    }
+    check('the front door is charged once, not per read', frontDoorHits === 1, `hits ${frontDoorHits}`);
+    check('range reads go straight to the pinned target', signedHits >= 6, `hits ${signedHits}`);
+    check('the pinned signed target never gets the cache-key param', paramOnSigned === 0, `${paramOnSigned}`);
+    token = 'sig-2'; // expire the pin: old token now 403s
+    const afterExpiry = await src.read(0, 16);
+    check('an expired pin re-resolves through the front door and the read succeeds',
+        Buffer.compare(Buffer.from(afterExpiry), payload.subarray(0, 16)) === 0 && frontDoorHits === 2,
+        `frontDoorHits ${frontDoorHits}`);
+    check('stats count the resolution hops', src.stats.redirects >= 2, `redirects ${src.stats.redirects}`);
+    host.close();
+}
+
+{
     // --- WASM sketch scanner (options.sketchScanner) ---
     // The engine's SIMD scan kernel must select the same candidates the JS
     // scan does — the exact rerank then scores both sets identically, so
