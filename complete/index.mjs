@@ -896,6 +896,12 @@ export async function openPancakeFile(input, options = {}) {
                     identity,
                     formatVersion,
                     profile,
+                    // Human-readable pack name from the identity-verified
+                    // manifest (compile records it under corpus.provenance);
+                    // null when the builder recorded none.
+                    name: typeof manifest.corpus?.provenance?.name === 'string'
+                        ? manifest.corpus.provenance.name
+                        : (typeof manifest.name === 'string' ? manifest.name : null),
                     records: recordCount,
                     dim,
                     metric: manifest.metric,

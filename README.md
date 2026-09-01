@@ -377,6 +377,20 @@ those, pass `verifyIndexVectors: true` (or call `verifyVectors()`) to
 authenticate them in one full pass before trusting results from an
 untrusted transport (spec/COMPLETE_PROFILE.md section 6).
 
+### Attaching packs to an LLM
+
+A complete artifact doubles as a portable knowledge pack: everything an
+LLM needs to query a body of knowledge — corpus, indexes, encoder,
+calibrated abstention, integrity commitments — in one immutable,
+identity-pinned file. `create-pancake-search mcp` serves packs over the
+Model Context Protocol so Claude Code, Claude Desktop, or any agent
+framework can attach them as a retrieval tool with one config line — no
+vector database, no embedding service, no retrieval backend. Results
+carry full provenance (pack, manifest identity, title, heading path,
+source), and a pack that cannot answer says so instead of returning
+plausible noise. See the create-pancake-search README's
+"Attaching packs to an LLM (MCP)" section.
+
 ## Demos
 
 Start with [DEMOS.md](DEMOS.md) for the maintained demo path.

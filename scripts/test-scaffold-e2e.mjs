@@ -148,6 +148,84 @@ console.log('\n--- compile ---');
   ok(rejected.status !== 0 && `${rejected.stderr}${rejected.stdout}`.includes('compile --source'),
     'scaffold --runtime complete is rejected with a pointer to compile', `${rejected.status} ${rejected.stderr.slice(0, 200)}`);
 
+  // The MCP server: the compiled pack attached the way an LLM client
+  // attaches it — stdio JSON-RPC, tools discovered and called, provenance
+  // and calibrated abstention crossing the protocol intact.
+  console.log('\n--- mcp ---');
+  {
+    const child = spawn(process.execPath, [CPS_BIN, 'mcp', '--pack', outFile, '--pack', outFile],
+      { cwd: CPS_DIR, stdio: ['pipe', 'pipe', 'pipe'] });
+    const lines = [];
+    let buffer = '';
+    child.stdout.on('data', (d) => {
+      buffer += d;
+      let idx;
+      while ((idx = buffer.indexOf('\n')) >= 0) {
+        lines.push(JSON.parse(buffer.slice(0, idx)));
+        buffer = buffer.slice(idx + 1);
+      }
+    });
+    const send = (m) => child.stdin.write(`${JSON.stringify(m)}\n`);
+    const waitFor = (id) => new Promise((resolve, reject) => {
+      const deadline = Date.now() + 120000;
+      const timer = setInterval(() => {
+        const hit = lines.find((l) => l.id === id);
+        if (hit) { clearInterval(timer); resolve(hit); }
+        else if (Date.now() > deadline) { clearInterval(timer); reject(new Error(`mcp reply ${id} timed out`)); }
+      }, 20);
+    });
+    const callTool = async (id, name, args) => {
+      send({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } });
+      const res = (await waitFor(id)).result;
+      const isError = res.isError === true;
+      // Error results carry plain text, successful ones carry JSON.
+      return { isError, body: isError ? res.content[0].text : JSON.parse(res.content[0].text) };
+    };
+    try {
+      send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'e2e', version: '0' } } });
+      const init = (await waitFor(1)).result;
+      ok(init.protocolVersion === '2025-06-18' && init.serverInfo?.name === 'pancake-knowledge-packs',
+        'mcp initialize handshakes with the requested protocol version', JSON.stringify(init).slice(0, 120));
+      send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+      send({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
+      const tools = (await waitFor(2)).result.tools.map((t) => t.name).sort();
+      ok(JSON.stringify(tools) === JSON.stringify(['get_record', 'list_packs', 'search']),
+        'mcp lists the three pack tools', tools.join(','));
+
+      const packs = (await callTool(3, 'list_packs', {})).body.packs;
+      ok(packs.length === 2 && packs[0].name !== packs[1].name
+        && packs[0].identity === packs[1].identity && /^[0-9a-f]{64}$/.test(packs[0].identity),
+        'duplicate pack names get suffixed; identities stay the manifest sha256', JSON.stringify(packs.map((p) => p.name)));
+
+      const packName = packs[0].name;
+      const hit = (await callTool(4, 'search', { query: 'how does bread rise without yeast', pack: packName, k: 2 })).body;
+      const section = hit.sections[0];
+      const top = section.results[0];
+      ok(section.matchQuality === 'strong' && top && top.pack === packName
+        && top.packIdentity === packs[0].identity && typeof top.text === 'string'
+        && Number.isFinite(top.distance) && (top.source || top.title),
+        'mcp search returns provenanced results with calibrated quality', JSON.stringify({ q: section.matchQuality, top: { ...top, text: (top.text || '').slice(0, 40) } }));
+
+      const off = (await callTool(5, 'search', { query: 'medicare part d formulary exception' })).body;
+      ok(off.sections.every((s) => s.matchQuality === 'none' && s.results.length === 0) && typeof off.note === 'string',
+        'off-domain query abstains in every pack and says so', JSON.stringify(off).slice(0, 160));
+
+      const record = (await callTool(6, 'get_record', { pack: packName, id: top.id })).body;
+      ok(record.pack === packName && record.id === top.id && typeof record.text === 'string' && record.text.length >= top.text.length,
+        'get_record hydrates the full provenanced chunk', JSON.stringify(record).slice(0, 120));
+
+      const badPack = await callTool(7, 'search', { query: 'x', pack: 'nope' });
+      const badTool = await callTool(8, 'no_such_tool', {}).catch(() => null);
+      ok(badPack.isError === true, 'unknown pack is a correctable tool error, not a protocol error');
+      ok(badTool === null || badTool.isError === true, 'unknown tool is reported as an error');
+      const ambiguous = await callTool(9, 'get_record', { id: 0 });
+      ok(ambiguous.isError === true, 'get_record without pack errors when multiple packs are mounted');
+    } finally {
+      child.stdin.end();
+      await new Promise((resolve) => child.on('close', resolve));
+    }
+  }
+
   // URL crawl filters: pattern semantics and the folder-glob/URL-pattern
   // mismatch erroring instead of silently no-opping.
   const { urlCrawlFilter } = await import(path.join(CPS_DIR, 'src', 'ingest.mjs'));

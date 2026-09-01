@@ -61,6 +61,12 @@ export interface CompleteSearch {
     formatVersion: number;
     /** Manifest profile: 'pancake-complete-v1' | 'pancake-complete-v2'. */
     profile: string;
+    /**
+     * Human-readable pack name from the identity-verified manifest
+     * (compile records it under corpus.provenance.name); null when the
+     * builder recorded none.
+     */
+    name: string | null;
     records: number;
     dim: number;
     metric: string | number;

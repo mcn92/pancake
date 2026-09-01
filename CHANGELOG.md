@@ -30,6 +30,31 @@ first.
 
 ### Added
 
+- **`create-pancake-search mcp` serves `.pancake` knowledge packs over
+  the Model Context Protocol** — the first concrete piece of the
+  knowledge-pack direction: an LLM client (Claude Code, Claude Desktop,
+  agent frameworks) attaches compiled packs as a retrieval tool with one
+  config line and no vector database, embedding service, or retrieval
+  backend. `mcp --pack a.pancake --pack b.pancake` mounts any number of
+  packs (named from the manifest, collision-suffixed) and exposes three
+  tools over stdio: `search` (per-pack result sections — distances are
+  only comparable within one pack — each result carrying pack name,
+  immutable manifest identity, title, heading path, anchor, and source,
+  so citations can pin the exact knowledge state an answer used),
+  `list_packs`, and `get_record` (full integrity-verified chunk by id).
+  Calibrated abstention crosses the protocol intact: a pack that cannot
+  answer reports `matchQuality: "none"` with zero results and the tool
+  result says to admit it rather than guess. The protocol layer is
+  hand-rolled newline-delimited JSON-RPC (four methods; no new
+  dependency); tool failures return correctable `isError` results, not
+  protocol errors. Kind-2 packs (host-encoder) are refused at mount with
+  an explanation; kind-1/3 packs are self-contained. The complete
+  reader's `info()` now exposes the manifest's pack `name`. Verified
+  live against real packs (docs.astro.build + nodejs.org mounted
+  together: cross-pack grouping, off-domain abstention, honest
+  `unscored` from a pack whose calibration failed its gate) and covered
+  by nine new scaffold-e2e checks driving the compiled fixture pack
+  through the actual protocol.
 - **The complete reader's resident scan accelerates through the engine's
   SIMD scan kernel — warm-query p50 at the 456k wiki scale drops from
   ~540 ms to ~129 ms** (measured A/B on a local file source; ~110 ms/query

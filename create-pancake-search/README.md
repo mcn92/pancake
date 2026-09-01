@@ -136,6 +136,56 @@ miscalibrated. `--calibration <file>` embeds a prebuilt
 retrieval-signals-v1 asset instead; `--skip-calibration` ships unscored
 deliberately.
 
+## Attaching packs to an LLM (MCP)
+
+A compiled `.pancake` is a portable knowledge pack: everything needed to
+query the knowledge it represents — corpus, semantic and lexical indexes,
+query encoder, calibrated abstention, integrity commitments — in one
+immutable file. `mcp` serves packs over the Model Context Protocol on
+stdio, so any MCP client (Claude Code, Claude Desktop, agent frameworks)
+can attach them as a retrieval tool with no vector database, embedding
+service, or retrieval backend:
+
+```bash
+npx create-pancake-search compile --source https://docs.astro.build --out astro.pancake
+npx create-pancake-search mcp --pack astro.pancake --pack team-handbook.pancake
+```
+
+As a Claude Code / Claude Desktop MCP entry:
+
+```json
+{
+  "mcpServers": {
+    "knowledge-packs": {
+      "command": "npx",
+      "args": ["create-pancake-search", "mcp", "--pack", "astro.pancake", "--pack", "team-handbook.pancake"]
+    }
+  }
+}
+```
+
+The model gets three tools. `search` queries one pack or all of them;
+results stay grouped per pack (distances are only comparable within one
+pack's encoder and corpus) and every result carries its provenance —
+pack name, the pack's immutable manifest identity (sha256), title,
+heading path, anchor, and source — so an answer can cite the exact
+knowledge state it was derived from, and a pinned identity means the
+citation survives pack rebuilds detectably. Calibrated abstention
+crosses the protocol intact: a pack that cannot answer says
+`matchQuality: "none"` with zero results, and the tool result tells the
+model to say so rather than guess — the property a grounding layer needs
+most. `list_packs` reports names, identities, record counts, and each
+pack's sample queries; `get_record` hydrates one full chunk
+(integrity-verified from the pack) by the id a search result reported.
+
+Because packs are just files, they share like files: copy one to a
+laptop, publish it on GitHub Releases or object storage, version it,
+pin it by identity. The recipient attaches the finished object — not
+30,000 documents and instructions for rebuilding your retrieval stack.
+Packs compiled with the inline encoder (the `compile` default) are fully
+self-contained; kind-2 packs, which need a host encoder, are refused at
+mount with an explanation.
+
 ## Where this sits
 
 This package is the **product layer** of the Pancake stack. It consumes the

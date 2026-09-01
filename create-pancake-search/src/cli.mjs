@@ -24,6 +24,15 @@ export async function main(argv) {
     }
     return;
   }
+  if (parsed.positionals[0] === 'mcp') {
+    const { runMcpServer } = await import('./mcp.mjs');
+    const { loadCompleteModules } = await import('./common.mjs');
+    const { reader } = await loadCompleteModules();
+    // Positional pack paths after `mcp` compose with repeated --pack.
+    const packPaths = [...(parsed.flags.pack || []), ...parsed.positionals.slice(1)];
+    await runMcpServer({ packPaths, openPancakeFile: reader.openPancakeFile });
+    return;
+  }
   const command = ['rebuild', 'compile'].includes(parsed.positionals[0]) ? parsed.positionals[0] : 'create';
   if (parsed.flags.help || parsed.flags.h) {
     printHelp();
@@ -48,6 +57,14 @@ Usage:
   create-pancake-search compile --source <path|url> --out search.pancake
   create-pancake-search rebuild --yes
   create-pancake-search doctor <url>   # probe artifact hosting: Range/206, cache-key ranges, h2, ETag, RTT
+  create-pancake-search mcp --pack <file.pancake> [--pack <file2.pancake> ...]
+
+mcp serves the given knowledge packs over the Model Context Protocol on
+stdio, so an MCP client (Claude Code, Claude Desktop, an agent framework)
+can attach them as a retrieval tool: search (per-pack results with
+provenance and calibrated abstention), list_packs (names + immutable
+identities for citation pinning), get_record. Packs are self-contained —
+the server needs no vector database, embedding service, or network.
 
 compile builds a complete kind-3 .pancake artifact from the source and stops:
 no project, no Worker, no Cloudflare. The file carries the corpus, index,
@@ -94,7 +111,7 @@ Flags:
 
 function parseArgs(args) {
   const flags = {};
-  const repeated = new Set(['include', 'exclude', 'include-url', 'exclude-url']);
+  const repeated = new Set(['include', 'exclude', 'include-url', 'exclude-url', 'pack']);
   const positionals = [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
