@@ -1,12 +1,14 @@
 # Changelog
 
 Release notes for the two published packages in this repository,
-`pikelet-wasm` (engine + artifact readers/builders) and
-`create-pancake-search` (scaffolder, `doctor`, Docusaurus plugin). Both are
-pre-1.0: a minor bump may carry breaking changes, and each entry lists them
+`pikelet-wasm` (engine + artifact readers/builders) and `pikelet` (the
+CLI: compile, mcp, doctor, scaffold; plus the Docusaurus plugin).
+Through 0.6.0 these were published as `pancake-wasm` and
+`create-pancake-search`; both old names are deprecated pointers. Both
+packages are pre-1.0: a minor bump may carry breaking changes, and each entry lists them
 first.
 
-## Unreleased
+## pikelet-wasm 0.7.0 / pikelet 0.7.0 — 2026-09-02
 
 ### Breaking / compatibility
 

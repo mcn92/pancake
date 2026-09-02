@@ -34,7 +34,7 @@ or later.
 ### Repository checkout
 
 ```bash
-git clone https://github.com/mcn92/pancake.git
+git clone https://github.com/mcn92/pikelet.git
 cd pancake
 npm install          # dev deps for the demos, benchmarks, and tests
 ```

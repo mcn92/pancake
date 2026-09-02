@@ -42,7 +42,7 @@ database to run, no embedding service to call:
 
 ```bash
 npx pikelet mcp install --client claude-code \
-  --pack https://github.com/mcn92/pancake/releases/download/artifact-wiki-inline-v4/pancake-wiki-inline.pancake#1b180adf4c6cebb2dcd5615256df6a25dac5fda8738dbbc11d60af86046f97f3
+  --pack https://github.com/mcn92/pikelet/releases/download/artifact-wiki-inline-v4/pancake-wiki-inline.pancake#1b180adf4c6cebb2dcd5615256df6a25dac5fda8738dbbc11d60af86046f97f3
 ```
 
 Then ask questions. That line pins 456,153 passages of Simple English
@@ -191,7 +191,7 @@ cluster-ordered rows and the 192-dim 2:1-pooled sketch, where v1–v3
 embedded a 96-dim 4:1 sketch in unpermuted order and measured 82.4%; adds
 the hybrid BM25 lexical segment and a format-2 sketch with per-row read
 verification; earlier versions stay published for older checkouts):
-`https://github.com/mcn92/pancake/releases/download/artifact-wiki-inline-v4/pancake-wiki-inline.pancake`
+`https://github.com/mcn92/pikelet/releases/download/artifact-wiki-inline-v4/pancake-wiki-inline.pancake`
 
 `node test-inline.mjs` downloads that file automatically when it is missing
 locally, verifies the manifest identity, and then runs the acceptance
@@ -238,7 +238,7 @@ npm install pancake-wasm
 From a checkout:
 
 ```bash
-git clone https://github.com/mcn92/pancake.git
+git clone https://github.com/mcn92/pikelet.git
 cd pancake
 npm install
 ```

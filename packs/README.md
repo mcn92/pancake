@@ -5,7 +5,7 @@ There is no registry service and no accounts — the registry is also just a
 file. Mount everything on a shelf in one line:
 
 ```bash
-npx pikelet mcp --shelf https://raw.githubusercontent.com/mcn92/pancake/main/packs/packs.json
+npx pikelet mcp --shelf https://raw.githubusercontent.com/mcn92/pikelet/main/packs/packs.json
 ```
 
 or write the config for your MCP client instead of running it by hand:

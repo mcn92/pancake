@@ -162,7 +162,7 @@ Wikipedia; mounting transfers a ~52 MiB resident slice and each question
 costs ~127 range requests against the 649 MiB file:
 
 ```bash
-npx pikelet mcp --pack https://github.com/mcn92/pancake/releases/download/artifact-wiki-inline-v4/pancake-wiki-inline.pancake
+npx pikelet mcp --pack https://github.com/mcn92/pikelet/releases/download/artifact-wiki-inline-v4/pancake-wiki-inline.pancake
 ```
 
 Either form takes `#<sha256>` to pin the pack's manifest identity — a

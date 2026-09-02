@@ -58,7 +58,7 @@ const CLI_VERSION = OWN_PACKAGE.version;
 // than carrying a second hardcoded one that drifts.
 const PANCAKE_WASM_RANGE = OWN_PACKAGE.dependencies['pikelet-wasm'];
 const DEFAULT_PREFIX = 'Represent this sentence for searching relevant passages: ';
-const CONFIG_SCHEMA_URL = 'https://raw.githubusercontent.com/mcn92/pancake/main/create-pancake-search/schemas/v1/pancake.config.schema.json';
+const CONFIG_SCHEMA_URL = 'https://raw.githubusercontent.com/mcn92/pikelet/main/create-pancake-search/schemas/v1/pancake.config.schema.json';
 const DEFAULT_CONFIG = Object.freeze({
   chunking: { targetTokens: 256, overlapPercent: 15 },
   embedding: {
