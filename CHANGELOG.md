@@ -1,7 +1,7 @@
 # Changelog
 
 Release notes for the two published packages in this repository,
-`pancake-wasm` (engine + artifact readers/builders) and
+`pikelet-wasm` (engine + artifact readers/builders) and
 `create-pancake-search` (scaffolder, `doctor`, Docusaurus plugin). Both are
 pre-1.0: a minor bump may carry breaking changes, and each entry lists them
 first.
@@ -9,6 +9,30 @@ first.
 ## Unreleased
 
 ### Breaking / compatibility
+
+- **The project is renamed to Pikelet.** Packages: `pancake-wasm` →
+  `pikelet-wasm`, `create-pancake-search` → `pikelet` (one CLI:
+  `npx pikelet create|compile|doctor|mcp`; the old `npm create
+  pancake-search` flow becomes `npx pikelet create`). New compiles
+  default to a `.pikelet` extension. What deliberately does NOT change:
+  the wire format — magic bytes, manifest profile strings
+  (`pancake-complete-v2` and family), segment kinds, and reader error
+  text keep their pancake-era names, so every existing artifact
+  identity (the published wiki pack included) stays valid, and
+  `.pancake` files remain fully readable (readers dispatch on magic
+  bytes, never extension). Library compatibility: `openPancakeFile` and
+  the other exported API names are unchanged; `openPikeletFile` is the
+  documented alias. Env vars gain `PIKELET_ENCODER_WEIGHTS_URL` /
+  `PIKELET_EMBED_WORKERS` (old names still honored). The Docusaurus
+  plugin's surface renames with the package (default asset dir
+  `pikelet-search/`, mount attribute `data-pikelet-search`, global
+  `window.PikeletDocusaurusSearch`, debug attribute
+  `data-pikelet-debug`); sites upgrading from the pancake-named plugin
+  update their config and any custom CSS hooks. Release-asset URLs in
+  code and docs keep their original hosts/paths — GitHub redirects them
+  after the repository rename, and the reader resolves and pins
+  redirects. Benchmark backend labels in committed result sets
+  (`pancake-wasm-int8` and friends) are measurement lineage and stay.
 
 - **The Docusaurus plugin's default output is now the complete kind-3
   `.pancake`**, served by the widget over genuine HTTP range reads — the
@@ -157,7 +181,7 @@ first.
   round (compaction 98.8%, fresh-build reference 96.8%); the committed
   result set and its README paragraph now describe the engine as it is.
 
-## pancake-wasm 0.6.0 / create-pancake-search 0.6.0 — 2026-08-31
+## pikelet-wasm 0.6.0 / create-pancake-search 0.6.0 — 2026-08-31
 
 ### Breaking / compatibility
 
@@ -503,7 +527,7 @@ first.
   no Cloudflare. It chunks and embeds the corpus with the packaged inline
   MiniLM encoder (auto-fetched, digest-pinned, when not present), measures
   the rerank operating point, and writes one file (`--out`, default
-  `search.pancake`) openable with `pancake-wasm/complete` on any runtime.
+  `search.pancake`) openable with `pikelet-wasm/complete` on any runtime.
   Takes `--name`, `--max-pages`, `--include`/`--exclude`, `--force`.
   Exercised by the scaffold e2e (compile → open → query, plus the
   `--runtime complete` rejection).
@@ -537,7 +561,7 @@ first.
   sequential); environments without worker support fall back to the
   sequential path with a logged reason.
 
-## pancake-wasm 0.5.0 / create-pancake-search 0.5.0 — 2026-08-26
+## pikelet-wasm 0.5.0 / create-pancake-search 0.5.0 — 2026-08-26
 
 ### Breaking / compatibility
 
@@ -562,11 +586,11 @@ first.
   integrity stance applies only to format-1-sketch artifacts.
 - New `test/sketch_row_integrity.js` in `npm test`.
 - `create-pancake-search` has no behavior changes of its own; generated
-  projects now depend on `pancake-wasm@^0.5.0` so the artifacts the
+  projects now depend on `pikelet-wasm@^0.5.0` so the artifacts the
   scaffolder builds (format-2 sketches included) open on the installed
   reader.
 
-## pancake-wasm 0.4.0 / create-pancake-search 0.4.0 — 2026-08-25
+## pikelet-wasm 0.4.0 / create-pancake-search 0.4.0 — 2026-08-25
 
 ### Breaking / compatibility
 
@@ -633,14 +657,14 @@ first.
   `close()` is idempotent (no `EBADF` on a second call) and queries after
   close are refused; `query({ k })` rejects 0 / negative / fractional `k`
   instead of silently defaulting to 5.
-- `create-pancake-search` loaders prefer the in-repo `pancake-wasm` when
+- `create-pancake-search` loaders prefer the in-repo `pikelet-wasm` when
   running inside the monorepo (a stale installed copy higher in the tree
   no longer shadows the checkout); npm consumers are unaffected.
 - Packaging: the native benchmark baselines (`faiss-node`, `hnswlib-node`,
   `usearch`) and the `@emnapi/*` pins are no longer `optionalDependencies`
-  of `pancake-wasm` — consumers no longer attempt those native builds; they
+  of `pikelet-wasm` — consumers no longer attempt those native builds; they
   live in `benchmarks/package.json` (`cd benchmarks && npm install`). The
-  unused self devDependency on `pancake-wasm` is removed.
+  unused self devDependency on `pikelet-wasm` is removed.
 - Sketch `search()` with a candidate pool equal to the row count (small
   artifact, or `k`/`rerank` ≥ count) no longer runs the resident selection
   scan — every row is a candidate for the exact rerank — instead of the
@@ -713,7 +737,7 @@ first.
   the commands and re-exports `buildSearchAssets`, `fetchInlineEncoderWeights`,
   `CliError` for the Docusaurus plugin. See the README's "Package layout".
 
-## pancake-wasm 0.3.0 — 2026-08-20
+## pikelet-wasm 0.3.0 — 2026-08-20
 
 ### Breaking / compatibility
 
@@ -736,9 +760,9 @@ first.
 
 ### Added
 
-- **`pancake-wasm/complete`** — the one-file `.pancake` reader
+- **`pikelet-wasm/complete`** — the one-file `.pancake` reader
   (`openPancakeFile`, `httpRangeSource`, the inline-transformer host and its
-  verification-vector API), and **`pancake-wasm/complete/builder`** — Node
+  verification-vector API), and **`pikelet-wasm/complete/builder`** — Node
   assembly (`assemblePancakeFile`, segment builders,
   `measureRecommendedRerank`, `loadInlineEncoderKernel`). Typed via
   `complete/index.d.ts` / `complete/builder.d.ts`. The PSF1 wire format has one
@@ -775,19 +799,19 @@ first.
 
 ### Fixed
 
-- Generated projects depended on `pancake-wasm: ^0.2.0`, which `npm install`
+- Generated projects depended on `pikelet-wasm: ^0.2.0`, which `npm install`
   resolves to 0.2.1 — a reader that rejects the format-v3 `.pancake-range`
   this version's scaffolder builds. Every `--runtime artifact` project
   generated by 0.3.0 therefore answered `/search` with `SNAPSHOT_INVALID`
   ("Unsupported Pancake range artifact version") until its dependency was
   bumped by hand. The generated `package.json` now inherits this package's
-  own `pancake-wasm` range (`^0.3.0`) instead of carrying a second hardcoded
+  own `pikelet-wasm` range (`^0.3.0`) instead of carrying a second hardcoded
   one. Projects already generated by 0.3.0: change the dependency to
   `^0.3.0` and `npm install`.
 
 ## create-pancake-search 0.3.0 — 2026-08-20
 
-Requires `pancake-wasm >= 0.3.0` (uses `pancake-wasm/complete`).
+Requires `pikelet-wasm >= 0.3.0` (uses `pikelet-wasm/complete`).
 
 ### Breaking / compatibility
 
@@ -823,22 +847,22 @@ Requires `pancake-wasm >= 0.3.0` (uses `pancake-wasm/complete`).
 
 ### Fixed
 
-- `pancake-wasm/artifact` and `pancake-wasm/complete` resolve from the site,
+- `pikelet-wasm/artifact` and `pikelet-wasm/complete` resolve from the site,
   the plugin, or the monorepo sibling, with an actionable error otherwise
   (npm consumers of the Docusaurus plugin previously failed at bundle time).
 
 ## Earlier releases (summary)
 
-- **pancake-wasm 0.2.1 / create-pancake-search 0.2.0 — 2026-08-12.**
+- **pikelet-wasm 0.2.1 / create-pancake-search 0.2.0 — 2026-08-12.**
   pancake-wasm: hostile-input hardening on deserialize, `packVersion`
   stamping. create-pancake-search: first publish of the Docusaurus plugin and
   `--mode student` (corpus-specific PSTU query encoder bundled in the
   Worker, no Workers AI binding).
-- **pancake-wasm 0.2.0 / create-pancake-search 0.1.0 — 2026-07-30.**
+- **pikelet-wasm 0.2.0 / create-pancake-search 0.1.0 — 2026-07-30.**
   Pancake 0.2 contract: `restore`, `inspectSnapshot`, per-query `efSearch`,
   `PancakeError` / `PANCAKE_ERROR_CODES`; mutable-ef and matrix helpers
-  removed; `pancake-wasm/artifact` search-artifact readers/builders.
+  removed; `pikelet-wasm/artifact` search-artifact readers/builders.
   create-pancake-search: initial scaffolder (snapshot and artifact
   runtimes).
-- **pancake-wasm 0.1.0 — 2026-06-27.** Initial release: HNSW engine in WASM
+- **pikelet-wasm 0.1.0 — 2026-06-27.** Initial release: HNSW engine in WASM
   (float and uint8 backends) for Node, browsers, and Cloudflare Workers.

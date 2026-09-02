@@ -4,7 +4,7 @@ Everything the docs-search POC needs beyond what the example already ships:
 an instrumented query harness, a cost model, and a report template. The
 build/host/reader pieces are the parent example (`compile.mjs`, `serve.mjs`,
 `pancake-file-reader.mjs`); building from your own docs is
-`create-pancake-search` (`--runtime artifact --mode student`, or the
+`pikelet` (`--runtime artifact --mode student`, or the
 Docusaurus plugin's `completeProfile` mode — see `docs-site/` in the repo
 root for a working config).
 

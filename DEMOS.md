@@ -1,4 +1,4 @@
-# Pancake Quickstart
+# Pikelet Quickstart
 
 Run every command from the repo root unless noted otherwise.
 
@@ -67,7 +67,7 @@ Expected: `chromium: passed`.
 
 ## 4. Catalog hydration (search + live data)
 
-Shows Pancake as the retrieval layer while a separate catalog owns live
+Shows Pikelet as the retrieval layer while a separate catalog owns live
 product data. Needs three terminals:
 
 **Terminal A** — mock catalog API:
@@ -159,12 +159,12 @@ and `DEPLOY.md` for Pages/R2 deployment.
 
 ---
 
-## 7. Scaffold a search app (`create-pancake-search`)
+## 7. Scaffold a search app (`pikelet`)
 
 Generates a complete Cloudflare Worker project from a docs folder:
 
 ```bash
-npm create pancake-search -- \
+npx pikelet create \
   --name my-docs-search --source ./docs \
   --runtime artifact --no-deploy --yes
 cd my-docs-search
@@ -193,7 +193,7 @@ npm run test:fuzz        # malformed-snapshot import fuzzing
 ## Notes
 
 - **npm audit warnings** are all in dev-only transitive dependencies
-  (Wrangler, Vite). The published `pancake-wasm` package has zero runtime
+  (Wrangler, Vite). The published `pikelet-wasm` package has zero runtime
   dependencies.
 - **Leftover wrangler processes:** if ports are stuck after tests, clear
   them with `pkill -f "wrangler dev"` and `pkill -f workerd`.

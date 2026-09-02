@@ -1,5 +1,5 @@
 'use strict';
-// pancake-wasm/artifact — the Search Artifact layer (spec/SEARCH_ARTIFACT_CONTRACT.md).
+// pikelet-wasm/artifact — the Search Artifact layer (spec/SEARCH_ARTIFACT_CONTRACT.md).
 // Public entry point; the implementation is split by profile:
 //   pancake-artifact-common.js  read budgets + range validation, range sources
 //                               (NodeFileRangeSource), result heap, snapshot

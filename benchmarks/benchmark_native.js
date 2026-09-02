@@ -425,7 +425,7 @@ async function main() {
   }
 
   fs.writeFileSync(JSON_PATH, JSON.stringify({
-    benchmark: 'pancake-wasm-vs-native-dbpedia-100k',
+    benchmark: 'pikelet-wasm-vs-native-dbpedia-100k',
     timestamp: new Date().toISOString(),
     dataset: { vectors: train.length, queries: test.length, dim, metric: 'l2' },
     params: { K, M, EF_CONSTRUCTION, EF_SEARCH_VALUES, REPETITIONS, WARMUP_QUERIES },

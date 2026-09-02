@@ -98,7 +98,7 @@ await withServer(async ({ send, waitFor }) => {
         discover.capabilities?.tools !== undefined && Number.isFinite(discover.ttlMs)
         && ['public', 'private'].includes(discover.cacheScope));
     check('discover result identifies the server in _meta',
-        discover._meta?.[META_SERVER_INFO]?.name === 'pancake-knowledge-packs');
+        discover._meta?.[META_SERVER_INFO]?.name === 'pikelet-knowledge-packs');
 
     // No handshake: a tools/list with per-request _meta just works.
     send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: { _meta: meta } });
@@ -117,7 +117,7 @@ await withServer(async ({ send, waitFor }) => {
     const call = (await waitFor(4)).result;
     check('modern tools/call returns content with resultType and serverInfo',
         call.resultType === 'complete' && Array.isArray(call.content)
-        && call._meta?.[META_SERVER_INFO]?.name === 'pancake-knowledge-packs');
+        && call._meta?.[META_SERVER_INFO]?.name === 'pikelet-knowledge-packs');
 
     // Unknown version: UnsupportedProtocolVersionError (-32022) with data.
     send({ jsonrpc: '2.0', id: 5, method: 'tools/list', params: { _meta: { [META_VERSION]: '1900-01-01' } } });
@@ -138,7 +138,7 @@ await withServer(async ({ send, waitFor }) => {
     const init = (await waitFor(1)).result;
     check('initialize echoes a supported requested version', init.protocolVersion === '2025-06-18');
     check('legacy initialize result keeps the legacy shape (no modern decoration)',
-        init.resultType === undefined && init._meta === undefined && init.serverInfo?.name === 'pancake-knowledge-packs',
+        init.resultType === undefined && init._meta === undefined && init.serverInfo?.name === 'pikelet-knowledge-packs',
         JSON.stringify(init));
     send({ jsonrpc: '2.0', method: 'notifications/initialized' });
     send({ jsonrpc: '2.0', id: 2, method: 'ping' });

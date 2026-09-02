@@ -1,4 +1,4 @@
-// Types for the `pancake-wasm/artifact` subpath: the engine-free CJS module
+// Types for the `pikelet-wasm/artifact` subpath: the engine-free CJS module
 // holding the Search Artifact readers, builders, and snapshot parser. Unlike
 // the entrypoints, this module DOES provide these as named exports.
 

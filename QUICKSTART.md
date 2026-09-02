@@ -1,6 +1,6 @@
-# Pancake Quick Start
+# Pikelet Quick Start
 
-Practical getting-started paths for building a Pancake index from your own embeddings, searching it locally, and running the Cloudflare Worker example.
+Practical getting-started paths for building a Pikelet index from your own embeddings, searching it locally, and running the Cloudflare Worker example.
 
 ## What This Guide Covers
 
@@ -12,13 +12,13 @@ This guide focuses on the current supported flows:
 - Running the reference Cloudflare Worker example from a repository checkout
 
 This guide covers the engine layer, where you bring your own embedding model
-or pipeline and feed the resulting vectors into Pancake. If you want to go
+or pipeline and feed the resulting vectors into Pikelet. If you want to go
 straight from documents to working search — embedding included — use the
-compile command instead (`npx create-pancake-search compile --source ./docs
---out search.pancake`, documented in
+compile command instead (`npx pikelet compile --source ./docs
+--out search.pikelet`, documented in
 [create-pancake-search/README.md](create-pancake-search/README.md)); it emits
 one `.pancake` file answering natural-language queries via
-`pancake-wasm/complete`. Pancake is not a hosted search service either way.
+`pikelet-wasm/complete`. Pikelet is not a hosted search service either way.
 
 ## Install
 
@@ -28,7 +28,7 @@ one `.pancake` file answering natural-language queries via
 npm install pancake-wasm
 ```
 
-This guide documents the Pancake 0.2 contract; it requires `pancake-wasm@0.2.0`
+This guide documents the Pikelet 0.2 contract; it requires `pikelet-wasm@0.2.0`
 or later.
 
 ### Repository checkout
@@ -56,18 +56,18 @@ npm run build:all    # rebuilds dist/engine.* — engine development only
 
 Use the path that matches what you already have:
 
-- Vectors already in memory: `Pancake.fromVectors(...)`
-- Vectors saved as JSON / JSONL: `Pancake.loadJsonFile(...)` on the Node entrypoints
-- Existing Pancake snapshot on disk: `Pancake.loadSnapshotFile(...)` on the Node entrypoints
+- Vectors already in memory: `Pikelet.fromVectors(...)`
+- Vectors saved as JSON / JSONL: `Pikelet.loadJsonFile(...)` on the Node entrypoints
+- Existing Pikelet snapshot on disk: `Pikelet.loadSnapshotFile(...)` on the Node entrypoints
 
-If you are working from a repo checkout, replace `import Pancake from 'pancake-wasm'` with `import Pancake from './pancake.node.mjs'` (or `require('./pancake.js')` from CommonJS code that awaits inside an async function).
+If you are working from a repo checkout, replace `import Pikelet from 'pikelet-wasm'` with `import Pikelet from './pancake.node.mjs'` (or `require('./pancake.js')` from CommonJS code that awaits inside an async function).
 
 ## Local Node.js Workflow
 
 ### 1. Build An Index From In-Memory Vectors
 
 ```js
-import Pancake from 'pancake-wasm';
+import Pikelet from 'pikelet-wasm';
 
 const rows = [
   { id: 'doc-1', vector: [1, 0, 0, 0] },
@@ -75,7 +75,7 @@ const rows = [
   { id: 'doc-3', vector: [0, 0, 1, 0] },
 ];
 
-const { index, ids, idMap } = await Pancake.fromVectors(rows, {
+const { index, ids, idMap } = await Pikelet.fromVectors(rows, {
   metric: 'cosine',
   quantized: true,
 });
@@ -89,12 +89,12 @@ Use this path when your embedder already returns arrays or `Float32Array`s in th
 
 ### 2. Build An Index From JSON Or JSONL
 
-On the Node.js entrypoints, Pancake can load vectors directly from disk:
+On the Node.js entrypoints, Pikelet can load vectors directly from disk:
 
 ```js
-import Pancake from 'pancake-wasm';
+import Pikelet from 'pikelet-wasm';
 
-const { index, ids, idMap } = await Pancake.loadJsonFile('vectors.jsonl', {
+const { index, ids, idMap } = await Pikelet.loadJsonFile('vectors.jsonl', {
   metric: 'cosine',
   quantized: true,
   vectorKey: 'embedding', // default: 'vector'
@@ -127,9 +127,9 @@ If you want to reuse a built index later, export a snapshot:
 
 ```js
 import fs from 'node:fs';
-import Pancake from 'pancake-wasm';
+import Pikelet from 'pikelet-wasm';
 
-const { index } = await Pancake.fromVectors([
+const { index } = await Pikelet.fromVectors([
   [1, 0, 0, 0],
   [0, 1, 0, 0],
 ], {
@@ -141,7 +141,7 @@ const { index } = await Pancake.fromVectors([
 const snapshot = index.export();
 fs.writeFileSync('index.pnck', snapshot);
 
-const restored = await Pancake.loadSnapshotFile('index.pnck', {
+const restored = await Pikelet.loadSnapshotFile('index.pnck', {
   dim: 4,
   maxElements: 2,
   metric: 'cosine',
@@ -155,11 +155,11 @@ Snapshot notes:
 
 - `export()` throws if `ghostCount > 0`; call `compact()` first after deletions
 - `loadSnapshotFile()` is Node-only
-- `loadSnapshotFile()` restores Pancake snapshots from disk, not arbitrary ANN binary formats
+- `loadSnapshotFile()` restores Pikelet snapshots from disk, not arbitrary ANN binary formats
 
 ## Embedding Your Own Documents
 
-Pancake does not care which embedder you use, as long as you end up with vectors.
+Pikelet does not care which embedder you use, as long as you end up with vectors.
 
 Typical workflow:
 
@@ -174,7 +174,7 @@ If you already have parquet, numpy, or another upstream format, convert it into 
 
 ## Worker Example
 
-The reference Worker example is repo-based. It loads the checked-in WASM engine artifacts and exposes Pancake over HTTP. Treat it as a deployment pattern you run in your own Cloudflare account, not as a centrally hosted Pancake service.
+The reference Worker example is repo-based. It loads the checked-in WASM engine artifacts and exposes Pikelet over HTTP. Treat it as a deployment pattern you run in your own Cloudflare account, not as a centrally hosted Pikelet service.
 
 When you run or deploy this example, it runs in your own Cloudflare environment:
 
@@ -279,7 +279,7 @@ Check:
 
 ### I already have vectors in another format
 
-Pancake does not currently load formats like `.fvecs`, `.npy`, or `.parquet` directly.
+Pikelet does not currently load formats like `.fvecs`, `.npy`, or `.parquet` directly.
 
 Use one of these instead:
 

@@ -69,7 +69,7 @@ async function buildAssets(projectDir, config, options = {}) {
   let artifact = null;
   let artifactInfo = null;
   if (config.runtime?.mode === 'artifact') {
-    log('Warning: the artifact runtime builds the deprecated .pancake-range profile. Prefer the snapshot runtime, or `create-pancake-search compile` for a complete .pancake file.');
+    log('Warning: the artifact runtime builds the deprecated .pancake-range profile. Prefer the snapshot runtime, or `pikelet compile` for a complete .pancake file.');
     if (artifactPath && !fssync.existsSync(artifactPath)) {
       throw new CliError(`Configured Search Artifact not found: ${artifactPath}\nNext: update runtime.artifactPath in pancake.config.json or rebuild with --artifact <file>.`, 2);
     }
@@ -136,7 +136,7 @@ async function buildAssets(projectDir, config, options = {}) {
   await fs.writeFile(path.join(projectDir, '.pancake', 'last-build.log'), `${logLines.join('\n')}\n`);
   const gzipBytes = options.skipBundleSizeCheck ? null : await projectedGzipBytes(projectDir);
   if (config.runtime?.mode === 'complete') {
-    log(`Built complete .pancake artifact with ${(artifactInfo.bytes / 1024 / 1024).toFixed(2)} MB`);
+    log(`Built complete .pikelet artifact with ${(artifactInfo.bytes / 1024 / 1024).toFixed(2)} MB`);
   } else if (config.runtime?.mode === 'artifact') {
     log(`Built corpus assets with ${(artifact.byteLength / 1024 / 1024).toFixed(2)} MB Search Artifact`);
   } else {

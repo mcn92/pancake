@@ -1,4 +1,4 @@
-// Thin adapter over the packaged one-file reader (pancake-wasm/complete).
+// Thin adapter over the packaged one-file reader (pikelet-wasm/complete).
 // The primary path range-reads the artifact over HTTP 206 — the sketch
 // profile's execution model, with the reader's own graceful fallback to a
 // bounded full download when a host ignores Range (the Cloudflare Pages
@@ -7,10 +7,10 @@
 // variant stays for callers that already hold the artifact. The plugin's
 // webpack alias points the bare specifier at the site-resolved module (the
 // repo root when building inside the pancake monorepo), exactly like
-// pancake-wasm/artifact. This file used to be a second implementation of
+// pikelet-wasm/artifact. This file used to be a second implementation of
 // the PSF1 reader; keeping it as an adapter preserves the widget's API
 // while the format logic lives in one place.
-import { openPancakeFile, httpRangeSource } from 'pancake-wasm/complete';
+import { openPancakeFile, httpRangeSource } from 'pikelet-wasm/complete';
 
 export async function openCompletePancakeUrl(url, options = {}) {
   const source = httpRangeSource(url, {

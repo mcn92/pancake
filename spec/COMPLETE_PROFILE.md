@@ -44,7 +44,7 @@ missing between the components.
    2026-08-14 for the wiki-scale compile: inline student encoders (kind 1)
    and pinned external encoders with verification vectors (kind 2,
    contract section 4.4 mode 2). Kind 3 (inline transformer, section 3.6)
-   followed and is the product default — `create-pancake-search compile`
+   followed and is the product default — `pikelet compile`
    emits it. The three are not generations of one idea but corners of a
    trade-off: each picks two of self-contained, small, and teacher-quality
    (kind 3 gives up small — its encoder bytes are ~25 MB; kind 1 gives up
@@ -481,7 +481,7 @@ both as equivalent.
 
 ## 7. Relationship to existing tooling
 
-- **Compiler:** `create-pancake-search`'s pipeline (ingest → chunk → embed
+- **Compiler:** `pikelet`'s pipeline (ingest → chunk → embed
   → index → distill → calibrate) becomes the frontend; a `compile` step
   assembles its outputs into one `.pancake`. Requires bytes-in/bytes-out
   builder variants (spike lesson) and compile-time renumbering.

@@ -1,6 +1,6 @@
 ---
 title: Quickstart
-description: Build a small Pancake index, add vectors, and query it from JavaScript.
+description: Build a small Pikelet index, add vectors, and query it from JavaScript.
 sidebar_position: 1
 ---
 
@@ -9,9 +9,9 @@ sidebar_position: 1
 Install the package and create an engine index:
 
 ```js
-import Pancake from 'pancake-wasm';
+import Pikelet from 'pikelet-wasm';
 
-const index = await Pancake.create({
+const index = await Pikelet.create({
   dim: 384,
   metric: 'cosine',
   M: 12,

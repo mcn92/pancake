@@ -1,4 +1,4 @@
-// create-pancake-search CLI: argument parsing, create / compile / rebuild /
+// pikelet CLI: argument parsing, create / compile / rebuild /
 // doctor commands, and the config the scaffold is generated from. The work
 // happens in the sibling modules (see the module map in README / each file
 // header).
@@ -56,7 +56,9 @@ export async function main(argv) {
     });
     return;
   }
-  const command = ['rebuild', 'compile'].includes(parsed.positionals[0]) ? parsed.positionals[0] : 'create';
+  // `pikelet create` is the canonical form; bare flags still scaffold for
+  // compatibility with the old `npm create` flow.
+  const command = ['rebuild', 'compile', 'create'].includes(parsed.positionals[0]) ? parsed.positionals[0] : 'create';
   if (parsed.flags.help || parsed.flags.h) {
     printHelp();
     return;
@@ -73,15 +75,15 @@ export async function main(argv) {
 }
 
 function printHelp() {
-  console.log(`create-pancake-search
+  console.log(`pikelet
 
 Usage:
-  npm create pancake-search -- --name my-docs-search --source ./docs --no-deploy --yes
-  create-pancake-search compile --source <path|url> --out search.pancake
-  create-pancake-search rebuild --yes
-  create-pancake-search doctor <url>   # probe artifact hosting: Range/206, cache-key ranges, h2, ETag, RTT
-  create-pancake-search mcp --pack <file-or-url> [--pack ... | --shelf <file-or-url>]
-  create-pancake-search mcp install --pack <file-or-url> [--client claude-code|claude-desktop]
+  npx pikelet create --name my-docs-search --source ./docs --no-deploy --yes
+  pikelet compile --source <path|url> --out search.pikelet
+  pikelet rebuild --yes
+  pikelet doctor <url>   # probe artifact hosting: Range/206, cache-key ranges, h2, ETag, RTT
+  pikelet mcp --pack <file-or-url> [--pack ... | --shelf <file-or-url>]
+  pikelet mcp install --pack <file-or-url> [--client claude-code|claude-desktop]
 
 mcp serves knowledge packs over the Model Context Protocol on stdio, so an
 MCP client (Claude Code, Claude Desktop, an agent framework) can attach
@@ -98,7 +100,7 @@ running the server (--server-name names the entry, --force replaces it).
 compile builds a complete kind-3 .pancake artifact from the source and stops:
 no project, no Worker, no Cloudflare. The file carries the corpus, index,
 inline MiniLM query encoder, calibrated abstention, and evaluation data; open
-it with pancake-wasm/complete on any runtime. Abstention is self-calibrated
+it with pikelet-wasm/complete on any runtime. Abstention is self-calibrated
 from the corpus at build time (skipped with a logged reason when the corpus
 cannot support a trustworthy fit); --calibration <file> supplies a prebuilt
 retrieval-signals asset instead, --skip-calibration ships the artifact
@@ -131,7 +133,7 @@ Flags:
                         runtime or 'compile' for a complete .pancake
   --artifact <file>     Deprecated with --runtime artifact: prebuilt
                         .pancake-range artifact
-  --out <file>          compile only: output .pancake path (default search.pancake)
+  --out <file>          compile only: output path (default search.pikelet)
   --deploy / --no-deploy
   --yes
   --force               Replace an existing target directory (or output file for compile)
@@ -177,7 +179,7 @@ async function createProject(flags) {
     await fs.rm(targetDir, { recursive: true, force: true });
   }
 
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'create-pancake-search-'));
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pikelet-'));
   try {
     const config = makeConfig(answers);
     await writeProject(tmpDir, config);
@@ -252,7 +254,7 @@ function makeConfig(options) {
     // project: the generated Worker templates only serve the snapshot and
     // artifact runtimes.
     throw new CliError(options.runtime === 'complete'
-      ? 'The scaffold serves snapshot and artifact runtimes. To build a complete .pancake artifact, run: create-pancake-search compile --source <path|url> --out search.pancake'
+      ? 'The scaffold serves snapshot and artifact runtimes. To build a complete .pancake artifact, run: pikelet compile --source <path|url> --out search.pikelet'
       : `--runtime must be snapshot or artifact, got ${options.runtime}`);
   }
   const isUrl = /^https?:\/\//i.test(options.source);
@@ -318,7 +320,7 @@ async function compileArtifact(flags) {
   if (flags.calibration && flags['skip-calibration']) {
     throw new CliError('--calibration and --skip-calibration are mutually exclusive');
   }
-  const outPath = path.resolve(process.cwd(), flags.out || 'search.pancake');
+  const outPath = path.resolve(process.cwd(), flags.out || 'search.pikelet');
   if (fssync.existsSync(outPath) && !flags.force) {
     throw new CliError(`Output file already exists: ${outPath}\nNext: rerun with --force or choose --out`);
   }
@@ -385,7 +387,7 @@ async function compileArtifact(flags) {
     await fs.copyFile(path.join(tmpDir, 'assets', config.runtime.fileName), outPath);
     console.log(`Compiled ${outPath}`);
     console.log(`  ${(manifest.artifact.bytes / 1024 / 1024).toFixed(2)} MB, ${manifest.chunkCount} records, identity ${manifest.artifact.identity}`);
-    console.log("Query it from any runtime: openPancakeFile from 'pancake-wasm/complete'");
+    console.log("Query it from any runtime: openPancakeFile from 'pikelet-wasm/complete'");
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -407,7 +409,7 @@ function applyRuntimeOverrides(config, projectDir, flags) {
   const runtime = flags.runtime || (flags.artifact ? 'artifact' : config.runtime?.mode || 'snapshot');
   if (!['snapshot', 'artifact'].includes(runtime)) {
     throw new CliError(runtime === 'complete'
-      ? 'The scaffold serves snapshot and artifact runtimes. To build a complete .pancake artifact, run: create-pancake-search compile --source <path|url> --out search.pancake'
+      ? 'The scaffold serves snapshot and artifact runtimes. To build a complete .pancake artifact, run: pikelet compile --source <path|url> --out search.pikelet'
       : `--runtime must be snapshot or artifact, got ${runtime}`);
   }
   if (runtime === 'artifact') {

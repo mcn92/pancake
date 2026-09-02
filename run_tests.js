@@ -875,10 +875,10 @@ async function testSearchDuringMutation() {
 async function testRuntimeEntryPoints() {
     section('Runtime entry points');
 
-    assert(require.resolve('pancake-wasm/engine.wasm').endsWith(path.join('dist', 'engine.wasm')),
+    assert(require.resolve('pikelet-wasm/engine.wasm').endsWith(path.join('dist', 'engine.wasm')),
         'engine.wasm remains a stable package asset path');
     assertThrows(
-        () => require.resolve('pancake-wasm/engine'),
+        () => require.resolve('pikelet-wasm/engine'),
         'generated Emscripten glue is not a public package export'
     );
 

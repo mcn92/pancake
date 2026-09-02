@@ -5,7 +5,7 @@
 // Verdict semantics: 'answer' (strong match), 'weak' (closest match is
 // distant — shown with a caveat), 'abstain' (nothing useful in the pack).
 //
-// Assets calibrated by create-pancake-search's self-templates-v2+ may carry
+// Assets calibrated by pikelet's self-templates-v2+ may carry
 // an additional grounding term (asset.coverage): the fraction of the query's
 // content words that appear in the top retrieved passage's text. Every base
 // feature measures topic similarity, so "the corpus discusses this area" and

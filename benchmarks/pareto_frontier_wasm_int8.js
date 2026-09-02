@@ -29,8 +29,8 @@ const args = [...passthrough];
 addDefault(args, 'dataset', 'dbpedia');
 addDefault(args, 'count', '25000');
 addDefault(args, 'configs', [
-  'pancake-wasm-u8',
-  'pancake-wasm-fp32',
+  'pikelet-wasm-u8',
+  'pikelet-wasm-fp32',
   'pancake-native-u8',
   'pancake-native-fp32',
   'usearch-wasm-int8',

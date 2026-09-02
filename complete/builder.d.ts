@@ -1,5 +1,5 @@
 /**
- * pancake-wasm/complete/builder — Node-only assembly of complete .pancake
+ * pikelet-wasm/complete/builder — Node-only assembly of complete .pancake
  * artifacts (spec/COMPLETE_PROFILE.md). The wire-format constants here are
  * the same objects the reader uses (complete/format.mjs).
  */

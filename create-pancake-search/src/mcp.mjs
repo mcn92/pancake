@@ -1,4 +1,4 @@
-// MCP server over .pancake knowledge packs: `create-pancake-search mcp
+// MCP server over .pancake knowledge packs: `pikelet mcp
 // --pack a.pancake --pack b.pancake` speaks Model Context Protocol on
 // stdio, so any MCP client (Claude Code, Claude Desktop, an agent
 // framework) can attach compiled packs as a retrieval tool — no vector
@@ -268,7 +268,7 @@ async function mountPack(packs, spec, { openPancakeFile, httpRangeSource, log })
   // URL packs are the format's native habitat: range-read off dumb HTTP,
   // nothing downloaded but the resident slice and per-query ranges. The
   // reader's own bounded full-download fallback covers hosts that ignore
-  // Range (`create-pancake-search doctor <url>` certifies a host).
+  // Range (`pikelet doctor <url>` certifies a host).
   // A pinned identity is enforced by the reader itself, one header read
   // in — a mismatched pack is refused before any of it is opened.
   const openOptions = spec.identity ? { expectedIdentity: spec.identity } : {};
@@ -342,7 +342,7 @@ export async function installMcpConfig({ packPaths, shelf, client = 'claude-code
   // The runtime is version-pinned: the packs are content-addressed and
   // immutable, and a reader that silently floats to whatever npm serves
   // next month would undercut exactly that reproducibility.
-  const args = ['-y', version ? `create-pancake-search@${version}` : 'create-pancake-search', 'mcp'];
+  const args = ['-y', version ? `pikelet@${version}` : 'pikelet', 'mcp'];
   for (const raw of packPaths || []) {
     // Local paths are pinned absolute so the config works from any cwd;
     // URLs (and #identity pins) pass through untouched.
@@ -415,7 +415,7 @@ export async function loadShelf(location) {
 
 /**
  * Mount packs and serve MCP on stdio until stdin closes. `openPack` is
- * injected (the CLI passes pancake-wasm/complete's openPancakeFile) so
+ * injected (the CLI passes pikelet-wasm/complete's openPancakeFile) so
  * tests can stub it.
  */
 export async function runMcpServer({ packPaths, openPancakeFile, httpRangeSource, serverVersion = '0.0.0', stdin = process.stdin, stdout = process.stdout, log = (line) => process.stderr.write(`${line}\n`) }) {
@@ -443,7 +443,7 @@ export async function runMcpServer({ packPaths, openPancakeFile, httpRangeSource
     mounted.warmup = mounted.search.query(probe, { k: 1 }).catch(() => {});
   }
 
-  const serverInfo = { name: 'pancake-knowledge-packs', version: serverVersion };
+  const serverInfo = { name: 'pikelet-knowledge-packs', version: serverVersion };
   const supportedVersions = [...MODERN_VERSIONS, ...LEGACY_VERSIONS];
   const send = (message) => stdout.write(`${JSON.stringify(message)}\n`);
   const replyError = (id, code, message, data) => send({ jsonrpc: '2.0', id, error: { code, message, ...(data ? { data } : {}) } });

@@ -1,4 +1,4 @@
-import Pancake from 'pancake-wasm/web';
+import Pancake from 'pikelet-wasm/web';
 import { loadStudentModel, embedTextWithStudent } from '../../../../03-edge-docs-search/student-embedder.mjs';
 import { createAbstentionScorer } from './abstention.js';
 import './style.css';

@@ -240,7 +240,7 @@ export interface RangeArtifactBuildManifest {
 /**
  * Node-only file-backed range source. This is NOT a named runtime export of
  * any entrypoint: reach the constructor via the Node API object
- * (`Pancake.NodeFileRangeSource`) or the `pancake-wasm/artifact` subpath.
+ * (`Pancake.NodeFileRangeSource`) or the `pikelet-wasm/artifact` subpath.
  */
 export interface NodeFileRangeSource extends RangeReadSource {
   readonly filePath: string;
@@ -257,7 +257,7 @@ export interface NodeFileRangeSourceConstructor {
 /**
  * A range-readable Search Artifact reader. The class is NOT a named runtime
  * export of any entrypoint: reach it via `Pancake.RangeArtifact` or the
- * `pancake-wasm/artifact` subpath.
+ * `pikelet-wasm/artifact` subpath.
  */
 export interface PancakeRangeArtifact {
   readonly version: number;
@@ -490,7 +490,7 @@ export interface SketchArtifactBuildManifest {
 /**
  * A sketch Search Artifact reader. The class is NOT a named runtime export of
  * any entrypoint: reach it via `Pancake.SketchArtifact` or the
- * `pancake-wasm/artifact` subpath.
+ * `pikelet-wasm/artifact` subpath.
  */
 export interface PancakeSketchArtifact {
   readonly metric: number;
@@ -642,7 +642,7 @@ export interface PancakeApi {
 
 /**
  * The Node.js API: the portable surface plus filesystem helpers. These helpers
- * exist only on the Node entrypoints (`pancake-wasm`, `pancake-wasm/node`); the
+ * exist only on the Node entrypoints (`pikelet-wasm`, `pikelet-wasm/node`); the
  * browser/Workers entrypoints do not expose them, and importing those returns
  * the narrower {@link PancakeApi}.
  */

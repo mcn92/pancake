@@ -17,7 +17,7 @@ node test-browser.mjs                 # Chromium acceptance (needs playwright ch
 ```
 
 ```js
-import { openPancakeFile } from 'pancake-wasm/complete';
+import { openPancakeFile } from 'pikelet-wasm/complete';
 const search = await openPancakeFile('pancake-docs.pancake');   // or a range source
 const out = await search.query('how do workers restore snapshots');
 // { matchQuality: 'strong', confidence: 0.94, results: [{ title, text, sourcePath, ... }] }
@@ -80,7 +80,7 @@ smoke, provenance, identity, abstention, and embedded-evaluation checks.
   and the evaluation segment carries the golden queries. `--inspect`
   verifies every digest.
 - `pancake-file-reader.mjs` — now a shim over the published reader at
-  `pancake-wasm/complete` (`complete/index.mjs` in this repo).
+  `pikelet-wasm/complete` (`complete/index.mjs` in this repo).
   Environment-neutral: Node opens a path, the browser passes an HTTP range
   source. Verifies the manifest identity and eager segments at open; the
   sketch tier and corpus records stay lazy. Kind-1 files use a pure-JS
@@ -95,7 +95,7 @@ smoke, provenance, identity, abstention, and embedded-evaluation checks.
   one-file reader is tested against.
 - `abstention.mjs` — calibration scoring shared by both readers (extracted
   from 03's worker.js).
-- `../../complete/builder.mjs` (`pancake-wasm/complete/builder`) — shared
+- `../../complete/builder.mjs` (`pikelet-wasm/complete/builder`) — shared
   container assembly (canonical JSON, header + table layout, streamed
   writes, the recall-vs-C rerank sweep) used by both compilers.
 - `compile-wiki.mjs` / `test-wiki.mjs` — the wiki-scale compiler and its
@@ -129,7 +129,7 @@ smoke, provenance, identity, abstention, and embedded-evaluation checks.
 
 ## Still out of scope
 
-Promotion into the published `pancake-wasm` package, the
-`create-pancake-search` compile frontend, per-chunk range verification
+Promotion into the published `pikelet-wasm` package, the
+`pikelet` compile frontend, per-chunk range verification
 (spec section 6), and large-corpus compilation (the wiki pack is the
 intended flagship).

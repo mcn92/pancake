@@ -1,6 +1,11 @@
-# Pancake
+# Pikelet
 
-Pancake is a search engine you host like a file.
+Pikelet is a search engine you host like a file.
+
+> Renamed from **Pancake** (2026-09). Same project, same wire format —
+> existing `.pancake` artifacts and their identities remain valid, and the
+> old package names are deprecated pointers to `pikelet-wasm` and
+> `pikelet`.
 
 At the bottom there's a small WebAssembly HNSW vector engine that runs
 anywhere JavaScript does — Node, browsers, Cloudflare Workers — with no
@@ -10,7 +15,7 @@ calibration, and evaluation data, and that can be served from any storage
 that answers byte-range requests.
 
 Where this has been heading is the **complete search artifact**: one
-`.pancake` file that answers natural-language queries with hydrated,
+`.pikelet` file that answers natural-language queries with hydrated,
 confidence-scored results, using nothing but the file, range reads, and a
 reader.
 
@@ -23,12 +28,12 @@ query text
   -> calibrated hydrated results
 ```
 
-The `pancake-wasm` package carries both the vector engine and the artifact
+The `pikelet-wasm` package carries both the vector engine and the artifact
 runtime.
 
 ## Knowledge Packs
 
-The same file doubles as a **knowledge pack** for LLMs. A `.pancake` is a
+The same file doubles as a **knowledge pack** for LLMs. A `.pikelet` is a
 portable, immutable corpus that contains its own query encoder, semantic
 and lexical indexes, calibrated abstention, provenance, and integrity
 metadata. Publish it as a static file; an MCP client attaches and queries
@@ -36,7 +41,7 @@ it directly over HTTP range requests — no index to rebuild, no vector
 database to run, no embedding service to call:
 
 ```bash
-npx create-pancake-search mcp install --client claude-code \
+npx pikelet mcp install --client claude-code \
   --pack https://github.com/mcn92/pancake/releases/download/artifact-wiki-inline-v4/pancake-wiki-inline.pancake#1b180adf4c6cebb2dcd5615256df6a25dac5fda8738dbbc11d60af86046f97f3
 ```
 
@@ -45,7 +50,7 @@ Wikipedia by content hash: the mount transfers a ~52 MiB resident slice
 of the 649 MiB file, each question costs ~127 range reads, results carry
 their provenance (pack identity, title, section, source), and a pack that
 cannot answer says so instead of guessing. Details in the
-create-pancake-search README ("Attaching packs to an LLM") and `packs/`.
+pikelet README ("Attaching packs to an LLM") and `packs/`.
 
 ## What's in This Repo
 
@@ -53,7 +58,7 @@ Three layers, bottom to top:
 
 1. **WASM vector engine**
    - In-memory HNSW index with float32 and row-wise affine uint8 backends.
-   - JavaScript API: `Pancake.create()`, `add()`, `search()`, `export()`,
+   - JavaScript API: `Pikelet.create()`, `add()`, `search()`, `export()`,
      `restore()`.
    - Source in `src/`, package entrypoints at `pancake.js`,
      `pancake.node.mjs`, `pancake.web.mjs`.
@@ -63,7 +68,7 @@ Three layers, bottom to top:
      range-readable from local files, R2, S3, CDNs — anything that serves
      byte ranges.
    - One product format, one index layer beneath it:
-     - `.pancake`: the complete one-file search artifact — the product.
+     - `.pikelet`: the complete one-file search artifact — the product.
      - `.pancake-sketch`: its index segment (resident sketch plus lazy
        rerank rows), also usable standalone; format 2 (the builder's
        default) interleaves per-row digests with the rows, so every row a
@@ -81,26 +86,26 @@ Three layers, bottom to top:
      [spec/COMPLETE_PROFILE.md](spec/COMPLETE_PROFILE.md).
 
 3. **Products and compilers**
-   - `create-pancake-search/`: the fast path. One command compiles a docs
-     folder or a live site into a complete `.pancake` file:
+   - `pikelet/`: the fast path. One command compiles a docs
+     folder or a live site into a complete `.pikelet` file:
      ```bash
-     npx create-pancake-search compile --source ./docs --out search.pancake
+     npx pikelet compile --source ./docs --out search.pikelet
      ```
      or scaffolds a deployable search app:
      ```bash
-     npm create pancake-search -- --name my-docs-search --source ./docs --no-deploy --yes
+     npx pikelet create --name my-docs-search --source ./docs --no-deploy --yes
      ```
    - `examples/05-one-file-search/`: the flagship path — the complete
-     `.pancake` container, its compilers, and acceptance tests.
+     `.pikelet` container, its compilers, and acceptance tests.
    - `examples/04-static-wiki-pack/`: wiki-scale corpus preparation and the
      sketch artifact pipeline.
    - `examples/03-edge-docs-search/`: a Worker search app with a bundled
      snapshot, distilled query encoder, and calibrated abstention.
 
-## Why Pancake Exists
+## Why Pikelet Exists
 
 Most vector search libraries assume a server process, native binaries, or a
-database service. Pancake is built for a different deployment shape:
+database service. Pikelet is built for a different deployment shape:
 
 - static files instead of always-on index servers;
 - byte-range reads instead of whole-index downloads;
@@ -115,7 +120,7 @@ database.
 
 ## The Flagship: One-File Search
 
-The complete profile (`.pancake`) packs the five components of a search
+The complete profile (`.pikelet`) packs the five components of a search
 application into one content-addressed file:
 
 ```text
@@ -140,7 +145,7 @@ third — that trade-off, not history, is why all three exist:
   The artifact carries the WordPiece vocab and quantized MiniLM teacher
   weights as verified data; the reader ships the execution kernels. Costs
   ~25 MB of encoder no matter how small the corpus. This is the default:
-  `create-pancake-search compile` builds kind 3.
+  `pikelet compile` builds kind 3.
 - **kind 1: `student-inline-v1`** — self-contained + small. A
   corpus-distilled student encoder (~1 MiB), pure-JS execution. The only
   way a small docs corpus compiles to a file measured in single-digit MB;
@@ -247,30 +252,30 @@ Published package:
 
 ```js
 // Node.js CJS
-const Pancake = require('pancake-wasm');
+const Pikelet = require('pikelet-wasm');
 
 // Node.js ESM
-import Pancake from 'pancake-wasm';
+import Pikelet from 'pikelet-wasm';
 
 // Explicit Node/browser entries
-import Pancake from 'pancake-wasm/node';
-import Pancake from 'pancake-wasm/web';
+import Pikelet from 'pikelet-wasm/node';
+import Pikelet from 'pikelet-wasm/web';
 
 // Search Artifact layer (sketch readers/builders; the deprecated
 // .pancake-range reader stays exported for existing artifacts)
-import { PancakeSketchArtifact, buildSketchArtifact } from 'pancake-wasm/artifact';
+import { PancakeSketchArtifact, buildSketchArtifact } from 'pikelet-wasm/artifact';
 
 // Complete one-file profile: reader (any runtime) and builder (Node)
-import { openPancakeFile } from 'pancake-wasm/complete';
-import { assemblePancakeFile } from 'pancake-wasm/complete/builder';
+import { openPikeletFile } from 'pikelet-wasm/complete';
+import { assemblePancakeFile } from 'pikelet-wasm/complete/builder';
 ```
 
 Repository checkout:
 
 ```js
-const Pancake = require('./pancake.js');
-import Pancake from './pancake.node.mjs';
-import Pancake from './pancake.web.mjs';
+const Pikelet = require('./pancake.js');
+import Pikelet from './pancake.node.mjs';
+import Pikelet from './pancake.web.mjs';
 ```
 
 The browser entry expects the runtime or bundler to resolve
@@ -282,9 +287,9 @@ Use the core engine when you already have vectors and want an in-memory ANN
 index.
 
 ```js
-import Pancake from 'pancake-wasm';
+import Pikelet from 'pikelet-wasm';
 
-const index = await Pancake.create({
+const index = await Pikelet.create({
   dim: 384,
   maxElements: 100000,
   metric: 'cosine',
@@ -303,7 +308,7 @@ index.delete(id);
 index.compact();
 
 const snapshot = index.export();
-const restored = await Pancake.restore(snapshot, { maxElements: 100000 });
+const restored = await Pikelet.restore(snapshot, { maxElements: 100000 });
 
 index.dispose();
 restored.dispose();
@@ -317,7 +322,7 @@ const rows = [
   { id: 'doc-2', vector: embedding2 },
 ];
 
-const { index, idMap } = await Pancake.fromVectors(rows, {
+const { index, idMap } = await Pikelet.fromVectors(rows, {
   metric: 'cosine',
   quantized: true,
 });
@@ -329,14 +334,14 @@ console.log(idMap.get(hits[0].id));
 On Node entrypoints, file helpers are available:
 
 ```js
-const { index, idMap } = await Pancake.loadJsonFile('vectors.jsonl', {
+const { index, idMap } = await Pikelet.loadJsonFile('vectors.jsonl', {
   metric: 'cosine',
   vectorKey: 'embedding',
   idKey: 'docId',
   maxFileBytes: 64 * 1024 * 1024,
 });
 
-const restored = await Pancake.loadSnapshotFile('index.pnck', {
+const restored = await Pikelet.loadSnapshotFile('index.pnck', {
   dim: 384,
   maxElements: 100000,
   metric: 'cosine',
@@ -348,12 +353,12 @@ const restored = await Pancake.loadSnapshotFile('index.pnck', {
 
 Use the complete reader when you want a file that is itself the search
 application data plane. To build one from your own docs, see the compile
-command above (`npx create-pancake-search compile`).
+command above (`npx pikelet compile`).
 
 ```js
-import { openPancakeFile } from 'pancake-wasm/complete'; // or './complete/index.mjs' in a checkout
+import { openPikeletFile } from 'pikelet-wasm/complete'; // or './complete/index.mjs' in a checkout
 
-const search = await openPancakeFile('examples/05-one-file-search/pancake-docs.pancake');
+const search = await openPikeletFile('examples/05-one-file-search/pancake-docs.pancake');
 
 const out = await search.query('how do workers restore snapshots', { k: 5 });
 
@@ -366,7 +371,7 @@ await search.close();
 For kind-3 artifacts, no host encoder is needed:
 
 ```js
-const search = await openPancakeFile('pancake-wiki-inline.pancake');
+const search = await openPikeletFile('pancake-wiki-inline.pancake');
 const out = await search.query('how do volcanoes form', { k: 5 });
 ```
 
@@ -374,11 +379,11 @@ For kind-2 artifacts, pass `options.encodeQuery`; the reader runs it
 against the declaration's verification vectors before serving and refuses
 the open if they disagree (`info().encoderVerified` reports the outcome).
 
-The reader also accepts a range source, which is how a `.pancake` on R2 or
+The reader also accepts a range source, which is how a `.pikelet` on R2 or
 a CDN gets queried without downloading it:
 
 ```js
-const search = await openPancakeFile({
+const search = await openPikeletFile({
   size,
   async read(offset, length) {
     // return bytes for [offset, offset + length)
@@ -403,13 +408,13 @@ untrusted transport (spec/COMPLETE_PROFILE.md section 6).
 A complete artifact doubles as a portable knowledge pack: everything an
 LLM needs to query a body of knowledge — corpus, indexes, encoder,
 calibrated abstention, integrity commitments — in one immutable,
-identity-pinned file. `create-pancake-search mcp` serves packs over the
+identity-pinned file. `pikelet mcp` serves packs over the
 Model Context Protocol so Claude Code, Claude Desktop, or any agent
 framework can attach them as a retrieval tool with one config line — no
 vector database, no embedding service, no retrieval backend. Results
 carry full provenance (pack, manifest identity, title, heading path,
 source), and a pack that cannot answer says so instead of returning
-plausible noise. See the create-pancake-search README's
+plausible noise. See the pikelet README's
 "Attaching packs to an LLM (MCP)" section.
 
 ## Demos
@@ -443,7 +448,7 @@ node serve.mjs
 Core index:
 
 ```js
-const index = await Pancake.create(options);
+const index = await Pikelet.create(options);
 index.add(vector);
 index.addBatch(vectors);
 index.search(query, k, options?);
@@ -472,15 +477,15 @@ Common options:
 Snapshot helpers:
 
 ```js
-await Pancake.restore(bytes, options);
-await Pancake.loadSnapshotFile(path, options);
-await Pancake.loadJsonFile(path, options);
-await Pancake.fromVectors(rows, options);
+await Pikelet.restore(bytes, options);
+await Pikelet.loadSnapshotFile(path, options);
+await Pikelet.loadJsonFile(path, options);
+await Pikelet.fromVectors(rows, options);
 ```
 
-Range and sketch artifact APIs ship at `pancake-wasm/artifact`; the
-complete-profile reader and builder ship at `pancake-wasm/complete` and
-`pancake-wasm/complete/builder`. The wiki-scale compilers and acceptance
+Range and sketch artifact APIs ship at `pikelet-wasm/artifact`; the
+complete-profile reader and builder ship at `pikelet-wasm/complete` and
+`pikelet-wasm/complete/builder`. The wiki-scale compilers and acceptance
 tests live in `examples/05-one-file-search/`.
 
 ## Building From Source
@@ -548,14 +553,14 @@ newer artifact-level benchmarks are more representative of what the project
 is actually for: search from static files and range-readable storage.
 
 The native baselines the engine benchmarks compare against (faiss-node,
-hnswlib-node, usearch) are not dependencies of `pancake-wasm`; install
+hnswlib-node, usearch) are not dependencies of `pikelet-wasm`; install
 them on demand with `cd benchmarks && npm install` before running those
 scripts. See `benchmarks/`, `benchmark_results/`, and the example READMEs
 for current numbers.
 
 ## Tradeoffs
 
-Pancake is a good fit when:
+Pikelet is a good fit when:
 
 - you want search in JavaScript runtimes without native addons;
 - you want static-file or edge deployment;
@@ -574,8 +579,8 @@ It's the wrong tool when:
 ## Status
 
 The engine and the artifact readers/builders are published and usable
-today (`pancake-wasm`, with `create-pancake-search` as the app scaffold).
-The complete `.pancake` profile's spec is still marked draft — Draft 2,
+today (`pikelet-wasm`, with `pikelet` as the app scaffold).
+The complete `.pikelet` profile's spec is still marked draft — Draft 2,
 under review, not frozen — but its reader and builder ship in the package,
 and it is the clearest expression of where the project is going: a search
 engine packaged as one verified, range-readable file.

@@ -3,8 +3,8 @@
 // that the declarations match the documented runtime surface — including
 // what must NOT type-check, via @ts-expect-error.
 
-import Pancake, { PancakeError, PANCAKE_ERROR_CODES } from 'pancake-wasm';
-import WebPancake from 'pancake-wasm/web';
+import Pancake, { PancakeError, PANCAKE_ERROR_CODES } from 'pikelet-wasm';
+import WebPancake from 'pikelet-wasm/web';
 import {
   PancakeRangeArtifact as RangeArtifactCtor,
   PancakeSketchArtifact as SketchArtifactCtor,
@@ -13,7 +13,7 @@ import {
   exportSketchArtifact,
   parseUint8Snapshot,
   createSketchScanner,
-} from 'pancake-wasm/artifact';
+} from 'pikelet-wasm/artifact';
 import type {
   PancakeIndex,
   PancakeSketchArtifact,
@@ -21,13 +21,13 @@ import type {
   SketchArtifactSearchResult,
   SketchStageEvent,
   SketchTier,
-} from 'pancake-wasm';
+} from 'pikelet-wasm';
 
 // The entrypoints provide PancakeError / PANCAKE_ERROR_CODES as named runtime
 // exports, but NOT the artifact classes — those are properties of the API
-// object (or named exports of pancake-wasm/artifact). Importing the name only
+// object (or named exports of pikelet-wasm/artifact). Importing the name only
 // yields a type; using it as a value must not compile.
-import { PancakeRangeArtifact as NotAValue } from 'pancake-wasm';
+import { PancakeRangeArtifact as NotAValue } from 'pikelet-wasm';
 
 async function nodeSurface(): Promise<void> {
   const index: PancakeIndex = await Pancake.create({ dim: 8, metric: 'l2', maxElements: 100 });

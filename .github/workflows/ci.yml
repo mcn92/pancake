@@ -136,20 +136,20 @@ jobs:
         working-directory: docs-site
       - name: Assert kind-3 search artifact
         run: |
-          test -f build/pancake-search/search.pancake
-          node -e "const fs=require('fs'); const p='build/pancake-search/search.pancake'; const s=fs.statSync(p).size; if (s < 20*1024*1024) throw new Error('search.pancake is unexpectedly small: '+s); console.log(p, (s/1048576).toFixed(2)+' MiB')"
+          test -f build/pikelet-search/search.pikelet
+          node -e "const fs=require('fs'); const p='build/pikelet-search/search.pikelet'; const s=fs.statSync(p).size; if (s < 20*1024*1024) throw new Error('search.pikelet is unexpectedly small: '+s); console.log(p, (s/1048576).toFixed(2)+' MiB')"
         working-directory: docs-site
 
   scaffold-e2e:
-    # create-pancake-search as a user runs it: scaffold (stub embeddings, no
+    # pikelet as a user runs it: scaffold (stub embeddings, no
     # Cloudflare account), install the generated project, start its Worker
     # with wrangler dev, query /search — for both runtimes. Installs the
-    # in-repo pancake-wasm tarball into the generated project, and asserts
+    # in-repo pikelet-wasm tarball into the generated project, and asserts
     # the generated dependency range equals the scaffolder's own and is
     # satisfied by the in-repo version. 0.3.0 shipped generated projects
     # pinned to ^0.2.0 while building format-v3 artifacts, so every
     # artifact-runtime project failed /search; nothing in CI ran one.
-    name: create-pancake-search generated project (scaffold, wrangler dev, /search)
+    name: pikelet generated project (scaffold, wrangler dev, /search)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

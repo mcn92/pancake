@@ -1,5 +1,5 @@
 {
-  "$comment": "A pancake shelf: a static listing of knowledge packs. No service, no accounts - the registry is also just a file. Mount everything on it with: npx create-pancake-search mcp --shelf <path-or-url-to-this-file>. Entries: name (optional mount name), url or path (relative paths resolve against this file's location), identity (optional sha256 manifest identity - mounts refuse a pack that does not match), description, license.",
+  "$comment": "A pikelet shelf: a static listing of knowledge packs. No service, no accounts - the registry is also just a file. Mount everything on it with: npx pikelet mcp --shelf <path-or-url-to-this-file>. Entries: name (optional mount name), url or path (relative paths resolve against this file's location), identity (optional sha256 manifest identity - mounts refuse a pack that does not match), description, license.",
   "packs": [
     {
       "name": "simple-wikipedia",

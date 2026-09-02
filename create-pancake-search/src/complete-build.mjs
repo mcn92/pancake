@@ -216,7 +216,7 @@ const INLINE_WEIGHTS_URL = 'https://github.com/mcn92/pancake/releases/download/i
 const INLINE_WEIGHTS_SHA256 = '3b14685a73bd7f30477be8dad89902b6e4bb55e49ec325c9e071c462cf89089b';
 
 async function fetchInlineEncoderWeights(weightsPath) {
-  const url = process.env.PANCAKE_ENCODER_WEIGHTS_URL || INLINE_WEIGHTS_URL;
+  const url = process.env.PIKELET_ENCODER_WEIGHTS_URL || process.env.PANCAKE_ENCODER_WEIGHTS_URL || INLINE_WEIGHTS_URL;
   let body;
   try {
     const response = await fetch(url, { redirect: 'follow' });
@@ -224,7 +224,7 @@ async function fetchInlineEncoderWeights(weightsPath) {
     body = Buffer.from(await response.arrayBuffer());
   } catch (error) {
     throw new CliError(`Inline encoder weights not found at ${weightsPath} and the download from ${url} failed (${error.message}). `
-      + `Next: place the encoder blob there yourself (sha256 ${INLINE_WEIGHTS_SHA256}), or set PANCAKE_ENCODER_WEIGHTS_URL to a mirror.`, 2);
+      + `Next: place the encoder blob there yourself (sha256 ${INLINE_WEIGHTS_SHA256}), or set PIKELET_ENCODER_WEIGHTS_URL to a mirror.`, 2);
   }
   const digest = sha256(body).toString('hex');
   if (digest !== INLINE_WEIGHTS_SHA256) {

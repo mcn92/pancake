@@ -1,4 +1,4 @@
-import Pancake from 'pancake-wasm/web';
+import Pancake from 'pikelet-wasm/web';
 
 const app = document.getElementById('app');
 

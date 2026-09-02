@@ -1,4 +1,4 @@
-# Pancake Roadmap
+# Pikelet Roadmap
 
 Last updated: 2026-07-31
 
@@ -7,7 +7,7 @@ project's working notes. Update this file when a track changes direction.
 
 ## North star
 
-Turn Pancake from a vector-search library into an artifact compiler and
+Turn Pikelet from a vector-search library into an artifact compiler and
 reader. The target is the Complete Search Artifact profile
 (`spec/SEARCH_ARTIFACT_CONTRACT.md` §9.4): one immutable, content-addressed
 package carrying corpus, index, encoder, evaluation, and calibration, that a
@@ -90,7 +90,7 @@ Structural work (the real fix for miss-round depth):
    a client near an edge PoP at 20-50 ms RTT lands at roughly 150-400 ms.
    Progress: the sketch profile is specified (`spec/SKETCH_PROFILE.md`,
    contract §9.3) and implemented — builder and reference reader ship in
-   `pancake-artifact.js` on all entrypoints (`Pancake.SketchArtifact`,
+   `pancake-artifact.js` on all entrypoints (`Pikelet.SketchArtifact`,
    `buildSketchArtifact[File]`, `openSketchArtifactFile`), with conformance
    checks in `test/sketch_profile.js` wired into npm test. SIFT1M validated
    through the product reader: 160 MiB artifact (vs 494 MiB range), 38.1 MiB
@@ -100,11 +100,11 @@ Structural work (the real fix for miss-round depth):
    HTTP @10 ms delay (283 ms mean with the WASM scanner via the reader's
    scanner hook); real R2 through the range proxy (opens the 38.1 MiB
    resident prefix in 2.26 s in one request, hash-verified, queries
-   RTT-bound as before); and a real browser via pancake-wasm/web
+   RTT-bound as before); and a real browser via pikelet-wasm/web
    (Playwright: opens in 0.9 s, resident verified through crypto.subtle,
    91.5% recall over 20 queries, zero page errors). The sketch arc is now
-   complete: Pancake.createSketchScanner exposes the SIMD kernel on every
-   entrypoint — in a real browser via pancake-wasm/web the scan drops from
+   complete: Pikelet.createSketchScanner exposes the SIMD kernel on every
+   entrypoint — in a real browser via pikelet-wasm/web the scan drops from
    3147 ms to 17.8 ms/query (176x, identical recall), so browser queries are
    RTT-bound; and golden fixtures (test/fixtures/sketch_golden.js, 4 cases,
    regenerable via scripts/make-sketch-fixture.mjs) hold both the reference
@@ -168,7 +168,7 @@ verified working (see examples/README.md ordering).
 
 ## Track C: Demos and product surface
 
-- `create-pancake-search` (v0.5.0 on npm, alongside `pancake-wasm` 0.5.0):
+- `pikelet` (v0.5.0 on npm, alongside `pikelet-wasm` 0.5.0):
   scaffolds snapshot, artifact, and complete (kind-3 `search.pancake`)
   runtimes; `--mode student` distills a corpus-specific encoder into the
   Worker; the Docusaurus plugin builds the same assets for static sites;

@@ -3,12 +3,12 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const config = {
-  title: 'Pancake',
+  title: 'Pikelet',
   tagline: 'One-file semantic search artifacts for edge and browser runtimes',
   url: 'https://mcn92.github.io',
-  baseUrl: '/pancake/',
+  baseUrl: '/pikelet/',
   organizationName: 'mcn92',
-  projectName: 'pancake',
+  projectName: 'pikelet',
   trailingSlash: false,
   onBrokenLinks: 'throw',
   markdown: {
@@ -23,7 +23,7 @@ const config = {
       {
         docs: {
           sidebarPath: './sidebars.js',
-          editUrl: 'https://github.com/mcn92/pancake/tree/main/docs-site/',
+          editUrl: 'https://github.com/mcn92/pikelet/tree/main/docs-site/',
         },
         blog: false,
         theme: {
@@ -35,9 +35,9 @@ const config = {
 
   plugins: [
     [
-      require.resolve('create-pancake-search/docusaurus'),
+      require.resolve('pikelet/docusaurus'),
       {
-        assetBase: 'pancake-search',
+        assetBase: 'pikelet-search',
         sourcePath: 'docs',
         sourceRouteBase: 'docs',
         // No completeProfile block: the complete kind-3 .pancake is the
@@ -59,10 +59,10 @@ const config = {
 
   themeConfig: {
     navbar: {
-      title: 'Pancake',
+      title: 'Pikelet',
       items: [
         { type: 'docSidebar', sidebarId: 'docs', position: 'left', label: 'Docs' },
-        { href: 'https://github.com/mcn92/pancake', label: 'GitHub', position: 'right' },
+        { href: 'https://github.com/mcn92/pikelet', label: 'GitHub', position: 'right' },
       ],
     },
     footer: {
@@ -77,7 +77,7 @@ const config = {
           ],
         },
       ],
-      copyright: `Copyright ${new Date().getFullYear()} Pancake contributors.`,
+      copyright: `Copyright ${new Date().getFullYear()} Pikelet contributors.`,
     },
   },
 };

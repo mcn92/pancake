@@ -461,7 +461,7 @@ artifact identity.
 
 This profile is implemented and shipping: byte layout and reader obligations
 are specified in `COMPLETE_PROFILE.md` (Draft 2), the reader and builder
-ship in `pancake-wasm/complete`, and `create-pancake-search compile` emits
+ship in `pikelet-wasm/complete`, and `pikelet compile` emits
 it. It is the profile that turns Pancake from a vector-search library into
 an artifact compiler and reader.
 

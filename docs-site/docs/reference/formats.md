@@ -1,6 +1,6 @@
 ---
 title: Formats
-description: The Pancake file extensions, what each contains, and which profile new applications should use.
+description: The Pikelet file extensions, what each contains, and which profile new applications should use.
 sidebar_position: 1
 ---
 

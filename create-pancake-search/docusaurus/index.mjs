@@ -33,7 +33,7 @@ function normalizeOptions(options = {}) {
   // the deprecated .pancake-range output needs mode: 'artifact' or an
   // explicit completeProfile.enabled: false.
   if (options.mode !== undefined && !['complete', 'student', 'artifact'].includes(options.mode)) {
-    throw new Error(`pancake-search mode must be complete, student, or artifact, got ${options.mode}`);
+    throw new Error(`pikelet-search mode must be complete, student, or artifact, got ${options.mode}`);
   }
   const studentRequested = options.mode === 'student'
     || !!options.studentModel
@@ -43,9 +43,9 @@ function normalizeOptions(options = {}) {
     ?? (options.mode === 'complete' || !(studentRequested || options.mode === 'artifact'));
   return {
     enabled: options.enabled !== false,
-    assetBase: trimSlashes(options.assetBase || 'pancake-search'),
+    assetBase: trimSlashes(options.assetBase || 'pikelet-search'),
     mount: options.mount !== false,
-    workDir: options.workDir || path.join('.docusaurus', 'pancake-search'),
+    workDir: options.workDir || path.join('.docusaurus', 'pikelet-search'),
     sourcePath: options.sourcePath || null,
     sourceRouteBase: options.sourceRouteBase ?? 'docs',
     name: options.name,
@@ -130,7 +130,7 @@ function makeConfig(context, options, workDir, outDir) {
           mode: 'complete',
           profile: 'kind3',
           storage: 'bundled',
-          fileName: 'search.pancake',
+          fileName: 'search.pikelet',
           inlineEncoder: {
             vocabPath: 'inline-encoder/vocab.txt',
             weightsPath: 'inline-encoder/encoder-weights.bin',
@@ -188,8 +188,8 @@ async function copyRuntimeManifest(assetDir, context, options, studentModelInfo)
   const assetUrlBase = joinSitePath(context.siteConfig?.baseUrl || '/', options.assetBase);
   manifest.docusaurus = {
     assetBase: options.assetBase,
-    artifactUrl: options.completeProfile.enabled ? `${assetUrlBase}/search.pancake` : `${assetUrlBase}/index.pancake-range`,
-    completeArtifactUrl: options.completeProfile.enabled ? `${assetUrlBase}/search.pancake` : null,
+    artifactUrl: options.completeProfile.enabled ? `${assetUrlBase}/search.pikelet` : `${assetUrlBase}/index.pancake-range`,
+    completeArtifactUrl: options.completeProfile.enabled ? `${assetUrlBase}/search.pikelet` : null,
     corpusUrl: `${assetUrlBase}/corpus.json`,
     manifestUrl: `${assetUrlBase}/manifest.json`,
     studentModelUrl: options.completeProfile.enabled ? null : `${assetUrlBase}/student-model.bin`,
@@ -337,11 +337,11 @@ function buildStubStudentModel() {
 function resolveArtifactModule(context) {
   const attempts = [];
   // Prefer real module resolution: from the consumer's site first, then from
-  // this plugin (pancake-wasm is create-pancake-search's own dependency, so
+  // this plugin (pikelet-wasm is pikelet's own dependency, so
   // the plugin-scoped resolve works under pnpm/strict node_modules layouts).
   for (const resolve of [
-    () => createRequire(path.join(context.siteDir, 'package.json')).resolve('pancake-wasm/artifact'),
-    () => createRequire(import.meta.url).resolve('pancake-wasm/artifact'),
+    () => createRequire(path.join(context.siteDir, 'package.json')).resolve('pikelet-wasm/artifact'),
+    () => createRequire(import.meta.url).resolve('pikelet-wasm/artifact'),
   ]) {
     try {
       return resolve();
@@ -349,20 +349,20 @@ function resolveArtifactModule(context) {
       attempts.push(error.message.split('\n')[0]);
     }
   }
-  // Monorepo dev fallback: the repo root IS pancake-wasm, with no
+  // Monorepo dev fallback: the repo root IS pikelet-wasm, with no
   // node_modules self-reference to resolve through.
   const repoArtifactModule = path.resolve(context.siteDir, '..', 'pancake-artifact.js');
   if (fssync.existsSync(repoArtifactModule)) return repoArtifactModule;
   throw new Error(
-    `docusaurus-plugin-pancake-search could not resolve pancake-wasm/artifact; install pancake-wasm alongside create-pancake-search. Tried: ${attempts.join(' | ')}`
+    `docusaurus-plugin-pikelet-search could not resolve pikelet-wasm/artifact; install pikelet-wasm alongside pikelet. Tried: ${attempts.join(' | ')}`
   );
 }
 
 function resolveCompleteModule(context) {
   const attempts = [];
   for (const resolve of [
-    () => createRequire(path.join(context.siteDir, 'package.json')).resolve('pancake-wasm/complete'),
-    () => createRequire(import.meta.url).resolve('pancake-wasm/complete'),
+    () => createRequire(path.join(context.siteDir, 'package.json')).resolve('pikelet-wasm/complete'),
+    () => createRequire(import.meta.url).resolve('pikelet-wasm/complete'),
   ]) {
     try {
       return resolve();
@@ -373,7 +373,7 @@ function resolveCompleteModule(context) {
   const repoCompleteModule = path.resolve(context.siteDir, '..', 'complete', 'index.mjs');
   if (fssync.existsSync(repoCompleteModule)) return repoCompleteModule;
   throw new Error(
-    `docusaurus-plugin-pancake-search could not resolve pancake-wasm/complete; install pancake-wasm >= 0.3 alongside create-pancake-search. Tried: ${attempts.join(' | ')}`
+    `docusaurus-plugin-pikelet-search could not resolve pikelet-wasm/complete; install pikelet-wasm >= 0.3 alongside pikelet. Tried: ${attempts.join(' | ')}`
   );
 }
 
@@ -387,7 +387,7 @@ export default function pancakeDocusaurusPlugin(context, rawOptions = {}) {
   // webpack flags it as ESM, and the widget dies at runtime on its
   // module.exports assignment. Keep the alias and webpack's resolution on
   // the symlinked node_modules side in that layout.
-  const symlinkedArtifact = path.join(context.siteDir, 'node_modules', 'pancake-wasm', 'pancake-artifact.js');
+  const symlinkedArtifact = path.join(context.siteDir, 'node_modules', 'pikelet-wasm', 'pancake-artifact.js');
   const useSymlinkPaths = !siteArtifactModule.includes(`${path.sep}node_modules${path.sep}`)
     && fssync.existsSync(symlinkedArtifact);
   const artifactAlias = useSymlinkPaths ? symlinkedArtifact : siteArtifactModule;
@@ -395,16 +395,16 @@ export default function pancakeDocusaurusPlugin(context, rawOptions = {}) {
   // client, alias resolved here (site -> plugin -> monorepo sibling).
   const siteCompleteModule = resolveCompleteModule(context);
   const completeAlias = useSymlinkPaths
-    ? path.join(context.siteDir, 'node_modules', 'pancake-wasm', 'complete', 'index.mjs')
+    ? path.join(context.siteDir, 'node_modules', 'pikelet-wasm', 'complete', 'index.mjs')
     : siteCompleteModule;
 
   return {
-    name: 'docusaurus-plugin-pancake-search',
+    name: 'docusaurus-plugin-pikelet-search',
 
     async postBuild({ outDir }) {
       if (!options.enabled) return;
       if (!options.completeProfile.enabled) {
-        console.warn('[pancake-search] building the deprecated .pancake-range output (student/artifact mode); '
+        console.warn('[pikelet-search] building the deprecated .pancake-range output (student/artifact mode); '
           + 'the default complete .pancake profile serves hybrid retrieval over range reads — '
           + 'remove the student/artifact options to adopt it');
       }
@@ -449,9 +449,9 @@ export default function pancakeDocusaurusPlugin(context, rawOptions = {}) {
           {
             tagName: 'div',
             attributes: {
-              class: 'pancake-search',
-              'data-pancake-search': '',
-              'data-pancake-asset-base': assetUrlBase,
+              class: 'pikelet-search',
+              'data-pikelet-search': '',
+              'data-pikelet-asset-base': assetUrlBase,
             },
           },
         ],
@@ -471,10 +471,10 @@ export default function pancakeDocusaurusPlugin(context, rawOptions = {}) {
         resolve: {
           ...(useSymlinkPaths ? { symlinks: false } : {}),
           alias: {
-            'pancake-wasm/artifact': artifactAlias,
-            'pancake-wasm/complete': completeAlias,
+            'pikelet-wasm/artifact': artifactAlias,
+            'pikelet-wasm/complete': completeAlias,
           },
-          // pancake-wasm/artifact is pure JS in the browser, but its Node-only
+          // pikelet-wasm/artifact is pure JS in the browser, but its Node-only
           // file helpers statically reference fs/crypto, which webpack must stub.
           ...(isServer ? {} : { fallback: { fs: false, crypto: false } }),
         },

@@ -12,7 +12,7 @@
  *      of recall targets, log-linearly interpolated along each frontier.
  *
  * Configs:
- *   pancake-wasm   u8 / fp32   (Pancake.create, setEfSearch per ef)
+ *   pikelet-wasm   u8 / fp32   (Pancake.create, setEfSearch per ef)
  *   pancake-native u8 / fp32   (native.pancake_*, pancake_set_ef per ef)
  *   usearch-native i8 / f16 / f32 (build-once-save-view per ef —
  *                                  expansion_search is fixed at construction)
@@ -214,8 +214,8 @@ if (CONFIG_FILTER_LABELS.size > 0 && CONFIG_FILTER_LIBRARIES.size > 0) {
 
 // --- Config table. Every config is ef-swept (no single-point libraries). ---
 let CONFIGS = [];
-CONFIGS.push({ label: 'pancake-wasm-u8',   library: 'pancake', runtime: 'wasm',   dtype: 'u8',  sweep: true });
-CONFIGS.push({ label: 'pancake-wasm-fp32',   library: 'pancake', runtime: 'wasm',   dtype: 'f32', sweep: true });
+CONFIGS.push({ label: 'pikelet-wasm-u8',   library: 'pancake', runtime: 'wasm',   dtype: 'u8',  sweep: true });
+CONFIGS.push({ label: 'pikelet-wasm-fp32',   library: 'pancake', runtime: 'wasm',   dtype: 'f32', sweep: true });
 if (native) {
   CONFIGS.push({ label: 'pancake-native-u8', library: 'pancake', runtime: 'native', dtype: 'u8',  sweep: true });
   CONFIGS.push({ label: 'pancake-native-fp32', library: 'pancake', runtime: 'native', dtype: 'f32', sweep: true });

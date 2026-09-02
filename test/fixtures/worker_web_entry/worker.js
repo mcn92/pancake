@@ -1,4 +1,4 @@
-import Pancake from 'pancake-wasm/web';
+import Pancake from 'pikelet-wasm/web';
 
 let indexPromise = null;
 

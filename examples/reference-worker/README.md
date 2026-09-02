@@ -1,10 +1,10 @@
 # Pancake Worker Reference Architecture
 
-This directory contains a reference Cloudflare Worker deployment built on top of `pancake-wasm`.
+This directory contains a reference Cloudflare Worker deployment built on top of `pikelet-wasm`.
 
 > **Note:** This example runs from the repository checkout and imports the same
-> public Worker entrypoint that the package exports as `pancake-wasm/web`. To
-> use the published package instead, you need `pancake-wasm@0.2.0` or later —
+> public Worker entrypoint that the package exports as `pikelet-wasm/web`. To
+> use the published package instead, you need `pikelet-wasm@0.2.0` or later —
 > earlier releases predate the 0.2 API this example is written against. See the
 > [root README](../../README.md#install).
 

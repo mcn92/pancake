@@ -21,7 +21,7 @@ committed beside each query set.
 
 ```bash
 # recompile the corpus (network; page content drifts over time)
-npx create-pancake-search compile --source https://nodejs.org/api/ \
+npx pikelet compile --source https://nodejs.org/api/ \
   --max-pages 30 --out nodeapi.pancake
 
 # measure all three retrieval modes

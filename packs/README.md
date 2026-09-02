@@ -5,13 +5,13 @@ There is no registry service and no accounts — the registry is also just a
 file. Mount everything on a shelf in one line:
 
 ```bash
-npx create-pancake-search mcp --shelf https://raw.githubusercontent.com/mcn92/pancake/main/packs/packs.json
+npx pikelet mcp --shelf https://raw.githubusercontent.com/mcn92/pancake/main/packs/packs.json
 ```
 
 or write the config for your MCP client instead of running it by hand:
 
 ```bash
-npx create-pancake-search mcp install --shelf <shelf-url> --client claude-code
+npx pikelet mcp install --shelf <shelf-url> --client claude-code
 ```
 
 Each entry names a pack, where it lives (`url`, or `path` relative to the
@@ -24,7 +24,7 @@ range requests; the file is never downloaded whole.
 ## Adding a pack
 
 Compile one and host it anywhere that serves HTTP ranges — GitHub
-release assets, R2, S3, any CDN; `create-pancake-search doctor <url>`
+release assets, R2, S3, any CDN; `pikelet doctor <url>`
 certifies a host. Redirecting hosts are fine: the reader resolves the
 redirect once and pins the target, so GitHub's rate-limited front door
 is charged once per mount while range reads go straight to its CDN
@@ -32,7 +32,7 @@ is charged once per mount while range reads go straight to its CDN
 transient 429/5xx pressure is retried with backoff:
 
 ```bash
-npx create-pancake-search compile --source https://docs.example.com \
+npx pikelet compile --source https://docs.example.com \
   --out example-docs.pancake --license MIT
 ```
 

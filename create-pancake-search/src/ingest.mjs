@@ -110,7 +110,7 @@ async function resolveSeedUrl(seed, log) {
     let response;
     try {
       response = await fetch(current.href, {
-        headers: { 'User-Agent': 'create-pancake-search/0.1.0' },
+        headers: { 'User-Agent': 'pikelet/0.1.0' },
         redirect: 'manual',
         signal: AbortSignal.timeout(15000),
       });
@@ -162,7 +162,7 @@ async function ingestUrl(source, log) {
     let response;
     try {
       response = await fetch(href, {
-        headers: { 'User-Agent': 'create-pancake-search/0.1.0' },
+        headers: { 'User-Agent': 'pikelet/0.1.0' },
         redirect: 'manual',
         signal: AbortSignal.timeout(15000),
       });

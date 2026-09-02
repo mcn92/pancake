@@ -1,4 +1,4 @@
-// Types for the browser / Cloudflare Workers entrypoints (`pancake-wasm/web`).
+// Types for the browser / Cloudflare Workers entrypoints (`pikelet-wasm/web`).
 // These runtimes expose the portable API, including range-readable Search
 // Artifacts. Only PancakeError and PANCAKE_ERROR_CODES exist as named runtime
 // exports; every other re-export below is type-only. Node-only helpers

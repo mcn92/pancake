@@ -1,4 +1,4 @@
-// `create-pancake-search doctor <url>` — probe an artifact hosting URL for
+// `pikelet doctor <url>` — probe an artifact hosting URL for
 // the transport properties the range readers depend on, and print a verdict
 // before anyone discovers them as "the demo is slow" in production:
 //
@@ -134,7 +134,7 @@ export async function probeHosting(url) {
 
 export async function runDoctor(url, log = console.log) {
   if (!url || !/^https?:\/\//.test(url)) {
-    throw Object.assign(new Error('usage: create-pancake-search doctor <http(s) url of the hosted artifact>'), { exitCode: 1 });
+    throw Object.assign(new Error('usage: pikelet doctor <http(s) url of the hosted artifact>'), { exitCode: 1 });
   }
   log(`doctor: probing ${url}`);
   const report = await probeHosting(url);

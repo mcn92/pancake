@@ -654,7 +654,7 @@ fetch caller-supplied URLs. Snapshot import accepts size-capped *bytes* in
 the request body; artifact and index data arrive as build-time bundled
 assets or Cloudflare bindings (`env.ASSETS`, R2) whose targets are fixed at
 deploy time. URL ingestion exists only in local, operator-driven tooling
-(the `create-pancake-search --source <url>` crawler, benchmarks) where the
+(the `pikelet --source <url>` crawler, benchmarks) where the
 operator controls both the URL and the machine. Keep it that way: a future
 "restore from URL" route on a deployed Worker is the moment scheme
 allowlisting, private/link-local IP rejection, redirect pinning, and

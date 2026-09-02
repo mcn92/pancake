@@ -36,6 +36,9 @@ import {
 } from './inline-transformer.mjs';
 
 export { httpRangeSource } from './sources.mjs';
+// The project renamed to Pikelet (2026-09); the wire format and this
+// reader's original export keep their pancake-era names for
+// compatibility, and openPikeletFile is the documented alias.
 export {
     KERNEL_LAYOUT, expectedBlobBytes, parseInlineTransformerEncoder,
     createInlineTransformerEmbedder, INLINE_TEST_VECTOR_TEXTS,
@@ -666,7 +669,7 @@ export async function openPancakeFile(input, options = {}) {
                         : (await import('./encoder-kernels/encoder.mjs')).default;
                 } catch (err) {
                     throw new Error('kind-3 artifact requires the inline-transformer kernels at '
-                        + 'complete/encoder-kernels/ (pancake-wasm/complete); run '
+                        + 'complete/encoder-kernels/ (pikelet-wasm/complete); run '
                         + 'examples/05-one-file-search/encoder-spike/build-encoder.sh to rebuild them',
                     { cause: err });
                 }
@@ -1116,3 +1119,6 @@ export async function openPancakeFile(input, options = {}) {
         throw err;
     }
 }
+
+// Documented alias (see the rename note at the top of this file).
+export { openPancakeFile as openPikeletFile };

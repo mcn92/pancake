@@ -1,19 +1,24 @@
-# create-pancake-search
+# pikelet
 
-Turn a documentation site into search: either one complete `.pancake` file
+The Pikelet CLI: compile a corpus into one `.pikelet` knowledge pack,
+serve packs to LLMs over MCP, scaffold a search app, or certify hosting.
+(Formerly `create-pancake-search`; the wire format keeps its pancake-era
+names, and `.pancake` files remain fully readable.)
+
+Turn a documentation site into search: either one complete `.pikelet` file
 you can query from any JavaScript runtime, or a deployable Worker + UI app.
 
 The 15-second version — compile a folder or a live site into one file:
 
 ```bash
-npx create-pancake-search compile --source ./docs --out search.pancake
+npx pikelet compile --source ./docs --out search.pikelet
 # or point it at a site:
-npx create-pancake-search compile --source https://docs.helix-editor.com --out search.pancake
+npx pikelet compile --source https://docs.helix-editor.com --out search.pikelet
 ```
 
 ```js
-import { openPancakeFile } from 'pancake-wasm/complete';
-const search = await openPancakeFile('search.pancake');
+import { openPikeletFile } from 'pikelet-wasm/complete';
+const search = await openPikeletFile('search.pikelet');
 const out = await search.query('how do I remap keys', { k: 5 });
 // out.results, out.matchQuality ('strong' | 'weak' | 'none'), out.confidence
 ```
@@ -22,7 +27,7 @@ The file carries the corpus records, sketch index, inline MiniLM query
 encoder, calibrated abstention, and evaluation data — no service, no model
 host, no Cloudflare. Off-domain queries return `matchQuality: "none"` with
 zero results instead of confidently wrong ones. See
-[Compiling a complete `.pancake` artifact](#compiling-a-complete-pancake-artifact)
+[Compiling a complete `.pikelet` artifact](#compiling-a-complete-pancake-artifact)
 for the details.
 
 ## Scaffolding a search app
@@ -32,19 +37,19 @@ your docs, builds the search assets offline, and ships them with a
 Worker/UI shell serving retrieval at the edge:
 
 ```bash
-npm create pancake-search -- --name my-docs-search --source ./docs --no-deploy --yes
+npx pikelet create --name my-docs-search --source ./docs --no-deploy --yes
 cd my-docs-search
 npm run dev
 ```
 
-The generated project contains a bundled Pancake snapshot, corpus metadata, a
+The generated project contains a bundled Pikelet snapshot, corpus metadata, a
 Workers AI search worker, and a static UI. A second runtime,
 `--runtime artifact`, serves the deprecated `.pancake-range` profile; it
 still works, but new projects should use the default snapshot runtime, or
-`compile` (below) when the deliverable is a complete `.pancake` file.
+`compile` (below) when the deliverable is a complete `.pikelet` file.
 
 In both runtimes, the story is the same: the expensive work happens at build
-time; query-time code embeds the query, searches Pancake, and hydrates result
+time; query-time code embeds the query, searches Pikelet, and hydrates result
 metadata. Query embedding comes from Workers AI by default, or from a bundled
 corpus-distilled encoder with `--mode student` (see below), which removes the
 Cloudflare AI dependency entirely. For workers-ai projects, `LOCAL_STUB_AI=1`
@@ -54,7 +59,7 @@ In the deprecated artifact runtime, a prebuilt `.pancake-range` file can be
 supplied with `--artifact`; external artifacts must have dimension, count,
 and IDs that match the generated corpus.
 
-Compiled `.pancake` artifacts also carry a BM25 lexical index (a few
+Compiled `.pikelet` artifacts also carry a BM25 lexical index (a few
 hundred KiB at docs scale), and queries run hybrid: the lexical matches
 join the vector rerank as candidates — so exact identifiers, config
 options, and title lookups land even when embedding similarity alone would
@@ -71,13 +76,13 @@ section stays one chunk when it fits and every result carries
 `headingPath` and `anchor` — deep links to the exact section, not the
 page.
 
-## Compiling a complete `.pancake` artifact
+## Compiling a complete `.pikelet` artifact
 
 When you want the search *file* rather than a search *app*, `compile` builds
 a complete kind-3 artifact and stops — no project, no Worker, no Cloudflare:
 
 ```bash
-npx create-pancake-search compile --source ./docs --out search.pancake
+npx pikelet compile --source ./docs --out search.pikelet
 ```
 
 The output is one self-contained file carrying the corpus records, sketch
@@ -85,8 +90,8 @@ index, inline MiniLM query encoder, and evaluation data. Open it from any
 runtime with the complete reader:
 
 ```js
-import { openPancakeFile } from 'pancake-wasm/complete';
-const search = await openPancakeFile('search.pancake');
+import { openPikeletFile } from 'pikelet-wasm/complete';
+const search = await openPikeletFile('search.pikelet');
 const out = await search.query('how do I configure auth', { k: 5 });
 ```
 
@@ -138,7 +143,7 @@ deliberately.
 
 ## Attaching packs to an LLM (MCP)
 
-A compiled `.pancake` is a portable knowledge pack: everything needed to
+A compiled `.pikelet` is a portable knowledge pack: everything needed to
 query the knowledge it represents — corpus, semantic and lexical indexes,
 query encoder, calibrated abstention, integrity commitments — in one
 immutable file. `mcp` serves packs over the Model Context Protocol on
@@ -147,8 +152,8 @@ can attach them as a retrieval tool with no vector database, embedding
 service, or retrieval backend:
 
 ```bash
-npx create-pancake-search compile --source https://docs.astro.build --out astro.pancake
-npx create-pancake-search mcp --pack astro.pancake --pack team-handbook.pancake
+npx pikelet compile --source https://docs.astro.build --out astro.pancake
+npx pikelet mcp --pack astro.pancake --pack team-handbook.pancake
 ```
 
 `--pack` also takes a URL — packs are range-read off dumb HTTP, never
@@ -157,7 +162,7 @@ Wikipedia; mounting transfers a ~52 MiB resident slice and each question
 costs ~127 range requests against the 649 MiB file:
 
 ```bash
-npx create-pancake-search mcp --pack https://github.com/mcn92/pancake/releases/download/artifact-wiki-inline-v4/pancake-wiki-inline.pancake
+npx pikelet mcp --pack https://github.com/mcn92/pancake/releases/download/artifact-wiki-inline-v4/pancake-wiki-inline.pancake
 ```
 
 Either form takes `#<sha256>` to pin the pack's manifest identity — a
@@ -173,7 +178,7 @@ pressure (429/502/503/504) is retried with backoff.
 Instead of running the server by hand, write your MCP client's config:
 
 ```bash
-npx create-pancake-search mcp install --pack astro.pancake --client claude-code
+npx pikelet mcp install --pack astro.pancake --client claude-code
 ```
 
 (`claude-code` writes `./.mcp.json`, `claude-desktop` the platform's
@@ -186,7 +191,7 @@ yourself:
   "mcpServers": {
     "knowledge-packs": {
       "command": "npx",
-      "args": ["-y", "create-pancake-search", "mcp", "--pack", "astro.pancake", "--pack", "team-handbook.pancake"]
+      "args": ["-y", "pikelet", "mcp", "--pack", "astro.pancake", "--pack", "team-handbook.pancake"]
     }
   }
 }
@@ -225,11 +230,11 @@ answers.
 
 ## Where this sits
 
-This package is the **product layer** of the Pancake stack. It consumes the
-two layers below it — the `pancake-wasm` ANN engine and the Search Artifact
+This package is the **product layer** of the Pikelet stack. It consumes the
+two layers below it — the `pikelet-wasm` ANN engine and the Search Artifact
 readers/builders (`spec/SEARCH_ARTIFACT_CONTRACT.md` in the main repo) — and
 emits a project that is *yours*: the generated Worker, UI, and config are
-application code with `pancake-wasm` as a dependency, not part of this
+application code with `pikelet-wasm` as a dependency, not part of this
 package. Engine and artifact behavior are documented in the main repo;
 this README covers only scaffolding, generation options, and the generated
 project's layout.
@@ -261,7 +266,7 @@ milliseconds, the generated `wrangler.toml` has no `[ai]` binding, and
 `wrangler dev` runs fully local with no Cloudflare account:
 
 ```bash
-npm create pancake-search -- --name my-docs-search --source ./docs --mode student --no-deploy --yes
+npx pikelet create --name my-docs-search --source ./docs --mode student --no-deploy --yes
 ```
 
 Training requires a Python 3 environment with `torch` and `transformers`
@@ -300,7 +305,7 @@ config a scaffold is generated from. The work lives beside it:
 
 | module | responsibility |
 | --- | --- |
-| `src/common.mjs` | package paths and version, config defaults, the model table, `CliError`, loaders that resolve `pancake-wasm` (engine, `/artifact`, `/complete`) from npm or the monorepo |
+| `src/common.mjs` | package paths and version, config defaults, the model table, `CliError`, loaders that resolve `pikelet-wasm` (engine, `/artifact`, `/complete`) from npm or the monorepo |
 | `src/ingest.mjs` | folder walk and URL crawl, HTML/Markdown/MDX extraction, chunking, dedupe, Docusaurus route mapping, the public chunk shape |
 | `src/embed.mjs` | build-time embeddings: transformers.js, the student trainer, the inline transformer, precomputed vectors, the deterministic stub, self-recall |
 | `src/complete-build.mjs` | kind-3 complete artifact assembly, the inline-encoder declaration, the pinned weights download |
@@ -313,11 +318,11 @@ config a scaffold is generated from. The work lives beside it:
 
 Range-read artifacts depend on transport properties that hosts get wrong
 silently, and the symptom is "the demo is slow", not an error. Before (or
-after) deploying a `.pancake`, `.pancake-sketch`, or `.pancake-range` file,
+after) deploying a `.pikelet`, `.pancake-sketch`, or `.pancake-range` file,
 probe the URL it is served from:
 
 ```bash
-npx create-pancake-search doctor https://example.com/search/search.pancake
+npx pikelet doctor https://example.com/search/search.pikelet
 ```
 
 It prints a pass/warn/fail line per check — `HEAD` (size, `Accept-Ranges`,
@@ -330,12 +335,12 @@ identity from its first 64 bytes — and exits 1 if any check fails.
 
 ## Docusaurus
 
-Docusaurus sites can build a static Pancake Search Artifact through the package
+Docusaurus sites can build a static Pikelet Search Artifact through the package
 subpath plugin:
 
 ```js
 // docusaurus.config.js
-import pancakeSearch from 'create-pancake-search/docusaurus';
+import pancakeSearch from 'pikelet/docusaurus';
 
 export default {
   plugins: [
@@ -352,7 +357,7 @@ export default {
 
 On `docusaurus build`, the plugin indexes the rendered HTML in the build
 output directory and, by default, compiles it into a complete kind-3
-`search.pancake` in `build/pancake-search/` — hybrid retrieval, calibrated
+`search.pikelet` in `build/pancake-search/` — hybrid retrieval, calibrated
 abstention, section anchors, one file. The widget serves it over HTTP
 range reads (opening on a fraction of the file, prefetching the inline
 encoder in the background from the moment the search panel first opens)
@@ -366,12 +371,12 @@ a deprecation note for the range format.
 That means docs, blog posts, pages, and rendered MDX all flow through the
 same folder ingestion, section-aware chunking, and complete-artifact builder
 as the CLI's `compile`, without generating or deploying a Worker. The output
-is `build/pancake-search/search.pancake` (plus `corpus.json` and
+is `build/pancake-search/search.pikelet` (plus `corpus.json` and
 `manifest.json`). The widget defers all loading until the first time the
 panel opens; results carry section heading-path breadcrumbs, and raw
 distances only render when the mount element sets
 `data-pancake-debug="1"`. Because the artifact is range-read, the host must
-honor `Range` — check with `create-pancake-search doctor <url>` (the widget
+honor `Range` — check with `pikelet doctor <url>` (the widget
 degrades to a bounded one-time download when a host ignores it).
 
 By default, the plugin injects a floating, draggable search panel into the page

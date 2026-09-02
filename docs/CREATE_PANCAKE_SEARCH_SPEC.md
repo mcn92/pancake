@@ -1,7 +1,7 @@
-# Spec: `create-pancake-search` — Scaffold CLI for Pancake Worker Search
+# Spec: `pikelet` — Scaffold CLI for Pancake Worker Search
 
-**Status:** Draft v2 · **Owner:** TBD · **Target:** v0.1.0 on npm as `create-pancake-search`
-**Depends on:** `pancake-wasm@0.2.0` published to npm (see M0). Registry `0.1.0` predates the
+**Status:** Draft v2 · **Owner:** TBD · **Target:** v0.1.0 on npm as `pikelet`
+**Depends on:** `pikelet-wasm@0.2.0` published to npm (see M0). Registry `0.1.0` predates the
 0.2 API contract and cannot run the worker template.
 
 ---
@@ -10,10 +10,10 @@
 
 A one-command scaffold that takes a user's content (local docs folder or website URL), builds a
 Pancake search index, and emits a ready-to-deploy Cloudflare Worker with a working search UI.
-Success criterion: **a first-time user goes from `npm create pancake-search` to a live search URL
+Success criterion: **a first-time user goes from `npx pikelet create` to a live search URL
 over their own content in under 5 minutes**, with no Python and no GPU.
 
-Invocable as `npm create pancake-search` (npm resolves this to the `create-pancake-search`
+Invocable as `npx pikelet create` (npm resolves this to the `pikelet`
 package; this mapping only works cleanly for an unscoped name — see §12, Q1 resolved).
 
 ## 2. Goals / Non-goals
@@ -24,12 +24,12 @@ package; this mapping only works cleanly for an unscoped name — see §12, Q1 r
 - Embed corpus at build time with a local ONNX model (no Python).
 - Query-time embedding via Cloudflare Workers AI binding (`--mode workers-ai`, default).
 - Generate a complete, deployable Worker project. The runtime is a vendored adaptation of
-  `examples/03-edge-docs-search/worker.js`, importing `pancake-wasm` from the registry
+  `examples/03-edge-docs-search/worker.js`, importing `pikelet-wasm` from the registry
   (the `workerd` export condition resolves to the Workers entrypoint).
 - Optional immediate deploy via `wrangler deploy` with the live URL printed at the end.
 - Emit a GitHub Action that rebuilds the index and redeploys on content changes.
 - Reproducible builds driven entirely by a checked-in `pancake.config.json` **and a pinned CLI
-  version** (the scaffold adds `create-pancake-search` as a devDependency; `reindex` runs the
+  version** (the scaffold adds `pikelet` as a devDependency; `reindex` runs the
   local install, never a floating `npx` latest).
 
 ### Non-goals (v1) — explicitly out of scope
@@ -53,9 +53,9 @@ package; this mapping only works cleanly for an unscoped name — see §12, Q1 r
 ### 3.1 Interactive flow
 
 ```
-$ npm create pancake-search
+$ npx pikelet create
 
-  🥞 create-pancake-search v0.1.0
+  🥞 pikelet v0.1.0
 
   ? Project name: › my-docs-search
   ? Content source: › ○ Local folder  ○ Website URL
@@ -78,7 +78,7 @@ $ npm create pancake-search
 All prompts must be skippable for CI use:
 
 ```
-npm create pancake-search -- \
+npx pikelet create \
   --name my-docs-search \
   --source ./docs            # or --source https://docs.example.com
   --mode workers-ai          # workers-ai | student (stubbed)
@@ -97,19 +97,19 @@ deploy instructions).
 ## 4. Architecture
 
 ```
-create-pancake-search (CLI, Node ≥ 20, ESM)
+pikelet (CLI, Node ≥ 20, ESM)
  ├─ ingest/       folder walker + crawler → RawDoc[]
  ├─ chunk/        heading-aware splitter → Chunk[]
  ├─ embed/        transformers.js (ONNX, WASM backend) → Float32Array[]
- ├─ build/        pancake-wasm 0.2 index build + export → snapshot.pnck
+ ├─ build/        pikelet-wasm 0.2 index build + export → snapshot.pnck
  ├─ scaffold/     template writer → project directory
  └─ deploy/       wrangler wrapper
 ```
 
-Package dependencies (keep lean): `pancake-wasm@^0.2.0`, `@xenova/transformers` (or
+Package dependencies (keep lean): `pikelet-wasm@^0.2.0`, `@xenova/transformers` (or
 `@huggingface/transformers`), `cheerio` (HTML extraction), `undici` (crawl), `prompts` or
 `@clack/prompts` (UX), `picocolors`. **No Python, no node-gyp, no native modules** — this is a
-hard requirement; see §10 risk R2. The CLI imports `pancake-wasm` under Node (the `import`
+hard requirement; see §10 risk R2. The CLI imports `pikelet-wasm` under Node (the `import`
 condition resolves to the Node entrypoint, which carries `loadJsonFile`/`loadSnapshotFile`);
 the worker template imports it under `workerd`.
 
@@ -122,7 +122,7 @@ the worker template imports it under `workerd`.
   behave identically on Windows (normalize separators before matching).
 - *URL mode:* same-origin BFS crawl from the seed URL. Respect `robots.txt`. Concurrency 4,
   per-request timeout 15s, cap at `--max-pages` (default 500). Skip non-HTML content types.
-  Identifiable User-Agent: `create-pancake-search/x.y`.
+  Identifiable User-Agent: `pikelet/x.y`.
 - HTML extraction: strip `<nav> <header> <footer> <script> <style> <aside>`, prefer
   `<main>`/`<article>` when present, fall back to `<body>`.
 - Output: `RawDoc { id, sourcePath | url, title, text, lang? }`.
@@ -158,13 +158,13 @@ the worker template imports it under `workerd`.
   and query-time text preprocessing must never be allowed to drift independently.
 - First run downloads model weights (~30 MB) to the platform cache dir (`$XDG_CACHE_HOME` or
   `~/.cache` on Linux/macOS, `%LOCALAPPDATA%` on Windows, subdir
-  `create-pancake-search/models`); print download progress. Subsequent runs are offline.
+  `pikelet/models`); print download progress. Subsequent runs are offline.
 - Batch size 16, normalize embeddings to unit length (cosine).
 - Throughput target: ≥ 40 chunks/sec on an M-series laptop; print a progress bar with ETA.
 
 **Stage 4 — Build index**
 
-- Use `pancake-wasm` 0.2 directly (Node entry):
+- Use `pikelet-wasm` 0.2 directly (Node entry):
 
   ```js
   const index = await Pancake.create({
@@ -208,7 +208,7 @@ my-docs-search/
 ├── ui.html                    # search UI, imported by worker.js as a Text module
 ├── wrangler.toml              # name, nodejs_compat, [ai] binding, rules, guardrail vars
 ├── pancake.config.json        # full reproducible build config (see §5)
-├── package.json               # pancake-wasm + pinned create-pancake-search devDependency;
+├── package.json               # pikelet-wasm + pinned pikelet devDependency;
 │                              # scripts: dev, deploy, reindex
 ├── assets/
 │   ├── snapshot.pnck
@@ -220,7 +220,7 @@ my-docs-search/
 ```
 
 - `npm run dev` → `wrangler dev` · `npm run deploy` → `wrangler deploy` · `npm run reindex` →
-  `create-pancake-search rebuild` **from the local devDependency** (reads
+  `pikelet rebuild` **from the local devDependency** (reads
   `pancake.config.json`, reruns stages 1–4 in place). A floating `npx` latest is forbidden: a
   newer CLI with different chunking would silently rebuild a different index under an older
   vendored worker.
@@ -309,7 +309,7 @@ jobs:
           path: ~/.cache/create-pancake-search/models
           key: cps-model-${{ hashFiles('my-docs-search/pancake.config.json') }}
       - run: npm ci
-      - run: npx create-pancake-search rebuild --yes   # resolves to the local pinned devDependency
+      - run: npx pikelet rebuild --yes   # resolves to the local pinned devDependency
       - run: npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -352,7 +352,7 @@ nav-heavy page, non-English).
    `MANIFEST_MISMATCH` 500 contract.
 
 **Acceptance (manual, release gate):**
-- Fresh machine (no cache), real docs folder of ≥ 100 files: `npm create pancake-search` →
+- Fresh machine (no cache), real docs folder of ≥ 100 files: `npx pikelet create` →
   deployed URL in **< 5 min wall clock** (excluding `wrangler login`).
 - Search quality spot check: 10 natural-language queries against the Pancake repo's own docs,
   ≥ 8 return a relevant chunk in the top 3.
@@ -363,7 +363,7 @@ nav-heavy page, non-English).
 
 | # | Deliverable | Est. |
 |---|---|---|
-| M0 | **Publish `pancake-wasm@0.2.0`**: version bump from 0.1.0, `prepublishOnly` gate (build:all + full test suites + worker-web test), release notes explicitly listing breaking changes vs the published 0.1.0 (mutable-ef and matrix helpers removed; restore/inspectSnapshot/per-query efSearch/PancakeError added). | 0.5 wk |
+| M0 | **Publish `pikelet-wasm@0.2.0`**: version bump from 0.1.0, `prepublishOnly` gate (build:all + full test suites + worker-web test), release notes explicitly listing breaking changes vs the published 0.1.0 (mutable-ef and matrix helpers removed; restore/inspectSnapshot/per-query efSearch/PancakeError added). | 0.5 wk |
 | M1 | Pipeline core: ingest (folder) + chunk + embed + build, CLI plumbing, config schema, bundle-ceiling gate | 1.5 wk |
 | M2 | Scaffolder + adapted worker template (manifest check, prefix policy, guardrail vars) + `rebuild` command with local pin | 1 wk |
 | M3 | URL crawl mode + deploy step + GH Action | 1 wk |
@@ -381,7 +381,7 @@ nav-heavy page, non-English).
   (`npm ls` gate, fail on any install script).
 - **R3 — Crawl liability:** users pointing the crawler at sites they don't own. Respect
   robots.txt, same-origin only, default page cap, identifiable User-Agent
-  (`create-pancake-search/x.y`), and a note in the generated README.
+  (`pikelet/x.y`), and a note in the generated README.
 - **R4 — Workers AI cost surprise:** per-query embedding is billed. Generated README must
   include an honest cost estimate; `RATE_LIMIT_RPM` ships on by default as the backstop; point
   to student mode as the future zero-cost path.
@@ -396,7 +396,7 @@ nav-heavy page, non-English).
 
 ## 11. Resolved decisions (was: open questions)
 
-- **Q1 — Naming: `create-pancake-search`, unscoped.** `npm create pancake-search` only maps
+- **Q1 — Naming: `pikelet`, unscoped.** `npx pikelet create` only maps
   cleanly unscoped; the scoped form would require `npm create @pancake/search` →
   `@pancake/create-search`, which nobody will guess.
 - **Q2 — Model allowlist: the BGE v1.5 family.** `bge-small-en-v1.5` (384D),
@@ -404,7 +404,7 @@ nav-heavy page, non-English).
   (`@cf/baai/bge-{small,base,large}-en-v1.5`), satisfying the identical-model-and-dims
   constraint. v1 ships **small only**; the allowlist plumbing carries dims through
   manifest → worker so adding base/large later is config, not code.
-- **Q3 — `rebuild` lives in `create-pancake-search`, pinned as a devDependency of the
+- **Q3 — `rebuild` lives in `pikelet`, pinned as a devDependency of the
   scaffold.** No second CLI; no floating `npx` latest (see §4.1 Stage 5). CI cold-start is a
   non-issue because `npm ci` installs the pinned version anyway.
 - **Q4 — UI ships as `ui.html`, imported by worker.js as a Text module.** Single deploy

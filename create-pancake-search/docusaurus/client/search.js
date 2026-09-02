@@ -3,7 +3,7 @@ import { computeMatchQuality, embedTextWithStudent, loadStudentModel } from '../
 
 const DEFAULT_K = 8;
 const DEFAULT_EF_SEARCH = 120;
-const DEFAULT_ASSET_BASE = '/pancake-search';
+const DEFAULT_ASSET_BASE = '/pikelet-search';
 
 function normalizeBase(value) {
   return String(value || DEFAULT_ASSET_BASE).replace(/\/+$/g, '');
@@ -49,11 +49,11 @@ function htmlEscape(value) {
 }
 
 function renderRows(results, corpusById, { debug = false } = {}) {
-  if (!results.length) return '<p class="pancake-search-empty">No results</p>';
-  return `<ol class="pancake-search-results">${results.map((hit) => {
+  if (!results.length) return '<p class="pikelet-search-empty">No results</p>';
+  return `<ol class="pikelet-search-results">${results.map((hit) => {
     const chunk = corpusById?.get(hit.id) || hit;
     const crumb = Array.isArray(chunk?.headingPath) && chunk.headingPath.length
-      ? `<span class="pancake-search-crumb">${htmlEscape(chunk.headingPath.join(' › '))}</span>`
+      ? `<span class="pikelet-search-crumb">${htmlEscape(chunk.headingPath.join(' › '))}</span>`
       : '';
     return `<li>
       <a href="${htmlEscape(resultUrl(chunk))}">${htmlEscape(chunk?.title || `Chunk ${hit.id}`)}</a>
@@ -67,9 +67,9 @@ function renderRows(results, corpusById, { debug = false } = {}) {
 async function loadBrowserRuntime() {
   if (typeof window === 'undefined') throw new Error('Pancake search can only load in a browser');
   // The widget only needs the range-artifact reader, which is pure JS. The
-  // full pancake-wasm/web entrypoint carries Vite-specific `?url` WASM asset
+  // full pikelet-wasm/web entrypoint carries Vite-specific `?url` WASM asset
   // imports that Docusaurus's webpack build cannot process.
-  const artifactModule = await import('pancake-wasm/artifact');
+  const artifactModule = await import('pikelet-wasm/artifact');
   const contract = artifactModule.default || artifactModule;
   return {
     RangeArtifact: contract.PancakeRangeArtifact,
@@ -101,7 +101,7 @@ function enableDrag(root, handle) {
       dx: event.clientX - rect.left,
       dy: event.clientY - rect.top,
     };
-    root.classList.add('pancake-search-dragging');
+    root.classList.add('pikelet-search-dragging');
     handle.setPointerCapture(event.pointerId);
   });
   handle.addEventListener('pointermove', (event) => {
@@ -117,7 +117,7 @@ function enableDrag(root, handle) {
   });
   function endDrag(event) {
     if (!drag || event.pointerId !== drag.pointerId) return;
-    root.classList.remove('pancake-search-dragging');
+    root.classList.remove('pikelet-search-dragging');
     drag = null;
   }
   handle.addEventListener('pointerup', endDrag);
@@ -125,7 +125,7 @@ function enableDrag(root, handle) {
   window.addEventListener('resize', () => clampPanel(root));
 }
 
-class PancakeDocusaurusSearch {
+class PikeletDocusaurusSearch {
   constructor(options = {}) {
     this.assetBase = normalizeBase(options.assetBase);
     this.k = Number(options.k || DEFAULT_K);
@@ -232,37 +232,37 @@ class PancakeDocusaurusSearch {
 }
 
 function mountSearch() {
-  const root = document.querySelector('[data-pancake-search]');
-  if (!root || root.dataset.pancakeMounted === '1') return;
-  root.dataset.pancakeMounted = '1';
-  const assetBase = root.dataset.pancakeAssetBase || window.__PANCAKE_SEARCH__?.assetBase;
-  const search = new PancakeDocusaurusSearch({ assetBase });
+  const root = document.querySelector('[data-pikelet-search]');
+  if (!root || root.dataset.pikeletMounted === '1') return;
+  root.dataset.pikeletMounted = '1';
+  const assetBase = root.dataset.pikeletAssetBase || window.__PANCAKE_SEARCH__?.assetBase;
+  const search = new PikeletDocusaurusSearch({ assetBase });
   root.innerHTML = `
-    <button class="pancake-search-launcher" type="button" aria-label="Open search">Search</button>
-    <section class="pancake-search-card" aria-label="Search documentation" hidden>
-      <div class="pancake-search-titlebar">
-        <button class="pancake-search-drag-handle" type="button" aria-label="Move search panel">
+    <button class="pikelet-search-launcher" type="button" aria-label="Open search">Search</button>
+    <section class="pikelet-search-card" aria-label="Search documentation" hidden>
+      <div class="pikelet-search-titlebar">
+        <button class="pikelet-search-drag-handle" type="button" aria-label="Move search panel">
           <span>Search docs</span>
         </button>
-        <button class="pancake-search-close" type="button" aria-label="Close search">×</button>
+        <button class="pikelet-search-close" type="button" aria-label="Close search">×</button>
       </div>
-      <form class="pancake-search-form">
-        <input class="pancake-search-input" type="search" autocomplete="off" placeholder="Search docs" />
-        <button class="pancake-search-button" type="submit">Search</button>
+      <form class="pikelet-search-form">
+        <input class="pikelet-search-input" type="search" autocomplete="off" placeholder="Search docs" />
+        <button class="pikelet-search-button" type="submit">Search</button>
       </form>
-      <div class="pancake-search-status">Loading search...</div>
-      <div class="pancake-search-output"></div>
+      <div class="pikelet-search-status">Loading search...</div>
+      <div class="pikelet-search-output"></div>
     </section>
   `;
-  const launcher = root.querySelector('.pancake-search-launcher');
-  const card = root.querySelector('.pancake-search-card');
-  const close = root.querySelector('.pancake-search-close');
-  const handle = root.querySelector('.pancake-search-drag-handle');
+  const launcher = root.querySelector('.pikelet-search-launcher');
+  const card = root.querySelector('.pikelet-search-card');
+  const close = root.querySelector('.pikelet-search-close');
+  const handle = root.querySelector('.pikelet-search-drag-handle');
   const form = root.querySelector('form');
   const input = root.querySelector('input');
-  const button = root.querySelector('.pancake-search-button');
-  const status = root.querySelector('.pancake-search-status');
-  const output = root.querySelector('.pancake-search-output');
+  const button = root.querySelector('.pikelet-search-button');
+  const status = root.querySelector('.pikelet-search-status');
+  const output = root.querySelector('.pikelet-search-output');
 
   enableDrag(root, handle);
   // Nothing loads until the panel first opens: page load costs zero search
@@ -299,7 +299,7 @@ function mountSearch() {
         ? ` - ${result.match_quality}`
         : '';
       status.textContent = `${result.results.length} results${quality} in ${(performance.now() - t0).toFixed(0)} ms`;
-      output.innerHTML = renderRows(result.results, search.state.corpusById, { debug: root.dataset.pancakeDebug === '1' });
+      output.innerHTML = renderRows(result.results, search.state.corpusById, { debug: root.dataset.pikeletDebug === '1' });
     } catch (error) {
       status.textContent = error.message || String(error);
     } finally {
@@ -309,9 +309,9 @@ function mountSearch() {
 }
 
 if (typeof window !== 'undefined') {
-  window.PancakeDocusaurusSearch = PancakeDocusaurusSearch;
+  window.PikeletDocusaurusSearch = PikeletDocusaurusSearch;
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountSearch);
   else mountSearch();
 }
 
-export { PancakeDocusaurusSearch, mountSearch };
+export { PikeletDocusaurusSearch, mountSearch };

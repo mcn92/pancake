@@ -1,4 +1,4 @@
-import Pancake, { PancakeError, PANCAKE_ERROR_CODES } from 'pancake-wasm';
+import Pancake, { PancakeError, PANCAKE_ERROR_CODES } from 'pikelet-wasm';
 import * as encoder from './encoder.js';
 import SNAPSHOT_ASSET from './assets/snapshot.pnck';
 import CORPUS_ASSET from './assets/corpus.json';

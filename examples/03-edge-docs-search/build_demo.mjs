@@ -63,7 +63,7 @@ function stripMarkdown(text) {
     .replace(/^\s*\d+\.\s+/gm, ' ')
     .replace(/[>#*_~|]/g, ' ')
     .replace(/\bghostCount\s*>\s*0\b/g, 'ghostCount > 0')
-    .replace(/\bpancake\s+wasm\b/gi, 'pancake-wasm')
+    .replace(/\bpancake\s+wasm\b/gi, 'pikelet-wasm')
     .replace(/\s+/g, ' ')
     .trim();
 }

@@ -42,7 +42,7 @@ async function embedChunks(chunks, config, log, projectDir) {
   try {
     transformers = await import('@xenova/transformers');
   } catch (error) {
-    throw new CliError(`Failed to load @xenova/transformers. Next: run npm install in the create-pancake-search package or generated project. ${error.message}`, 2);
+    throw new CliError(`Failed to load @xenova/transformers. Next: run npm install in the pikelet package or generated project. ${error.message}`, 2);
   }
   const extractor = await transformers.pipeline('feature-extraction', model.hfModel, { quantized: true });
   const vectors = [];
@@ -111,10 +111,10 @@ async function trainStudentVectors(chunks, embeddingConfig, log, projectDir) {
 // import.meta.url under the Docusaurus plugin), embedding falls back to the
 // sequential path below.
 function inlineEmbedWorkerCount(chunkCount) {
-  const env = process.env.PANCAKE_SEARCH_EMBED_WORKERS;
+  const env = process.env.PIKELET_EMBED_WORKERS ?? process.env.PANCAKE_SEARCH_EMBED_WORKERS;
   if (env !== undefined) {
     const parsed = parseInt(env, 10);
-    if (!Number.isInteger(parsed) || parsed < 0) throw new CliError('PANCAKE_SEARCH_EMBED_WORKERS must be a non-negative integer');
+    if (!Number.isInteger(parsed) || parsed < 0) throw new CliError('PIKELET_EMBED_WORKERS must be a non-negative integer');
     return Math.max(1, Math.min(parsed, chunkCount));
   }
   if (chunkCount < 32) return 1;

@@ -87,13 +87,13 @@ function generatedPackageJson(config) {
     scripts: {
       dev: 'wrangler dev --config wrangler.local.toml',
       deploy: 'wrangler deploy',
-      reindex: 'create-pancake-search rebuild --yes',
+      reindex: 'pikelet rebuild --yes',
     },
     dependencies: {
-      'pancake-wasm': PANCAKE_WASM_RANGE,
+      'pikelet-wasm': PANCAKE_WASM_RANGE,
     },
     devDependencies: {
-      'create-pancake-search': CLI_VERSION,
+      'pikelet': CLI_VERSION,
       wrangler: '^4.81.1',
     },
   }, null, 2)}\n`;

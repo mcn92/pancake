@@ -1,5 +1,5 @@
 /**
- * pancake-wasm/complete — reader for complete .pancake artifacts
+ * pikelet-wasm/complete — reader for complete .pancake artifacts
  * (spec/COMPLETE_PROFILE.md, profile pancake-complete-v1). Opens any kind
  * (1 student-inline, 2 declared-external, 3 inline-transformer) from a file
  * path in Node or a range source anywhere.
@@ -284,3 +284,6 @@ export declare function buildInlineTestVectors(embedder: unknown, texts?: string
   text: string; windows: number; embedding: number[]; tolerance: number;
 }>>;
 export declare function verifyInlineTestVectors(embedder: unknown): Promise<{ checked: number }>;
+
+/** Documented alias for openPancakeFile — the project renamed to Pikelet; the reader's original export stays for compatibility. */
+export declare const openPikeletFile: typeof openPancakeFile;
