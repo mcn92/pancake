@@ -349,6 +349,19 @@ export async function openPancakeFile(input, options = {}) {
             throw new Error('.pancake header places the manifest or segment table past the file');
         }
         const identity = toHex(header.subarray(24, 56));
+        // A caller pinning an expected identity (a shelf entry, a lockfile,
+        // `--pack url#sha256`) is refused at the earliest possible moment —
+        // one 64-byte header read in. Wrong knowledge object: don't touch
+        // the knowledge object. The manifest hash check below still binds
+        // the header's claim to the actual manifest bytes.
+        if (options.expectedIdentity !== undefined) {
+            if (typeof options.expectedIdentity !== 'string' || !/^[0-9a-f]{64}$/i.test(options.expectedIdentity)) {
+                throw new Error('options.expectedIdentity must be a sha256 hex string');
+            }
+            if (identity !== options.expectedIdentity.toLowerCase()) {
+                throw new Error(`.pancake identity mismatch: expected ${options.expectedIdentity.toLowerCase()}, found ${identity}`);
+            }
+        }
 
         const manifestBuf = await readChecked(source, HEADER_BYTES, manifestBytes, 'manifest', maxReadBytes, fileBytes);
         if (await sha256hex(manifestBuf) !== identity) {

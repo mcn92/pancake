@@ -26,6 +26,27 @@ query text
 The `pancake-wasm` package carries both the vector engine and the artifact
 runtime.
 
+## Knowledge Packs
+
+The same file doubles as a **knowledge pack** for LLMs. A `.pancake` is a
+portable, immutable corpus that contains its own query encoder, semantic
+and lexical indexes, calibrated abstention, provenance, and integrity
+metadata. Publish it as a static file; an MCP client attaches and queries
+it directly over HTTP range requests — no index to rebuild, no vector
+database to run, no embedding service to call:
+
+```bash
+npx create-pancake-search mcp install --client claude-code \
+  --pack https://github.com/mcn92/pancake/releases/download/artifact-wiki-inline-v4/pancake-wiki-inline.pancake#1b180adf4c6cebb2dcd5615256df6a25dac5fda8738dbbc11d60af86046f97f3
+```
+
+Then ask questions. That line pins 456,153 passages of Simple English
+Wikipedia by content hash: the mount transfers a ~52 MiB resident slice
+of the 649 MiB file, each question costs ~127 range reads, results carry
+their provenance (pack identity, title, section, source), and a pack that
+cannot answer says so instead of guessing. Details in the
+create-pancake-search README ("Attaching packs to an LLM") and `packs/`.
+
 ## What's in This Repo
 
 Three layers, bottom to top:

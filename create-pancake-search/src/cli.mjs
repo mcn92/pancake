@@ -38,6 +38,7 @@ export async function main(argv) {
         client: parsed.flags.client || 'claude-code',
         serverName: parsed.flags['server-name'] || 'knowledge-packs',
         force: parsed.flags.force === true,
+        version: CLI_VERSION,
       });
       console.log(`Wrote MCP server "${written.serverName}" to ${written.configPath}`);
       console.log(written.hint);

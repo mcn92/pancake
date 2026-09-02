@@ -51,7 +51,7 @@ export declare function httpRangeSource(url: string, options?: {
   cacheKeyParam?: string | null | false;
   /**
    * Retries per read for transient statuses (429/502/503/504), with capped
-   * exponential backoff (Retry-After honored when sane). Default 4; 0
+   * exponential backoff (Retry-After honored when sane). Default 6; 0
    * disables. CDNs rate-limit the parallel range bursts a query issues.
    */
   maxRetries?: number;
@@ -181,6 +181,13 @@ export declare function openPancakeFile(
     allowUnverifiedEncoder?: boolean;
     /** Verify each hydrated record against its digest on format 2. Default true. */
     verifyRecords?: boolean;
+    /**
+     * Pin the expected manifest identity (sha256 hex). Checked against the
+     * header one 64-byte read in — a mismatched artifact is refused before
+     * anything else is fetched; the manifest-hash verification then binds
+     * the header's claim to the manifest bytes as always.
+     */
+    expectedIdentity?: string;
     /**
      * Kind-3 artifacts open lazily: the ~25 MiB inline-encoder region is not
      * read at open, and by default starts downloading in the background the

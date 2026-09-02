@@ -94,6 +94,29 @@ first.
   should carry one. Scaffold e2e grows to 46 checks (verify_pack
   goldens, URL mount over a local range server, wrong-pin refusal,
   install round-trip).
+- **The MCP server is dual-era: current protocol revision 2026-07-28
+  served statelessly alongside the legacy initialize handshake.** Modern
+  requests carry their protocol version in `_meta` per request; the
+  server answers the mandatory `server/discover` (supported versions,
+  capabilities, pack-usage instructions, cache hints), decorates modern
+  results with `resultType` and server identity, returns
+  `UnsupportedProtocolVersionError` (-32022, with the supported list)
+  for unknown versions, and marks `tools/list` as a CacheableResult with
+  deterministic tool order. Legacy clients (2025-11-25 and earlier) get
+  the exact pre-modern shapes, initialize handshake included — era is
+  selected per request, as the spec's dual-era rules describe. A
+  protocol-only conformance suite (16 checks, stubbed pack, no compile
+  or network) runs in `npm test`, so interoperability is verified in CI,
+  both eras. Also: an identity pin (`--pack …#sha256`, shelf entries) is
+  now enforced by the reader itself via `openPancakeFile`'s new
+  `expectedIdentity` option — a mismatched artifact is refused after the
+  64-byte header read, before the manifest or any segment is touched
+  (conformance asserts exactly one read happens); `mcp install` pins the
+  runtime version it writes (`create-pancake-search@<version>`) so
+  content-addressed packs are not served by whatever npm publishes next
+  month; and `verify_pack` describes itself as self-verification —
+  proving the artifact is intact and behaves as built, not that its
+  content is true or its publisher trustworthy.
 - **The complete reader's resident scan accelerates through the engine's
   SIMD scan kernel — warm-query p50 at the 456k wiki scale drops from
   ~540 ms to ~129 ms** (measured A/B on a local file source; ~110 ms/query

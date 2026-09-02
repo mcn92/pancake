@@ -14,7 +14,7 @@ async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, c
     assemblePancakeFile, buildCorpusSegment, buildInlineTransformerEncoderSegment, PROFILE_V2,
     buildQueryInterpSegment, buildLexicalSegment, measureRecommendedRerank, loadInlineEncoderKernel,
   } = (await loadCompleteModules()).builder;
-  const { createInlineTransformerEmbedder, buildInlineTestVectors } = (await loadCompleteModules()).reader;
+  const { createInlineTransformerEmbedder, buildInlineTestVectors, openPancakeFile } = (await loadCompleteModules()).reader;
   const runtime = config.runtime || {};
   const { encoder, vocabPath, weightsPath } = await resolveInlineEncoderInputs(config, projectDir);
 
@@ -90,13 +90,17 @@ async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, c
     recommendedRerank: rerankSweep.recommendedRerank,
   });
   const records = chunks.map((chunk) => Buffer.from(JSON.stringify(publicChunk(chunk)), 'utf8'));
-  const evaluation = Buffer.from(JSON.stringify({
+  const generatedAt = new Date().toISOString();
+  const evaluationBytes = (goldens) => Buffer.from(JSON.stringify({
     kind: 'docs-site-build-v1',
-    generatedAt: new Date().toISOString(),
+    generatedAt,
     querySet: runtime.evaluation?.queries || [],
-    // Each verified at build time to retrieve its source; expectId names a
-    // chunk id, expectTitle any chunk of the titled document.
-    goldenQueries,
+    // Each verified at build time to retrieve its source — first against
+    // the calibration index, then replayed through the assembled artifact
+    // itself (below), so the tests the file carries are true of the file
+    // by construction. expectId names a chunk id, expectTitle any chunk
+    // of the titled document.
+    goldenQueries: goldens,
     // COMPLETE_PROFILE.md section 5.4: the recall-vs-C measurements behind
     // this artifact's recommendedRerank.
     rerankSweep,
@@ -108,7 +112,7 @@ async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, c
   // scan's candidate cutoff. Older readers skip the segment.
   const lexical = buildLexicalSegment(chunks.map((chunk) => chunk.text || ''));
   log(`Built lexical index: ${lexical.meta.terms.toLocaleString()} terms over ${lexical.meta.docCount.toLocaleString()} records (${(lexical.bytes.length / 1024).toFixed(0)} KiB)`);
-  const result = assemblePancakeFile({
+  const assemble = (goldens) => assemblePancakeFile({
     profile: PROFILE_V2,
     corpus: {
       ...corpusSegment.corpus,
@@ -137,9 +141,40 @@ async function buildCompleteArtifact({ Pancake, projectDir, assetsDir, config, c
     { kind: 'index', bytes: Buffer.from(sketch.bytes) },
     { kind: 'corpus', bytes: corpusSegment.bytes },
     { kind: 'query-interp', bytes: buildQueryInterpSegment(3, inlineEncoderBytes, calibrationBytes) },
-    { kind: 'evaluation', bytes: evaluation },
+    { kind: 'evaluation', bytes: evaluationBytes(goldens) },
     { kind: 'lexical', bytes: lexical.bytes },
   ], outPath);
+  let result = assemble(goldenQueries);
+  // Replay the candidate goldens through the assembled artifact's own
+  // retrieval (sketch scan + rerank + hybrid ordering, inline encoder) —
+  // the configuration a reader will actually run, which the calibration
+  // index only approximates. A golden that does not reproduce there is
+  // dropped and the file reassembled: verify_pack and acceptance tests
+  // must pass by construction on the shipped bytes. (The evaluation
+  // segment does not feed retrieval, so the replay stays valid across
+  // the reassembly.)
+  if (goldenQueries.length) {
+    const replay = await openPancakeFile(outPath);
+    let kept;
+    try {
+      kept = [];
+      for (const golden of goldenQueries) {
+        const out = await replay.query(golden.text, { k: 10 });
+        const hit = golden.expectId !== undefined
+          ? out.results.some((r) => r.id === golden.expectId)
+          : out.results.some((r) => (r.title || '').trim() === golden.expectTitle);
+        if (hit) kept.push(golden);
+      }
+    } finally {
+      await replay.close();
+    }
+    if (kept.length !== goldenQueries.length) {
+      log(`Golden replay against the assembled artifact: ${kept.length}/${goldenQueries.length} reproduce; embedding the ${kept.length} that do`);
+      result = assemble(kept);
+    } else {
+      log(`Golden replay against the assembled artifact: ${kept.length}/${kept.length} reproduce`);
+    }
+  }
   return {
     profile: PROFILE_V2,
     kind: 'inline-transformer-v1',

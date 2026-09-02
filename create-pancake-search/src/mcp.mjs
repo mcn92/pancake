@@ -29,7 +29,22 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline';
 
-const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
+// Dual-era protocol support (spec 2026-07-28 "Versioning and
+// Compatibility"): modern revisions are stateless — every request carries
+// its protocol version in _meta, servers answer server/discover, results
+// carry resultType and serverInfo metadata — while legacy revisions open
+// with an initialize handshake. This server serves both concurrently:
+// a request with modern _meta gets modern semantics, an initialize gets
+// the legacy session. Legacy responses stay byte-shaped as before —
+// modern decoration is only added where modern clients look for it.
+const MODERN_VERSIONS = ['2026-07-28'];
+const LEGACY_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
+const META_VERSION = 'io.modelcontextprotocol/protocolVersion';
+const META_SERVER_INFO = 'io.modelcontextprotocol/serverInfo';
+// tools/list is static for the life of the process (packs mount once), so
+// modern CacheableResult hints let clients cache it for an hour; private
+// because mounted packs are the user's own configuration.
+const CACHE_HINTS = { ttlMs: 3600000, cacheScope: 'private' };
 // Result text is chunk-sized by construction (compile targets ~256
 // tokens); k stays small so one tool result cannot flood a context window.
 const MAX_K = 20;
@@ -69,8 +84,9 @@ function toolDefinitions(packs) {
       description: 'Run the tests a pack carries inside itself: golden queries (each verified '
         + 'at build time to retrieve its source) and abstention probes (queries the pack must '
         + 'answer or must refuse). Reports pass/fail per test plus the pack\'s encoder and '
-        + 'integrity verification state — an audit of the knowledge source, from the knowledge '
-        + 'source. Use it to establish trust in a newly attached pack.',
+        + 'integrity verification state. This is self-verification: it proves the artifact is '
+        + 'intact and behaves as it did when built — not that its content is true or its '
+        + 'publisher trustworthy.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -253,19 +269,26 @@ async function mountPack(packs, spec, { openPancakeFile, httpRangeSource, log })
   // nothing downloaded but the resident slice and per-query ranges. The
   // reader's own bounded full-download fallback covers hosts that ignore
   // Range (`create-pancake-search doctor <url>` certifies a host).
-  const search = isUrl
-    ? await (async () => {
-      const source = httpRangeSource(spec.location);
-      await source.init();
-      return openPancakeFile(source);
-    })()
-    : await openPancakeFile(path.resolve(spec.location));
-  const info = search.info();
-  if (spec.identity && info.identity !== spec.identity) {
-    await search.close();
-    throw new Error(`${spec.location}: identity mismatch — expected ${spec.identity}, got ${info.identity}. `
-      + 'The pack at this location is not the knowledge state the mount pinned; refusing to serve it.');
+  // A pinned identity is enforced by the reader itself, one header read
+  // in — a mismatched pack is refused before any of it is opened.
+  const openOptions = spec.identity ? { expectedIdentity: spec.identity } : {};
+  let search;
+  try {
+    search = isUrl
+      ? await (async () => {
+        const source = httpRangeSource(spec.location);
+        await source.init();
+        return openPancakeFile(source, openOptions);
+      })()
+      : await openPancakeFile(path.resolve(spec.location), openOptions);
+  } catch (err) {
+    if (/identity mismatch/.test(String(err?.message))) {
+      throw new Error(`${spec.location}: ${err.message} — the pack at this location is not the `
+        + 'knowledge state the mount pinned; refusing to serve it.');
+    }
+    throw err;
   }
+  const info = search.info();
   if (info.encoder && info.encoder.kind === 'external-transformers-v1') {
     await search.close();
     throw new Error(`${spec.location}: kind-2 packs need a host encoder and cannot be mounted self-contained; `
@@ -293,7 +316,7 @@ async function mountPack(packs, spec, { openPancakeFile, httpRangeSource, log })
  * preserved; an existing server of the same name is only replaced with
  * force.
  */
-export async function installMcpConfig({ packPaths, shelf, client = 'claude-code', serverName = 'knowledge-packs', force = false, homedir = undefined, cwd = undefined }) {
+export async function installMcpConfig({ packPaths, shelf, client = 'claude-code', serverName = 'knowledge-packs', force = false, version = undefined, homedir = undefined, cwd = undefined }) {
   const os = await import('node:os');
   const home = homedir || os.homedir();
   const base = cwd || process.cwd();
@@ -316,7 +339,10 @@ export async function installMcpConfig({ packPaths, shelf, client = 'claude-code
   } else {
     throw new Error(`mcp install: unknown --client ${client} (use claude-code or claude-desktop)`);
   }
-  const args = ['-y', 'create-pancake-search', 'mcp'];
+  // The runtime is version-pinned: the packs are content-addressed and
+  // immutable, and a reader that silently floats to whatever npm serves
+  // next month would undercut exactly that reproducibility.
+  const args = ['-y', version ? `create-pancake-search@${version}` : 'create-pancake-search', 'mcp'];
   for (const raw of packPaths || []) {
     // Local paths are pinned absolute so the config works from any cwd;
     // URLs (and #identity pins) pass through untouched.
@@ -417,9 +443,10 @@ export async function runMcpServer({ packPaths, openPancakeFile, httpRangeSource
     mounted.warmup = mounted.search.query(probe, { k: 1 }).catch(() => {});
   }
 
+  const serverInfo = { name: 'pancake-knowledge-packs', version: serverVersion };
+  const supportedVersions = [...MODERN_VERSIONS, ...LEGACY_VERSIONS];
   const send = (message) => stdout.write(`${JSON.stringify(message)}\n`);
-  const reply = (id, result) => send({ jsonrpc: '2.0', id, result });
-  const replyError = (id, code, message) => send({ jsonrpc: '2.0', id, error: { code, message } });
+  const replyError = (id, code, message, data) => send({ jsonrpc: '2.0', id, error: { code, message, ...(data ? { data } : {}) } });
 
   const rl = readline.createInterface({ input: stdin, crlfDelay: Infinity });
   for await (const line of rl) {
@@ -433,18 +460,48 @@ export async function runMcpServer({ packPaths, openPancakeFile, httpRangeSource
     const { id, method, params } = message;
     // Notifications (no id) get no response, per JSON-RPC.
     const isRequest = id !== undefined && id !== null;
+    // Modern requests declare their version per request; server/discover
+    // is modern by definition (it is the stdio compatibility probe).
+    const metaVersion = typeof params?._meta?.[META_VERSION] === 'string' ? params._meta[META_VERSION] : null;
+    const modern = metaVersion !== null || method === 'server/discover';
+    // Modern results carry resultType and server identity; legacy results
+    // keep their exact pre-modern shape.
+    const reply = (replyId, result) => send({
+      jsonrpc: '2.0',
+      id: replyId,
+      result: modern
+        ? { resultType: 'complete', ...result, _meta: { [META_SERVER_INFO]: serverInfo, ...(result._meta || {}) } }
+        : result,
+    });
     try {
-      if (method === 'initialize') {
+      if (metaVersion !== null && !supportedVersions.includes(metaVersion)) {
+        if (isRequest) {
+          replyError(id, -32022, 'Unsupported protocol version', { supported: supportedVersions, requested: metaVersion });
+        }
+      } else if (method === 'server/discover') {
+        reply(id, {
+          supportedVersions,
+          capabilities: { tools: {} },
+          instructions: 'This server mounts .pancake knowledge packs. Use search to retrieve '
+            + 'provenanced passages; matchQuality "none" means the pack does not contain the '
+            + 'answer — say so rather than guessing. verify_pack runs the tests a pack carries '
+            + 'inside itself; list_packs reports identities for citation pinning.',
+          ...CACHE_HINTS,
+        });
+      } else if (method === 'initialize') {
         const requested = params?.protocolVersion;
         reply(id, {
-          protocolVersion: PROTOCOL_VERSIONS.includes(requested) ? requested : PROTOCOL_VERSIONS[0],
+          protocolVersion: LEGACY_VERSIONS.includes(requested) ? requested : LEGACY_VERSIONS[0],
           capabilities: { tools: {} },
-          serverInfo: { name: 'pancake-knowledge-packs', version: serverVersion },
+          serverInfo,
         });
       } else if (method === 'ping') {
+        // Removed in 2026-07-28 but kept for legacy clients; a modern
+        // caller who sends it anyway gets a well-formed empty result.
         if (isRequest) reply(id, {});
       } else if (method === 'tools/list') {
-        reply(id, { tools: toolDefinitions(packs) });
+        // Deterministic order (mount order) per the modern caching rules.
+        reply(id, { tools: toolDefinitions(packs), ...(modern ? CACHE_HINTS : {}) });
       } else if (method === 'tools/call') {
         const toolName = params?.name;
         const args = params?.arguments ?? {};

@@ -900,6 +900,35 @@ console.log('\nD. lexical segment and hybrid retrieval');
 }
 
 {
+    // --- expectedIdentity: refused one header read in ---
+    // Wrong knowledge object: don't touch the knowledge object. A pinned
+    // open that finds a different identity must stop after the 64-byte
+    // header, before the manifest or any segment is fetched.
+    let reads = 0;
+    const counting = {
+        size: A.bytes.length,
+        preferredParallelism: Infinity,
+        preferredGapBytes: 2048,
+        async read(offset, length) { reads += 1; return A.bytes.subarray(offset, offset + length); },
+        async close() {},
+    };
+    await rejects('a mismatched identity pin refuses the open',
+        () => openPancakeFile(counting, { expectedIdentity: 'f'.repeat(64) }), /identity mismatch/);
+    check('the mismatch is decided on the header read alone', reads === 1, `${reads} reads`);
+    await rejects('a malformed identity pin is rejected as such',
+        () => openPancakeFile(memorySource(A.bytes), { expectedIdentity: 'not-a-hash' }), /sha256 hex/);
+    const unpinned = await openPancakeFile(memorySource(A.bytes), { encodeQuery: hostEncode });
+    const trueIdentity = unpinned.info().identity;
+    await unpinned.close();
+    const pinned = await openPancakeFile(memorySource(A.bytes), {
+        encodeQuery: hostEncode,
+        expectedIdentity: trueIdentity.toUpperCase(), // case-insensitive pin
+    });
+    check('a correct identity pin opens and serves', pinned.info().identity === trueIdentity);
+    await pinned.close();
+}
+
+{
     // --- httpRangeSource redirect memoization ---
     // A redirecting host (GitHub release assets: every hit to the front
     // door 302s to a signed URL) must be charged once, not per range read;
