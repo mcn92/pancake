@@ -291,7 +291,7 @@ about cloning one implementation.
 Exact byte-for-byte equality is not required between producers.
 
 Rank-identical output is a property of one reference reader on one build
-target, not of the contract. Pancake's own engine produces different distance
+target, not of the contract. Pikelet's own engine produces different distance
 reduction orders across WASM SIMD, scalar WASM, and native SIMD builds, so a
 tolerance regime that demands rank-identical results from independent readers
 cannot be satisfied honestly.
@@ -391,14 +391,14 @@ The Search Artifact contract does not require:
 Immutability is a feature of the contract. Mutable search systems can exist
 beside it, but they are not the artifact model.
 
-## 9. Current Pancake Profiles
+## 9. Current Pikelet Profiles
 
-Current Pancake implementations are moving toward this contract through these
+Current Pikelet implementations are moving toward this contract through these
 profiles:
 
 ### 9.1 Snapshot Profile (`.pnck`)
 
-The snapshot profile carries a Pancake index snapshot suitable for full restore
+The snapshot profile carries a Pikelet index snapshot suitable for full restore
 into memory. It is useful for Node, browser, and Worker deployments where the
 entire index fits within memory and bundle limits.
 
@@ -419,7 +419,7 @@ profile for every measured regime: depth-1 execution beat graph traversal
 `.pancake-range` artifacts stay openable; producers should not emit new
 ones, and no further format revisions are planned.
 
-The range artifact profile carries a range-readable Pancake index that separates
+The range artifact profile carries a range-readable Pikelet index that separates
 resident routing data from lazily materialized node records.
 
 It is intended for bounded-memory execution over immutable storage. Current
@@ -465,7 +465,7 @@ artifact identity.
 This profile is implemented and shipping: byte layout and reader obligations
 are specified in `COMPLETE_PROFILE.md` (Draft 2), the reader and builder
 ship in `pikelet-wasm/complete`, and `pikelet compile` emits
-it. It is the profile that turns Pancake from a vector-search library into
+it. It is the profile that turns Pikelet from a vector-search library into
 an artifact compiler and reader.
 
 ## 10. Open Decisions
@@ -496,5 +496,5 @@ declaration (4.5).
 A Search Artifact is a content-addressed, immutable search package whose corpus,
 index, query interpretation, evaluation, and calibration define a portable
 behavioral contract that any conforming reader or producer can implement from
-the profile specifications alone, without reproducing Pancake's construction
+the profile specifications alone, without reproducing Pikelet's construction
 algorithms.
