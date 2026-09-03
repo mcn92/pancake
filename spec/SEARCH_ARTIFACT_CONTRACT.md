@@ -1,7 +1,10 @@
 # Search Artifact Contract
 
+Copyright 2026 Matthew Noonan. This specification is part of the Pikelet
+project and is licensed under the Apache License 2.0 (see `LICENSE`).
+
 **Status:** Draft 1  
-**Scope:** Behavioral contract for Pancake Search Artifacts. This document is
+**Scope:** Behavioral contract for Pikelet Search Artifacts. This document is
 not a byte-layout specification.
 
 Draft 1 resolves three previously open decisions — the identity scheme, the
@@ -45,7 +48,7 @@ context of one corpus.
 
 **Artifact**  
 An immutable package of bytes and metadata that declares a search contract.
-Current Pancake artifacts are the complete `.pikelet` profile and the
+Current Pikelet artifacts are the complete `.pikelet` profile and the
 `.pancake-sketch` index profile it embeds. `.pnck` snapshots (engine
 serialization) and the deprecated `.pancake-range` profile predate the
 contract and cover fewer layers; see section 9.
@@ -55,7 +58,7 @@ Software that opens an artifact and executes the behavior declared by the
 artifact.
 
 **Producer**  
-Software that emits an artifact. A producer does not need to use Pancake's
+Software that emits an artifact. A producer does not need to use Pikelet's
 index builder or algorithms.
 
 **Host**  
@@ -190,7 +193,7 @@ procedure itself: entry selection, upper-layer descent, beam semantics and
 their parameters, termination, and tie behavior. The byte-layout specification
 for each graph profile MUST define that traversal. Construction remains out of
 contract: a conforming reader does not need to reconstruct the producer's
-build algorithm, and a producer does not need to use Pancake's builder — but a
+build algorithm, and a producer does not need to use Pikelet's builder — but a
 reader cannot claim conformance for a graph profile without implementing that
 profile's traversal semantics.
 
@@ -276,7 +279,7 @@ A producer is conforming for a profile if it emits artifacts that:
 - pass the conformance suite
 - meet their own declared evaluation bounds
 
-A producer does not need to replicate Pancake's HNSW construction, quantizer, or
+A producer does not need to replicate Pikelet's HNSW construction, quantizer, or
 layout algorithm. It must emit a valid artifact whose observable behavior
 matches the contract it declares.
 

@@ -1,4 +1,7 @@
-# Pancake Complete Search Artifact Profile
+# Pikelet Complete Search Artifact Profile
+
+Copyright 2026 Matthew Noonan. This specification is part of the Pikelet
+project and is licensed under the Apache License 2.0 (see `LICENSE`).
 
 **Status:** Draft 2 (2026-08-21) — for review, not frozen. Draft 2 adds
 format version 2: per-record corpus integrity (section 3.5), the host-encoder

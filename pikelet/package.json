@@ -17,7 +17,8 @@
     "tools",
     "templates",
     "schemas",
-    "README.md"
+    "README.md",
+    "NOTICE"
   ],
   "scripts": {
     "smoke": "PANCAKE_SEARCH_STUB_EMBEDDINGS=1 node bin/pikelet.mjs --name /tmp/pancake-search-smoke --source ../docs --no-deploy --yes --force"

@@ -95,7 +95,8 @@
     "dist/engine.scalar.wasm",
     "LICENSE",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "NOTICE"
   ],
   "scripts": {
     "build": "node scripts/build-engine.mjs",
