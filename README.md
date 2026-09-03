@@ -7,6 +7,10 @@ Pikelet is a search engine you host like a file.
 > old package names are deprecated pointers to `pikelet-wasm` and
 > `pikelet`.
 
+Looking for the [Pikelet programming language](https://github.com/pikelet-lang/pikelet)?
+That's Brendan Zabarauskas's dependently-typed systems language — an
+unrelated project that had the name first.
+
 At the bottom there's a small WebAssembly HNSW vector engine that runs
 anywhere JavaScript does — Node, browsers, Cloudflare Workers — with no
 native dependencies. On top of it sit immutable search artifact formats:
