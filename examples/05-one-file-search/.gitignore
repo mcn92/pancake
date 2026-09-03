@@ -2,6 +2,7 @@
 # .pancake gets committed as the golden conformance fixture is an open
 # decision (spec/COMPLETE_PROFILE.md section 5).
 *.pancake
+*.pikelet
 *.tampered
 web/dist/
 
