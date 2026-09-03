@@ -4,7 +4,7 @@
 backends, the WASM C ABI, the JavaScript wrapper, the native benchmarking addon,
 serialization, and the Cloudflare Worker reference deployments.
 **Last updated:** 2026-07-19
-**Status:** Reflects the current source tree (`src/`, `pancake-core.js`,
+**Status:** Reflects the current source tree (`src/`, `pikelet-core.js`,
 `native/`, `examples/reference-worker*`). This document was written from a ground-up
 re-read of the code.
 
@@ -70,8 +70,8 @@ the caller's responsibility.
 │   Node.js app   │   Cloudflare Worker   │   Browser (ESM import)   │
 ├─────────┬───────┴───────────┬───────────┴──────────┬──────────────┤
 │  JS Wrapper Layer           │                      │              │
-│   pancake.js / pancake.node.mjs / pancake.web.mjs / pancake.workerd.mjs │
-│            └──────────── pancake-core.js ──────────┘              │
+│   pikelet.js / pikelet.node.mjs / pikelet.web.mjs / pikelet.workerd.mjs │
+│            └──────────── pikelet-core.js ──────────┘              │
 │            PancakeIndex: marshalling, ID translation,             │
 │            export envelope, buffer management                     │
 ├──────────────────────────────┬────────────────────────────────────┤
@@ -88,8 +88,8 @@ the caller's responsibility.
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-One sibling of `pancake-core.js` is deliberately absent from the diagram
-above: `pancake-artifact.js`, the Search Artifact layer. It implements the
+One sibling of `pikelet-core.js` is deliberately absent from the diagram
+above: `pikelet-artifact.js`, the Search Artifact layer. It implements the
 sketch (`.pancake-sketch`) and deprecated range-readable (`.pancake-range`)
 readers and builders in pure JS on top of a `read(offset, length)` source
 abstraction —
@@ -396,12 +396,12 @@ The complete export list is in [Appendix A](#appendix-a-wasm-export-inventory).
 
 | Entry | File | WASM resolution |
 |-------|------|-----------------|
-| CJS (Node) | `pancake.js` | reads each selected asset once, compiles once, instantiates per index |
-| ESM (Node) | `pancake.node.mjs` | same, via `node:fs` + `fileURLToPath` |
-| Web | `pancake.web.mjs` | fetches each selected asset once, compiles once, instantiates per index |
-| workerd | `pancake.workerd.mjs` | consumes the bundled precompiled module and instantiates per index |
+| CJS (Node) | `pikelet.js` | reads each selected asset once, compiles once, instantiates per index |
+| ESM (Node) | `pikelet.node.mjs` | same, via `node:fs` + `fileURLToPath` |
+| Web | `pikelet.web.mjs` | fetches each selected asset once, compiles once, instantiates per index |
+| workerd | `pikelet.workerd.mjs` | consumes the bundled precompiled module and instantiates per index |
 
-All entrypoints share `pancake-loader.js`, which memoizes source and compiled
+All entrypoints share `pikelet-loader.js`, which memoizes source and compiled
 module promises per SIMD/scalar variant. Concurrent `create()` calls therefore
 share fetch/read/compile work but each call invokes the Emscripten factory with
 a fresh `WebAssembly.Instance`. Heaps, handle tables, growth, failure, and
@@ -430,11 +430,11 @@ The preferred state properties are `liveCount`, `deletedCount`, `deletedRatio`,
 configuration, and the default `efSearch` are cached; backend counts and logical
 memory proxy to WASM.
 
-**Module-level API.** Beyond `create()`, `pancake-core.js` exports
+**Module-level API.** Beyond `create()`, `pikelet-core.js` exports
 `fromVectors()` (bulk ingest returning `{ index, ids, idMap }`), `restore()`
 (config-inferring snapshot restore), `inspectSnapshot()` (header validation
 without creating a WASM instance), and `withIndex()` (scoped create/use/dispose)
-(`pancake-core.js:892–1035`). The Node entrypoints add `loadJsonFile()` and
+(`pikelet-core.js:892–1035`). The Node entrypoints add `loadJsonFile()` and
 `loadSnapshotFile()`; the web/workerd entrypoints stub the file helpers to throw
 `INVALID_ARGUMENT`.
 
@@ -442,10 +442,10 @@ without creating a WASM instance), and `withIndex()` (scoped create/use/dispose)
 
 Search result buffers (`_idPtr`, `_distPtr`) are reused across queries and grown
 on demand by `_ensureSearchCapacity` when `k` exceeds the current capacity
-(`pancake-core.js:639`). Result ids are read back as a `uint64` (two `uint32`
+(`pikelet-core.js:639`). Result ids are read back as a `uint64` (two `uint32`
 halves recombined) from the heap and translated to external ids; for L2 the
 stored squared distance is `Math.sqrt`-ed before being returned
-(`pancake-core.js:773`). `dispose()` frees all three scratch pointers even if the
+(`pikelet-core.js:773`). `dispose()` frees all three scratch pointers even if the
 handle dispose throws, then sets a disposed flag that every method checks.
 
 ---
@@ -454,7 +454,7 @@ handle dispose throws, then sets a disposed flag that every method checks.
 
 The WASM backend assigns sequential internal ids (0, 1, 2, …) and **reassigns
 them on compaction** (gaps from deletes are closed). To give callers stable ids,
-`pancake-core.js` keeps a bidirectional map:
+`pikelet-core.js` keeps a bidirectional map:
 
 - `_extToInt: Map<extId, intId>`
 - `_intToExt: Map<intId, extId>`
@@ -462,7 +462,7 @@ them on compaction** (gaps from deletes are closed). To give callers stable ids,
 - `_nextExtId`: monotonic external-id counter, never reused
 
 External ids are assigned at insert and never change. On `compact()`
-(`pancake-core.js:285`):
+(`pikelet-core.js:285`):
 
 1. Allocate a `countBefore × u32` map buffer and call
    `_pancake_compact_remap(handle, mapPtr, countBefore)`.
@@ -518,7 +518,7 @@ footprint.
 `PancakeIndex.export()` wraps the backend blob with a 32-byte header **plus an
 embedded id-mapping table** so external ids survive an export/import cycle. This
 is new in v3 — earlier envelopes (v1/v2, 20-byte header, still accepted on
-import) carried no mapping. (`pancake-core.js:10`, `:334`.)
+import) carried no mapping. (`pikelet-core.js:10`, `:334`.)
 
 ```
 Offset  Size           Field
@@ -543,7 +543,7 @@ validates its construction fields against the target, including
 entry count must equal the vector count declared in the backend header, internal
 ids must fall in `[0, count)`, external ids must be unique and non-negative, and
 `nextExtId` must exceed every mapped id — then commits the restored maps
-(`pancake-core.js:686–718`). A bare backend blob with no envelope is imported
+(`pikelet-core.js:686–718`). A bare backend blob with no envelope is imported
 with identity id mappings.
 
 ### 9.4 Untrusted-snapshot hardening (backend deserialize)
@@ -659,7 +659,7 @@ operator controls both the URL and the machine. Keep it that way: a future
 "restore from URL" route on a deployed Worker is the moment scheme
 allowlisting, private/link-local IP rejection, redirect pinning, and
 response size caps become mandatory — the crawler in
-`create-pancake-search/src/ingest.mjs` already implements most of that list
+`pikelet/src/ingest.mjs` already implements most of that list
 and is the model to copy.
 
 ### 11.1 Request lifecycle
@@ -738,7 +738,7 @@ index out-of-band, deploy read-only, expose only search.
 ### 11.5 ID mapping
 
 The Worker uses the public API and does not maintain a second mapping layer.
-Stable external IDs live in `pancake-core.js` and are serialized inside the v3
+Stable external IDs live in `pikelet-core.js` and are serialized inside the v3
 snapshot envelope. Cold restore, compaction, and subsequent insertion therefore
 exercise the same mapping contract as Node and browser consumers.
 
@@ -757,7 +757,7 @@ per-source ID sets fed to `searchFiltered`), plus `/health` (public) and a
 minimal UI; `/readiness` and `/reset_cache` are its admin routes, requiring
 `API_KEY` or `ALLOW_INSECURE_ADMIN`. Public search parameters are clamped
 (`k ≤ 8`, `ef` clamped to 10–400), it deploys with `READ_ONLY=1` by default,
-and it has no write endpoints. It uses the high-level `pancake-core.js` API
+and it has no write endpoints. It uses the high-level `pikelet-core.js` API
 rather than raw WASM exports.
 
 ---

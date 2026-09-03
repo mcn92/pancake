@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pipeline } from '@huggingface/transformers';
-import Pancake from '../../pancake.node.mjs';
+import Pikelet from '../../pikelet.node.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.join(here, process.argv[2] || 'data-full');
@@ -18,8 +18,8 @@ const queries = JSON.parse(fs.readFileSync(path.join(dataDir, 'eval-queries.json
 const gt = JSON.parse(fs.readFileSync(path.join(dataDir, 'eval-gt.json'), 'utf8'));
 const EVAL_K = gt[0]?.length || K;
 
-const artifact = await Pancake.openSketchArtifactFile(path.join(dataDir, 'wiki.pancake-sketch'));
-const scanner = await Pancake.createSketchScanner(artifact);
+const artifact = await Pikelet.openSketchArtifactFile(path.join(dataDir, 'wiki.pancake-sketch'));
+const scanner = await Pikelet.createSketchScanner(artifact);
 
 async function evalDtype(dtype) {
     const embed = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', { dtype });

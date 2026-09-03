@@ -1,4 +1,4 @@
-import Pancake from '../../pancake.web.mjs';
+import Pikelet from '../../pikelet.web.mjs';
 
 const DATASET_URL = '/webanns_1k/arxiv_1k.jsonl';
 const TOP_K = 10;
@@ -98,7 +98,7 @@ function randomQuery(dim, rng) {
 async function runOne(config, rows) {
   const vectors = rows.map((row) => row.vector);
   const dim = vectors[0].length;
-  const index = await Pancake.create({
+  const index = await Pikelet.create({
     dim,
     maxElements: vectors.length,
     metric: 'l2',

@@ -24,8 +24,8 @@ async function verifyEntry(loadApi, label) {
 
     let indexes = [];
     try {
-        const Pancake = await loadApi();
-        indexes = await Promise.all(Array.from({ length: 3 }, () => Pancake.create({
+        const Pikelet = await loadApi();
+        indexes = await Promise.all(Array.from({ length: 3 }, () => Pikelet.create({
             dim: 4,
             maxElements: 4,
             metric: 'l2',
@@ -55,12 +55,12 @@ async function verifyEntry(loadApi, label) {
 
 async function main() {
     await verifyEntry(async () => {
-        const url = pathToFileURL(path.join(__dirname, '..', 'pancake.node.mjs')).href;
+        const url = pathToFileURL(path.join(__dirname, '..', 'pikelet.node.mjs')).href;
         return (await import(`${url}?model-c-loader-test`)).default;
     }, 'Node ESM');
 
     await verifyEntry(async () => {
-        const entry = require.resolve('../pancake.js');
+        const entry = require.resolve('../pikelet.js');
         delete require.cache[entry];
         return require(entry);
     }, 'Node CJS');

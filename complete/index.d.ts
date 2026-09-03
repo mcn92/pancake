@@ -1,5 +1,5 @@
 /**
- * pikelet-wasm/complete — reader for complete .pancake artifacts
+ * pikelet-wasm/complete — reader for complete .pikelet artifacts
  * (spec/COMPLETE_PROFILE.md, profile pancake-complete-v1). Opens any kind
  * (1 student-inline, 2 declared-external, 3 inline-transformer) from a file
  * path in Node or a range source anywhere.

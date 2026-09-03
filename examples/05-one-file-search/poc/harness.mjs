@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// POC measurement harness for a .pancake complete artifact. Opens the file
+// POC measurement harness for a .pikelet complete artifact. Opens the file
 // (local path or range-capable URL), runs a query set through the one-file
 // reader, and records per-query latency, bytes requested, and range-read
 // counts — the numbers the POC report needs. Two passes per query set:
@@ -8,7 +8,7 @@
 // separate axis; measure it by pointing this at a URL and flushing the
 // edge cache between runs.
 //
-//   node harness.mjs <artifact.pancake | http(s)://host/artifact.pancake>
+//   node harness.mjs <artifact.pikelet | http(s)://host/artifact.pikelet>
 //       [--queries queries.json]   queries: ["text", ...] or [{ text, ids? }, ...];
 //                                  ids (optional) are ground-truth top-k doc ids
 //                                  for recall@k. Default: the artifact's own
@@ -23,7 +23,7 @@
 // as egress, before transport overhead.
 
 import fs from 'node:fs';
-import { openPancakeFile } from '../pancake-file-reader.mjs';
+import { openPancakeFile } from '../pikelet-file-reader.mjs';
 import { httpRangeSource } from '../sources.mjs';
 
 function parseArgs(argv) {

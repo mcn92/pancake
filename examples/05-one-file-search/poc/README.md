@@ -12,14 +12,14 @@ root for a working config).
 # smoke it on the shipped example artifact (goldens come from the file itself)
 cd examples/05-one-file-search
 node compile.mjs
-node poc/harness.mjs pancake-docs.pancake --k 5 --out poc/results.json
+node poc/harness.mjs pancake-docs.pikelet --k 5 --out poc/results.json
 
 # over HTTP range requests (real egress accounting)
 node serve.mjs &
-node poc/harness.mjs http://127.0.0.1:8790/pancake-docs.pancake --k 5
+node poc/harness.mjs http://127.0.0.1:8790/pancake-docs.pikelet --k 5
 
 # your artifact, your queries, with ground truth for recall@10
-node poc/harness.mjs /path/to/your.pancake --queries queries.json --k 10 --out poc/results.json
+node poc/harness.mjs /path/to/your.pikelet --queries queries.json --k 10 --out poc/results.json
 
 # cost estimate from the measurements
 node poc/cost.mjs --results poc/results.json --queries-per-month 1000000 \

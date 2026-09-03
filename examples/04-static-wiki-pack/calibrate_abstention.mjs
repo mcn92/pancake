@@ -28,7 +28,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pipeline } from '@huggingface/transformers';
-import Pancake from '../../pancake.node.mjs';
+import Pikelet from '../../pikelet.node.mjs';
 import { stampPackVersion } from './stamp_pack_version.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -293,7 +293,7 @@ async function buildPack(dataPath) {
         throw new Error(`${dataPath}: vectors.f32 holds ${count} rows but manifest says ${manifest.chunks}`);
     }
     const vectors = new Float32Array(vectorsBytes.buffer, vectorsBytes.byteOffset, count * DIM);
-    const index = await Pancake.create({
+    const index = await Pikelet.create({
         dim: DIM,
         maxElements: count,
         metric: 'cosine',
@@ -313,7 +313,7 @@ async function buildPack(dataPath) {
     const snapshotPath = path.join(dataPath, 'wiki.pnck');
     fs.writeFileSync(snapshotPath, index.export());
     index.dispose();
-    Pancake.buildSketchArtifactFile(snapshotPath, path.join(dataPath, 'wiki.pancake-sketch'), {
+    Pikelet.buildSketchArtifactFile(snapshotPath, path.join(dataPath, 'wiki.pancake-sketch'), {
         sketchDims: 192,
         sketchBits: 4,
         recommendedRerank: RERANK,
@@ -419,8 +419,8 @@ function syntheticGibberish(n, seed, bloom) {
 const embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', { dtype: 'fp16' });
 
 async function openPack(dir, bloom) {
-    const artifact = await Pancake.openSketchArtifactFile(path.join(dir, 'wiki.pancake-sketch'));
-    const scanner = await Pancake.createSketchScanner(artifact);
+    const artifact = await Pikelet.openSketchArtifactFile(path.join(dir, 'wiki.pancake-sketch'));
+    const scanner = await Pikelet.createSketchScanner(artifact);
     const offsetsBuf = fs.readFileSync(path.join(dir, 'corpus-offsets.u32'));
     const offsets = new Uint32Array(offsetsBuf.buffer, offsetsBuf.byteOffset, offsetsBuf.byteLength / 4);
     const corpusFd = fs.openSync(path.join(dir, 'corpus.bin'), 'r');

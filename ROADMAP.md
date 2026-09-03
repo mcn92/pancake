@@ -14,7 +14,7 @@ package carrying corpus, index, encoder, evaluation, and calibration, that a
 bounded-memory reader can execute over range reads.
 
 The pieces already exist separately: the range-readable index
-(`pancake-artifact.js`), the distilled encoder with calibrated abstention
+(`pikelet-artifact.js`), the distilled encoder with calibrated abstention
 (`examples/worker-semantic-search/`), and the contract that binds them
 (`spec/`). The roadmap is mostly about converging them.
 
@@ -34,7 +34,7 @@ The structural bottleneck is sequential miss-round depth in both regimes.
 Near term:
 
 1. DONE 2026-07-31: docs-scale semantic artifact live at
-   pancake-artifact-demo.pages.dev — 208-chunk docs index, local distilled
+   pikelet-artifact-demo.pages.dev — 208-chunk docs index, local distilled
    encoder, corpus hydration, and calibrated abstention, all client-side.
    Rank-parity verified against the snapshot reader; abstention golden
    probes pass in-browser.
@@ -46,7 +46,7 @@ Near term:
 3. Confirm static hosts preserve Range requests and cache behavior. Status
    2026-07-31: Cloudflare Pages ignores Range in its static pipeline
    (full-download fallback added); a bundled Pages Function now restores real
-   206 slicing, verified live at pancake-artifact-demo.pages.dev with cache
+   206 slicing, verified live at pikelet-artifact-demo.pages.dev with cache
    headers honored. jsDelivr serves correct ranges (content-range total field
    unreliable but unused). Remaining: GitHub Pages, S3/CloudFront.
 
@@ -90,7 +90,7 @@ Structural work (the real fix for miss-round depth):
    a client near an edge PoP at 20-50 ms RTT lands at roughly 150-400 ms.
    Progress: the sketch profile is specified (`spec/SKETCH_PROFILE.md`,
    contract §9.3) and implemented — builder and reference reader ship in
-   `pancake-artifact.js` on all entrypoints (`Pikelet.SketchArtifact`,
+   `pikelet-artifact.js` on all entrypoints (`Pikelet.SketchArtifact`,
    `buildSketchArtifact[File]`, `openSketchArtifactFile`), with conformance
    checks in `test/sketch_profile.js` wired into npm test. SIFT1M validated
    through the product reader: 160 MiB artifact (vs 494 MiB range), 38.1 MiB
@@ -169,7 +169,7 @@ verified working (see examples/README.md ordering).
 ## Track C: Demos and product surface
 
 - `pikelet` (v0.5.0 on npm, alongside `pikelet-wasm` 0.5.0):
-  scaffolds snapshot, artifact, and complete (kind-3 `search.pancake`)
+  scaffolds snapshot, artifact, and complete (kind-3 `search.pikelet`)
   runtimes; `--mode student` distills a corpus-specific encoder into the
   Worker; the Docusaurus plugin builds the same assets for static sites;
   `doctor <url>` probes artifact hosting. 0.5.0 ships sketch format 2 —
@@ -212,8 +212,8 @@ maintenance, not features:
 
 ## Track E: Repo hygiene
 
-- Commit the pending range-artifact work: `pancake-artifact.js`,
-  `create-pancake-search/templates/worker.artifact.js`, `package.json`,
+- Commit the pending range-artifact work: `pikelet-artifact.js`,
+  `pikelet/templates/worker.artifact.js`, `package.json`,
   `spec/`, `examples/search-artifact-demo/static/`, `benchmarks/range_artifact*`.
 - Clear the root of loose artifacts before any external source browse: the
   29 GB ground-truth tarball, AWS bundles, MNIST files, `commit*.txt`

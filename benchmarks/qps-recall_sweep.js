@@ -27,7 +27,7 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const Pancake = require('../pancake.js');
+const Pikelet = require('../pikelet.js');
 const { parseBenchmarkArgs, resolveSingleValue, resolveSweepValues } = require('./bench_args');
 
 const parsedArgs = parseBenchmarkArgs();
@@ -48,7 +48,7 @@ const WARMUP_QUERIES = 200;   // Warmup per point (hot cache, V8 tier-up)
 
 // Which (library, dtype) combinations to run
 const CONFIGS = [
-  { label: 'pancake-u8-wasm',   library: 'pancake',  dtype: 'u8' },
+  { label: 'pancake-u8-wasm',   library: 'pikelet',  dtype: 'u8' },
   { label: 'hnswlib-f32-native',  library: 'hnswlib',  dtype: 'f32' },
 ];
 
@@ -149,11 +149,11 @@ function stddev(arr) {
   return Math.sqrt(v);
 }
 
-// --- Pancake: build and query ---
-async function buildPancake({ train, dim, dtype }) {
+// --- Pikelet: build and query ---
+async function buildPikelet({ train, dim, dtype }) {
   const quantized = dtype === 'u8';
   log(`  [pancake-${dtype}] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
-  const index = await Pancake.create({
+  const index = await Pikelet.create({
     dim,
     maxElements: train.length,
     quantized,
@@ -178,7 +178,7 @@ async function buildPancake({ train, dim, dtype }) {
   return { index, buildMs };
 }
 
-function queryPancake(index, test, groundTruth, efSearch) {
+function queryPikelet(index, test, groundTruth, efSearch) {
   // Assume index has a way to update ef_search. If not, you'll need to add
   // a _set_ef wrapper. Falling back to recreating the wrapper is possible
   // but expensive. Check for _i8_set_ef and _float_set_ef exports.
@@ -189,7 +189,7 @@ function queryPancake(index, test, groundTruth, efSearch) {
   } else if (index._e && index._e._float_set_ef && !index._useInt8) {
     index._e._float_set_ef(efSearch);
   } else {
-    throw new Error('Pancake index does not expose ef_search mutation; '
+    throw new Error('Pikelet index does not expose ef_search mutation; '
                   + 'add a setEfSearch() wrapper or export _i8_set_ef/_float_set_ef.');
   }
 
@@ -259,8 +259,8 @@ async function sweepOne(config, dataset) {
   log('='.repeat(60));
 
   let built;
-  if (config.library === 'pancake') {
-    built = await buildPancake({ train, dim, dtype: config.dtype });
+  if (config.library === 'pikelet') {
+    built = await buildPikelet({ train, dim, dtype: config.dtype });
   } else {
     built = buildHnswlib({ train, dim });
     if (!built) return null;
@@ -273,8 +273,8 @@ async function sweepOne(config, dataset) {
     log(`\n  ef_search=${efSearch}`);
     const reps = [];
     for (let rep = 0; rep < REPETITIONS; rep++) {
-      const { latencies, meanRecall } = config.library === 'pancake'
-        ? queryPancake(index, test, groundTruth, efSearch)
+      const { latencies, meanRecall } = config.library === 'pikelet'
+        ? queryPikelet(index, test, groundTruth, efSearch)
         : queryHnswlib(index, test, groundTruth, efSearch);
       const sorted = [...latencies].sort((a, b) => a - b);
       const avgLatency = mean(latencies);

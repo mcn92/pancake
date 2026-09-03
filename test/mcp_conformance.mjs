@@ -7,7 +7,7 @@
 // run — no compile, no encoder, no network.
 
 import { PassThrough } from 'node:stream';
-import { runMcpServer } from '../create-pancake-search/src/mcp.mjs';
+import { runMcpServer } from '../pikelet/src/mcp.mjs';
 
 let passed = 0;
 let failed = 0;
@@ -58,7 +58,7 @@ async function withServer(fn) {
         }
     });
     const done = runMcpServer({
-        packPaths: ['stub.pancake'],
+        packPaths: ['stub.pikelet'],
         openPancakeFile: async () => stubPack(),
         httpRangeSource: () => { throw new Error('no network in conformance'); },
         serverVersion: '0.0.0-test',

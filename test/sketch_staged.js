@@ -3,8 +3,8 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const Pancake = require('../pancake.js');
-const { exportSketchArtifact } = require('../pancake-artifact.js');
+const Pikelet = require('../pikelet.js');
+const { exportSketchArtifact } = require('../pikelet-artifact.js');
 
 let passed = 0, failed = 0;
 function check(label, cond) {
@@ -55,8 +55,8 @@ async function main() {
 
   // 1. v1-reader compatibility: non-staged open of a micro file must equal
   // a plain file built from the same rows, byte-for-byte on results.
-  const plain = await Pancake.SketchArtifact.openFile(plainPath);
-  const microPlainOpen = await Pancake.SketchArtifact.openFile(microPath);
+  const plain = await Pikelet.SketchArtifact.openFile(plainPath);
+  const microPlainOpen = await Pikelet.SketchArtifact.openFile(microPath);
   let same = true;
   for (const q of queries) {
     const a = await plain.search(q, K, { rerank: 60 });
@@ -67,7 +67,7 @@ async function main() {
 
   // 2. staged open: micro tier first, boosted C, then convergence.
   const stages = [];
-  const staged = await Pancake.SketchArtifact.open(
+  const staged = await Pikelet.SketchArtifact.open(
     { read: (o, l) => Promise.resolve(new Uint8Array(fs.readFileSync(microPath).buffer.slice(o, o + l))) },
     { staged: true, onStage: (s) => stages.push(s.tier) });
   check('staged open starts in micro tier', staged.tier === 'micro');
@@ -85,8 +85,8 @@ async function main() {
   check('post-convergence results identical to non-staged open', conv);
 
   // 3. per-tier WASM scanners agree with the JS tier scan.
-  const microScanner = await Pancake.createSketchScanner(staged, { tier: 'micro', maxRerank: count });
-  const fullScanner = await Pancake.createSketchScanner(staged, { tier: 'full', maxRerank: count });
+  const microScanner = await Pikelet.createSketchScanner(staged, { tier: 'micro', maxRerank: count });
+  const fullScanner = await Pikelet.createSketchScanner(staged, { tier: 'full', maxRerank: count });
   check('scanner tags tier + dims', microScanner.tier === 'micro' && microScanner.sketchDims === 16 && fullScanner.sketchDims === 32);
   const viaFull = await staged.search(queries[1], K, { rerank: 60, scanner: fullScanner });
   const viaJs = await staged.search(queries[1], K, { rerank: 60 });
@@ -101,14 +101,14 @@ async function main() {
   t1[microInfo.addressing.sketchesOffset + count * 32 + 5] ^= 0xff; // micro segment
   fs.writeFileSync(microPath + '.t1', t1);
   let s1rej = false;
-  try { await Pancake.SketchArtifact.open({ read: (o,l)=>Promise.resolve(new Uint8Array(fs.readFileSync(microPath+'.t1').buffer.slice(o,o+l))) }, { staged: true }); }
+  try { await Pikelet.SketchArtifact.open({ read: (o,l)=>Promise.resolve(new Uint8Array(fs.readFileSync(microPath+'.t1').buffer.slice(o,o+l))) }, { staged: true }); }
   catch (e) { s1rej = true; }
   check('tampered micro segment rejected at stage 1', s1rej);
 
   const t2 = fs.readFileSync(microPath);
   t2[microInfo.addressing.sketchesOffset + 7] ^= 0xff; // full-sketch segment
   fs.writeFileSync(microPath + '.t2', t2);
-  const lateTamper = await Pancake.SketchArtifact.open({ read: (o,l)=>Promise.resolve(new Uint8Array(fs.readFileSync(microPath+'.t2').buffer.slice(o,o+l))) }, { staged: true });
+  const lateTamper = await Pikelet.SketchArtifact.open({ read: (o,l)=>Promise.resolve(new Uint8Array(fs.readFileSync(microPath+'.t2').buffer.slice(o,o+l))) }, { staged: true });
   check('full-sketch tamper is invisible to stage 1', lateTamper.tier === 'micro');
   let s2rej = false;
   try { await lateTamper.fullyResident; } catch (e) { s2rej = true; }

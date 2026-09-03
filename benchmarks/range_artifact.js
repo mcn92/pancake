@@ -50,7 +50,7 @@ function unwrapSnapshot(bytes) {
     const rawOffset = V3_ENVELOPE_HEADER_SIZE + mappingCount * MAPPING_ENTRY_SIZE;
     return bytes.subarray(rawOffset, rawOffset + rawSize);
   }
-  throw new Error(`unsupported Pancake envelope version ${version}`);
+  throw new Error(`unsupported Pikelet envelope version ${version}`);
 }
 
 function parseSnapshot(bytes) {
@@ -70,7 +70,7 @@ function parseSnapshot(bytes) {
   const M0 = u32();
   const metric = u32();
   const efConstruction = u32();
-  if (magic !== UINT8_HNSW_MAGIC_V1) throw new Error('range artifact prototype currently supports u8 Pancake snapshots only');
+  if (magic !== UINT8_HNSW_MAGIC_V1) throw new Error('range artifact prototype currently supports u8 Pikelet snapshots only');
   if (metric !== 0) throw new Error('range artifact prototype currently supports L2 snapshots only');
 
   const scales = new Float32Array(count);
@@ -341,7 +341,7 @@ class RangeArtifact {
     fs.readSync(this.fd, header, 0, HEADER_BYTES, 0);
     let h = 0;
     const magic = header.readUInt32LE(h); h += 4;
-    if (magic !== RANGE_MAGIC) throw new Error('not a Pancake range artifact');
+    if (magic !== RANGE_MAGIC) throw new Error('not a Pikelet range artifact');
     this.version = header.readUInt32LE(h); h += 4;
     this.kind = header.readUInt32LE(h); h += 4;
     this.dim = header.readUInt32LE(h); h += 4;

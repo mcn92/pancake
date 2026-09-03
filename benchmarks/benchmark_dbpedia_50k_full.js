@@ -5,17 +5,17 @@
  * Full DBpedia 50K comparison benchmark (L2, 1536D)
  *
  * Compares:
- *   - Pancake u8 WASM
- *   - Pancake u8 Native
- *   - Pancake FP32 WASM
- *   - Pancake FP32 Native
+ *   - Pikelet u8 WASM
+ *   - Pikelet u8 Native
+ *   - Pikelet FP32 WASM
+ *   - Pikelet FP32 Native
  *   - hnswlib-node FP32
  *   - USearch Int8
  *   - USearch FP32
  *   - Faiss HNSW
  *
  * Notes:
- * - Pancake, hnswlib, and USearch are run at the requested M / efConstruction /
+ * - Pikelet, hnswlib, and USearch are run at the requested M / efConstruction /
  *   efSearch settings.
  * - faiss-node HNSW does not expose efConstruction / efSearch control through
  *   its JS binding. It is included with those defaults clearly labeled.
@@ -28,7 +28,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const Pancake = require('../pancake.js');
+const Pikelet = require('../pikelet.js');
 const { parseBenchmarkArgs, resolveSingleValue } = require('./bench_args');
 
 let native;
@@ -202,7 +202,7 @@ function stddev(arr) {
   return Math.sqrt(arr.reduce((a, b) => a + (b - m) ** 2, 0) / arr.length);
 }
 
-async function benchPancake(train, queries, groundTruth, dim, quantized, runtimeLabel) {
+async function benchPikelet(train, queries, groundTruth, dim, quantized, runtimeLabel) {
   if (runtimeLabel === 'native') {
     const label = quantized ? 'pancake-u8-native' : 'pancake-f32-native';
     const h = native.pancake_init(dim, train.length, quantized ? 1 : 0, 0, M, EF_CONSTRUCTION, EF_SEARCH, 108);
@@ -245,7 +245,7 @@ async function benchPancake(train, queries, groundTruth, dim, quantized, runtime
   }
 
   const label = quantized ? 'pancake-u8-wasm' : 'pancake-f32-wasm';
-  const index = await Pancake.create({
+  const index = await Pikelet.create({
     dim,
     maxElements: train.length,
     quantized,
@@ -453,14 +453,14 @@ async function main() {
 
   const results = [];
 
-  log('--- Pancake u8 WASM ---');
-  results.push(await benchPancake(train, queries, groundTruth, dim, true, 'wasm'));
-  log('--- Pancake u8 Native ---');
-  results.push(await benchPancake(train, queries, groundTruth, dim, true, 'native'));
-  log('--- Pancake FP32 WASM ---');
-  results.push(await benchPancake(train, queries, groundTruth, dim, false, 'wasm'));
-  log('--- Pancake FP32 Native ---');
-  results.push(await benchPancake(train, queries, groundTruth, dim, false, 'native'));
+  log('--- Pikelet u8 WASM ---');
+  results.push(await benchPikelet(train, queries, groundTruth, dim, true, 'wasm'));
+  log('--- Pikelet u8 Native ---');
+  results.push(await benchPikelet(train, queries, groundTruth, dim, true, 'native'));
+  log('--- Pikelet FP32 WASM ---');
+  results.push(await benchPikelet(train, queries, groundTruth, dim, false, 'wasm'));
+  log('--- Pikelet FP32 Native ---');
+  results.push(await benchPikelet(train, queries, groundTruth, dim, false, 'native'));
   log('--- hnswlib FP32 ---');
   results.push(benchHnswlib(train, queries, groundTruth, dim));
   log('--- USearch Int8 ---');

@@ -2,7 +2,7 @@
 // Measures aggregate QPS scaling across Node worker_threads, each worker owning an
 // isolated WASM instance importing the same snapshot ("scale out with copies").
 //
-// Usage (from the pancake repo root):
+// Usage (from the pikelet repo root):
 //   node pancake-scaleout-bench.mjs [--vectors path.bin] [--dim 384] [--synthN 30000] [--synthD 768]
 //                                   [--workers 1,2,4,8] [--duration 8] [--ef 100] [--k 10] [--quantized 1]
 //
@@ -29,7 +29,7 @@ const K = parseInt(args.k ?? '10');
 const QUANTIZED = (args.quantized ?? '1') !== '0';
 const N_QUERIES = 512; // pool per worker, cycled
 
-const pancakePath = path.resolve('./pancake.node.mjs');
+const pancakePath = path.resolve('./pikelet.node.mjs');
 
 function makeSynthetic(n, d) {
   const centers = 128, C = new Float32Array(centers * d);
@@ -47,7 +47,7 @@ function makeSynthetic(n, d) {
 }
 
 if (isMainThread) {
-  const Pancake = (await import(pancakePath)).default;
+  const Pikelet = (await import(pancakePath)).default;
   let data, dim, n;
   if (args.vectors) {
     const buf = fs.readFileSync(args.vectors);
@@ -62,7 +62,7 @@ if (isMainThread) {
 
   console.log(`building index (quantized=${QUANTIZED}, M=12, efc=100)...`);
   const t0 = performance.now();
-  const index = await Pancake.create({ dim, maxElements: n, metric: 'cosine', quantized: QUANTIZED, M: 12, efConstruction: 100, efSearch: EF });
+  const index = await Pikelet.create({ dim, maxElements: n, metric: 'cosine', quantized: QUANTIZED, M: 12, efConstruction: 100, efSearch: EF });
   const BATCH = 5000;
   for (let i = 0; i < n; i += BATCH) {
     const chunk = [];
@@ -131,9 +131,9 @@ if (isMainThread) {
   // ---- worker ----
   const { snapshot, queries, dim, ef, k, quantized, durationMs, pancakePath, maxElements } = workerData;
   try {
-    const Pancake = (await import(pancakePath)).default;
+    const Pikelet = (await import(pancakePath)).default;
     const t0 = performance.now();
-    const index = await Pancake.create({ dim, maxElements, metric: 'cosine', quantized, M: 12, efConstruction: 100, efSearch: ef });
+    const index = await Pikelet.create({ dim, maxElements, metric: 'cosine', quantized, M: 12, efConstruction: 100, efSearch: ef });
     index.import(snapshot);
     const importMs = performance.now() - t0;
 

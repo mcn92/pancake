@@ -3,7 +3,7 @@
  * Technical Demo — Worker Edition
  *
  * Runs the same proof suite as technical_demo_cli.js but against
- * the Pancake Search Cloudflare Worker REST API (localhost:8787).
+ * the Pikelet Search Cloudflare Worker REST API (localhost:8787).
  * This is the primary worker demo for the 384D real-embedding flow using
  * `dist/vectors.bin` over the HTTP API.
  *

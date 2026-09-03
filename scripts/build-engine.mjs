@@ -120,7 +120,7 @@ const debugFlags = debugSymbols
   : ['-g0'];
 
 console.log('==============================================');
-console.log(`Building Pancake WASM Engine (${buildDesc})`);
+console.log(`Building Pikelet WASM Engine (${buildDesc})`);
 console.log('==============================================');
 
 fs.mkdirSync('dist', { recursive: true });

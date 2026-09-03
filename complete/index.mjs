@@ -1,4 +1,4 @@
-// The one-file reader: open a .pancake (spec/COMPLETE_PROFILE.md) and query
+// The one-file reader: open a .pikelet (spec/COMPLETE_PROFILE.md) and query
 // it. Environment-neutral — the same module runs in Node (file path or
 // range source) and the browser (HTTP range source, via a bundler for the
 // CJS sketch-reader dependency). The query path needs no core HNSW engine:
@@ -8,7 +8,7 @@
 // engine's SIMD scan kernel (options.sketchScanner — auto-staged in Node,
 // injected in browsers), which only ever changes speed, never results.
 //
-//   const search = await openPancakeFile('pancake-docs.pancake');   // Node
+//   const search = await openPancakeFile('pancake-docs.pikelet');   // Node
 //   const search = await openPancakeFile(httpRangeSource(url));     // browser
 //   const out = await search.query('how do workers restore snapshots');
 //
@@ -25,7 +25,7 @@ import { loadStudentModel, embedTextWithStudent } from './student-embedder.mjs';
 import { computeMatchQuality, computePreSearchAbstention } from './student-abstention.mjs';
 import { createAbstentionScorer } from './retrieval-abstention.mjs';
 import { openLexicalIndex, openLexicalIndexLazy } from './lexical.mjs';
-import { PancakeSketchArtifact } from '../pancake-artifact.js';
+import { PancakeSketchArtifact } from '../pikelet-artifact.js';
 import { MAGIC, HEADER_BYTES, TABLE_ENTRY_BYTES, KINDS, KIND_NAMES } from './format.mjs';
 
 import {
@@ -123,7 +123,7 @@ function asUint8Array(bytes) {
     if (bytes instanceof Uint8Array) return bytes;
     if (bytes instanceof ArrayBuffer) return new Uint8Array(bytes);
     if (ArrayBuffer.isView(bytes)) return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    throw new Error('.pancake range source returned a non-binary value');
+    throw new Error('.pikelet range source returned a non-binary value');
 }
 
 function resolveBudget(value, label, fallback) {
@@ -138,7 +138,7 @@ function resolveBudget(value, label, fallback) {
 // u64 fields become JS numbers only when they are exactly representable.
 function u64(view, offset, label) {
     const big = view.getBigUint64(offset, true);
-    if (big > MAX_SAFE_BIG) throw new Error(`.pancake ${label} exceeds the safe integer range`);
+    if (big > MAX_SAFE_BIG) throw new Error(`.pikelet ${label} exceeds the safe integer range`);
     return Number(big);
 }
 
@@ -148,16 +148,16 @@ function u64(view, offset, label) {
 function checkRange(source, offset, length, label, limit, fileBytes) {
     if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(length)
         || offset < 0 || length < 0 || !Number.isSafeInteger(offset + length)) {
-        throw new Error(`.pancake ${label} range is out of bounds`);
+        throw new Error(`.pikelet ${label} range is out of bounds`);
     }
     if (length > limit) {
-        throw new Error(`.pancake ${label} read of ${length} bytes exceeds the ${limit}-byte read budget`);
+        throw new Error(`.pikelet ${label} read of ${length} bytes exceeds the ${limit}-byte read budget`);
     }
     if (fileBytes !== undefined && offset + length > fileBytes) {
-        throw new Error(`.pancake ${label} range extends past the file (${offset}+${length} > ${fileBytes})`);
+        throw new Error(`.pikelet ${label} range extends past the file (${offset}+${length} > ${fileBytes})`);
     }
     if (Number.isSafeInteger(source.size) && offset + length > source.size) {
-        throw new Error(`.pancake ${label} range extends past the source (${offset}+${length} > ${source.size})`);
+        throw new Error(`.pikelet ${label} range extends past the source (${offset}+${length} > ${source.size})`);
     }
 }
 
@@ -165,7 +165,7 @@ async function readChecked(source, offset, length, label, limit, fileBytes) {
     checkRange(source, offset, length, label, limit, fileBytes);
     const bytes = asUint8Array(await source.read(offset, length));
     if (bytes.length !== length) {
-        throw new Error(`.pancake ${label} read returned ${bytes.length} of ${length} bytes (truncated or misbehaving source)`);
+        throw new Error(`.pikelet ${label} read returned ${bytes.length} of ${length} bytes (truncated or misbehaving source)`);
     }
     return bytes;
 }
@@ -185,7 +185,7 @@ async function fileSource(filePath) {
         preferredParallelism: Infinity,
         preferredGapBytes: 2048,
         async read(offset, length) {
-            if (fd === null) throw new Error('.pancake file source is closed');
+            if (fd === null) throw new Error('.pikelet file source is closed');
             const buffer = new Uint8Array(length);
             let bytesRead = 0;
             while (bytesRead < length) {
@@ -217,7 +217,7 @@ function windowSource(source, offset, length) {
         preferredGapBytes: source.preferredGapBytes,
         async read(off, len) {
             if (!Number.isSafeInteger(off) || !Number.isSafeInteger(len) || off < 0 || len < 0 || off + len > length) {
-                throw new Error('.pancake index segment read is outside the segment window');
+                throw new Error('.pikelet index segment read is outside the segment window');
             }
             return source.read(offset + off, len);
         },
@@ -257,19 +257,19 @@ function base64Bytes(text) {
 export async function verifyHostEncoder(declaration, encodeQuery, dim) {
     const vectors = declaration.testVectors;
     if (!Array.isArray(vectors) || vectors.length === 0) {
-        throw new Error('.pancake kind-2 declaration carries no verification vectors');
+        throw new Error('.pikelet kind-2 declaration carries no verification vectors');
     }
     if (declaration.dim !== undefined && declaration.dim !== dim) {
-        throw new Error(`.pancake kind-2 declaration dim ${declaration.dim} disagrees with manifest dim ${dim}`);
+        throw new Error(`.pikelet kind-2 declaration dim ${declaration.dim} disagrees with manifest dim ${dim}`);
     }
     for (const tv of vectors) {
         if (!tv || typeof tv.text !== 'string') {
-            throw new Error('.pancake kind-2 verification vector is malformed');
+            throw new Error('.pikelet kind-2 verification vector is malformed');
         }
         // The expected embedding must be dim finite numbers: a malformed
         // entry would turn every comparison into NaN, and NaN > maxDiff is
         // false — the vector would "pass" without comparing anything.
-        const label = `.pancake kind-2 verification vector "${tv.text.slice(0, 40)}…"`;
+        const label = `.pikelet kind-2 verification vector "${tv.text.slice(0, 40)}…"`;
         validateExpectedEmbedding(tv.embedding, dim, label);
         const tolerance = validateTestVectorTolerance(tv.tolerance, label);
         const vector = toFloat32(await encodeQuery(tv.text), dim, 'options.encodeQuery');
@@ -288,7 +288,7 @@ export async function verifyHostEncoder(declaration, encodeQuery, dim) {
 }
 
 /**
- * Open a .pancake complete artifact from a file path (Node) or a
+ * Open a .pikelet complete artifact from a file path (Node) or a
  * { read(offset, length), size? } range source (any runtime).
  * Returns { query(text, {k}), info(), evaluation(), close() }.
  */
@@ -333,23 +333,23 @@ export async function openPancakeFile(input, options = {}) {
         const header = await readChecked(source, 0, HEADER_BYTES, 'header', maxReadBytes);
         const headerView = viewOf(header);
         if (headerView.getUint32(0, true) !== MAGIC) {
-            throw new Error('not a .pancake file (bad magic)');
+            throw new Error('not a .pikelet file (bad magic)');
         }
         const formatVersion = headerView.getUint32(4, true);
         const profile = SUPPORTED_PROFILES[formatVersion];
-        if (!profile) throw new Error(`unsupported .pancake format version ${formatVersion}`);
+        if (!profile) throw new Error(`unsupported .pikelet format version ${formatVersion}`);
         const manifestBytes = headerView.getUint32(8, true);
         const segmentCount = headerView.getUint32(12, true);
         const fileBytes = u64(headerView, 16, 'header fileBytes');
         if (manifestBytes < 2 || manifestBytes > MAX_MANIFEST_BYTES || segmentCount < 1 || segmentCount > MAX_SEGMENTS) {
-            throw new Error('.pancake header is implausible');
+            throw new Error('.pikelet header is implausible');
         }
         if (Number.isSafeInteger(source.size) && source.size !== fileBytes) {
-            throw new Error(`.pancake is truncated or padded: header says ${fileBytes} bytes, source has ${source.size}`);
+            throw new Error(`.pikelet is truncated or padded: header says ${fileBytes} bytes, source has ${source.size}`);
         }
         const tableBytes = segmentCount * TABLE_ENTRY_BYTES;
         if (HEADER_BYTES + manifestBytes + tableBytes > fileBytes) {
-            throw new Error('.pancake header places the manifest or segment table past the file');
+            throw new Error('.pikelet header places the manifest or segment table past the file');
         }
         const identity = toHex(header.subarray(24, 56));
         // A caller pinning an expected identity (a shelf entry, a lockfile,
@@ -362,30 +362,30 @@ export async function openPancakeFile(input, options = {}) {
                 throw new Error('options.expectedIdentity must be a sha256 hex string');
             }
             if (identity !== options.expectedIdentity.toLowerCase()) {
-                throw new Error(`.pancake identity mismatch: expected ${options.expectedIdentity.toLowerCase()}, found ${identity}`);
+                throw new Error(`.pikelet identity mismatch: expected ${options.expectedIdentity.toLowerCase()}, found ${identity}`);
             }
         }
 
         const manifestBuf = await readChecked(source, HEADER_BYTES, manifestBytes, 'manifest', maxReadBytes, fileBytes);
         if (await sha256hex(manifestBuf) !== identity) {
-            throw new Error('.pancake manifest failed identity verification');
+            throw new Error('.pikelet manifest failed identity verification');
         }
         let manifest;
         try { manifest = JSON.parse(decoder.decode(manifestBuf)); } catch (err) {
-            throw new Error('.pancake manifest is not valid JSON', { cause: err });
+            throw new Error('.pikelet manifest is not valid JSON', { cause: err });
         }
         if (!manifest || typeof manifest !== 'object' || manifest.profile !== profile) {
             throw new Error(`unsupported profile ${manifest?.profile} for format version ${formatVersion}`);
         }
         if (!Array.isArray(manifest.segments) || manifest.segments.length !== segmentCount) {
-            throw new Error('.pancake manifest segment list disagrees with the header segment count');
+            throw new Error('.pikelet manifest segment list disagrees with the header segment count');
         }
         const dim = manifest.dim;
         if (!Number.isSafeInteger(dim) || dim < 1 || dim > 65536) {
-            throw new Error('.pancake manifest dim is implausible');
+            throw new Error('.pikelet manifest dim is implausible');
         }
         if (!manifest.corpus || typeof manifest.corpus !== 'object') {
-            throw new Error('.pancake manifest has no corpus block');
+            throw new Error('.pikelet manifest has no corpus block');
         }
 
         const table = await readChecked(source, HEADER_BYTES + manifestBytes, tableBytes, 'segment table', maxReadBytes, fileBytes);
@@ -401,26 +401,26 @@ export async function openPancakeFile(input, options = {}) {
             const declared = manifest.segments[i];
             if (!declared || typeof declared !== 'object' || declared.bytes !== length || !isSha256Hex(declared.sha256)
                 || offset !== expectedOffset || !Number.isSafeInteger(offset + length) || offset + length > fileBytes) {
-                throw new Error(`.pancake segment table disagrees with manifest at entry ${i}`);
+                throw new Error(`.pikelet segment table disagrees with manifest at entry ${i}`);
             }
             if (kind === undefined) {
                 // Unknown kinds are skipped, not failed (spec 3.3); they are
                 // still committed through the manifest, so the declared name
                 // must at least not claim to be a kind this reader knows.
                 if (typeof declared.kind !== 'string' || declared.kind in KINDS) {
-                    throw new Error(`.pancake segment table entry ${i} has unknown kind ${kindNumber} but the manifest names it ${declared.kind}`);
+                    throw new Error(`.pikelet segment table entry ${i} has unknown kind ${kindNumber} but the manifest names it ${declared.kind}`);
                 }
             } else {
                 if (declared.kind !== kind) {
-                    throw new Error(`.pancake segment table disagrees with manifest at entry ${i}`);
+                    throw new Error(`.pikelet segment table disagrees with manifest at entry ${i}`);
                 }
-                if (segments.has(kind)) throw new Error(`.pancake carries more than one ${kind} segment`);
+                if (segments.has(kind)) throw new Error(`.pikelet carries more than one ${kind} segment`);
                 segments.set(kind, { offset, length, sha256: declared.sha256 });
             }
             expectedOffset = align16(offset + length);
         }
         for (const required of ['index', 'corpus', 'query-interp']) {
-            if (!segments.has(required)) throw new Error(`.pancake is missing the ${required} segment`);
+            if (!segments.has(required)) throw new Error(`.pikelet is missing the ${required} segment`);
         }
 
         // Corpus tables: count + offsets (+ page table for layout v2),
@@ -432,15 +432,15 @@ export async function openPancakeFile(input, options = {}) {
         const corpus = segments.get('corpus');
         const declaredRecords = manifest.corpus.records;
         if (!Number.isSafeInteger(declaredRecords) || declaredRecords < 0 || declaredRecords > MAX_RECORDS) {
-            throw new Error('.pancake manifest corpus.records is implausible');
+            throw new Error('.pikelet manifest corpus.records is implausible');
         }
         const layout = manifest.corpus.layout;
         const perRecord = formatVersion >= 2;
         if (perRecord && layout !== CORPUS_LAYOUT_V2) {
-            throw new Error(`.pancake format ${formatVersion} requires corpus layout ${CORPUS_LAYOUT_V2}, manifest says ${layout}`);
+            throw new Error(`.pikelet format ${formatVersion} requires corpus layout ${CORPUS_LAYOUT_V2}, manifest says ${layout}`);
         }
         if (!perRecord && layout !== undefined) {
-            throw new Error(`.pancake format 1 carries corpus layout v1, manifest says ${layout}`);
+            throw new Error(`.pikelet format 1 carries corpus layout v1, manifest says ${layout}`);
         }
         let pageRecords = 0;
         let pages = 0;
@@ -451,12 +451,12 @@ export async function openPancakeFile(input, options = {}) {
         if (perRecord) {
             pageRecords = manifest.corpus.pageRecords;
             if (!Number.isSafeInteger(pageRecords) || pageRecords < 1 || pageRecords > MAX_PAGE_RECORDS) {
-                throw new Error('.pancake manifest corpus.pageRecords is implausible');
+                throw new Error('.pikelet manifest corpus.pageRecords is implausible');
             }
             pages = Math.ceil(declaredRecords / pageRecords);
             if (manifest.corpus.pages !== pages || !isSha256Hex(manifest.corpus.pageTableSha256)
                 || manifest.corpus.recordDigest !== 'sha256') {
-                throw new Error('.pancake manifest corpus integrity block is inconsistent');
+                throw new Error('.pikelet manifest corpus integrity block is inconsistent');
             }
             offsetsAt = 8;
             tablesBytes = offsetsAt + 8 * (declaredRecords + 1) + 32 * pages;
@@ -468,7 +468,7 @@ export async function openPancakeFile(input, options = {}) {
             recordsAt = tablesBytes;
         }
         if (!Number.isSafeInteger(recordsAt) || recordsAt > corpus.length) {
-            throw new Error('.pancake manifest corpus.records is implausible for the corpus segment');
+            throw new Error('.pikelet manifest corpus.records is implausible for the corpus segment');
         }
         // Format 2 commits to the embedded sketch's 256-byte header
         // (metric/dim/count and the sketch's residentSha256/vectorsSha256),
@@ -476,7 +476,7 @@ export async function openPancakeFile(input, options = {}) {
         // sketch's self-checks alone verify against fields an attacker who
         // rewrites the segment also controls.
         if (perRecord && (!isSha256Hex(manifest.index?.headerSha256) || idx.length < SKETCH_HEADER_BYTES)) {
-            throw new Error('.pancake manifest carries no index header commitment (index.headerSha256)');
+            throw new Error('.pikelet manifest carries no index header commitment (index.headerSha256)');
         }
 
         // After the segment table, every remaining open-path extent is known,
@@ -502,7 +502,7 @@ export async function openPancakeFile(input, options = {}) {
                 }
                 const bytes = await readChecked(source, qi.offset, qi.length, 'query-interp segment', maxReadBytes, fileBytes);
                 if (await sha256hex(bytes) !== qi.sha256) {
-                    throw new Error('.pancake query-interp segment failed hash verification');
+                    throw new Error('.pikelet query-interp segment failed hash verification');
                 }
                 return bytes;
             })(),
@@ -522,14 +522,14 @@ export async function openPancakeFile(input, options = {}) {
                 }
                 const bytes = await readChecked(source, seg.offset, seg.length, 'lexical segment', maxReadBytes, fileBytes);
                 if (await sha256hex(bytes) !== seg.sha256) {
-                    throw new Error('.pancake lexical segment failed hash verification');
+                    throw new Error('.pikelet lexical segment failed hash verification');
                 }
                 return { bytes };
             })() : null,
             perRecord ? (async () => {
                 const headerBytes = await readChecked(source, idx.offset, SKETCH_HEADER_BYTES, 'index header', maxReadBytes, fileBytes);
                 if (await sha256hex(headerBytes) !== manifest.index.headerSha256) {
-                    throw new Error('.pancake index header failed hash verification against the manifest');
+                    throw new Error('.pikelet index header failed hash verification against the manifest');
                 }
             })() : null,
         ]);
@@ -538,12 +538,12 @@ export async function openPancakeFile(input, options = {}) {
             ? (lexicalBytes.lazyIndex || openLexicalIndex(lexicalBytes.bytes))
             : null;
         if (lexicalIndex && lexicalIndex.docCount !== declaredRecords) {
-            throw new Error(`.pancake lexical segment covers ${lexicalIndex.docCount} records, corpus declares ${declaredRecords}`);
+            throw new Error(`.pikelet lexical segment covers ${lexicalIndex.docCount} records, corpus declares ${declaredRecords}`);
         }
 
         // Query interpretation: version word, kind, two length-prefixed
         // regions that must tile the segment exactly.
-        if (qi.length < 16) throw new Error('.pancake query-interp segment is too short');
+        if (qi.length < 16) throw new Error('.pikelet query-interp segment is too short');
         const qiView = viewOf(qiFirst);
         const qiVersion = qiView.getUint32(0, true);
         if (qiVersion !== 1) throw new Error(`unsupported query-interpretation version ${qiVersion}`);
@@ -551,7 +551,7 @@ export async function openPancakeFile(input, options = {}) {
         const encoderLen = qiView.getUint32(8, true);
         const calibrationLen = qiView.getUint32(12, true);
         if (16 + encoderLen + calibrationLen !== qi.length) {
-            throw new Error('.pancake query-interp segment layout is inconsistent');
+            throw new Error('.pikelet query-interp segment layout is inconsistent');
         }
         // Laziness only pays for kind 3 (the deferrable bulk IS the
         // encoder); a large segment of any other kind falls back to the
@@ -561,7 +561,7 @@ export async function openPancakeFile(input, options = {}) {
         if (qiDeferrable && qiKind !== 3) {
             qiBytes = await readChecked(source, qi.offset, qi.length, 'query-interp segment', maxReadBytes, fileBytes);
             if (await sha256hex(qiBytes) !== qi.sha256) {
-                throw new Error('.pancake query-interp segment failed hash verification');
+                throw new Error('.pikelet query-interp segment failed hash verification');
             }
             qiDeferred = false;
         }
@@ -574,10 +574,10 @@ export async function openPancakeFile(input, options = {}) {
         const encoderBytes = qiDeferred ? null : qiBytes.subarray(16, 16 + encoderLen);
         let calibrationJson;
         try { calibrationJson = JSON.parse(decoder.decode(calibrationRegion)); } catch (err) {
-            throw new Error('.pancake calibration is not valid JSON', { cause: err });
+            throw new Error('.pikelet calibration is not valid JSON', { cause: err });
         }
         if (!calibrationJson || typeof calibrationJson !== 'object') {
-            throw new Error('.pancake calibration must be a JSON object');
+            throw new Error('.pikelet calibration must be a JSON object');
         }
 
         // kind 1 (student-inline-v1): pure-JS inline encoder + feature-stream
@@ -625,9 +625,9 @@ export async function openPancakeFile(input, options = {}) {
         } else if (qiKind === 2) {
             let declaration;
             try { declaration = JSON.parse(decoder.decode(encoderBytes)); } catch (err) {
-                throw new Error('.pancake kind-2 encoder declaration is not valid JSON', { cause: err });
+                throw new Error('.pikelet kind-2 encoder declaration is not valid JSON', { cause: err });
             }
-            if (!declaration || typeof declaration !== 'object') throw new Error('.pancake kind-2 encoder declaration must be a JSON object');
+            if (!declaration || typeof declaration !== 'object') throw new Error('.pikelet kind-2 encoder declaration must be a JSON object');
             encoderInfo = declaration;
             const encodeQuery = options.encodeQuery;
             if (encodeQuery !== undefined && typeof encodeQuery !== 'function') {
@@ -641,7 +641,7 @@ export async function openPancakeFile(input, options = {}) {
                 } else if (options.allowUnverifiedEncoder === true) {
                     encoderVerified = false;
                 } else {
-                    throw new Error(`.pancake declares an external encoder (${declaration.model}) without verification vectors, `
+                    throw new Error(`.pikelet declares an external encoder (${declaration.model}) without verification vectors, `
                         + 'so the host encoder cannot be checked against it (contract section 4.4); '
                         + 'pass options.allowUnverifiedEncoder: true to serve it anyway, marked unverified');
                 }
@@ -650,7 +650,7 @@ export async function openPancakeFile(input, options = {}) {
             }
             embed = async (text) => {
                 if (!encodeQuery) {
-                    throw new Error(`.pancake declares an external encoder (${declaration.model}); `
+                    throw new Error(`.pikelet declares an external encoder (${declaration.model}); `
                         + 'pass options.encodeQuery to openPancakeFile');
                 }
                 return { vector: toFloat32(await encodeQuery(text), dim, 'options.encodeQuery'), text };
@@ -680,7 +680,7 @@ export async function openPancakeFile(input, options = {}) {
                 if (qiDeferred) {
                     const full = await readChecked(source, qi.offset, qi.length, 'query-interp segment', maxReadBytes, fileBytes);
                     if (await sha256hex(full) !== qi.sha256) {
-                        throw new Error('.pancake query-interp segment failed hash verification');
+                        throw new Error('.pikelet query-interp segment failed hash verification');
                     }
                     // The header and calibration slices used at open were
                     // unverified; the digest-verified segment must contain
@@ -688,13 +688,13 @@ export async function openPancakeFile(input, options = {}) {
                     // every query must fail.
                     if (!bytesEqual(full.subarray(0, 16), openHeader)
                         || !bytesEqual(full.subarray(16 + encoderLen), calibrationRegion)) {
-                        throw new Error('.pancake query-interp segment bytes changed between open and encoder fetch');
+                        throw new Error('.pikelet query-interp segment bytes changed between open and encoder fetch');
                     }
                     encBytes = full.subarray(16, 16 + encoderLen);
                 }
                 const { declaration, vocabText, blob } = parseInlineTransformerEncoder(encBytes);
                 if (declaration.dim !== undefined && declaration.dim !== dim) {
-                    throw new Error(`.pancake kind-3 declaration dim ${declaration.dim} disagrees with manifest dim ${dim}`);
+                    throw new Error(`.pikelet kind-3 declaration dim ${declaration.dim} disagrees with manifest dim ${dim}`);
                 }
                 const embedder = await createInlineTransformerEmbedder({ declaration, vocabText, blob, createEncoder, verify: verifyEncoder });
                 encoderInfo = declaration;
@@ -732,10 +732,10 @@ export async function openPancakeFile(input, options = {}) {
         // Index: the embedded sketch artifact, opened in the wave above
         // against a segment-windowed source (resident hash verified there).
         if (sketch.count !== declaredRecords) {
-            throw new Error(`.pancake index count ${sketch.count} != corpus records ${declaredRecords}`);
+            throw new Error(`.pikelet index count ${sketch.count} != corpus records ${declaredRecords}`);
         }
         if (sketch.dim !== undefined && sketch.dim !== dim) {
-            throw new Error(`.pancake index dim ${sketch.dim} != manifest dim ${dim}`);
+            throw new Error(`.pikelet index dim ${sketch.dim} != manifest dim ${dim}`);
         }
         // The metric decides the search semantics; the sketch header's copy
         // must agree with the identity-verified manifest (on format 2 the
@@ -743,7 +743,7 @@ export async function openPancakeFile(input, options = {}) {
         // is the only binding).
         if (METRIC_NAMES[sketch.metric] !== undefined && typeof manifest.metric === 'string'
             && METRIC_NAMES[sketch.metric] !== manifest.metric) {
-            throw new Error(`.pancake index metric ${METRIC_NAMES[sketch.metric]} != manifest metric ${manifest.metric}`);
+            throw new Error(`.pikelet index metric ${METRIC_NAMES[sketch.metric]} != manifest metric ${manifest.metric}`);
         }
         if (verifyIndexVectors) {
             await sketch.verifyVectors();
@@ -788,9 +788,9 @@ export async function openPancakeFile(input, options = {}) {
                 // Hidden from bundlers like the node encoder kernels: the
                 // web entrypoint's ?url wasm imports would break a browser
                 // build that statically pulled this in.
-                const { default: Pancake } = await import(/* webpackIgnore: true */ /* @vite-ignore */ '../pancake.node.mjs');
+                const { default: Pikelet } = await import(/* webpackIgnore: true */ /* @vite-ignore */ '../pikelet.node.mjs');
                 await sketch.fullyResident;
-                const created = await Pancake.createSketchScanner(sketch, {
+                const created = await Pikelet.createSketchScanner(sketch, {
                     maxRerank: Math.min(sketch.count, SCANNER_MAX_RERANK),
                 });
                 disposeScanner = () => created.dispose();
@@ -805,16 +805,16 @@ export async function openPancakeFile(input, options = {}) {
         const tablesView = viewOf(tables);
         const recordCount = tablesView.getUint32(0, true);
         if (recordCount !== declaredRecords) {
-            throw new Error('.pancake corpus count disagrees with manifest');
+            throw new Error('.pikelet corpus count disagrees with manifest');
         }
         if (perRecord && tablesView.getUint32(4, true) !== pageRecords) {
-            throw new Error('.pancake corpus page size disagrees with manifest');
+            throw new Error('.pikelet corpus page size disagrees with manifest');
         }
         const recordOffsets = new Float64Array(recordCount + 1);
         for (let i = 0; i <= recordCount; i++) {
             const value = u64(tablesView, offsetsAt + 8 * i, `corpus offset ${i}`);
             if (value > corpus.length || (i > 0 && value < recordOffsets[i - 1]) || (i === 0 && value !== recordsAt)) {
-                throw new Error('.pancake corpus offsets are inconsistent');
+                throw new Error('.pikelet corpus offsets are inconsistent');
             }
             recordOffsets[i] = value;
         }
@@ -822,7 +822,7 @@ export async function openPancakeFile(input, options = {}) {
         if (perRecord) {
             pageTable = tables.slice(offsetsAt + 8 * (recordCount + 1), tablesBytes);
             if (await sha256hex(pageTable) !== manifest.corpus.pageTableSha256) {
-                throw new Error('.pancake corpus page table failed hash verification');
+                throw new Error('.pikelet corpus page table failed hash verification');
             }
         }
         const corpusIntegrity = perRecord ? (verifyRecords ? 'per-record-sha256' : 'per-record-sha256 (unverified by option)') : 'segment-sha256';
@@ -846,7 +846,7 @@ export async function openPancakeFile(input, options = {}) {
                     `corpus digest page ${page}`, maxReadBytes, fileBytes);
                 if (await sha256hex(bytes) !== toHex(pageTable.subarray(32 * page, 32 * page + 32))) {
                     digestPages.delete(page);
-                    throw new Error(`.pancake corpus digest page ${page} failed hash verification`);
+                    throw new Error(`.pikelet corpus digest page ${page} failed hash verification`);
                 }
                 return bytes;
             })();
@@ -869,7 +869,7 @@ export async function openPancakeFile(input, options = {}) {
 
         const hydrate = async (id) => {
             if (!Number.isSafeInteger(id) || id < 0 || id >= recordCount) {
-                throw new Error(`.pancake result id ${id} is outside the corpus`);
+                throw new Error(`.pikelet result id ${id} is outside the corpus`);
             }
             if (recordCache.has(id)) {
                 const cached = recordCache.get(id);
@@ -885,15 +885,15 @@ export async function openPancakeFile(input, options = {}) {
                 const digests = await pageDigests(page);
                 const at = 32 * (id - page * pageRecords);
                 if (await sha256hex(bytes) !== toHex(digests.subarray(at, at + 32))) {
-                    throw new Error(`.pancake corpus record ${id} failed integrity verification`);
+                    throw new Error(`.pikelet corpus record ${id} failed integrity verification`);
                 }
             }
             let record;
             try { record = JSON.parse(decoder.decode(bytes)); } catch (err) {
-                throw new Error(`.pancake corpus record ${id} is not valid JSON`, { cause: err });
+                throw new Error(`.pikelet corpus record ${id} is not valid JSON`, { cause: err });
             }
             if (!record || typeof record !== 'object' || Array.isArray(record)) {
-                throw new Error(`.pancake corpus record ${id} is not a JSON object`);
+                throw new Error(`.pikelet corpus record ${id} is not a JSON object`);
             }
             return cacheRecord(id, record);
         };
@@ -903,7 +903,7 @@ export async function openPancakeFile(input, options = {}) {
         // use after close instead of reading through a freed encoder.
         let closed = false;
         const assertOpen = () => {
-            if (closed) throw new Error('.pancake reader is closed');
+            if (closed) throw new Error('.pikelet reader is closed');
         };
 
         return {
@@ -1087,14 +1087,14 @@ export async function openPancakeFile(input, options = {}) {
                 if (!ev) return null;
                 const bytes = await readChecked(source, ev.offset, ev.length, 'evaluation segment', maxReadBytes, fileBytes);
                 if (await sha256hex(bytes) !== ev.sha256) {
-                    throw new Error('.pancake evaluation segment failed hash verification');
+                    throw new Error('.pikelet evaluation segment failed hash verification');
                 }
                 let parsed;
                 try { parsed = JSON.parse(decoder.decode(bytes)); } catch (err) {
-                    throw new Error('.pancake evaluation segment is not valid JSON', { cause: err });
+                    throw new Error('.pikelet evaluation segment is not valid JSON', { cause: err });
                 }
                 if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-                    throw new Error('.pancake evaluation segment must be a JSON object');
+                    throw new Error('.pikelet evaluation segment must be a JSON object');
                 }
                 return parsed;
             },

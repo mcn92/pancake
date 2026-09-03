@@ -8,10 +8,10 @@
     "lib": ["esnext"],
     "types": [],
     "paths": {
-      "pikelet-wasm": ["../../pancake.d.ts"],
-      "pikelet-wasm/node": ["../../pancake.d.ts"],
-      "pikelet-wasm/web": ["../../pancake.web.d.ts"],
-      "pikelet-wasm/artifact": ["../../pancake-artifact.d.ts"]
+      "pikelet-wasm": ["../../pikelet.d.ts"],
+      "pikelet-wasm/node": ["../../pikelet.d.ts"],
+      "pikelet-wasm/web": ["../../pikelet.web.d.ts"],
+      "pikelet-wasm/artifact": ["../../pikelet-artifact.d.ts"]
     }
   },
   "include": ["./check.ts"]

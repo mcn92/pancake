@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Acceptance for the one-file reader. The golden queries come from the
-// .pancake's OWN evaluation segment — the artifact carries its conformance
+// .pikelet's OWN evaluation segment — the artifact carries its conformance
 // fixtures, so this test is "open the file, ask it to prove itself":
 //   1. every golden query reproduces its expected match-quality label;
 //   2. every corpus record round-trips the compiler byte-exactly;
@@ -10,13 +10,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openPancakeFile } from './pancake-file-reader.mjs';
+import { openPancakeFile } from './pikelet-file-reader.mjs';
 import { openDocsSearch, docsAssetPaths } from './search-reader.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const pancakePath = path.join(here, 'pancake-docs.pancake');
-if (!fs.existsSync(pancakePath)) {
-    console.error('pancake-docs.pancake not found — run node compile.mjs first');
+const pikeletPath = path.join(here, 'pikelet-docs.pikelet');
+if (!fs.existsSync(pikeletPath)) {
+    console.error('pikelet-docs.pikelet not found — run node compile.mjs first');
     process.exit(1);
 }
 
@@ -27,9 +27,9 @@ const check = (name, ok, detail) => {
     else { failed++; console.log(`  FAIL: ${name}${detail ? ` — ${detail}` : ''}`); }
 };
 
-const search = await openPancakeFile(pancakePath);
+const search = await openPancakeFile(pikeletPath);
 const info = search.info();
-console.log(`opened ${path.basename(pancakePath)}: identity ${info.identity.slice(0, 16)}..., `
+console.log(`opened ${path.basename(pikeletPath)}: identity ${info.identity.slice(0, 16)}..., `
     + `${info.records} records, resident ${(info.residentBytes / 1024).toFixed(1)} KiB, `
     + `sketch hash verified: ${info.residentVerified}`);
 
@@ -76,9 +76,9 @@ await spike.close();
 
 // 4. Tamper: flip one byte in the corpus segment; open succeeds (lazy), the
 // manifest identity is unchanged, but evaluation()/eager segments verify.
-const tampered = Buffer.from(fs.readFileSync(pancakePath));
+const tampered = Buffer.from(fs.readFileSync(pikeletPath));
 tampered[tampered.length - 3] ^= 0xff; // inside the evaluation segment (last)
-const tamperedPath = pancakePath + '.tampered';
+const tamperedPath = pikeletPath + '.tampered';
 fs.writeFileSync(tamperedPath, tampered);
 const tamperedReader = await openPancakeFile(tamperedPath);
 let rejected = false;

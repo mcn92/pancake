@@ -9,7 +9,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const Pancake = require('../pancake.js');
+const Pikelet = require('../pikelet.js');
 
 let passed = 0;
 let failed = 0;
@@ -94,30 +94,30 @@ async function run() {
         for (const sketchBits of [4, 8]) {
             console.log(`\nsketch profile: metric=${metric} sketchBits=${sketchBits}`);
             const rows = seededVectors(COUNT, DIM, 42);
-            const index = await Pancake.create({ dim: DIM, maxElements: COUNT, metric, quantized: true });
+            const index = await Pikelet.create({ dim: DIM, maxElements: COUNT, metric, quantized: true });
             index.addBatch(rows);
             const snapshotPath = path.join(tmp, `snap-${metric}.pnck`);
             fs.writeFileSync(snapshotPath, index.export());
             index.dispose();
 
             const artifactPath = path.join(tmp, `art-${metric}-${sketchBits}.pancake-sketch`);
-            const manifest = Pancake.buildSketchArtifactFile(snapshotPath, artifactPath, {
+            const manifest = Pikelet.buildSketchArtifactFile(snapshotPath, artifactPath, {
                 sketchDims: 16, sketchBits, recommendedRerank: 60,
             });
             check('manifest shape', manifest.formatVersion === 2 && manifest.graph.count === COUNT
                 && manifest.sketch.sketchBits === sketchBits && manifest.sizeBytes === fs.statSync(artifactPath).size
                 && manifest.rowIntegrity.rowsPerBlock === 16 && manifest.rowIntegrity.rowDigestBytes === 16);
 
-            const artifact = await Pancake.openSketchArtifactFile(artifactPath);
+            const artifact = await Pikelet.openSketchArtifactFile(artifactPath);
             check('open + header', artifact.count === COUNT && artifact.dim === DIM
                 && artifact.recommendedRerank === 60 && artifact.residentVerified === true);
 
             // Determinism: rebuilding produces byte-identical output, and
             // the bytes-in/bytes-out builder matches the file builder.
             const artifact2Path = artifactPath + '.rebuild';
-            Pancake.buildSketchArtifactFile(snapshotPath, artifact2Path, { sketchDims: 16, sketchBits, recommendedRerank: 60 });
+            Pikelet.buildSketchArtifactFile(snapshotPath, artifact2Path, { sketchDims: 16, sketchBits, recommendedRerank: 60 });
             check('builder determinism', fs.readFileSync(artifactPath).equals(fs.readFileSync(artifact2Path)));
-            const { bytes: builtBytes, manifest: bytesManifest } = Pancake.buildSketchArtifactBytes(
+            const { bytes: builtBytes, manifest: bytesManifest } = Pikelet.buildSketchArtifactBytes(
                 fs.readFileSync(snapshotPath), { sketchDims: 16, sketchBits, recommendedRerank: 60 });
             check('bytes builder matches file builder',
                 fs.readFileSync(artifactPath).equals(Buffer.from(builtBytes))
@@ -128,7 +128,7 @@ async function run() {
             // C = count: sketch selection cannot exclude anything, so results
             // must exactly equal brute force over the quantized rows. Compare
             // against a fully restored engine index as the quantization oracle.
-            const restored = await Pancake.restore(fs.readFileSync(snapshotPath));
+            const restored = await Pikelet.restore(fs.readFileSync(snapshotPath));
             let exactMatches = 0;
             for (const q of queries) {
                 const ours = (await artifact.search(q, K, { rerank: COUNT })).results.map((r) => r.id);
@@ -170,7 +170,7 @@ async function run() {
             check('repeat query fully cached', after.rangeRequests === mid.rangeRequests && mid.rangeRequests >= before);
 
             const depthSource = new DelayedMemorySource(fs.readFileSync(artifactPath));
-            const depthArtifact = await Pancake.SketchArtifact.open(depthSource);
+            const depthArtifact = await Pikelet.SketchArtifact.open(depthSource);
             const sparseIds = Array.from({ length: 90 }, (_, i) => i * 2);
             depthSource.resetStats();
             await depthArtifact.fetchRows(sparseIds, { maxRangeBytes: DIM, gap: 0 });
@@ -188,7 +188,7 @@ async function run() {
             // its raw candidate set against the reference sketch scan, before
             // exact rerank can mask a wrong-metric selection: no unselected
             // row may beat a selected one (tie-safe top-C).
-            const scanner = await Pancake.createSketchScanner(artifact);
+            const scanner = await Pikelet.createSketchScanner(artifact);
             check('scanner reports artifact metric', scanner.metric === artifact.metric);
             const pool = DIM / artifact.sketchDims;
             let topCOk = true;
@@ -264,7 +264,7 @@ async function run() {
             const tamperedPath = artifactPath + '.tampered';
             fs.writeFileSync(tamperedPath, tampered);
             let rejected = false;
-            try { await Pancake.openSketchArtifactFile(tamperedPath); }
+            try { await Pikelet.openSketchArtifactFile(tamperedPath); }
             catch (err) { rejected = /hash verification/.test(String(err && err.message)); }
             check('tampered resident prefix rejected', rejected);
         }
@@ -275,7 +275,7 @@ async function run() {
     console.log('\nbounded caches');
     {
         const rows = seededVectors(COUNT, DIM, 42);
-        const index = await Pancake.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
+        const index = await Pikelet.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
         index.addBatch(rows);
         const snapshotPath = path.join(tmp, 'cache-snap.pnck');
         fs.writeFileSync(snapshotPath, index.export());
@@ -283,9 +283,9 @@ async function run() {
         const queries = seededVectors(30, DIM, 99);
 
         const rangePath = path.join(tmp, 'cache.pancake-range');
-        Pancake.buildRangeArtifactFile(snapshotPath, rangePath);
-        const unboundedRange = await Pancake.openRangeArtifactFile(rangePath, { maxCacheBytes: Infinity });
-        const boundedRange = await Pancake.openRangeArtifactFile(rangePath, { maxCacheBytes: 1 }); // clamps to 64 records
+        Pikelet.buildRangeArtifactFile(snapshotPath, rangePath);
+        const unboundedRange = await Pikelet.openRangeArtifactFile(rangePath, { maxCacheBytes: Infinity });
+        const boundedRange = await Pikelet.openRangeArtifactFile(rangePath, { maxCacheBytes: 1 }); // clamps to 64 records
         let rangeMatch = true;
         for (const q of queries) {
             const a = (await unboundedRange.search(q, K, { efSearch: 80 })).results.map((r) => r.id);
@@ -300,9 +300,9 @@ async function run() {
         await boundedRange.close();
 
         const sketchPath = path.join(tmp, 'cache.pancake-sketch');
-        Pancake.buildSketchArtifactFile(snapshotPath, sketchPath, { sketchDims: 16, sketchBits: 8 });
-        const unboundedSketch = await Pancake.openSketchArtifactFile(sketchPath, { maxCacheBytes: Infinity });
-        const boundedSketch = await Pancake.openSketchArtifactFile(sketchPath, { maxCacheBytes: 1 }); // clamps to 256 rows
+        Pikelet.buildSketchArtifactFile(snapshotPath, sketchPath, { sketchDims: 16, sketchBits: 8 });
+        const unboundedSketch = await Pikelet.openSketchArtifactFile(sketchPath, { maxCacheBytes: Infinity });
+        const boundedSketch = await Pikelet.openSketchArtifactFile(sketchPath, { maxCacheBytes: 1 }); // clamps to 256 rows
         let sketchMatch = true;
         for (const q of queries) {
             // rerank 400 exceeds the 256-row cache budget on purpose:
@@ -325,7 +325,7 @@ async function run() {
     console.log('\ntruncated files fail closed');
     {
         const rows = seededVectors(COUNT, DIM, 7);
-        const index = await Pancake.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
+        const index = await Pikelet.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
         index.addBatch(rows);
         const snapshotPath = path.join(tmp, 'trunc-snap.pnck');
         fs.writeFileSync(snapshotPath, index.export());
@@ -334,12 +334,12 @@ async function run() {
 
         const readers = [
             ['range', 'trunc.pancake-range',
-                (snap, out) => Pancake.buildRangeArtifactFile(snap, out),
-                (p) => Pancake.openRangeArtifactFile(p),
+                (snap, out) => Pikelet.buildRangeArtifactFile(snap, out),
+                (p) => Pikelet.openRangeArtifactFile(p),
                 (artifact, q) => artifact.search(q, K, { efSearch: 200 })],
             ['sketch', 'trunc.pancake-sketch',
-                (snap, out) => Pancake.buildSketchArtifactFile(snap, out, { sketchDims: 16, sketchBits: 8 }),
-                (p) => Pancake.openSketchArtifactFile(p),
+                (snap, out) => Pikelet.buildSketchArtifactFile(snap, out, { sketchDims: 16, sketchBits: 8 }),
+                (p) => Pikelet.openSketchArtifactFile(p),
                 (artifact, q) => artifact.search(q, K, { rerank: 200 })],
         ];
         for (const [label, name, build, open, search] of readers) {
@@ -361,7 +361,7 @@ async function run() {
                         await artifact.close();
                     }
                 } catch (err) {
-                    coded = err instanceof Pancake.PancakeError && typeof err.code === 'string';
+                    coded = err instanceof Pikelet.PancakeError && typeof err.code === 'string';
                     detail = String(err && err.message);
                 }
                 check(`${label} artifact truncated to ${keep}B fails closed`, coded, detail);
@@ -375,15 +375,15 @@ async function run() {
     console.log('\nforged record ids fail closed');
     {
         const rows = seededVectors(COUNT, DIM, 21);
-        const index = await Pancake.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
+        const index = await Pikelet.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
         index.addBatch(rows);
         const snapshotPath = path.join(tmp, 'forge-snap.pnck');
         fs.writeFileSync(snapshotPath, index.export());
         index.dispose();
         const rangePath = path.join(tmp, 'forge.pancake-range');
-        Pancake.buildRangeArtifactFile(snapshotPath, rangePath);
+        Pikelet.buildRangeArtifactFile(snapshotPath, rangePath);
 
-        const clean = await Pancake.openRangeArtifactFile(rangePath);
+        const clean = await Pikelet.openRangeArtifactFile(rangePath);
         const baseOffset = clean.baseRecordsOffset;
         const routerOffset = clean.routerRecordsOffset;
         await clean.close();
@@ -397,7 +397,7 @@ async function run() {
             let coded = false;
             let detail = 'no error thrown';
             try {
-                const artifact = await Pancake.openRangeArtifactFile(forgedPath);
+                const artifact = await Pikelet.openRangeArtifactFile(forgedPath);
                 try {
                     const queries = seededVectors(10, DIM, 22);
                     for (const q of queries) await artifact.search(q, K, { efSearch: 200 });
@@ -405,7 +405,7 @@ async function run() {
                     await artifact.close();
                 }
             } catch (err) {
-                coded = err instanceof Pancake.PancakeError && err.code === 'SNAPSHOT_INVALID';
+                coded = err instanceof Pikelet.PancakeError && err.code === 'SNAPSHOT_INVALID';
                 detail = String(err && err.message);
             }
             check(`forged ${label} record id rejected with SNAPSHOT_INVALID`, coded, detail);
@@ -420,13 +420,13 @@ async function run() {
     console.log('\nartifact read sizes bounded before fetch');
     {
         const rows = seededVectors(COUNT, DIM, 51);
-        const index = await Pancake.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
+        const index = await Pikelet.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
         index.addBatch(rows);
         const snapshotPath = path.join(tmp, 'bound-snap.pnck');
         fs.writeFileSync(snapshotPath, index.export());
         index.dispose();
         const rangePath = path.join(tmp, 'bound.pancake-range');
-        Pancake.buildRangeArtifactFile(snapshotPath, rangePath);
+        Pikelet.buildRangeArtifactFile(snapshotPath, rangePath);
         const realHeader = Buffer.from(fs.readFileSync(rangePath)).subarray(0, 128);
 
         // Wrap a real 128-byte header over a source that records read sizes and
@@ -447,7 +447,7 @@ async function run() {
         for (const reportSize of [true, false]) {
             const src = makeSource(reportSize);
             let threw = false;
-            try { await Pancake.RangeArtifact.open(src); } catch { threw = true; }
+            try { await Pikelet.RangeArtifact.open(src); } catch { threw = true; }
             // Open-path reads default to the 256 MiB budget, well under the
             // 2 GiB absolute backstop.
             const giant = src.calls.some(([, l]) => l > 256 * 1024 * 1024);
@@ -457,10 +457,10 @@ async function run() {
 
         // NodeFileRangeSource.read must refuse an out-of-file range directly,
         // independent of any caller validation (defense in depth).
-        const art = await Pancake.openRangeArtifactFile(rangePath);
+        const art = await Pikelet.openRangeArtifactFile(rangePath);
         let directCoded = false, ddetail = '';
         try { await art.source.read(0, 0x40000000); }
-        catch (err) { directCoded = err instanceof Pancake.PancakeError && err.code === 'SNAPSHOT_INVALID'; ddetail = String(err && err.message); }
+        catch (err) { directCoded = err instanceof Pikelet.PancakeError && err.code === 'SNAPSHOT_INVALID'; ddetail = String(err && err.message); }
         check('NodeFileRangeSource.read refuses an out-of-file range', directCoded, ddetail);
         await art.close();
     }
@@ -471,21 +471,21 @@ async function run() {
     console.log('\nscanner input validation');
     {
         const rows = seededVectors(COUNT, DIM, 31);
-        const index = await Pancake.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
+        const index = await Pikelet.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
         index.addBatch(rows);
         const snapshotPath = path.join(tmp, 'scan-snap.pnck');
         fs.writeFileSync(snapshotPath, index.export());
         index.dispose();
         const sketchPath = path.join(tmp, 'scan.pancake-sketch');
-        Pancake.buildSketchArtifactFile(snapshotPath, sketchPath, { sketchDims: 16, sketchBits: 8 });
-        const artifact = await Pancake.openSketchArtifactFile(sketchPath);
-        const scanner = await Pancake.createSketchScanner(artifact);
+        Pikelet.buildSketchArtifactFile(snapshotPath, sketchPath, { sketchDims: 16, sketchBits: 8 });
+        const artifact = await Pikelet.openSketchArtifactFile(sketchPath);
+        const scanner = await Pikelet.createSketchScanner(artifact);
         const sd = scanner.sketchDims;
 
         const rejects = (input, label) => {
             let coded = false, detail = 'no error thrown';
             try { scanner.scan(input, 10); }
-            catch (err) { coded = err instanceof Pancake.PancakeError && typeof err.code === 'string'; detail = String(err && err.message); }
+            catch (err) { coded = err instanceof Pikelet.PancakeError && typeof err.code === 'string'; detail = String(err && err.message); }
             check(`scan() rejects ${label}`, coded, detail);
         };
         rejects(new Float32Array(sd + 5000).fill(0.5), 'oversized input');
@@ -504,13 +504,13 @@ async function run() {
     console.log('\nverification fails closed without crypto');
     {
         const rows = seededVectors(COUNT, DIM, 41);
-        const index = await Pancake.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
+        const index = await Pikelet.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
         index.addBatch(rows);
         const snapshotPath = path.join(tmp, 'verify-snap.pnck');
         fs.writeFileSync(snapshotPath, index.export());
         index.dispose();
         const sketchPath = path.join(tmp, 'verify.pancake-sketch');
-        Pancake.buildSketchArtifactFile(snapshotPath, sketchPath, { sketchDims: 16, sketchBits: 8 });
+        Pikelet.buildSketchArtifactFile(snapshotPath, sketchPath, { sketchDims: 16, sketchBits: 8 });
 
         // Simulate an environment with no crypto backend at all. globalThis.crypto
         // is a getter-only accessor, so override it via defineProperty and
@@ -526,10 +526,10 @@ async function run() {
         try {
             let coded = false, detail = 'no error thrown';
             try {
-                const artifact = await Pancake.openSketchArtifactFile(sketchPath, { verify: true });
+                const artifact = await Pikelet.openSketchArtifactFile(sketchPath, { verify: true });
                 await artifact.close();
             } catch (err) {
-                coded = err instanceof Pancake.PancakeError && err.code === 'SNAPSHOT_INVALID' && /no crypto backend/i.test(err.message);
+                coded = err instanceof Pikelet.PancakeError && err.code === 'SNAPSHOT_INVALID' && /no crypto backend/i.test(err.message);
                 detail = String(err && err.message);
             }
             check('open(verify:true) fails closed with no crypto backend', coded, detail);
@@ -537,7 +537,7 @@ async function run() {
             // verify:false must still open in the same environment.
             let opened = false, odetail = '';
             try {
-                const artifact = await Pancake.openSketchArtifactFile(sketchPath, { verify: false });
+                const artifact = await Pikelet.openSketchArtifactFile(sketchPath, { verify: false });
                 opened = artifact.count === COUNT;
                 await artifact.close();
             } catch (err) { odetail = String(err && err.message); }
@@ -555,19 +555,19 @@ async function run() {
     console.log('\nrange artifact segment digests (v3)');
     {
         const rows = seededVectors(COUNT, DIM, 61);
-        const index = await Pancake.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
+        const index = await Pikelet.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
         index.addBatch(rows);
         const snapshotPath = path.join(tmp, 'digest-snap.pnck');
         fs.writeFileSync(snapshotPath, index.export());
         index.dispose();
         const rangePath = path.join(tmp, 'digest.pancake-range');
-        const manifest = Pancake.buildRangeArtifactFile(snapshotPath, rangePath);
+        const manifest = Pikelet.buildRangeArtifactFile(snapshotPath, rangePath);
         check('manifest declares v3 + integrity digests', manifest.formatVersion === 3
             && /^[0-9a-f]{64}$/.test(manifest.integrity.idMapSha256)
             && /^[0-9a-f]{64}$/.test(manifest.integrity.routerSha256)
             && /^[0-9a-f]{64}$/.test(manifest.integrity.baseSha256));
 
-        const clean = await Pancake.openRangeArtifactFile(rangePath);
+        const clean = await Pikelet.openRangeArtifactFile(rangePath);
         const stats = clean.stats();
         check('id map + router verified at open', clean.version === 3
             && stats.segmentVerified.idMap === true && stats.segmentVerified.router === true);
@@ -590,7 +590,7 @@ async function run() {
             let baseRejected = false;
             let detail = 'no error thrown';
             try {
-                const artifact = await Pancake.openRangeArtifactFile(tamperedPath);
+                const artifact = await Pikelet.openRangeArtifactFile(tamperedPath);
                 try { await artifact.verifyBaseSegment(); }
                 catch (err) { baseRejected = /hash verification/.test(String(err && err.message)); }
                 await artifact.close();
@@ -612,14 +612,14 @@ async function run() {
         v2Bytes.fill(0, 128, 224);
         const v2Path = `${rangePath}.v2`;
         fs.writeFileSync(v2Path, v2Bytes);
-        const v2Artifact = await Pancake.openRangeArtifactFile(v2Path);
+        const v2Artifact = await Pikelet.openRangeArtifactFile(v2Path);
         const v2Results = (await v2Artifact.search(seededVectors(1, DIM, 62)[0], K, { efSearch: 80 })).results.map((r) => r.id);
         check('v2 artifact (no digests) still opens, same results', v2Artifact.version === 2
             && v2Artifact.stats().segmentVerified.idMap === false
             && JSON.stringify(v2Results) === JSON.stringify(cleanResults));
         let v2BaseRefused = false;
         try { await v2Artifact.verifyBaseSegment(); }
-        catch (err) { v2BaseRefused = err instanceof Pancake.PancakeError && err.code === 'INVALID_ARGUMENT'; }
+        catch (err) { v2BaseRefused = err instanceof Pikelet.PancakeError && err.code === 'INVALID_ARGUMENT'; }
         check('verifyBaseSegment refuses a pre-digest artifact explicitly', v2BaseRefused);
         await v2Artifact.close();
 
@@ -629,8 +629,8 @@ async function run() {
         const v9Path = `${rangePath}.v9`;
         fs.writeFileSync(v9Path, v9Bytes);
         let v9Rejected = false;
-        try { await Pancake.openRangeArtifactFile(v9Path); }
-        catch (err) { v9Rejected = err instanceof Pancake.PancakeError && /version/i.test(String(err.message)); }
+        try { await Pikelet.openRangeArtifactFile(v9Path); }
+        catch (err) { v9Rejected = err instanceof Pikelet.PancakeError && /version/i.test(String(err.message)); }
         check('unknown range artifact version rejected', v9Rejected);
     }
 
@@ -639,7 +639,7 @@ async function run() {
     console.log('\nsnapshot format version bounded');
     {
         const rows = seededVectors(64, DIM, 71);
-        const index = await Pancake.create({ dim: DIM, maxElements: 64, metric: 'l2', quantized: true });
+        const index = await Pikelet.create({ dim: DIM, maxElements: 64, metric: 'l2', quantized: true });
         index.addBatch(rows);
         const snapshot = Buffer.from(index.export());
         index.dispose();
@@ -652,10 +652,10 @@ async function run() {
         snapshot.writeUInt32LE(99, rawOffset + 8);
         let rejected = false, detail = 'no error thrown';
         try {
-            const restored = await Pancake.restore(snapshot);
+            const restored = await Pikelet.restore(snapshot);
             restored.dispose();
         } catch (err) {
-            rejected = err instanceof Pancake.PancakeError && err.code === 'SNAPSHOT_INVALID' && /format version/i.test(err.message);
+            rejected = err instanceof Pikelet.PancakeError && err.code === 'SNAPSHOT_INVALID' && /format version/i.test(err.message);
             detail = String(err && err.message);
         }
         check('unknown raw snapshot version rejected at import', rejected, detail);
@@ -668,38 +668,38 @@ async function run() {
     console.log('\nread budgets and chunked processing');
     {
         const rows = seededVectors(COUNT, DIM, 91);
-        const index = await Pancake.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
+        const index = await Pikelet.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
         index.addBatch(rows);
         const snapshotPath = path.join(tmp, 'budget-snap.pnck');
         fs.writeFileSync(snapshotPath, index.export());
         index.dispose();
         const rangePath = path.join(tmp, 'budget.pancake-range');
-        Pancake.buildRangeArtifactFile(snapshotPath, rangePath);
+        Pikelet.buildRangeArtifactFile(snapshotPath, rangePath);
         const sketchPath = path.join(tmp, 'budget.pancake-sketch');
-        Pancake.buildSketchArtifactFile(snapshotPath, sketchPath, { sketchDims: 16, sketchBits: 8 });
+        Pikelet.buildSketchArtifactFile(snapshotPath, sketchPath, { sketchDims: 16, sketchBits: 8 });
         const queries = seededVectors(10, DIM, 92);
 
         // A budget below the artifact's resident needs fails the open with a
         // coded error instead of being silently raised.
         let coded = false, detail = 'no error thrown';
-        try { await Pancake.openRangeArtifactFile(rangePath, { maxReadBytes: 1024 }); }
+        try { await Pikelet.openRangeArtifactFile(rangePath, { maxReadBytes: 1024 }); }
         catch (err) {
-            coded = err instanceof Pancake.PancakeError && err.code === 'SNAPSHOT_INVALID' && /maximum read size/.test(err.message);
+            coded = err instanceof Pikelet.PancakeError && err.code === 'SNAPSHOT_INVALID' && /maximum read size/.test(err.message);
             detail = String(err && err.message);
         }
         check('range open under a too-small read budget fails closed', coded, detail);
         coded = false;
-        try { await Pancake.openSketchArtifactFile(sketchPath, { maxReadBytes: 1024 }); }
-        catch (err) { coded = err instanceof Pancake.PancakeError && err.code === 'SNAPSHOT_INVALID'; }
+        try { await Pikelet.openSketchArtifactFile(sketchPath, { maxReadBytes: 1024 }); }
+        catch (err) { coded = err instanceof Pikelet.PancakeError && err.code === 'SNAPSHOT_INVALID'; }
         check('sketch open under a too-small read budget fails closed', coded);
         let invalid = false;
-        try { await Pancake.openRangeArtifactFile(rangePath, { maxReadBytes: -5 }); }
-        catch (err) { invalid = err instanceof Pancake.PancakeError && err.code === 'INVALID_ARGUMENT'; }
+        try { await Pikelet.openRangeArtifactFile(rangePath, { maxReadBytes: -5 }); }
+        catch (err) { invalid = err instanceof Pikelet.PancakeError && err.code === 'INVALID_ARGUMENT'; }
         check('invalid maxReadBytes rejected with INVALID_ARGUMENT', invalid);
 
         // Chunked verification: multiple small chunks must accept a clean
         // segment and reject a tampered one, same as the one-shot path.
-        const cleanRange = await Pancake.openRangeArtifactFile(rangePath);
+        const cleanRange = await Pikelet.openRangeArtifactFile(rangePath);
         check('chunked base verification accepts a clean segment',
             (await cleanRange.verifyBaseSegment({ chunkBytes: 4096 })) === true);
         const baseRecordsOffset = cleanRange.baseRecordsOffset;
@@ -713,19 +713,19 @@ async function run() {
         tamperedBytes[tamperedBytes.length - 4] ^= 0xff;
         const tamperedPath = `${rangePath}.chunktamper`;
         fs.writeFileSync(tamperedPath, tamperedBytes);
-        const tamperedRange = await Pancake.openRangeArtifactFile(tamperedPath);
+        const tamperedRange = await Pikelet.openRangeArtifactFile(tamperedPath);
         let rejected = false;
         try { await tamperedRange.verifyBaseSegment({ chunkBytes: 4096 }); }
         catch (err) { rejected = /hash verification/.test(String(err && err.message)); }
         check('chunked base verification rejects a tail-tampered segment', rejected);
         await tamperedRange.close();
 
-        const cleanSketch = await Pancake.openSketchArtifactFile(sketchPath);
+        const cleanSketch = await Pikelet.openSketchArtifactFile(sketchPath);
         check('chunked vectors verification accepts a clean segment',
             (await cleanSketch.verifyVectors({ chunkBytes: 4096 })) === true);
 
         // Splitting coalesced runs must change request counts, never results.
-        const splitRange = await Pancake.openRangeArtifactFile(rangePath);
+        const splitRange = await Pikelet.openRangeArtifactFile(rangePath);
         let splitMatch = true;
         for (let i = 0; i < queries.length; i++) {
             const got = (await splitRange.search(queries[i], K, { efSearch: 80, maxRangeBytes: recordBytes })).results.map((r) => r.id);
@@ -764,11 +764,11 @@ async function run() {
         try {
             // Budget sits between the resident prefix (~14.4 KB, must load)
             // and the vectors segment (19.2 KB, must be refused one-shot).
-            const noStream = await Pancake.openSketchArtifactFile(sketchPath, { verify: false, maxReadBytes: 16384 });
+            const noStream = await Pikelet.openSketchArtifactFile(sketchPath, { verify: false, maxReadBytes: 16384 });
             let refused = false, rdetail = 'no error thrown';
             try { await noStream.verifyVectors(); }
             catch (err) {
-                refused = err instanceof Pancake.PancakeError && /too large to verify/.test(err.message);
+                refused = err instanceof Pikelet.PancakeError && /too large to verify/.test(err.message);
                 rdetail = String(err && err.message);
             }
             check('one-shot fallback refuses segments beyond the read budget', refused, rdetail);
@@ -783,15 +783,15 @@ async function run() {
     console.log('\nsketch vectors segment digest');
     {
         const rows = seededVectors(COUNT, DIM, 81);
-        const index = await Pancake.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
+        const index = await Pikelet.create({ dim: DIM, maxElements: COUNT, metric: 'l2', quantized: true });
         index.addBatch(rows);
         const snapshotPath = path.join(tmp, 'vecdigest-snap.pnck');
         fs.writeFileSync(snapshotPath, index.export());
         index.dispose();
         const sketchPath = path.join(tmp, 'vecdigest.pancake-sketch');
-        Pancake.buildSketchArtifactFile(snapshotPath, sketchPath, { sketchDims: 16, sketchBits: 8 });
+        Pikelet.buildSketchArtifactFile(snapshotPath, sketchPath, { sketchDims: 16, sketchBits: 8 });
 
-        const clean = await Pancake.openSketchArtifactFile(sketchPath);
+        const clean = await Pikelet.openSketchArtifactFile(sketchPath);
         const ok = await clean.verifyVectors();
         check('clean vectors segment verifies', ok === true && clean.stats().vectorsVerified === true);
         const vectorsOffset = clean.vectorsOffset;
@@ -801,7 +801,7 @@ async function run() {
         tampered[vectorsOffset + 3] ^= 0xff;
         const tamperedPath = `${sketchPath}.tampered`;
         fs.writeFileSync(tamperedPath, tampered);
-        const artifact = await Pancake.openSketchArtifactFile(tamperedPath);
+        const artifact = await Pikelet.openSketchArtifactFile(tamperedPath);
         check('vectors tamper is invisible to the resident hash', artifact.stats().residentVerified === true);
         let rejected = false, detail = 'no error thrown';
         try { await artifact.verifyVectors(); }
@@ -822,7 +822,7 @@ async function run() {
             const bytes = Buffer.from(c.artifactBase64, 'base64');
             const goldenPath = path.join(tmp, `golden-${c.metric}-${c.sketchBits}.pancake-sketch`);
             fs.writeFileSync(goldenPath, bytes);
-            const artifact = await Pancake.openSketchArtifactFile(goldenPath);
+            const artifact = await Pikelet.openSketchArtifactFile(goldenPath);
             let ok = true;
             let ri = 0;
             for (const q of c.queries) {
@@ -836,7 +836,7 @@ async function run() {
                 }
             }
             // The WASM scanner path must reproduce the same golden results.
-            const scanner = await Pancake.createSketchScanner(artifact);
+            const scanner = await Pikelet.createSketchScanner(artifact);
             let scannerOk = true;
             ri = 0;
             for (const q of c.queries) {

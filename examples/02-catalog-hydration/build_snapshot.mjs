@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import Pancake from '../../pancake.node.mjs';
+import Pikelet from '../../pikelet.node.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,7 +29,7 @@ async function main() {
     seed: 108,
   };
 
-  const { index, ids, idMap } = await Pancake.fromVectors(rows, opts);
+  const { index, ids, idMap } = await Pikelet.fromVectors(rows, opts);
   try {
     const snapshot = index.export();
     fs.writeFileSync(packageSnapshotPath, snapshot);

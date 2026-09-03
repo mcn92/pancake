@@ -1,7 +1,7 @@
 /**
- * Pancake Test Suite
+ * Pikelet Test Suite
  *
- * Tests core invariants of the Pancake index.
+ * Tests core invariants of the Pikelet index.
  * Run with: npm test
  *
  * No test framework required — plain Node.js.
@@ -9,7 +9,7 @@
 
 'use strict';
 
-const Pancake = require('./pancake.js');
+const Pikelet = require('./pikelet.js');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -262,7 +262,7 @@ function assertSearchRowsEqualWithTolerance(actualRows, expectedRows, distanceTo
 
 async function evaluateHeldOutOracle(config, oracleSpec) {
     const dataset = buildClusteredCosineDataset(oracleSpec);
-    const idx = await Pancake.create({
+    const idx = await Pikelet.create({
         dim: oracleSpec.dim,
         metric: 'cosine',
         maxElements: 1024,
@@ -320,7 +320,7 @@ async function evaluateHeldOutOracle(config, oracleSpec) {
 
     idx.dispose();
 
-    const idx2 = await Pancake.create({
+    const idx2 = await Pikelet.create({
         dim: oracleSpec.dim,
         metric: 'cosine',
         maxElements: 1024,
@@ -369,7 +369,7 @@ async function testCreation() {
 
     // Basic creation
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         assert(idx !== null && idx !== undefined, 'create() returns an index');
         assert(idx.count === 0, 'fresh index has count 0');
         assert(idx.memory > 0, 'fresh index has positive memory');
@@ -378,31 +378,31 @@ async function testCreation() {
 
     // L2 metric
     {
-        const idx = await Pancake.create({ ...DEFAULT_CONFIG, metric: 'l2' });
+        const idx = await Pikelet.create({ ...DEFAULT_CONFIG, metric: 'l2' });
         assert(idx !== null, 'create() with l2 metric succeeds');
         idx.dispose();
     }
 
     // Different dimensions
     for (const dim of [32, 64, 256, 384]) {
-        const idx = await Pancake.create({ ...DEFAULT_CONFIG, dim });
+        const idx = await Pikelet.create({ ...DEFAULT_CONFIG, dim });
         assert(idx !== null, `create() with dim=${dim} succeeds`);
         idx.dispose();
     }
 
     // Missing required field
     await assertThrowsAsync(
-        () => Pancake.create({ metric: 'cosine', maxElements: 100 }),
+        () => Pikelet.create({ metric: 'cosine', maxElements: 100 }),
         'create() without dim throws'
     );
 
     await assertThrowsAsync(
-        () => Pancake.create({ ...DEFAULT_CONFIG, compressed: DIM }),
+        () => Pikelet.create({ ...DEFAULT_CONFIG, compressed: DIM }),
         'create() with removed compressed option throws'
     );
 
     await assertThrowsAsync(
-        () => Pancake.create({ ...DEFAULT_CONFIG, varianceSample: [normalizedVec(DIM)] }),
+        () => Pikelet.create({ ...DEFAULT_CONFIG, varianceSample: [normalizedVec(DIM)] }),
         'create() with removed varianceSample option throws'
     );
 
@@ -411,7 +411,7 @@ async function testCreation() {
     // silently create a 3-element index reporting capacity 4294967299).
     for (const bad of [2 ** 31, 2 ** 32 + 3, 0, -1, 1.5]) {
         let err = null;
-        try { await Pancake.create({ ...DEFAULT_CONFIG, maxElements: bad }); } catch (e) { err = e; }
+        try { await Pikelet.create({ ...DEFAULT_CONFIG, maxElements: bad }); } catch (e) { err = e; }
         assert(err && err.code === 'INVALID_ARGUMENT',
             `create() rejects maxElements=${bad} with INVALID_ARGUMENT`);
     }
@@ -423,7 +423,7 @@ async function testCreation() {
     {
         const big = { dim: 4096, maxElements: 50_000_000, metric: 'l2', M: 12 };
         let err = null;
-        try { await Pancake.create(big); } catch (e) { err = e; }
+        try { await Pikelet.create(big); } catch (e) { err = e; }
         assert(err && err.code === 'WASM_ALLOCATION_FAILED'
             && err.details && err.details.estimatedBytes > err.details.budgetBytes
             && err.details.estimatedBytes === big.maxElements * (big.dim + 16 * big.M + 39)
@@ -434,14 +434,14 @@ async function testCreation() {
         // are 4x smaller but their edges are 2x larger); the guard must apply
         // the formula for the backend actually requested.
         err = null;
-        try { await Pancake.create({ ...big, quantized: false }); } catch (e) { err = e; }
+        try { await Pikelet.create({ ...big, quantized: false }); } catch (e) { err = e; }
         assert(err && err.code === 'WASM_ALLOCATION_FAILED'
             && err.details.estimatedBytes === big.maxElements * (4 * big.dim + 8 * big.M + 23)
             && err.details.quantized === false,
             'create() rejects the same config using the float formula');
 
         // A rejected create must not poison the engine for later indexes.
-        const after = await Pancake.create({ ...DEFAULT_CONFIG });
+        const after = await Pikelet.create({ ...DEFAULT_CONFIG });
         after.add(normalizedVec(DIM));
         assert(after.search(normalizedVec(DIM), 1).length === 1,
             'engine remains usable after a capacity rejection');
@@ -452,10 +452,10 @@ async function testCreation() {
     // uint32_t INVALID_HANDLE (0xFFFFFFFF), which the i32 ABI delivers to JS
     // as -1; create() must detect it and free its scratch allocations.
     {
-        const createPancakeApi = require('./pancake-core.js');
+        const createPikeletApi = require('./pikelet-core.js');
         const freed = [];
         let nextPtr = 0;
-        const FailingInit = createPancakeApi(async () => ({
+        const FailingInit = createPikeletApi(async () => ({
             _emsc_malloc: () => (nextPtr += 8),
             _emsc_free: (p) => freed.push(p),
             _pancake_init: () => -1,
@@ -472,7 +472,7 @@ async function testCreation() {
 async function testAdd() {
     section('Add');
 
-    const idx = await Pancake.create(DEFAULT_CONFIG);
+    const idx = await Pikelet.create(DEFAULT_CONFIG);
 
     // Add Float32Array
     const vec = normalizedVec(DIM);
@@ -537,7 +537,7 @@ async function testAdd() {
 async function testAddBatch() {
     section('AddBatch');
 
-    const idx = await Pancake.create(DEFAULT_CONFIG);
+    const idx = await Pikelet.create(DEFAULT_CONFIG);
 
     const vecs = Array.from({ length: 10 }, () => normalizedVec(DIM));
     const ids  = idx.addBatch(vecs);
@@ -561,7 +561,7 @@ async function testAddBatch() {
 async function testSearch() {
     section('Search');
 
-    const idx = await Pancake.create(DEFAULT_CONFIG);
+    const idx = await Pikelet.create(DEFAULT_CONFIG);
 
     // Insert known vectors and verify self-recall
     const vecs = Array.from({ length: 100 }, () => normalizedVec(DIM));
@@ -634,7 +634,7 @@ async function testSearch() {
     // A result without an external-ID mapping is an internal invariant failure,
     // not a valid raw-ID fallback.
     {
-        const broken = await Pancake.create({
+        const broken = await Pikelet.create({
             ...DEFAULT_CONFIG,
             dim: 4,
             maxElements: 4,
@@ -659,7 +659,7 @@ async function testSearchMetrics() {
 
     // Cosine: unit vectors, known angles
     {
-        const idx = await Pancake.create({
+        const idx = await Pikelet.create({
             ...DEFAULT_CONFIG,
             dim: DIM2,
             metric: 'cosine',
@@ -684,7 +684,7 @@ async function testSearchMetrics() {
 
     // L2: known distances
     {
-        const idx = await Pancake.create({
+        const idx = await Pikelet.create({
             ...DEFAULT_CONFIG,
             dim: DIM2,
             metric: 'l2',
@@ -712,7 +712,7 @@ async function testSearchMetrics() {
 async function testDelete() {
     section('Delete');
 
-    const idx = await Pancake.create(DEFAULT_CONFIG);
+    const idx = await Pikelet.create(DEFAULT_CONFIG);
 
     const vecs = Array.from({ length: 10 }, () => normalizedVec(DIM));
     const ids  = idx.addBatch(vecs);
@@ -738,7 +738,7 @@ async function testDelete() {
 async function testGhostRatio() {
     section('Ghost ratio');
 
-    const idx = await Pancake.create(DEFAULT_CONFIG);
+    const idx = await Pikelet.create(DEFAULT_CONFIG);
 
     const vecs = Array.from({ length: 100 }, () => normalizedVec(DIM));
     const ids  = idx.addBatch(vecs);
@@ -757,7 +757,7 @@ async function testGhostRatio() {
 async function testCompact() {
     section('Compact');
 
-    const idx = await Pancake.create(DEFAULT_CONFIG);
+    const idx = await Pikelet.create(DEFAULT_CONFIG);
 
     const vecs = Array.from({ length: 100 }, () => normalizedVec(DIM));
     const ids  = idx.addBatch(vecs);
@@ -789,7 +789,7 @@ async function testCompact() {
 async function testMemory() {
     section('Memory');
 
-    const idx = await Pancake.create(DEFAULT_CONFIG);
+    const idx = await Pikelet.create(DEFAULT_CONFIG);
     const memEmpty = idx.memory;
 
     // Memory grows with insertions
@@ -805,7 +805,7 @@ async function testMemory() {
 async function testDispose() {
     section('Dispose');
 
-    const idx = await Pancake.create(DEFAULT_CONFIG);
+    const idx = await Pikelet.create(DEFAULT_CONFIG);
     idx.add(normalizedVec(DIM));
     idx.dispose();
 
@@ -836,7 +836,7 @@ async function testDeterminism() {
     const query = normalizedVec(DIM);
 
     const runSearch = async () => {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         idx.addBatch(vecs);
         const results = idx.search(query, 5);
         idx.dispose();
@@ -854,7 +854,7 @@ async function testDeterminism() {
 async function testSearchDuringMutation() {
     section('Search during mutation');
 
-    const idx = await Pancake.create(DEFAULT_CONFIG);
+    const idx = await Pikelet.create(DEFAULT_CONFIG);
 
     // Build initial index
     const vecs = Array.from({ length: 100 }, () => normalizedVec(DIM));
@@ -884,8 +884,8 @@ async function testRuntimeEntryPoints() {
 
     // CommonJS package entry
     {
-        const CjsPancake = require('./pancake.js');
-        const idx = await CjsPancake.create({ dim: 4, maxElements: 10 });
+        const CjsPikelet = require('./pikelet.js');
+        const idx = await CjsPikelet.create({ dim: 4, maxElements: 10 });
         idx.add(new Float32Array([1, 0, 0, 0]));
         const results = idx.search(new Float32Array([1, 0, 0, 0]), 1);
         assert(results.length === 1 && results[0].id === 0, 'CJS entry works');
@@ -894,8 +894,8 @@ async function testRuntimeEntryPoints() {
 
     // ESM package entry
     {
-        const { default: EsmPancake } = await import(pathToFileURL(path.join(process.cwd(), 'pancake.node.mjs')).href);
-        const idx = await EsmPancake.create({ dim: 4, maxElements: 10 });
+        const { default: EsmPikelet } = await import(pathToFileURL(path.join(process.cwd(), 'pikelet.node.mjs')).href);
+        const idx = await EsmPikelet.create({ dim: 4, maxElements: 10 });
         idx.add(new Float32Array([1, 0, 0, 0]));
         const results = idx.search(new Float32Array([1, 0, 0, 0]), 1);
         assert(results.length === 1 && results[0].id === 0, 'ESM node entry works');
@@ -906,7 +906,7 @@ async function testRuntimeEntryPoints() {
     // loading contract without depending on a specific bundler or browser.
     {
         const loadEngine = require('./dist/engine.js');
-        const createPancakeApi = require('./pancake-core.js');
+        const createPikeletApi = require('./pikelet-core.js');
         async function compileWasmWithFallback() {
             const entries = [
                 ['engine.wasm', 'simd'],
@@ -931,7 +931,7 @@ async function testRuntimeEntryPoints() {
         }
         const { compiled, label } = await compileWasmWithFallback();
 
-        const BrowserStylePancake = createPancakeApi(() => loadEngine({
+        const BrowserStylePikelet = createPikeletApi(() => loadEngine({
             instantiateWasm(imports, successCallback) {
                 WebAssembly.instantiate(compiled, imports)
                     .then(instance => successCallback(instance))
@@ -940,7 +940,7 @@ async function testRuntimeEntryPoints() {
             }
         }));
 
-        const idx = await BrowserStylePancake.create({ dim: 4, maxElements: 10 });
+        const idx = await BrowserStylePikelet.create({ dim: 4, maxElements: 10 });
         idx.add(new Float32Array([1, 0, 0, 0]));
         const results = idx.search(new Float32Array([1, 0, 0, 0]), 1);
         assert(results.length === 1 && results[0].id === 0, `browser-style instantiateWasm path works (${label})`);
@@ -952,7 +952,7 @@ async function testRuntimeEntryPoints() {
 async function testExportImport() {
     section('Export / Import');
 
-    const idx = await Pancake.create(DEFAULT_CONFIG);
+    const idx = await Pikelet.create(DEFAULT_CONFIG);
 
     const vecs = Array.from({ length: 50 }, () => normalizedVec(DIM));
     const ids  = idx.addBatch(vecs);
@@ -972,7 +972,7 @@ async function testExportImport() {
     idx.dispose();
 
     // Import into fresh index
-    const idx2 = await Pancake.create(DEFAULT_CONFIG);
+    const idx2 = await Pikelet.create(DEFAULT_CONFIG);
     idx2.import(exported);
 
     assert(idx2.count === 49, 'imported index has correct count');
@@ -993,7 +993,7 @@ async function testExportImport() {
 async function testLargeIndex() {
     section('Scale — 1000 vectors');
 
-    const idx = await Pancake.create({
+    const idx = await Pikelet.create({
         ...DEFAULT_CONFIG,
         maxElements: 1000,
     });
@@ -1032,7 +1032,7 @@ async function testQuantized() {
     };
 
     // Creation
-    const idx = await Pancake.create(QCONFIG);
+    const idx = await Pikelet.create(QCONFIG);
     assert(idx !== null, 'create() with quantized: true succeeds');
     assert(idx.count === 0, 'fresh quantized index has count 0');
 
@@ -1068,7 +1068,7 @@ async function testQuantized() {
     const exported = idx.export();
     assert(exported.byteLength > 0, 'quantized: export produces data');
 
-    const idx2 = await Pancake.create(QCONFIG);
+    const idx2 = await Pikelet.create(QCONFIG);
     idx2.import(exported);
     assert(idx2.count === 80, 'quantized: imported count correct');
 
@@ -1082,7 +1082,7 @@ async function testErrorPaths() {
 
     // Import corrupted data
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         const garbage = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7]);
         let threw = false;
         try {
@@ -1096,7 +1096,7 @@ async function testErrorPaths() {
 
     // Import empty data
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         let threw = false;
         try {
             idx.import(new Uint8Array(0));
@@ -1109,13 +1109,13 @@ async function testErrorPaths() {
 
     // Import from ArrayBuffer (not Uint8Array)
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         const vecs = Array.from({ length: 10 }, () => normalizedVec(DIM));
         idx.addBatch(vecs);
         const exported = idx.export();
         idx.dispose();
 
-        const idx2 = await Pancake.create(DEFAULT_CONFIG);
+        const idx2 = await Pikelet.create(DEFAULT_CONFIG);
         idx2.import(exported.buffer); // ArrayBuffer, not Uint8Array
         assert(idx2.count === 10, 'import from ArrayBuffer works');
         idx2.dispose();
@@ -1123,11 +1123,11 @@ async function testErrorPaths() {
 
     // Import into non-empty index (overwrites)
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         const vecs1 = Array.from({ length: 20 }, () => normalizedVec(DIM));
         idx.addBatch(vecs1);
 
-        const idx2 = await Pancake.create(DEFAULT_CONFIG);
+        const idx2 = await Pikelet.create(DEFAULT_CONFIG);
         const vecs2 = Array.from({ length: 10 }, () => normalizedVec(DIM));
         idx2.addBatch(vecs2);
         const snapshot = idx2.export();
@@ -1140,13 +1140,13 @@ async function testErrorPaths() {
 
     // Import rejects snapshots larger than the destination maxElements.
     {
-        const src = await Pancake.create({ ...DEFAULT_CONFIG, maxElements: 6 });
+        const src = await Pikelet.create({ ...DEFAULT_CONFIG, maxElements: 6 });
         const srcVecs = Array.from({ length: 6 }, () => normalizedVec(DIM));
         src.addBatch(srcVecs);
         const exported = src.export();
         src.dispose();
 
-        const dst = await Pancake.create({ ...DEFAULT_CONFIG, maxElements: 5 });
+        const dst = await Pikelet.create({ ...DEFAULT_CONFIG, maxElements: 5 });
         const liveVecs = Array.from({ length: 2 }, () => normalizedVec(DIM));
         const liveIds = dst.addBatch(liveVecs);
         const beforeTop = dst.search(liveVecs[0], 1)[0];
@@ -1163,7 +1163,7 @@ async function testErrorPaths() {
 
     // Backend-level import failure preserves an existing destination index.
     {
-        const src = await Pancake.create(DEFAULT_CONFIG);
+        const src = await Pikelet.create(DEFAULT_CONFIG);
         src.addBatch(Array.from({ length: 5 }, () => normalizedVec(DIM)));
         const exported = new Uint8Array(src.export());
         src.dispose();
@@ -1172,7 +1172,7 @@ async function testErrorPaths() {
         const view = new DataView(exported.buffer, exported.byteOffset, exported.byteLength);
         view.setUint32(rawSizeOffset, 40, true); // valid raw header, truncated backend payload
 
-        const dst = await Pancake.create(DEFAULT_CONFIG);
+        const dst = await Pikelet.create(DEFAULT_CONFIG);
         const liveVecs = Array.from({ length: 4 }, () => normalizedVec(DIM));
         const liveIds = dst.addBatch(liveVecs);
         dst.delete(liveIds[0]);
@@ -1194,7 +1194,7 @@ async function testErrorPaths() {
 
     // add() with wrong dimension after successful adds
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         idx.add(normalizedVec(DIM));
         assertThrows(
             () => idx.add(new Float32Array(DIM * 2)),
@@ -1206,12 +1206,12 @@ async function testErrorPaths() {
 
     // Import config mismatch: dim 64 → 128
     {
-        const src = await Pancake.create({ ...DEFAULT_CONFIG, dim: 64 });
+        const src = await Pikelet.create({ ...DEFAULT_CONFIG, dim: 64 });
         src.addBatch(Array.from({ length: 10 }, () => normalizedVec(64)));
         const exported = src.export();
         src.dispose();
 
-        const dst = await Pancake.create({ ...DEFAULT_CONFIG, dim: 128 });
+        const dst = await Pikelet.create({ ...DEFAULT_CONFIG, dim: 128 });
         let msg = '';
         try { dst.import(exported); } catch (e) { msg = e.message; }
         assert(msg.includes('dim mismatch'), 'import dim 64→128 throws with dim mismatch message');
@@ -1220,12 +1220,12 @@ async function testErrorPaths() {
 
     // Import config mismatch: dim 128 → 64
     {
-        const src = await Pancake.create({ ...DEFAULT_CONFIG, dim: 128 });
+        const src = await Pikelet.create({ ...DEFAULT_CONFIG, dim: 128 });
         src.addBatch(Array.from({ length: 10 }, () => normalizedVec(128)));
         const exported = src.export();
         src.dispose();
 
-        const dst = await Pancake.create({ ...DEFAULT_CONFIG, dim: 64 });
+        const dst = await Pikelet.create({ ...DEFAULT_CONFIG, dim: 64 });
         let msg = '';
         try { dst.import(exported); } catch (e) { msg = e.message; }
         assert(msg.includes('dim mismatch'), 'import dim 128→64 throws with dim mismatch message');
@@ -1234,12 +1234,12 @@ async function testErrorPaths() {
 
     // Import config mismatch: cosine → l2
     {
-        const src = await Pancake.create({ ...DEFAULT_CONFIG, metric: 'cosine' });
+        const src = await Pikelet.create({ ...DEFAULT_CONFIG, metric: 'cosine' });
         src.addBatch(Array.from({ length: 10 }, () => normalizedVec(DIM)));
         const exported = src.export();
         src.dispose();
 
-        const dst = await Pancake.create({ ...DEFAULT_CONFIG, metric: 'l2' });
+        const dst = await Pikelet.create({ ...DEFAULT_CONFIG, metric: 'l2' });
         let msg = '';
         try { dst.import(exported); } catch (e) { msg = e.message; }
         assert(msg.includes('metric mismatch'), 'import cosine→l2 throws with metric mismatch message');
@@ -1248,7 +1248,7 @@ async function testErrorPaths() {
 
     // Import of deprecated DCT/PCA envelope is rejected
     {
-        const src = await Pancake.create(DEFAULT_CONFIG);
+        const src = await Pikelet.create(DEFAULT_CONFIG);
         src.addBatch(Array.from({ length: 10 }, () => normalizedVec(DIM)));
         const exported = src.export();
         src.dispose();
@@ -1258,7 +1258,7 @@ async function testErrorPaths() {
         view.setUint32(4, 1, true);
         view.setUint32(12, 64, true);
 
-        const dst = await Pancake.create(DEFAULT_CONFIG);
+        const dst = await Pikelet.create(DEFAULT_CONFIG);
         let msg = '';
         try { dst.import(deprecated); } catch (e) { msg = e.message; }
         assert(msg.includes('no longer supported'), 'import rejects deprecated DCT/PCA envelopes');
@@ -1267,13 +1267,13 @@ async function testErrorPaths() {
 
     // Import of truncated v3 envelope is rejected
     {
-        const src = await Pancake.create(DEFAULT_CONFIG);
+        const src = await Pikelet.create(DEFAULT_CONFIG);
         src.addBatch(Array.from({ length: 10 }, () => normalizedVec(DIM)));
         const exported = src.export();
         src.dispose();
 
         const truncated = exported.subarray(0, exported.byteLength - 3);
-        const dst = await Pancake.create(DEFAULT_CONFIG);
+        const dst = await Pikelet.create(DEFAULT_CONFIG);
         let msg = '';
         try { dst.import(truncated); } catch (e) { msg = e.message; }
         assert(msg.includes('truncated v3 envelope payload'), 'import rejects truncated v3 payload');
@@ -1282,7 +1282,7 @@ async function testErrorPaths() {
 
     // Import of v3 envelope with invalid nextExtId is rejected
     {
-        const src = await Pancake.create(DEFAULT_CONFIG);
+        const src = await Pikelet.create(DEFAULT_CONFIG);
         src.addBatch(Array.from({ length: 5 }, () => normalizedVec(DIM)));
         const exported = new Uint8Array(src.export());
         src.dispose();
@@ -1290,7 +1290,7 @@ async function testErrorPaths() {
         const view = new DataView(exported.buffer, exported.byteOffset, exported.byteLength);
         view.setUint32(20, 1, true);
 
-        const dst = await Pancake.create(DEFAULT_CONFIG);
+        const dst = await Pikelet.create(DEFAULT_CONFIG);
         let msg = '';
         try { dst.import(exported); } catch (e) { msg = e.message; }
         assert(msg.includes('nextExtId is invalid'), 'import rejects v3 envelope with invalid nextExtId');
@@ -1299,7 +1299,7 @@ async function testErrorPaths() {
 
     // Import of v3 envelope with mismatched mapping count is rejected
     {
-        const src = await Pancake.create(DEFAULT_CONFIG);
+        const src = await Pikelet.create(DEFAULT_CONFIG);
         src.addBatch(Array.from({ length: 5 }, () => normalizedVec(DIM)));
         const exported = new Uint8Array(src.export());
         src.dispose();
@@ -1312,7 +1312,7 @@ async function testErrorPaths() {
         exported.set(wasmBytes, newOffset);
         view.setUint32(28, wasmBytes.byteLength, true);
 
-        const dst = await Pancake.create(DEFAULT_CONFIG);
+        const dst = await Pikelet.create(DEFAULT_CONFIG);
         let msg = '';
         try { dst.import(exported); } catch (e) { msg = e.message; }
         assert(msg.includes('mapping count mismatch'), 'import rejects v3 envelope with mapping-count mismatch');
@@ -1321,7 +1321,7 @@ async function testErrorPaths() {
 
     // Import of v3 envelope with duplicate external IDs is rejected
     {
-        const src = await Pancake.create(DEFAULT_CONFIG);
+        const src = await Pikelet.create(DEFAULT_CONFIG);
         src.addBatch(Array.from({ length: 5 }, () => normalizedVec(DIM)));
         const exported = new Uint8Array(src.export());
         src.dispose();
@@ -1331,7 +1331,7 @@ async function testErrorPaths() {
         const firstExtId = view.getUint32(mappingOffset + 4, true);
         view.setUint32(mappingOffset + 12, firstExtId, true);
 
-        const dst = await Pancake.create(DEFAULT_CONFIG);
+        const dst = await Pikelet.create(DEFAULT_CONFIG);
         let msg = '';
         try { dst.import(exported); } catch (e) { msg = e.message; }
         assert(msg.includes('mapping contains duplicates'), 'import rejects v3 envelope with duplicate external IDs');
@@ -1345,7 +1345,7 @@ async function testEdgeCases() {
 
     // Search on empty index
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         const results = idx.search(normalizedVec(DIM), 5);
         assert(Array.isArray(results), 'search on empty index returns array');
         assert(results.length === 0, 'search on empty index returns 0 results');
@@ -1354,7 +1354,7 @@ async function testEdgeCases() {
 
     // k=0 search
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         idx.addBatch(Array.from({ length: 10 }, () => normalizedVec(DIM)));
         const results = idx.search(normalizedVec(DIM), 0);
         assert(results.length === 0, 'search with k=0 returns 0 results');
@@ -1363,7 +1363,7 @@ async function testEdgeCases() {
 
     // Delete non-existent ID (should not throw)
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         idx.addBatch(Array.from({ length: 5 }, () => normalizedVec(DIM)));
         let threw = false;
         try {
@@ -1379,7 +1379,7 @@ async function testEdgeCases() {
 
     // Double-delete same ID
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         const vecs = Array.from({ length: 5 }, () => normalizedVec(DIM));
         const ids = idx.addBatch(vecs);
         idx.delete(ids[0]);
@@ -1395,7 +1395,7 @@ async function testEdgeCases() {
 
     // Compact with no deletions (no ghosts)
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         const vecs = Array.from({ length: 20 }, () => normalizedVec(DIM));
         const ids = idx.addBatch(vecs);
         idx.compact(); // no-op compact
@@ -1414,7 +1414,7 @@ async function testEdgeCases() {
 
     // Engine compact_remap validates output before mutating.
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         const ids = idx.addBatch(Array.from({ length: 3 }, () => normalizedVec(DIM)));
         idx.delete(ids[1]);
         assert(idx.ghostCount === 1, 'compact_remap guard setup has one ghost');
@@ -1436,7 +1436,7 @@ async function testEdgeCases() {
 
     // Compact after deleting ALL vectors
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         const vecs = Array.from({ length: 10 }, () => normalizedVec(DIM));
         const ids = idx.addBatch(vecs);
         for (const id of ids) idx.delete(id);
@@ -1449,11 +1449,11 @@ async function testEdgeCases() {
 
     // Export on empty index
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         const exported = idx.export();
         assert(exported.byteLength > 0, 'export on empty index produces data');
 
-        const idx2 = await Pancake.create(DEFAULT_CONFIG);
+        const idx2 = await Pikelet.create(DEFAULT_CONFIG);
         idx2.import(exported);
         assert(idx2.count === 0, 'import of empty export gives count 0');
         idx2.dispose();
@@ -1462,7 +1462,7 @@ async function testEdgeCases() {
 
     // All getters after dispose
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         idx.add(normalizedVec(DIM));
         idx.dispose();
 
@@ -1476,7 +1476,7 @@ async function testEdgeCases() {
 
     // search() with plain number[] query (not Float32Array)
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         const vec = normalizedVec(DIM);
         idx.add(vec);
         const query = Array.from(vec);
@@ -1488,7 +1488,7 @@ async function testEdgeCases() {
 
     // addBatch with single element
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         const ids = idx.addBatch([normalizedVec(DIM)]);
         assert(ids.length === 1, 'addBatch with single vector returns 1 id');
         assert(idx.count === 1, 'count is 1 after single-element batch');
@@ -1503,14 +1503,14 @@ async function testMaxElementsOverflow() {
     section('maxElements overflow');
 
     // maxElements is a HARD limit in the C++ layer: insert() returns UINT32_MAX
-    // when count_ >= max_elements_, and pancake.js translates that to a throw.
+    // when count_ >= max_elements_, and pikelet.js translates that to a throw.
     //
-    // IMPORTANT: The WASM backend uses a single global index. Each Pancake.create()
+    // IMPORTANT: The WASM backend uses a single global index. Each Pikelet.create()
     // reinitializes that global, clobbering any previously created index. All
     // overflow assertions must therefore use a single index instance.
 
     const SMALL = 5;
-    const idx = await Pancake.create({
+    const idx = await Pikelet.create({
         ...DEFAULT_CONFIG,
         maxElements: SMALL,
     });
@@ -1563,7 +1563,7 @@ async function testMaxElementsOverflow() {
 async function testExportImportWithGhosts() {
     section('Export / Import — with ghosts');
 
-    const idx = await Pancake.create(DEFAULT_CONFIG);
+    const idx = await Pikelet.create(DEFAULT_CONFIG);
     const vecs = Array.from({ length: 20 }, () => normalizedVec(DIM));
     const ids  = idx.addBatch(vecs);
 
@@ -1579,7 +1579,7 @@ async function testExportImportWithGhosts() {
     assert(idx.count === 17, 'compact() reduces count to 17 live vectors');
     const compactExported = idx.export();
 
-    const idx2 = await Pancake.create(DEFAULT_CONFIG);
+    const idx2 = await Pikelet.create(DEFAULT_CONFIG);
     idx2.import(compactExported);
     assert(idx2.count === 17, 'import after compact() gives 17 vectors');
 
@@ -1598,7 +1598,7 @@ async function testExportImportWithGhosts() {
 async function testExportImportWithGhostsQuantized() {
     section('Export / Import — with ghosts (quantized)');
 
-    const idx = await Pancake.create({
+    const idx = await Pikelet.create({
         ...DEFAULT_CONFIG,
         quantized: true,
     });
@@ -1615,7 +1615,7 @@ async function testExportImportWithGhostsQuantized() {
 
     idx.compact();
     const exported = idx.export();
-    const idx2 = await Pancake.create({
+    const idx2 = await Pikelet.create({
         ...DEFAULT_CONFIG,
         quantized: true,
     });
@@ -1632,7 +1632,7 @@ async function testAddBatchPartialFailure() {
 
     // addBatch with a wrong-dimension vector mid-batch
     {
-        const idx = await Pancake.create({ ...DEFAULT_CONFIG, maxElements: 20 });
+        const idx = await Pikelet.create({ ...DEFAULT_CONFIG, maxElements: 20 });
         const goodVec  = normalizedVec(DIM);
         const badVec   = new Float32Array(DIM + 10); // wrong dim
         const goodVec2 = normalizedVec(DIM);
@@ -1659,7 +1659,7 @@ async function testAddBatchPartialFailure() {
 
     // addBatch where ALL vectors have wrong dim
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         let threw = false;
         try {
             idx.addBatch([new Float32Array(DIM + 1), new Float32Array(DIM + 1)]);
@@ -1673,7 +1673,7 @@ async function testAddBatchPartialFailure() {
 
     // addBatch exceeding remaining capacity must not partially insert
     {
-        const idx = await Pancake.create({ ...DEFAULT_CONFIG, maxElements: 5 });
+        const idx = await Pikelet.create({ ...DEFAULT_CONFIG, maxElements: 5 });
         const existingIds = idx.addBatch(Array.from({ length: 4 }, () => normalizedVec(DIM)));
         let threw = false;
         try {
@@ -1692,7 +1692,7 @@ async function testAddBatchPartialFailure() {
     // If the C bulk_insert ever reports a short insert after JS prevalidation,
     // the wrapper must not present it as a normal capacity error.
     {
-        const idx = await Pancake.create({ ...DEFAULT_CONFIG, maxElements: 5 });
+        const idx = await Pikelet.create({ ...DEFAULT_CONFIG, maxElements: 5 });
         const originalBulkInsert = idx._e._pancake_bulk_insert;
         idx._e._pancake_bulk_insert = (handle, dataPtr, n) => originalBulkInsert(handle, dataPtr, n - 1);
         try {
@@ -1702,8 +1702,8 @@ async function testAddBatchPartialFailure() {
             } catch (e) {
                 err = e;
             }
-            assert(err instanceof Pancake.PancakeError, 'short bulk_insert throws PancakeError');
-            assert(err?.code === Pancake.PANCAKE_ERROR_CODES.INTERNAL_INVARIANT, 'short bulk_insert reports INTERNAL_INVARIANT');
+            assert(err instanceof Pikelet.PancakeError, 'short bulk_insert throws PancakeError');
+            assert(err?.code === Pikelet.PANCAKE_ERROR_CODES.INTERNAL_INVARIANT, 'short bulk_insert reports INTERNAL_INVARIANT');
             assert(err?.details?.inserted === 1 && err?.details?.requested === 2, 'short bulk_insert reports partial insert details');
             assert(idx.count === 1, 'short bulk_insert leaves the actual inserted row visible');
             assert(idx.search(normalizedVec(DIM), 1).length === 1, 'index remains searchable after short bulk_insert invariant failure');
@@ -1718,7 +1718,7 @@ async function testAddBatchPartialFailure() {
 async function testIdLifecycleAcrossCompaction() {
     section('ID lifecycle across compaction');
 
-    const idx = await Pancake.create(DEFAULT_CONFIG);
+    const idx = await Pikelet.create(DEFAULT_CONFIG);
     const initialIds = idx.addBatch(Array.from({ length: 6 }, () => normalizedVec(DIM)));
 
     idx.delete(initialIds[1]);
@@ -1736,7 +1736,7 @@ async function testIdLifecycleAcrossCompaction() {
     assert(afterSecondCompact === 7, 'new ID after second compact continues monotonically');
 
     const exported = idx.export();
-    const idx2 = await Pancake.create(DEFAULT_CONFIG);
+    const idx2 = await Pikelet.create(DEFAULT_CONFIG);
     idx2.import(exported);
     const afterImport = idx2.add(normalizedVec(DIM));
     assert(afterImport === 8, 'new ID after import still continues monotonically');
@@ -1751,7 +1751,7 @@ async function testZeroAndDegenerateVectors() {
 
     // Zero vector — cosine is undefined; engine should not crash or corrupt
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         const zero = zeroVec(DIM);
         try {
             idx.add(zero);
@@ -1767,7 +1767,7 @@ async function testZeroAndDegenerateVectors() {
 
     // NaN vector — must not silently corrupt
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         const nanVec = new Float32Array(DIM).fill(NaN);
         try {
             idx.add(nanVec);
@@ -1782,7 +1782,7 @@ async function testZeroAndDegenerateVectors() {
 
     // Infinity vector — same contract as NaN
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         const infVec = new Float32Array(DIM).fill(Infinity);
         try {
             idx.add(infVec);
@@ -1797,7 +1797,7 @@ async function testZeroAndDegenerateVectors() {
 
     // Zero query vector — search must not crash or hang
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         idx.addBatch(Array.from({ length: 10 }, () => normalizedVec(DIM)));
         try {
             const results = idx.search(zeroVec(DIM), 5);
@@ -1817,7 +1817,7 @@ async function testDeterminismIds() {
     const vecs = Array.from({ length: 20 }, () => normalizedVec(DIM));
 
     const build = async () => {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         const ids = idx.addBatch(vecs);
         idx.dispose();
         return ids;
@@ -1837,7 +1837,7 @@ async function testDeterminismIds() {
 
     // After compact(), surviving external IDs are stable
     {
-        const idx = await Pancake.create(DEFAULT_CONFIG);
+        const idx = await Pikelet.create(DEFAULT_CONFIG);
         const ids = idx.addBatch(vecs);
         const survivorId = ids[10];
 
@@ -1870,7 +1870,7 @@ async function testMetricCorrectnessQuantized() {
         quantized:      true,
     };
 
-    const idx = await Pancake.create(QCONFIG);
+    const idx = await Pikelet.create(QCONFIG);
 
     // a = unit vector along axis 0
     // b = close to a (normalized)
@@ -1909,7 +1909,7 @@ async function testRawEngineImportValidation() {
 
     for (const testCase of cases) {
         const cfg = { ...DEFAULT_CONFIG, quantized: testCase.quantized, dim: 16, maxElements: 64 };
-        const src = await Pancake.create(cfg);
+        const src = await Pikelet.create(cfg);
         const vecs = Array.from({ length: 8 }, () => normalizedVec(cfg.dim));
         src.addBatch(vecs);
         const exported = src.export();
@@ -1936,7 +1936,7 @@ async function testRawEngineImportValidation() {
             { label: 'v2', bytes: wrapV2Envelope(rawWithL2Metric, cfg.dim, testCase.quantized, 1) },
             { label: 'v1', bytes: wrapV1Envelope(rawWithL2Metric, cfg.dim, testCase.quantized, 1) },
         ]) {
-            const idx = await Pancake.create(cfg);
+            const idx = await Pikelet.create(cfg);
             assertThrows(
                 () => idx.import(mismatch.bytes),
                 `${testCase.label}/${mismatch.label}: rejects envelope/raw metric disagreement`
@@ -1947,7 +1947,7 @@ async function testRawEngineImportValidation() {
 
         // Header: count at 12, entry point at 16, max level at 20, M at 24, M0 at 28, metric at 32
         {
-            const idx = await Pancake.create(cfg);
+            const idx = await Pikelet.create(cfg);
             const bad = overwriteU32(raw, 16, 9999);
             let msg = '';
             try { idx.import(bad); } catch (e) { msg = e.message; }
@@ -1956,7 +1956,7 @@ async function testRawEngineImportValidation() {
         }
 
         {
-            const idx = await Pancake.create(cfg);
+            const idx = await Pikelet.create(cfg);
             const bad = overwriteU32(raw, 32, 99);
             let msg = '';
             try { idx.import(bad); } catch (e) { msg = e.message; }
@@ -1965,7 +1965,7 @@ async function testRawEngineImportValidation() {
         }
 
         {
-            const idx = await Pancake.create(cfg);
+            const idx = await Pikelet.create(cfg);
             const bad = overwriteU32(raw, 24, 1);
             let msg = '';
             try { idx.import(bad); } catch (e) { msg = e.message; }
@@ -1974,7 +1974,7 @@ async function testRawEngineImportValidation() {
         }
 
         {
-            const idx = await Pancake.create(cfg);
+            const idx = await Pikelet.create(cfg);
             const serializedM = new DataView(raw.buffer, raw.byteOffset, raw.byteLength).getUint32(24, true);
             const bad = overwriteU32(raw, 28, serializedM * 2 - 1);
             let msg = '';
@@ -1984,7 +1984,7 @@ async function testRawEngineImportValidation() {
         }
 
         {
-            const idx = await Pancake.create(cfg);
+            const idx = await Pikelet.create(cfg);
             const graphOffset = testCase.graphBaseOffset(8, cfg.dim);
             const bad = overwriteU32(raw, graphOffset + 4, 9999);
             let msg = '';
@@ -2015,7 +2015,7 @@ async function testGhostEntryPointSearch() {
             return v;
         });
 
-        const src = await Pancake.create({
+        const src = await Pikelet.create({
             dim, maxElements: N, metric: 'l2', quantized,
             M: 8, efConstruction: 50, efSearch: 50,
         });
@@ -2026,7 +2026,7 @@ async function testGhostEntryPointSearch() {
         let fullK = 0;
         let ghostLeaks = 0;
         for (let i = 0; i < N; i++) {
-            const idx = await Pancake.create({
+            const idx = await Pikelet.create({
                 dim, maxElements: N, metric: 'l2', quantized,
                 M: 8, efConstruction: 50, efSearch: 50,
             });
@@ -2059,7 +2059,7 @@ async function testGhostsRemainNavigable() {
 
     for (const quantized of [false, true]) {
         const label = quantized ? 'uint8' : 'float';
-        const idx = await Pancake.create({
+        const idx = await Pikelet.create({
             dim,
             maxElements: N,
             metric: 'l2',
@@ -2113,7 +2113,7 @@ async function testDeleteChurnRegression() {
             metric: scenario.metric,
             efSearch: 120,
         };
-        const idx = await Pancake.create(cfg);
+        const idx = await Pikelet.create(cfg);
         const corpus = Array.from({ length: 120 }, () => normalizedVec(cfg.dim));
         const ids = idx.addBatch(corpus);
 
@@ -2179,7 +2179,7 @@ async function testGoldenSnapshotCompatibility() {
             { label: 'v1', bytes: exportedV1 },
             { label: 'raw', bytes: raw },
         ]) {
-            const idx = await Pancake.create({
+            const idx = await Pikelet.create({
                 dim: 4,
                 maxElements: 16,
                 metric: 'cosine',
@@ -2199,7 +2199,7 @@ async function testGoldenSnapshotCompatibility() {
             assert(top.every(r => Number.isFinite(r.distance)), `${scenario.label}/${variant.label}: distances are finite`);
 
             const reexported = idx.export();
-            const idx2 = await Pancake.create({
+            const idx2 = await Pikelet.create({
                 dim: 4,
                 maxElements: 16,
                 metric: 'cosine',
@@ -2232,7 +2232,7 @@ async function testNonFiniteRejection() {
     const dim = 16;
     for (const quantized of [false, true]) {
         const label = quantized ? 'uint8' : 'float32';
-        const idx = await Pancake.create({ dim, maxElements: 64, metric: 'cosine', quantized });
+        const idx = await Pikelet.create({ dim, maxElements: 64, metric: 'cosine', quantized });
 
         idx.add(normalizedVec(dim));
 
@@ -2271,7 +2271,7 @@ async function testCosineNormOverflowRegression() {
 
     for (const quantized of [false, true]) {
         const label = quantized ? 'uint8' : 'float32';
-        const idx = await Pancake.create({ dim, maxElements: 8, metric: 'cosine', quantized });
+        const idx = await Pikelet.create({ dim, maxElements: 8, metric: 'cosine', quantized });
 
         const id = idx.add(huge);
         assert(id === 0, `${label}: huge finite vector inserts`);
@@ -2298,7 +2298,7 @@ async function testCompactEntryPointRecovery() {
     // ~42% chance all are level 0. We use a fixed seed via deterministic vectors.
     for (const quantized of [false, true]) {
         const label = quantized ? 'uint8' : 'float32';
-        const idx = await Pancake.create({
+        const idx = await Pikelet.create({
             dim: 4, maxElements: 32, metric: 'cosine', quantized,
             M: 16, efConstruction: 50, efSearch: 50,
         });
@@ -2321,7 +2321,7 @@ async function testCompactEntryPointRecovery() {
         assert(snapshot.length > 0, `${label}: export succeeds after entry point deletion + compact`);
 
         // Reimport must succeed
-        const idx2 = await Pancake.create({
+        const idx2 = await Pikelet.create({
             dim: 4, maxElements: 32, metric: 'cosine', quantized,
             M: 16, efConstruction: 50, efSearch: 50,
         });
@@ -2343,7 +2343,7 @@ async function testSearchFiltered() {
     for (const quantized of [false, true]) {
         const label = quantized ? 'uint8' : 'float32';
         const dim = 32;
-        const idx = await Pancake.create({
+        const idx = await Pikelet.create({
             dim, maxElements: 200, metric: 'cosine', quantized,
         });
 
@@ -2537,7 +2537,7 @@ async function testCompactReconnectsIsolatedSurvivors() {
             quantized,
         };
 
-        const idx = await Pancake.create(config);
+        const idx = await Pikelet.create(config);
         const vecs = [];
         const ids = [];
         for (let i = 0; i < 80; i++) {
@@ -2615,11 +2615,11 @@ async function testConvenienceLoaders() {
             unitVec(4, 1),
             unitVec(4, 2),
         ];
-        const { index, ids, idMap } = await Pancake.fromVectors(rows, {
+        const { index, ids, idMap } = await Pikelet.fromVectors(rows, {
             metric: 'cosine',
             quantized: false,
         });
-        assert(ids.length === 3, 'fromVectors() returns one Pancake ID per raw vector');
+        assert(ids.length === 3, 'fromVectors() returns one Pikelet ID per raw vector');
         assert(index.dim === 4, 'fromVectors() infers dim from raw vectors');
         assert(index.count === 3, 'fromVectors() populates the index from raw vectors');
         assert(idMap.size === 0, 'fromVectors() leaves idMap empty for raw vectors');
@@ -2633,7 +2633,7 @@ async function testConvenienceLoaders() {
             { id: 'doc-a', vector: unitVec(4, 0) },
             { id: 'doc-b', vector: unitVec(4, 1) },
         ];
-        const { index, ids, idMap } = await Pancake.fromVectors(rows, {
+        const { index, ids, idMap } = await Pikelet.fromVectors(rows, {
             metric: 'cosine',
             quantized: false,
         });
@@ -2643,7 +2643,7 @@ async function testConvenienceLoaders() {
         index.dispose();
     }
 
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pancake-loaders-'));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pikelet-loaders-'));
     try {
         {
             const jsonPath = path.join(tmpDir, 'vectors.json');
@@ -2652,7 +2652,7 @@ async function testConvenienceLoaders() {
                 { docId: 'beta', embedding: Array.from(unitVec(4, 1)) },
             ]));
 
-            const { index, ids, idMap } = await Pancake.loadJsonFile(jsonPath, {
+            const { index, ids, idMap } = await Pikelet.loadJsonFile(jsonPath, {
                 metric: 'cosine',
                 quantized: false,
                 vectorKey: 'embedding',
@@ -2671,7 +2671,7 @@ async function testConvenienceLoaders() {
                 JSON.stringify({ id: 'delta', vector: Array.from(unitVec(4, 3)) }),
             ].join('\n'));
 
-            const { index, ids, idMap } = await Pancake.loadJsonFile(jsonlPath, {
+            const { index, ids, idMap } = await Pikelet.loadJsonFile(jsonlPath, {
                 metric: 'cosine',
                 quantized: false,
             });
@@ -2688,7 +2688,7 @@ async function testConvenienceLoaders() {
             ]));
 
             await assertThrowsAsync(
-                () => Pancake.loadJsonFile(txtPath, {
+                () => Pikelet.loadJsonFile(txtPath, {
                     metric: 'cosine',
                     quantized: false,
                 }),
@@ -2703,7 +2703,7 @@ async function testConvenienceLoaders() {
             ]));
 
             await assertThrowsAsync(
-                () => Pancake.loadJsonFile(jsonPath, {
+                () => Pikelet.loadJsonFile(jsonPath, {
                     metric: 'cosine',
                     quantized: false,
                     maxFileBytes: 8,
@@ -2713,7 +2713,7 @@ async function testConvenienceLoaders() {
         }
 
         {
-            const src = await Pancake.create({
+            const src = await Pikelet.create({
                 dim: 4,
                 metric: 'cosine',
                 quantized: false,
@@ -2725,7 +2725,7 @@ async function testConvenienceLoaders() {
             fs.writeFileSync(snapshotPath, src.export());
             src.dispose();
 
-            const restored = await Pancake.loadSnapshotFile(snapshotPath, {
+            const restored = await Pikelet.loadSnapshotFile(snapshotPath, {
                 dim: 4,
                 metric: 'cosine',
                 quantized: false,
@@ -2742,7 +2742,7 @@ async function testConvenienceLoaders() {
             fs.writeFileSync(badSnapshotPath, Buffer.from('not-a-pancake-snapshot'));
 
             await assertThrowsAsync(
-                () => Pancake.loadSnapshotFile(badSnapshotPath, {
+                () => Pikelet.loadSnapshotFile(badSnapshotPath, {
                     dim: 4,
                     metric: 'cosine',
                     quantized: false,
@@ -2759,7 +2759,7 @@ async function testConvenienceLoaders() {
 async function testSearchFilteredInputContract() {
     section('Filtered search input contract');
 
-    const idx = await Pancake.create(DEFAULT_CONFIG);
+    const idx = await Pikelet.create(DEFAULT_CONFIG);
     idx.addBatch([
         normalizedVec(DIM),
         normalizedVec(DIM),
@@ -2834,7 +2834,7 @@ async function testPancakeErrorContract() {
             fn();
             assert(false, `${message} (expected ${code})`);
         } catch (error) {
-            assert(error instanceof Pancake.PancakeError, `${message} throws PancakeError`);
+            assert(error instanceof Pikelet.PancakeError, `${message} throws PancakeError`);
             assert(error.code === code, `${message} has ${code} code`);
         }
     };
@@ -2843,94 +2843,94 @@ async function testPancakeErrorContract() {
             await fn();
             assert(false, `${message} (expected ${code})`);
         } catch (error) {
-            assert(error instanceof Pancake.PancakeError, `${message} throws PancakeError`);
+            assert(error instanceof Pikelet.PancakeError, `${message} throws PancakeError`);
             assert(error.code === code, `${message} has ${code} code`);
         }
     };
 
-    assert(typeof Pancake.PancakeError === 'function', 'CJS API exposes PancakeError');
-    assert(Pancake.PANCAKE_ERROR_CODES.INDEX_DISPOSED === 'INDEX_DISPOSED',
+    assert(typeof Pikelet.PancakeError === 'function', 'CJS API exposes PancakeError');
+    assert(Pikelet.PANCAKE_ERROR_CODES.INDEX_DISPOSED === 'INDEX_DISPOSED',
         'CJS API exposes stable error codes');
 
-    const esm = await import(pathToFileURL(path.join(process.cwd(), 'pancake.node.mjs')).href);
-    assert(esm.PancakeError === Pancake.PancakeError, 'Node ESM exposes the same PancakeError class');
+    const esm = await import(pathToFileURL(path.join(process.cwd(), 'pikelet.node.mjs')).href);
+    assert(esm.PancakeError === Pikelet.PancakeError, 'Node ESM exposes the same PancakeError class');
 
     await expectCodeAsync(
-        () => Pancake.create({ dim: 0 }),
-        Pancake.PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+        () => Pikelet.create({ dim: 0 }),
+        Pikelet.PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
         'invalid construction options'
     );
 
-    const full = await Pancake.create({ dim: 4, maxElements: 1, metric: 'l2', quantized: false });
+    const full = await Pikelet.create({ dim: 4, maxElements: 1, metric: 'l2', quantized: false });
     expectCode(
         () => full.add(new Float32Array(3)),
-        Pancake.PANCAKE_ERROR_CODES.DIMENSION_MISMATCH,
+        Pikelet.PANCAKE_ERROR_CODES.DIMENSION_MISMATCH,
         'wrong-length vector'
     );
     expectCode(
         () => full.add(new Float32Array([NaN, 0, 0, 0])),
-        Pancake.PANCAKE_ERROR_CODES.INVALID_VECTOR,
+        Pikelet.PANCAKE_ERROR_CODES.INVALID_VECTOR,
         'non-finite vector'
     );
     full.add(new Float32Array(4));
     expectCode(
         () => full.add(new Float32Array(4)),
-        Pancake.PANCAKE_ERROR_CODES.INDEX_FULL,
+        Pikelet.PANCAKE_ERROR_CODES.INDEX_FULL,
         'capacity overflow'
     );
     full.delete(0);
     expectCode(
         () => full.export(),
-        Pancake.PANCAKE_ERROR_CODES.COMPACTION_REQUIRED,
+        Pikelet.PANCAKE_ERROR_CODES.COMPACTION_REQUIRED,
         'snapshot export with deleted nodes'
     );
     full.dispose();
 
-    const source = await Pancake.create({ dim: 4, maxElements: 2, metric: 'l2', quantized: false });
+    const source = await Pikelet.create({ dim: 4, maxElements: 2, metric: 'l2', quantized: false });
     source.addBatch([unitVec(4, 0), unitVec(4, 1)]);
     const snapshot = source.export();
-    const mismatched = await Pancake.create({ dim: 4, maxElements: 2, metric: 'cosine', quantized: false });
+    const mismatched = await Pikelet.create({ dim: 4, maxElements: 2, metric: 'cosine', quantized: false });
     expectCode(
         () => mismatched.import(snapshot),
-        Pancake.PANCAKE_ERROR_CODES.SNAPSHOT_CONFIG_MISMATCH,
+        Pikelet.PANCAKE_ERROR_CODES.SNAPSHOT_CONFIG_MISMATCH,
         'snapshot configuration mismatch'
     );
-    const undersized = await Pancake.create({ dim: 4, maxElements: 1, metric: 'l2', quantized: false });
+    const undersized = await Pikelet.create({ dim: 4, maxElements: 1, metric: 'l2', quantized: false });
     expectCode(
         () => undersized.import(snapshot),
-        Pancake.PANCAKE_ERROR_CODES.SNAPSHOT_CAPACITY_EXCEEDED,
+        Pikelet.PANCAKE_ERROR_CODES.SNAPSHOT_CAPACITY_EXCEEDED,
         'snapshot capacity overflow'
     );
     source.dispose();
     mismatched.dispose();
     undersized.dispose();
 
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pancake-errors-'));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pikelet-errors-'));
     try {
         const invalidJson = path.join(tmpDir, 'invalid.json');
         fs.writeFileSync(invalidJson, '{');
         await expectCodeAsync(
-            () => Pancake.loadJsonFile(invalidJson),
-            Pancake.PANCAKE_ERROR_CODES.PARSE_FAILED,
+            () => Pikelet.loadJsonFile(invalidJson),
+            Pikelet.PANCAKE_ERROR_CODES.PARSE_FAILED,
             'malformed JSON file'
         );
         await expectCodeAsync(
-            () => Pancake.loadJsonFile(path.join(tmpDir, 'missing.json')),
-            Pancake.PANCAKE_ERROR_CODES.FILE_IO_FAILED,
+            () => Pikelet.loadJsonFile(path.join(tmpDir, 'missing.json')),
+            Pikelet.PANCAKE_ERROR_CODES.FILE_IO_FAILED,
             'missing JSON file'
         );
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 
-    const idx = await Pancake.create({ dim: 4, maxElements: 4, metric: 'l2', quantized: false });
+    const idx = await Pikelet.create({ dim: 4, maxElements: 4, metric: 'l2', quantized: false });
     idx.dispose();
     try {
         idx.search(new Float32Array(4), 1);
         assert(false, 'disposed index throws PancakeError');
     } catch (error) {
-        assert(error instanceof Pancake.PancakeError, 'disposed index error is a PancakeError');
-        assert(error.code === Pancake.PANCAKE_ERROR_CODES.INDEX_DISPOSED,
+        assert(error instanceof Pikelet.PancakeError, 'disposed index error is a PancakeError');
+        assert(error.code === Pikelet.PANCAKE_ERROR_CODES.INDEX_DISPOSED,
             'disposed index error has INDEX_DISPOSED code');
     }
 }
@@ -2938,7 +2938,7 @@ async function testPancakeErrorContract() {
 async function testPerQueryEfSearch() {
     section('Per-query efSearch');
 
-    const idx = await Pancake.create({
+    const idx = await Pikelet.create({
         dim: 4,
         maxElements: 8,
         metric: 'l2',
@@ -2980,9 +2980,9 @@ async function testPerQueryEfSearch() {
                 idx.search(unitVec(4, 0), 1, { efSearch: invalid });
                 assert(false, `search() rejects invalid efSearch ${String(invalid)}`);
             } catch (error) {
-                assert(error instanceof Pancake.PancakeError,
+                assert(error instanceof Pikelet.PancakeError,
                     `invalid efSearch ${String(invalid)} throws PancakeError`);
-                assert(error.code === Pancake.PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
+                assert(error.code === Pikelet.PANCAKE_ERROR_CODES.INVALID_ARGUMENT,
                     `invalid efSearch ${String(invalid)} has INVALID_ARGUMENT code`);
             }
         }
@@ -2996,7 +2996,7 @@ async function testPerQueryEfSearch() {
 async function testAdditiveIndexSurface() {
     section('0.2 index state and lifecycle surface');
 
-    const idx = await Pancake.create({
+    const idx = await Pikelet.create({
         dim: 4,
         maxElements: 5,
         metric: 'l2',
@@ -3042,7 +3042,7 @@ async function testAdditiveIndexSurface() {
     idx.dispose();
 
     let scopedIndex;
-    const result = await Pancake.withIndex(
+    const result = await Pikelet.withIndex(
         { dim: 4, maxElements: 2, metric: 'l2', quantized: false },
         async (index) => {
             scopedIndex = index;
@@ -3055,7 +3055,7 @@ async function testAdditiveIndexSurface() {
 
     let failedIndex;
     await assertThrowsAsync(
-        () => Pancake.withIndex(
+        () => Pikelet.withIndex(
             { dim: 4, maxElements: 2, metric: 'l2', quantized: false },
             (index) => {
                 failedIndex = index;
@@ -3070,7 +3070,7 @@ async function testAdditiveIndexSurface() {
 async function testSnapshotInspectionAndRestore() {
     section('Snapshot inspection and restore');
 
-    const source = await Pancake.create({
+    const source = await Pikelet.create({
         dim: 4,
         maxElements: 8,
         metric: 'cosine',
@@ -3084,15 +3084,15 @@ async function testSnapshotInspectionAndRestore() {
     source.compact();
     const snapshot = source.export();
 
-    const metadata = Pancake.inspectSnapshot(snapshot);
-    assert(metadata.format === 'pancake' && metadata.version === 3,
+    const metadata = Pikelet.inspectSnapshot(snapshot);
+    assert(metadata.format === 'pikelet' && metadata.version === 3,
         'inspectSnapshot() identifies the current envelope');
     assert(metadata.dim === 4 && metadata.count === 2 && metadata.metric === 'cosine' &&
         metadata.quantized === true && metadata.M === 8 && metadata.efConstruction === 64,
         'inspectSnapshot() reports the complete construction config');
     assert(metadata.nextId === 3, 'inspectSnapshot() reports the stable next external ID');
 
-    const exact = await Pancake.restore(snapshot);
+    const exact = await Pikelet.restore(snapshot);
     assert(exact.config.dim === 4 && exact.config.metric === 'cosine' && exact.config.quantized === true &&
         exact.config.M === 8 && exact.config.efConstruction === 64 &&
         exact.config.efSearch === 100 && exact.config.seed === 108,
@@ -3101,7 +3101,7 @@ async function testSnapshotInspectionAndRestore() {
         'restore() defaults capacity to the restored count');
     exact.dispose();
 
-    const grown = await Pancake.restore(snapshot, { maxElements: 5, efSearch: 200 });
+    const grown = await Pikelet.restore(snapshot, { maxElements: 5, efSearch: 200 });
     assert(grown.capacity === 5 && grown.config.efSearch === 200,
         'restore() accepts capacity and runtime-policy overrides');
     const nextId = grown.add(unitVec(4, 3));
@@ -3109,19 +3109,19 @@ async function testSnapshotInspectionAndRestore() {
     grown.dispose();
 
     await assertThrowsAsync(
-        () => Pancake.restore(snapshot, { M: 16 }),
+        () => Pikelet.restore(snapshot, { M: 16 }),
         'restore() rejects construction overrides that disagree with the snapshot'
     );
 
     const raw = extractRawEngineBytes(snapshot);
-    const rawMetadata = Pancake.inspectSnapshot(raw);
+    const rawMetadata = Pikelet.inspectSnapshot(raw);
     assert(rawMetadata.format === 'raw' && rawMetadata.M === 8 && rawMetadata.efConstruction === 64,
         'inspectSnapshot() reads legacy raw headers');
     await assertThrowsAsync(
-        () => Pancake.restore(raw),
+        () => Pikelet.restore(raw),
         'restore() requires explicit config for legacy raw snapshots'
     );
-    const rawRestored = await Pancake.restore(raw, {
+    const rawRestored = await Pikelet.restore(raw, {
         dim: 4,
         metric: 'cosine',
         quantized: true,
@@ -3193,7 +3193,7 @@ function parseGraphSkeleton(raw, quantized) {
 async function buildParityPair(vectors, cfg) {
     const pair = {};
     for (const quantized of [false, true]) {
-        const index = await Pancake.create({ ...cfg, quantized });
+        const index = await Pikelet.create({ ...cfg, quantized });
         index.addBatch(vectors);
         pair[quantized ? 'uint8' : 'float'] = index;
     }
@@ -3355,7 +3355,7 @@ async function testFloatUint8DeleteCompactParity() {
 
 async function main() {
     console.log('');
-    console.log('Pancake Test Suite');
+    console.log('Pikelet Test Suite');
     console.log('==================');
 
     const suites = [

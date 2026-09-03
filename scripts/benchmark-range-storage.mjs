@@ -8,7 +8,7 @@
  *
  *   npm run bench:range-storage -- \
  *     --queries test/relevance/nodeapi-queries.json \
- *     artifacts/1k.pancake artifacts/10k.pancake artifacts/100k.pancake
+ *     artifacts/1k.pikelet artifacts/10k.pikelet artifacts/100k.pikelet
  *
  * Each artifact is benchmarked in a fresh child process so RSS/heap numbers
  * do not accumulate caches from earlier corpus sizes. The child serves the
@@ -40,7 +40,7 @@ const RESULT_PREFIX = '__PANCAKE_RANGE_BENCH_RESULT__';
 
 function usage(exitCode = 0) {
   const out = exitCode ? console.error : console.log;
-  out(`usage: node scripts/benchmark-range-storage.mjs [options] <artifact.pancake> [...]
+  out(`usage: node scripts/benchmark-range-storage.mjs [options] <artifact.pikelet> [...]
 
 Options:
   --queries <file>           JSON array of strings or {text} query objects.
@@ -65,10 +65,10 @@ Options:
   -h, --help                 Show this help.
 
 Examples:
-  node scripts/benchmark-range-storage.mjs --queries queries.json search.pancake
+  node scripts/benchmark-range-storage.mjs --queries queries.json search.pikelet
 
   node scripts/benchmark-range-storage.mjs --server-delay-ms 25 \\
-    --queries queries.json 1k.pancake 10k.pancake 100k.pancake
+    --queries queries.json 1k.pikelet 10k.pikelet 100k.pikelet
 `);
   process.exit(exitCode);
 }
@@ -228,7 +228,7 @@ async function serveRangeFile(filePath, delayMs = 0) {
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || '/', 'http://127.0.0.1');
-    if (url.pathname !== '/artifact.pancake') {
+    if (url.pathname !== '/artifact.pikelet') {
       res.writeHead(404).end('not found');
       return;
     }
@@ -289,7 +289,7 @@ async function serveRangeFile(filePath, delayMs = 0) {
     server.listen(0, '127.0.0.1', resolve);
   });
   const address = server.address();
-  const url = `http://127.0.0.1:${address.port}/artifact.pancake`;
+  const url = `http://127.0.0.1:${address.port}/artifact.pikelet`;
   return {
     url,
     size,
@@ -497,7 +497,7 @@ function summaryRow(r) {
 }
 
 function printHuman(results, options) {
-  console.log(`\nPancake HTTP range-storage benchmark`);
+  console.log(`\nPikelet HTTP range-storage benchmark`);
   console.log(`retrieval=${options.retrieval}, k=${options.k}, query-limit=${options.queryLimit}, server-delay=${options.serverDelayMs}ms`);
   console.log('latencies are loopback client+HTTP+search timings, not public-CDN latency\n');
   console.table(results.map(summaryRow));

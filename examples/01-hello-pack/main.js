@@ -1,9 +1,9 @@
-import Pancake from 'pikelet-wasm/web';
+import Pikelet from 'pikelet-wasm/web';
 
 const app = document.getElementById('app');
 
 async function run() {
-  const idx = await Pancake.create({
+  const idx = await Pikelet.create({
     dim: 4,
     maxElements: 10,
     metric: 'cosine',
@@ -21,7 +21,7 @@ async function run() {
 
     const snapshot = idx.export();
 
-    const restored = await Pancake.restore(snapshot, { maxElements: 10 });
+    const restored = await Pikelet.restore(snapshot, { maxElements: 10 });
 
     try {
       const after = restored.search(new Float32Array([1, 0, 0, 0]), 2);

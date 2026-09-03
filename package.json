@@ -2,66 +2,66 @@
   "name": "pikelet-wasm",
   "version": "0.7.0",
   "description": "HNSW vector search in WebAssembly. Runs in Node.js, browsers, and Cloudflare Workers with no native dependencies.",
-  "main": "pancake.js",
-  "types": "pancake.d.ts",
+  "main": "pikelet.js",
+  "types": "pikelet.d.ts",
   "exports": {
     ".": {
       "workerd": {
-        "types": "./pancake.web.d.ts",
-        "default": "./pancake.workerd.mjs"
+        "types": "./pikelet.web.d.ts",
+        "default": "./pikelet.workerd.mjs"
       },
       "browser": {
-        "types": "./pancake.web.d.ts",
-        "default": "./pancake.web.mjs"
+        "types": "./pikelet.web.d.ts",
+        "default": "./pikelet.web.mjs"
       },
       "import": {
-        "types": "./pancake.d.ts",
-        "default": "./pancake.node.mjs"
+        "types": "./pikelet.d.ts",
+        "default": "./pikelet.node.mjs"
       },
       "require": {
-        "types": "./pancake.d.ts",
-        "default": "./pancake.js"
+        "types": "./pikelet.d.ts",
+        "default": "./pikelet.js"
       },
       "default": {
-        "types": "./pancake.d.ts",
-        "default": "./pancake.js"
+        "types": "./pikelet.d.ts",
+        "default": "./pikelet.js"
       }
     },
     "./web": {
       "workerd": {
-        "types": "./pancake.web.d.ts",
-        "default": "./pancake.workerd.mjs"
+        "types": "./pikelet.web.d.ts",
+        "default": "./pikelet.workerd.mjs"
       },
       "browser": {
-        "types": "./pancake.web.d.ts",
-        "default": "./pancake.web.mjs"
+        "types": "./pikelet.web.d.ts",
+        "default": "./pikelet.web.mjs"
       },
       "import": {
-        "types": "./pancake.web.d.ts",
-        "default": "./pancake.web.mjs"
+        "types": "./pikelet.web.d.ts",
+        "default": "./pikelet.web.mjs"
       },
       "default": {
-        "types": "./pancake.web.d.ts",
-        "default": "./pancake.web.mjs"
+        "types": "./pikelet.web.d.ts",
+        "default": "./pikelet.web.mjs"
       }
     },
     "./node": {
       "import": {
-        "types": "./pancake.d.ts",
-        "default": "./pancake.node.mjs"
+        "types": "./pikelet.d.ts",
+        "default": "./pikelet.node.mjs"
       },
       "require": {
-        "types": "./pancake.d.ts",
-        "default": "./pancake.js"
+        "types": "./pikelet.d.ts",
+        "default": "./pikelet.js"
       },
       "default": {
-        "types": "./pancake.d.ts",
-        "default": "./pancake.js"
+        "types": "./pikelet.d.ts",
+        "default": "./pikelet.js"
       }
     },
     "./artifact": {
-      "types": "./pancake-artifact.d.ts",
-      "default": "./pancake-artifact.js"
+      "types": "./pikelet-artifact.d.ts",
+      "default": "./pikelet-artifact.js"
     },
     "./complete": {
       "types": "./complete/index.d.ts",
@@ -75,20 +75,20 @@
   },
   "files": [
     "complete",
-    "pancake.js",
-    "pancake-artifact.js",
-    "pancake-artifact-common.js",
-    "pancake-artifact-range.js",
-    "pancake-artifact-sketch.js",
-    "pancake.node.mjs",
-    "pancake.web.mjs",
-    "pancake.workerd.mjs",
-    "pancake-core.js",
-    "pancake-errors.js",
-    "pancake-loader.js",
-    "pancake.d.ts",
-    "pancake.web.d.ts",
-    "pancake-artifact.d.ts",
+    "pikelet.js",
+    "pikelet-artifact.js",
+    "pikelet-artifact-common.js",
+    "pikelet-artifact-range.js",
+    "pikelet-artifact-sketch.js",
+    "pikelet.node.mjs",
+    "pikelet.web.mjs",
+    "pikelet.workerd.mjs",
+    "pikelet-core.js",
+    "pikelet-errors.js",
+    "pikelet-loader.js",
+    "pikelet.d.ts",
+    "pikelet.web.d.ts",
+    "pikelet-artifact.d.ts",
     "dist/engine.js",
     "dist/engine.wasm",
     "dist/engine.scalar.js",

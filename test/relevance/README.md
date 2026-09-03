@@ -22,10 +22,10 @@ committed beside each query set.
 ```bash
 # recompile the corpus (network; page content drifts over time)
 npx pikelet compile --source https://nodejs.org/api/ \
-  --max-pages 30 --out nodeapi.pancake
+  --max-pages 30 --out nodeapi.pikelet
 
 # measure all three retrieval modes
-node scripts/bakeoff-retrieval.mjs nodeapi.pancake \
+node scripts/bakeoff-retrieval.mjs nodeapi.pikelet \
   test/relevance/nodeapi-queries.json
 ```
 

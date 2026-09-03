@@ -25,8 +25,8 @@ import {
 } from '../03-edge-docs-search/student-embedder.mjs';
 
 const require = createRequire(import.meta.url);
-const Pancake = require('../../pancake.js');
-const { buildSketchArtifact } = require('../../pancake-artifact.js');
+const Pikelet = require('../../pikelet.js');
+const { buildSketchArtifact } = require('../../pikelet-artifact.js');
 
 // Abstention scoring lives in abstention.mjs (shared with the one-file
 // reader); re-exported here for compatibility.
@@ -73,7 +73,7 @@ export async function openDocsSearch({ manifestPath, indexPath, encoderPath, cal
     buildSketchArtifact(snapshotBytes, sketchPath, {
         recommendedRerank: manifest.efSearch || 120,
     });
-    const sketch = await Pancake.openSketchArtifactFile(sketchPath);
+    const sketch = await Pikelet.openSketchArtifactFile(sketchPath);
     if (sketch.count !== corpusById.size) {
         throw new Error(`openDocsSearch: index count ${sketch.count} != corpus records ${corpusById.size}`);
     }

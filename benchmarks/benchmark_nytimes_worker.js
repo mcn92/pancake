@@ -4,7 +4,7 @@
 /**
  * NYTimes-256 Benchmark via Worker API
  *
- * Builds the index on a running Pancake Worker, then measures search
+ * Builds the index on a running Pikelet Worker, then measures search
  * recall and latency over the wire. This benchmarks the full deployment
  * path: HTTP → Worker → WASM → HNSW → response.
  *

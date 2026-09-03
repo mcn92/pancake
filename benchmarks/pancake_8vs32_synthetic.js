@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * Synthetic 1536D Benchmark: Pancake vs hnswlib-node
+ * Synthetic 1536D Benchmark: Pikelet vs hnswlib-node
  *
  * 100K clustered unit-norm vectors in 1536D (OpenAI Ada dimension).
  * Sweeps ef_search to produce recall-QPS curves comparable to the
@@ -21,7 +21,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const Pancake = require('../pancake.js');
+const Pikelet = require('../pikelet.js');
 const { parseBenchmarkArgs, resolveSingleValue, resolveSweepValues } = require('./bench_args');
 
 const parsedArgs = parseBenchmarkArgs();
@@ -249,14 +249,14 @@ async function main() {
   const memBefore = process.memoryUsage();
 
   // =============================================
-  // Pancake
+  // Pikelet
   // =============================================
   log(`\n${'='.repeat(70)}`);
-  log('Pancake u8 (WASM)');
+  log('Pikelet u8 (WASM)');
   log('='.repeat(70));
 
   log('Building index...');
-  const pkIndex = await Pancake.create({
+  const pkIndex = await Pikelet.create({
     dim: DIM, maxElements: N_VECTORS, quantized: true,
     M, efConstruction: EF_CONSTRUCTION, efSearch: EF_SEARCH_VALUES[0],
   });
@@ -390,7 +390,7 @@ async function main() {
   const csvRows = ['label,library,dtype,ef_search,recall,recall_std,qps,qps_std,p50_ms,p95_ms,p99_ms,p999_ms'];
   for (const p of pkPoints) {
     csvRows.push([
-      'pancake-u8-wasm', 'pancake', 'u8', p.ef_search,
+      'pancake-u8-wasm', 'pikelet', 'u8', p.ef_search,
       p.recall_mean.toFixed(5), p.recall_std.toFixed(5),
       p.qps_mean.toFixed(2), p.qps_std.toFixed(2),
       p.p50.toFixed(4), p.p95.toFixed(4), p.p99.toFixed(4), p.p999.toFixed(4),
@@ -421,7 +421,7 @@ async function main() {
       ef_search_values: EF_SEARCH_VALUES,
       repetitions: REPETITIONS, warmup: WARMUP_QUERIES,
     },
-    pancake: {
+    pikelet: {
       build_s: +pkBuildSec.toFixed(1),
       index_memory_mb: +(pkIndexMem / 1024 / 1024).toFixed(1),
       bytes_per_vector: +bytesPerVec.toFixed(0),

@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * Build a Pancake snapshot from vectors.bin for upload to R2.
+ * Build a Pikelet snapshot from vectors.bin for upload to R2.
  *
  * Usage:
  *   node build_and_export_index.js \
@@ -36,8 +36,8 @@ function positiveInt(value, name) {
   return parsed;
 }
 
-async function loadPancake() {
-  const url = pathToFileURL(path.join(__dirname, '..', '..', 'pancake.node.mjs')).href;
+async function loadPikelet() {
+  const url = pathToFileURL(path.join(__dirname, '..', '..', 'pikelet.node.mjs')).href;
   const mod = await import(url);
   return mod.default;
 }
@@ -76,8 +76,8 @@ async function main() {
   console.log(`[config] out=${outPath}`);
 
   const vectors = readVectors(vectorsPath, dims, count);
-  const Pancake = await loadPancake();
-  const index = await Pancake.create({
+  const Pikelet = await loadPikelet();
+  const index = await Pikelet.create({
     dim: dims,
     maxElements,
     metric: 'cosine',

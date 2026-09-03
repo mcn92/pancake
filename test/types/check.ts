@@ -3,8 +3,8 @@
 // that the declarations match the documented runtime surface — including
 // what must NOT type-check, via @ts-expect-error.
 
-import Pancake, { PancakeError, PANCAKE_ERROR_CODES } from 'pikelet-wasm';
-import WebPancake from 'pikelet-wasm/web';
+import Pikelet, { PancakeError, PANCAKE_ERROR_CODES } from 'pikelet-wasm';
+import WebPikelet from 'pikelet-wasm/web';
 import {
   PancakeRangeArtifact as RangeArtifactCtor,
   PancakeSketchArtifact as SketchArtifactCtor,
@@ -30,13 +30,13 @@ import type {
 import { PancakeRangeArtifact as NotAValue } from 'pikelet-wasm';
 
 async function nodeSurface(): Promise<void> {
-  const index: PancakeIndex = await Pancake.create({ dim: 8, metric: 'l2', maxElements: 100 });
+  const index: PancakeIndex = await Pikelet.create({ dim: 8, metric: 'l2', maxElements: 100 });
   const hits: SearchResult[] = index.search(new Float32Array(8), 3, { efSearch: 50 });
   hits[0]?.distance.toFixed(3);
   index.dispose();
 
   // Staged sketch open with residency callbacks.
-  const artifact: PancakeSketchArtifact = await Pancake.openSketchArtifactFile('x.pancake-sketch', {
+  const artifact: PancakeSketchArtifact = await Pikelet.openSketchArtifactFile('x.pancake-sketch', {
     staged: true,
     onStage: (event: SketchStageEvent) => {
       const tier: SketchTier = event.tier;
@@ -51,7 +51,7 @@ async function nodeSurface(): Promise<void> {
   const settled: PancakeSketchArtifact = await artifact.fullyResident;
   void settled;
 
-  const micro = await Pancake.createSketchScanner(artifact, { tier: 'micro', maxRerank: 512 });
+  const micro = await Pikelet.createSketchScanner(artifact, { tier: 'micro', maxRerank: 512 });
   micro.sketchDims.toFixed(0);
   const microTier: SketchTier = micro.tier;
   void microTier;
@@ -68,7 +68,7 @@ async function nodeSurface(): Promise<void> {
   await artifact.close();
 
   // Build options carry the micro-tier geometry; the manifest reports it.
-  const manifest = Pancake.buildSketchArtifactFile('snap.pnck', 'out.pancake-sketch', {
+  const manifest = Pikelet.buildSketchArtifactFile('snap.pnck', 'out.pancake-sketch', {
     sketchDims: 192,
     sketchBits: 4,
     microDims: 48,
@@ -82,7 +82,7 @@ async function nodeSurface(): Promise<void> {
 }
 
 async function webSurface(): Promise<void> {
-  const artifact = await WebPancake.RangeArtifact.open({
+  const artifact = await WebPikelet.RangeArtifact.open({
     async read(offset: number, length: number): Promise<Uint8Array> {
       void offset;
       return new Uint8Array(length);
@@ -93,7 +93,7 @@ async function webSurface(): Promise<void> {
   await artifact.close();
 
   // @ts-expect-error the web surface has no Node file helpers
-  WebPancake.loadSnapshotFile;
+  WebPikelet.loadSnapshotFile;
 }
 
 async function artifactSubpath(): Promise<void> {

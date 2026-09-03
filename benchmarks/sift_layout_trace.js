@@ -4,14 +4,14 @@
 /**
  * Offline SIFT layout-touch analyzer.
  *
- * Builds or loads a Pancake SIFT snapshot, replays HNSW search from the raw
+ * Builds or loads a Pikelet SIFT snapshot, replays HNSW search from the raw
  * snapshot graph, records node ids touched by each query, applies a candidate
  * node-layout permutation, and reports unique layout blocks touched per query.
  *
  * The block model is intentionally hypothetical: after permutation each node is
  * treated as one contiguous record containing vector payload, scale/offset, base
  * edge storage, and per-node size metadata. This lets us compare candidate node
- * layouts without changing Pancake's current struct-of-arrays engine layout.
+ * layouts without changing Pikelet's current struct-of-arrays engine layout.
  *
  * Example:
  *   node benchmarks/sift_layout_trace.js \
@@ -35,7 +35,7 @@ const fs = require('fs');
 const path = require('path');
 const { performance } = require('perf_hooks');
 
-const Pancake = require('../pancake.js');
+const Pikelet = require('../pikelet.js');
 
 const PANCAKE_MAGIC = 0x504E434B;
 const V1_ENVELOPE_HEADER_SIZE = 24;
@@ -110,21 +110,21 @@ function readFvecs(file, limit = Infinity) {
 function unwrapSnapshot(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (bytes.byteLength < 4 || view.getUint32(0, true) !== PANCAKE_MAGIC) return bytes;
-  if (bytes.byteLength < 8) throw new Error('truncated Pancake snapshot envelope');
+  if (bytes.byteLength < 8) throw new Error('truncated Pikelet snapshot envelope');
   const version = view.getUint32(4, true);
   if (version === 1) return bytes.subarray(V1_ENVELOPE_HEADER_SIZE);
   if (version === 2) return bytes.subarray(V2_ENVELOPE_HEADER_SIZE);
   if (version === 3) {
-    if (bytes.byteLength < V3_ENVELOPE_HEADER_SIZE) throw new Error('truncated v3 Pancake snapshot envelope');
+    if (bytes.byteLength < V3_ENVELOPE_HEADER_SIZE) throw new Error('truncated v3 Pikelet snapshot envelope');
     const mappingCount = view.getUint32(24, true);
     const rawSize = view.getUint32(28, true);
     const rawOffset = V3_ENVELOPE_HEADER_SIZE + mappingCount * MAPPING_ENTRY_SIZE;
     if (rawOffset > bytes.byteLength || rawSize > bytes.byteLength - rawOffset) {
-      throw new Error('truncated v3 Pancake snapshot payload');
+      throw new Error('truncated v3 Pikelet snapshot payload');
     }
     return bytes.subarray(rawOffset, rawOffset + rawSize);
   }
-  throw new Error(`unsupported Pancake snapshot envelope version ${version}`);
+  throw new Error(`unsupported Pikelet snapshot envelope version ${version}`);
 }
 
 function parseSnapshot(bytes) {
@@ -752,8 +752,8 @@ async function writeMetisGraph(index, file) {
 async function buildSnapshot(snapshotPath, dataDir, count, opts) {
   console.log(`Loading ${count.toLocaleString()} SIFT base vectors...`);
   const { vectors, dim } = readFvecs(path.join(dataDir, 'sift_base.fvecs'), count);
-  console.log(`Building Pancake u8 index (${vectors.length.toLocaleString()} x ${dim}D)...`);
-  const index = await Pancake.create({
+  console.log(`Building Pikelet u8 index (${vectors.length.toLocaleString()} x ${dim}D)...`);
+  const index = await Pikelet.create({
     dim,
     maxElements: vectors.length,
     metric: 'l2',

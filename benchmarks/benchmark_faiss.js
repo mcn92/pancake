@@ -2,12 +2,12 @@
 'use strict';
 
 /**
- * Faiss Comparison Benchmark: Pancake u8 vs Pancake FP32 vs Faiss HNSW vs Faiss Flat
+ * Faiss Comparison Benchmark: Pikelet u8 vs Pikelet FP32 vs Faiss HNSW vs Faiss Flat
  *
  * Uses the DBpedia-OpenAI-1536D dataset with L2 distance.
  * Faiss HNSW uses default efConstruction=40 and efSearch=16 (not tunable
  * via faiss-node), so this is a fixed-point comparison rather than a sweep.
- * Pancake and hnswlib are included at matched parameters for context.
+ * Pikelet and hnswlib are included at matched parameters for context.
  *
  * Expected files in dbpedia/:
  *   dbpedia_base_100k.fvecs - base vectors (float32, 1536D)
@@ -22,7 +22,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const Pancake = require('../pancake.js');
+const Pikelet = require('../pikelet.js');
 const { parseBenchmarkArgs, resolveSingleValue } = require('./bench_args');
 
 const parsedArgs = parseBenchmarkArgs();
@@ -113,9 +113,9 @@ function percentile(sorted, p) {
 }
 
 // --- Benchmark runners ---
-async function benchPancake(train, queries, groundTruth, dim, quantized) {
+async function benchPikelet(train, queries, groundTruth, dim, quantized) {
     const label = quantized ? 'pancake-u8' : 'pancake-f32';
-    const index = await Pancake.create({
+    const index = await Pikelet.create({
         dim, maxElements: train.length, quantized,
         metric: 'l2', M, efConstruction: EF_CONSTRUCTION, efSearch: EF_SEARCH,
     });
@@ -308,7 +308,7 @@ async function main() {
     console.log(`  Base:    ${train.length.toLocaleString()} vectors, ${dim}D`);
     console.log(`  Queries: ${queries.length.toLocaleString()}`);
     console.log(`  k=${K}, M=${M}, efC=${EF_CONSTRUCTION}, efS=${EF_SEARCH}`);
-    console.log(`  Libraries: pancake${HierarchicalNSW ? ', hnswlib' : ''}${faiss ? ', faiss' : ''}`);
+    console.log(`  Libraries: pikelet${HierarchicalNSW ? ', hnswlib' : ''}${faiss ? ', faiss' : ''}`);
     console.log();
 
     const groundTruth = computeGroundTruth(train, queries, dim);
@@ -317,11 +317,11 @@ async function main() {
     // Run all benchmarks
     const results = [];
 
-    console.log('--- Pancake u8 ---');
-    results.push(await benchPancake(train, queries, groundTruth, dim, true));
+    console.log('--- Pikelet u8 ---');
+    results.push(await benchPikelet(train, queries, groundTruth, dim, true));
 
-    console.log('--- Pancake FP32 ---');
-    results.push(await benchPancake(train, queries, groundTruth, dim, false));
+    console.log('--- Pikelet FP32 ---');
+    results.push(await benchPikelet(train, queries, groundTruth, dim, false));
 
     if (HierarchicalNSW) {
         console.log('--- hnswlib ---');

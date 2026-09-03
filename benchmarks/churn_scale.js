@@ -16,7 +16,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const Pancake = require('../pancake.js');
+const Pikelet = require('../pikelet.js');
 
 const args = process.argv.slice(2);
 function intArg(name, fallback) {
@@ -177,7 +177,7 @@ async function main() {
   if (CLUSTERS > POPULATION) throw new Error('--clusters cannot exceed --population');
 
   const capacity = POPULATION * (ROUNDS + 1);
-  const index = await Pancake.create({
+  const index = await Pikelet.create({
     dim: DIMS,
     maxElements: capacity,
     metric: 'cosine',
@@ -217,7 +217,7 @@ async function main() {
     // A clean build of the final live population is the recovery ceiling for
     // this exact dataset. It keeps compaction quality separate from changes in
     // difficulty between generations.
-    const fresh = await Pancake.create({
+    const fresh = await Pikelet.create({
       dim: DIMS,
       maxElements: POPULATION,
       metric: 'cosine',

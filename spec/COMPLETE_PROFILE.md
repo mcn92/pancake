@@ -6,7 +6,7 @@ verification obligation for kind 2 (section 3.6), the reader's bounded-read
 rules (section 4), and the CI conformance suite (section 5). Format-1 files
 remain readable; readers report which integrity stance a file carries.
 **Profile of:** the Search Artifact Contract (`SEARCH_ARTIFACT_CONTRACT.md`, section 9.4)
-**File extension:** `.pancake`
+**File extension:** `.pikelet`
 **Magic:** `PSF1` (`0x31465350`, little-endian u32)
 
 ## 1. Purpose
@@ -483,7 +483,7 @@ both as equivalent.
 
 - **Compiler:** `pikelet`'s pipeline (ingest → chunk → embed
   → index → distill → calibrate) becomes the frontend; a `compile` step
-  assembles its outputs into one `.pancake`. Requires bytes-in/bytes-out
+  assembles its outputs into one `.pikelet`. Requires bytes-in/bytes-out
   builder variants (spike lesson) and compile-time renumbering.
 - **Hosts:** a static page with the browser reader, a Worker, and Node all
   open the same file; the Worker example becomes one host among three.

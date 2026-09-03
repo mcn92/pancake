@@ -1,4 +1,4 @@
-import Pancake from '../../pancake.workerd.mjs';
+import Pikelet from '../../pikelet.workerd.mjs';
 import { embedTextWithStudent, loadStudentModel, scoreQuery } from './student-embedder.mjs';
 import SNAPSHOT_ASSET from './assets/docs-index.bin';
 import STUDENT_ASSET from './assets/docs-student.bin';
@@ -173,7 +173,7 @@ function privateSearchEnabled(env) {
 }
 
 function getSearchAccessKey(request, url) {
-  const headerKey = request.headers.get('X-Pancake-Demo-Key') || '';
+  const headerKey = request.headers.get('X-Pikelet-Demo-Key') || '';
   if (headerKey) return headerKey.trim();
   const authHeader = request.headers.get('Authorization') || '';
   if (authHeader.startsWith('Bearer ')) return authHeader.slice(7).trim();
@@ -300,7 +300,7 @@ function renderPage() {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Pancake Worker Semantic Search</title>
+  <title>Pikelet Worker Semantic Search</title>
   <style>
     :root {
       --bg: #efe6d7;
@@ -735,15 +735,15 @@ function renderPage() {
     <section class="frame">
       <div class="hero">
         <div class="hero-copy">
-          <p class="eyebrow">Pancake + Cloudflare Workers</p>
+          <p class="eyebrow">Pikelet + Cloudflare Workers</p>
           <div class="stats">
             <span class="pill">Zero runtime dependencies</span>
             <span class="pill">No model API</span>
-            <span class="pill">Pancake WASM in a Worker</span>
+            <span class="pill">Pikelet WASM in a Worker</span>
           </div>
           <h1>Distilled docs search with nothing to call.</h1>
           <p class="lede">
-            A 1.08 MB domain-specific student turns text into 384D vectors locally. Pancake
+            A 1.08 MB domain-specific student turns text into 384D vectors locally. Pikelet
             restores its bundled quantized index and searches it in memory. The Worker makes
             no outbound requests at any point in the query path.
           </p>
@@ -752,7 +752,7 @@ function renderPage() {
           <p class="side-kicker">What to look for</p>
           <p class="side-value">Teacher quality offline. Tiny student and vector index at runtime.</p>
           <p class="side-note">
-            The teacher never ships. The response separates student embedding time, Pancake
+            The teacher never ships. The response separates student embedding time, Pikelet
             search time, and any cold snapshot restore so the boundary stays visible.
           </p>
         </aside>
@@ -802,7 +802,7 @@ function renderPage() {
         <div class="samples">
           <button class="sample" type="button" data-query="How do Cloudflare Workers restore snapshots from R2?">Cold restore</button>
           <button class="sample" type="button" data-query="Why do I need compact before export after deletes?">Ghost cleanup</button>
-          <button class="sample" type="button" data-query="How does filtered search work in Pancake?">Filtered search</button>
+          <button class="sample" type="button" data-query="How does filtered search work in Pikelet?">Filtered search</button>
           <button class="sample" type="button" data-query="What are the memory tradeoffs for quantized indexes?">Memory tradeoffs</button>
         </div>
         <div class="meta" id="meta">Ready.</div>
@@ -869,7 +869,7 @@ function renderPage() {
         : '';
       meta.textContent =
         'Embed ' + payload.embedding_ms.toFixed(2) + 'ms' +
-        ' • Pancake ' + payload.search_ms.toFixed(2) + 'ms' +
+        ' • Pikelet ' + payload.search_ms.toFixed(2) + 'ms' +
         ' • restore ' + payload.restore_ms.toFixed(2) + 'ms' +
         ' • ' + payload.result_count + ' results' +
         (payload.filter_label ? ' • filter ' + payload.filter_label : '') +
@@ -881,7 +881,7 @@ function renderPage() {
       if (payload.match_quality === 'weak') {
         banner = '<div class="quality-banner weak">No strong match — showing the closest sections.</div>';
       } else if (payload.match_quality === 'none') {
-        banner = '<div class="quality-banner none">No reliable match. Try a query about Pancake APIs, Workers, snapshots, filtering, or compaction.</div>';
+        banner = '<div class="quality-banner none">No reliable match. Try a query about Pikelet APIs, Workers, snapshots, filtering, or compaction.</div>';
       }
       if (!payload.results.length) {
         resultsList.innerHTML = banner || '<div class="empty">No results.</div>';
@@ -1044,7 +1044,7 @@ async function restoreBundledAssets(env) {
     console.warn(`Abstention disabled: ${state.abstention.error}`);
   }
 
-  const restored = await Pancake.restore(snapshotBytes, {
+  const restored = await Pikelet.restore(snapshotBytes, {
     maxElements: loadedManifest.maxElements,
     efSearch: loadedManifest.efSearch,
   });
@@ -1442,7 +1442,7 @@ export default {
     }
 
     return jsonResponse({
-      name: 'Pancake Worker Semantic Search Demo',
+      name: 'Pikelet Worker Semantic Search Demo',
       endpoints: {
         'GET /': 'Minimal docs-search UI',
         'GET /health': 'Liveness and coarse mode status',

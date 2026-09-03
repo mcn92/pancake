@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const createPancakeApi = require('../pancake-core.js');
+const createPikeletApi = require('../pikelet-core.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const DIST = path.join(ROOT, 'dist');
@@ -109,7 +109,7 @@ async function loadModule(basename) {
 }
 
 function makePancakeApi(basename) {
-    return createPancakeApi(() => loadModule(basename));
+    return createPikeletApi(() => loadModule(basename));
 }
 
 async function main() {

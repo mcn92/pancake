@@ -2,17 +2,17 @@
 'use strict';
 
 /**
- * Pancake WASM vs Pancake Native Benchmark (DBpedia 100K, L2, 1536D)
+ * Pikelet WASM vs Pikelet Native Benchmark (DBpedia 100K, L2, 1536D)
  *
  * Same engine, same graph construction, same distance functions —
  * only difference is WASM vs native compilation. Measures the pure
  * WASM overhead on both build and search.
  *
  * Configs:
- *   1. Pancake u8  WASM    (WASM SIMD 128-bit)
- *   2. Pancake u8  Native  (SSE2 128-bit)
- *   3. Pancake FP32  WASM    (WASM SIMD 128-bit)
- *   4. Pancake FP32  Native  (SSE2 128-bit)
+ *   1. Pikelet u8  WASM    (WASM SIMD 128-bit)
+ *   2. Pikelet u8  Native  (SSE2 128-bit)
+ *   3. Pikelet FP32  WASM    (WASM SIMD 128-bit)
+ *   4. Pikelet FP32  Native  (SSE2 128-bit)
  *
  * Usage:
  *   node benchmarks/benchmark_native.js
@@ -21,7 +21,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const Pancake = require('../pancake.js');
+const Pikelet = require('../pikelet.js');
 const { parseBenchmarkArgs, resolveSingleValue, resolveSweepValues } = require('./bench_args');
 
 let native;
@@ -186,11 +186,11 @@ function stddev(arr) {
   return Math.sqrt(arr.reduce((a, b) => a + (b - m) ** 2, 0) / arr.length);
 }
 
-// --- Pancake WASM: build + query ---
+// --- Pikelet WASM: build + query ---
 async function buildWasm({ train, dim, dtype }) {
   const quantized = dtype === 'u8';
   log(`  [wasm-${dtype}] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
-  const index = await Pancake.create({
+  const index = await Pikelet.create({
     dim, maxElements: train.length, quantized,
     metric: 'l2', M, efConstruction: EF_CONSTRUCTION, efSearch: EF_SEARCH_VALUES[0],
   });
@@ -221,7 +221,7 @@ function queryWasm(index, test, groundTruth, efSearch) {
   return { latencies, meanRecall: totalRecall / test.length };
 }
 
-// --- Pancake Native: build + query ---
+// --- Pikelet Native: build + query ---
 function buildNative({ train, dim, dtype }) {
   const quantized = dtype === 'u8' ? 1 : 0;
   log(`  [native-${dtype}] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
@@ -394,7 +394,7 @@ async function main() {
   }
 
   log('='.repeat(70));
-  log('Pancake WASM vs Native Benchmark (DBpedia 100K, L2, 1536D)');
+  log('Pikelet WASM vs Native Benchmark (DBpedia 100K, L2, 1536D)');
   log('='.repeat(70));
 
   log('\nLoading dataset...');

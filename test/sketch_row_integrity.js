@@ -7,8 +7,8 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const Pancake = require('../pancake.js');
-const { PancakeSketchArtifact, exportSketchArtifact } = require('../pancake-artifact.js');
+const Pikelet = require('../pikelet.js');
+const { PancakeSketchArtifact, exportSketchArtifact } = require('../pikelet-artifact.js');
 
 let passed = 0, failed = 0;
 function check(label, cond, detail) {

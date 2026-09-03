@@ -1,4 +1,4 @@
-import Pancake from 'pikelet-wasm/web';
+import Pikelet from 'pikelet-wasm/web';
 import { loadStudentModel, embedTextWithStudent } from '../../../../03-edge-docs-search/student-embedder.mjs';
 import { createAbstentionScorer } from './abstention.js';
 import './style.css';
@@ -12,7 +12,7 @@ const SAMPLE_QUERIES = [
   'how does compaction work',
   'How do Cloudflare Workers restore snapshots from R2?',
   'What are the memory tradeoffs for quantized indexes?',
-  'banana pancake recipe',
+  'banana pikelet recipe',
 ];
 
 const els = {
@@ -233,7 +233,7 @@ async function boot() {
   abstention = createAbstentionScorer(abstentionAsset);
 
   const source = createHttpRangeSource(ARTIFACT_URL);
-  artifact = await Pancake.RangeArtifact.open(source);
+  artifact = await Pikelet.RangeArtifact.open(source);
   const labelParts = [
     `${artifact.count.toLocaleString()} doc chunks`,
     `${artifact.dim}D`,

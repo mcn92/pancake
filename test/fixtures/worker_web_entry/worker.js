@@ -1,11 +1,11 @@
-import Pancake from 'pikelet-wasm/web';
+import Pikelet from 'pikelet-wasm/web';
 
 let indexPromise = null;
 
 async function getIndex() {
   if (!indexPromise) {
     indexPromise = (async () => {
-      const index = await Pancake.create({
+      const index = await Pikelet.create({
         dim: 4,
         maxElements: 16,
         metric: 'l2',

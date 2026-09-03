@@ -1,12 +1,12 @@
 ---
 title: One-File Search
-description: How the complete .pancake profile packages index, corpus, query interpretation, and evaluation metadata.
+description: How the complete .pikelet profile packages index, corpus, query interpretation, and evaluation metadata.
 sidebar_position: 2
 ---
 
 # One-File Search
 
-The complete `.pancake` profile has four segment types:
+The complete `.pikelet` profile has four segment types:
 
 - `index`: the embedded sketch artifact used for candidate generation and reranking.
 - `corpus`: length-prefixed JSON rows used to hydrate result records.

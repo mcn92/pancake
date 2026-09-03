@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Compile the Simple English Wikipedia pack (examples/04-static-wiki-pack,
-// 456k chunks) into one .pancake — the complete profile's scale test, and
+// 456k chunks) into one .pikelet — the complete profile's scale test, and
 // its first kind-2 (pinned-external encoder) artifact: the MiniLM encoder
 // is declared and verifiable, not embedded (contract section 4.4 mode 2);
 // the host executes it, exactly as the deployed wiki demo already does.

@@ -6,7 +6,7 @@
  *
  * Measures the Node deployment path from snapshot bytes on disk to first query:
  *   - file read time
- *   - Pancake.restore() time (warm compiled module + deserialize)
+ *   - Pikelet.restore() time (warm compiled module + deserialize)
  *   - first query latency
  *   - warm query latency
  *
@@ -23,7 +23,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { performance } = require('perf_hooks');
-const Pancake = require('../pancake.js');
+const Pikelet = require('../pikelet.js');
 const { parseBenchmarkArgs, resolveSingleValue } = require('./bench_args');
 
 const parsedArgs = parseBenchmarkArgs();
@@ -122,7 +122,7 @@ async function buildSyntheticSnapshot(count) {
     efSearch: EF_SEARCH,
   };
 
-  const index = await Pancake.create(opts);
+  const index = await Pikelet.create(opts);
   try {
     const vectors = new Array(count);
     for (let i = 0; i < count; i++) vectors[i] = makeVector(i + 1, DIM, normalized);
@@ -148,7 +148,7 @@ async function buildSyntheticSnapshot(count) {
 
 function resolveSnapshotCase(filePath) {
   const bytes = fs.readFileSync(filePath);
-  const inspected = Pancake.inspectSnapshot(bytes);
+  const inspected = Pikelet.inspectSnapshot(bytes);
   const maxElements = getIntArg('max-elements', Math.max(1, inspected.count));
   const overrides = { maxElements, efSearch: EF_SEARCH };
   if (inspected.format === 'raw') {
@@ -190,7 +190,7 @@ async function measureRestore(snapshotCase) {
     const readMs = performance.now() - readStart;
 
     const restoreStart = performance.now();
-    const index = await Pancake.restore(bytes, snapshotCase.overrides || {
+    const index = await Pikelet.restore(bytes, snapshotCase.overrides || {
       maxElements: snapshotCase.opts.maxElements,
       efSearch: snapshotCase.opts.efSearch,
     });

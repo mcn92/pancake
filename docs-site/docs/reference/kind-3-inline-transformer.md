@@ -10,4 +10,4 @@ Kind 3 is the complete-profile query interpretation mode named `inline-transform
 
 The reader supplies the code. In this repository that code is a small WASM module compiled from the encoder kernel. The kernel performs MiniLM-L6 forward inference over the quantized weight blob and keeps dense projection work fused with dequantization.
 
-This split is intentional. Model identity, revision, license, layout, vocabulary, and weights are artifact data. Execution kernels are reader capability. That keeps a `.pancake` file verifiable while avoiding a host dependency on Python, PyTorch, Transformers, or a remote embedding service.
+This split is intentional. Model identity, revision, license, layout, vocabulary, and weights are artifact data. Execution kernels are reader capability. That keeps a `.pikelet` file verifiable while avoiding a host dependency on Python, PyTorch, Transformers, or a remote embedding service.

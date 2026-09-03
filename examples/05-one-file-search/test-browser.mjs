@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Browser acceptance: serve web/dist + the .pancake over the range-capable
+// Browser acceptance: serve web/dist + the .pikelet over the range-capable
 // server, drive Chromium through a real query and an abstention query, and
 // assert range requests actually happened (laziness, not a full download).
 
@@ -29,7 +29,7 @@ try {
     await page.waitForSelector('#q:not([disabled])', { timeout: 30000 });
 
     const status = await page.textContent('#status');
-    check('page opens the .pancake and verifies it', /hash verified: true/.test(status), status);
+    check('page opens the .pikelet and verifies it', /hash verified: true/.test(status), status);
     check('open used HTTP range requests', rangeRequests.length > 0, `ranges=${rangeRequests.length}`);
 
     const openRanges = rangeRequests.length;
@@ -43,7 +43,7 @@ try {
     check('query issued additional range requests', rangeRequests.length > openRanges,
         `open=${openRanges} total=${rangeRequests.length}`);
 
-    await page.fill('#q', 'banana pancake recipe');
+    await page.fill('#q', 'banana pikelet recipe');
     await page.press('#q', 'Enter');
     await page.waitForFunction(() => /none/.test(document.querySelector('#verdict').textContent), null, { timeout: 30000 });
     const abstained = await page.locator('.hit').count();

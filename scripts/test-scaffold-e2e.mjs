@@ -2,7 +2,7 @@
 // End-to-end check of pikelet as a user experiences it:
 // scaffold a project (stub embeddings, no Cloudflare account), install it,
 // start its Worker with `wrangler dev`, and query /search — once per runtime.
-// Also exercises `compile` (complete kind-3 .pancake from a fixture corpus,
+// Also exercises `compile` (complete kind-3 .pikelet from a fixture corpus,
 // opened and queried with the in-repo reader).
 //
 // Two things this catches that the in-repo smoke does not:
@@ -28,7 +28,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const CPS_DIR = path.join(ROOT, 'create-pancake-search');
+const CPS_DIR = path.join(ROOT, 'pikelet');
 const CPS_BIN = path.join(CPS_DIR, 'bin', 'pikelet.mjs');
 const requestedRuntimes = process.argv.slice(2).flatMap((arg, i, all) => (arg === '--runtime' ? [all[i + 1]] : []));
 const RUNTIMES = requestedRuntimes.length ? requestedRuntimes : ['artifact', 'snapshot'];
@@ -102,7 +102,7 @@ const cpsPackOut = run(npm, ['pack', '--pack-destination', work, '--ignore-scrip
 const cpsTarball = path.join(work, cpsPackOut.trim().split('\n').pop());
 ok(fs.existsSync(cpsTarball), `packed in-repo pikelet: ${path.basename(cpsTarball)}`);
 
-// The compile command: a complete kind-3 .pancake from a small fixture
+// The compile command: a complete kind-3 .pikelet from a small fixture
 // corpus, opened and queried with the in-repo complete reader. A fixture
 // rather than ROOT/docs because the inline transformer embeds for real
 // (no stub path), and the guard rail: --runtime complete must point at
@@ -118,9 +118,9 @@ console.log('\n--- compile ---');
     'sourdough.md': 'Sourdough bread rises without commercial yeast by relying on a starter, a live culture of wild yeast and lactic acid bacteria kept alive with regular feedings of flour and water. The long fermentation develops flavor and structure, and the acidity gives the crumb its characteristic tang.',
   };
   for (const [name, text] of Object.entries(fixtures)) fs.writeFileSync(path.join(fixtureDir, name), `# ${name}\n\n${(text + ' ').repeat(3)}`);
-  const outFile = path.join(work, 'compiled', 'search.pancake');
+  const outFile = path.join(work, 'compiled', 'search.pikelet');
   run(process.execPath, [CPS_BIN, 'compile', '--source', fixtureDir, '--out', outFile], { cwd: CPS_DIR });
-  ok(fs.existsSync(outFile), 'compile wrote the .pancake artifact');
+  ok(fs.existsSync(outFile), 'compile wrote the .pikelet artifact');
 
   const { openPancakeFile } = await import(path.join(ROOT, 'complete', 'index.mjs'));
   const search = await openPancakeFile(outFile);
@@ -252,7 +252,7 @@ console.log('\n--- compile ---');
       else fs.createReadStream(outFile).pipe(res);
     });
     await new Promise((resolve) => rangeSrv.listen(0, '127.0.0.1', resolve));
-    const packUrl = `http://127.0.0.1:${rangeSrv.address().port}/search.pancake`;
+    const packUrl = `http://127.0.0.1:${rangeSrv.address().port}/search.pikelet`;
     const { openPancakeFile: openForIdentity } = await import(path.join(ROOT, 'complete', 'index.mjs'));
     const identityReader = await openForIdentity(outFile);
     const packIdentity = identityReader.info().identity;
@@ -347,7 +347,7 @@ console.log('\n--- compile ---');
     redirectSrv.close();
   }
   const globOnUrl = spawnSync(process.execPath,
-    [CPS_BIN, 'compile', '--source', 'https://docs.example.com', '--exclude', '*print*', '--out', path.join(work, 'x.pancake')],
+    [CPS_BIN, 'compile', '--source', 'https://docs.example.com', '--exclude', '*print*', '--out', path.join(work, 'x.pikelet')],
     { encoding: 'utf8', cwd: CPS_DIR });
   ok(globOnUrl.status !== 0 && `${globOnUrl.stderr}${globOnUrl.stdout}`.includes('--exclude-url'),
     'folder globs against a URL source error instead of silently no-opping', globOnUrl.stderr.slice(0, 200));
@@ -390,7 +390,7 @@ try {
     if (up) {
       const health = await (await fetch(`${base}/health`)).json();
       ok(health.runtime_mode === runtime, `/health reports runtime_mode ${runtime}`, JSON.stringify(health).slice(0, 300));
-      const res = await fetch(`${base}/search?q=${encodeURIComponent('pancake search artifact')}&k=3`);
+      const res = await fetch(`${base}/search?q=${encodeURIComponent('pikelet search artifact')}&k=3`);
       const body = await res.json().catch(() => ({}));
       ok(res.status === 200 && !body.error, `/search returns 200 without error`, `${res.status} ${JSON.stringify(body).slice(0, 300)}`);
       ok(Array.isArray(body.results) && body.results.length > 0 && typeof body.results[0].title === 'string',

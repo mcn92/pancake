@@ -19,7 +19,7 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
-const Pancake = require('../pancake.js');
+const Pikelet = require('../pikelet.js');
 
 function arg(name, fallback = null) {
   const idx = process.argv.indexOf('--' + name);
@@ -57,7 +57,7 @@ function readIvecs(file, limit) {
 const SKETCH_MAGIC = 0x314B5350; // 'PSK1'
 
 async function buildSketchSidecar(artifactPath, sidecarPath, sketchDims) {
-  const probe = await Pancake.openRangeArtifactFile(artifactPath, { loadRouter: false });
+  const probe = await Pikelet.openRangeArtifactFile(artifactPath, { loadRouter: false });
   const { count, dim, maxLevel, recordBytes, routerCount, baseCount } = probe;
   const routerOffset = probe.routerRecordsOffset;
   const baseOffset = probe.baseRecordsOffset;
@@ -355,12 +355,12 @@ async function main() {
     traversalSource = createHttpRangeSource(url);
     console.log(`http mode: injected delay ${delayMs} ms/request, parallelism ${parallelism}`);
   } else {
-    sketchSource = new Pancake.NodeFileRangeSource(artifactPath);
-    traversalSource = new Pancake.NodeFileRangeSource(artifactPath);
+    sketchSource = new Pikelet.NodeFileRangeSource(artifactPath);
+    traversalSource = new Pikelet.NodeFileRangeSource(artifactPath);
   }
 
   // Sketch reader needs no resident router.
-  const sketchArtifact = await Pancake.RangeArtifact.open(sketchSource, { loadRouter: false });
+  const sketchArtifact = await Pikelet.RangeArtifact.open(sketchSource, { loadRouter: false });
   const recallOf = (results, q) => {
     let hits = 0;
     for (let j = 0; j < K; j++) {
@@ -394,7 +394,7 @@ async function main() {
   }
 
   if (compare) {
-    const traversalArtifact = await Pancake.RangeArtifact.open(traversalSource, { loadRouter: true });
+    const traversalArtifact = await Pikelet.RangeArtifact.open(traversalSource, { loadRouter: true });
     const walls = [];
     const recalls = [];
     const before = traversalArtifact.stats();

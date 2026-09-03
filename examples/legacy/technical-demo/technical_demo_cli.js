@@ -18,7 +18,7 @@ const DEFAULT_EXPORT_PATH = path.join(__dirname, 'pancake-index.pnck');
 
 const PROOFS = [
     { id: 'load', text: 'Deterministic clustered demo embeddings loaded from vectors.bin' },
-    { id: 'init', text: 'Index built through the public Pancake API' },
+    { id: 'init', text: 'Index built through the public Pikelet API' },
     { id: 'search', text: 'Successful search execution' },
     { id: 'avg_latency', text: `Average search latency under ${AVG_LATENCY_THRESHOLD_MS}ms over ${LATENCY_CHECK_QUERIES} queries` },
     { id: 'p99_latency', text: `P99 search latency under ${P99_LATENCY_THRESHOLD_MS}ms over ${LATENCY_CHECK_QUERIES} queries` },
@@ -28,8 +28,8 @@ const PROOFS = [
     { id: 'compact', text: 'Compaction executed successfully' },
     { id: 'deterministic', text: 'Search is deterministic for a fixed query' },
     { id: 'excl_deleted', text: 'Deleted vectors are excluded from results' },
-    { id: 'export', text: 'Index serialized to a Pancake snapshot' },
-    { id: 'import', text: 'Index restored from a Pancake snapshot' },
+    { id: 'export', text: 'Index serialized to a Pikelet snapshot' },
+    { id: 'import', text: 'Index restored from a Pikelet snapshot' },
     { id: 'self_recall', text: 'Self-recall: inserted vectors found at rank 1' },
     { id: 'recall_at_k', text: 'Recall@10 checked against brute force' },
     { id: 'stable', text: 'Sustained-mutation latency thresholds met' },
@@ -44,8 +44,8 @@ const STRESS_MODES = {
     worst: { insert: 500, delete: 490, search: 1000 }
 };
 
-async function loadPancake() {
-    const mod = await import(pathToFileURL(path.join(__dirname, '..', '..', '..', 'pancake.node.mjs')).href);
+async function loadPikelet() {
+    const mod = await import(pathToFileURL(path.join(__dirname, '..', '..', '..', 'pikelet.node.mjs')).href);
     return mod.default;
 }
 
@@ -80,8 +80,8 @@ function cosineDistance(a, b) {
 }
 
 class TechnicalDemoCLI {
-    constructor(Pancake) {
-        this.Pancake = Pancake;
+    constructor(Pikelet) {
+        this.Pikelet = Pikelet;
         this.index = null;
         this.vectors = null;
         this.totalVectors = 0;
@@ -140,7 +140,7 @@ class TechnicalDemoCLI {
 
     async createIndex(maxElements = MAX_ELEM) {
         if (this.index) this.index.dispose();
-        this.index = await this.Pancake.create({
+        this.index = await this.Pikelet.create({
             dim: DIMS,
             maxElements,
             metric: 'cosine',
@@ -364,7 +364,7 @@ class TechnicalDemoCLI {
         const query = this.randomLoadedVec();
         const before = this.index.search(query, K);
         const snapshot = this.index.export();
-        const restored = await this.Pancake.create({
+        const restored = await this.Pikelet.create({
             dim: DIMS,
             maxElements: MAX_ELEM,
             metric: 'cosine',
@@ -621,7 +621,7 @@ class TechnicalDemoCLI {
     }
 
     async runInteractive() {
-        const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: 'pancake> ' });
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: 'pikelet> ' });
         let shouldExit = false;
         rl.on('SIGINT', () => {
             shouldExit = true;
@@ -654,8 +654,8 @@ class TechnicalDemoCLI {
 }
 
 (async () => {
-    const Pancake = await loadPancake();
-    const cli = new TechnicalDemoCLI(Pancake);
+    const Pikelet = await loadPikelet();
+    const cli = new TechnicalDemoCLI(Pikelet);
     const args = process.argv.slice(2);
     await cli.init(args.length === 0);
     try {

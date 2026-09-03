@@ -3,7 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const Pancake = require('../../../pancake.js');
+const Pikelet = require('../../../pikelet.js');
 
 // Default to the docs artifact committed to the repo so the demo runs on a
 // fresh clone with no extra data. Point --artifact at a larger .pancake-range
@@ -107,7 +107,7 @@ async function main() {
         ].join('\n'));
     }
 
-    const artifact = await Pancake.openRangeArtifactFile(artifactPath);
+    const artifact = await Pikelet.openRangeArtifactFile(artifactPath);
 
     // Use the real query file when it matches the artifact's dimension;
     // otherwise synthesize queries at the artifact's dimension so the demo

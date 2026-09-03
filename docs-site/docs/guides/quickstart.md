@@ -24,4 +24,4 @@ const results = index.search(new Float32Array(384).fill(0.1), 1);
 
 Cosine vectors must have non-zero norm. The example uses filled vectors for that reason; a zero vector is rejected by validation before it reaches the index.
 
-For deployable search, prefer building a search artifact rather than shipping a raw engine snapshot. The complete `.pancake` profile is the path that packages index data, corpus rows, query encoder data, and verification metadata together.
+For deployable search, prefer building a search artifact rather than shipping a raw engine snapshot. The complete `.pikelet` profile is the path that packages index data, corpus rows, query encoder data, and verification metadata together.

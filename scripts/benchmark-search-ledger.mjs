@@ -22,7 +22,7 @@
  *   node scripts/benchmark-search-ledger.mjs \
  *     [--out report.md] [--query-limit 12] [--presets city=5,continent=25,world=90] \
  *     [--r2-... | --s3-... pricing overrides, see --help] \
- *     <artifact.pancake>:<queries.json> [...]
+ *     <artifact.pikelet>:<queries.json> [...]
  */
 
 import fs from 'node:fs';
@@ -44,7 +44,7 @@ const PRICING = {
 
 function usage(code = 0) {
   const out = code ? console.error : console.log;
-  out(`usage: node scripts/benchmark-search-ledger.mjs [options] <artifact.pancake>:<queries.json> [...]
+  out(`usage: node scripts/benchmark-search-ledger.mjs [options] <artifact.pikelet>:<queries.json> [...]
 
 Options:
   --out <file>            Markdown report path (default search-ledger.md)

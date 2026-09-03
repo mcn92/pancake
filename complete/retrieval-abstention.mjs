@@ -39,7 +39,7 @@ export function createAbstentionScorer(asset, bloomBytes) {
     }) : null;
 
     // Max over the scored passages, with corpus-common words counted at
-    // reduced weight — mirrors create-pancake-search/src/calibrate.mjs
+    // reduced weight — mirrors pikelet/src/calibrate.mjs
     // coverageFrac exactly (the weight ships in the asset).
     const commonWordWeight = coverageCfg?.commonWordWeight ?? 1 / 3;
     function coverageFrac(text, passageTexts) {

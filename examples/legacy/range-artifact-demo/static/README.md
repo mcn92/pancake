@@ -37,7 +37,7 @@ corpus/docs-corpus.json                doc chunks for result display
 The docs artifact is built from the worker-semantic-search snapshot:
 
 ```bash
-node -e "require('./pancake.js').buildRangeArtifactFile(
+node -e "require('./pikelet.js').buildRangeArtifactFile(
   'examples/03-edge-docs-search/assets/docs-index.bin',
   'examples/legacy/range-artifact-demo/static/public/artifacts/pancake-docs.pancake-range',
   { layout: 'rcm' })"
@@ -93,7 +93,7 @@ served as local slices (the header line reports
 
 ## Static host findings (2026-07-31)
 
-Live deployment: https://pancake-artifact-demo.pages.dev
+Live deployment: https://pikelet-artifact-demo.pages.dev
 
 | Host | Range behavior | Notes |
 | --- | --- | --- |

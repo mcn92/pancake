@@ -1,12 +1,12 @@
 /**
- * Pancake Search - Cloudflare Workers Entrypoint
+ * Pikelet Search - Cloudflare Workers Entrypoint
  *
- * This example intentionally uses the public Pancake API. It should be useful
+ * This example intentionally uses the public Pikelet API. It should be useful
  * as deployment documentation and as a benchmark of the package surface users
  * actually call, not as a copy of the raw WASM ABI.
  */
 
-import Pancake, { PancakeError, PANCAKE_ERROR_CODES } from '../../pancake.workerd.mjs';
+import Pikelet, { PancakeError, PANCAKE_ERROR_CODES } from '../../pikelet.workerd.mjs';
 
 let index = null;
 let indexConfig = null;
@@ -346,7 +346,7 @@ async function restoreIndex(env) {
   const generation = restoreGeneration;
   if (!env?.INDEX_BUCKET && localSnapshot) {
     const start = performance.now();
-    const restored = await Pancake.restore(localSnapshot.bytes, {
+    const restored = await Pikelet.restore(localSnapshot.bytes, {
       maxElements: localSnapshot.config.maxElements,
       efSearch: localSnapshot.config.efSearch
     });
@@ -383,7 +383,7 @@ async function restoreIndex(env) {
   }
 
   const metadata = parseCustomMetadata(obj.customMetadata || {});
-  const inspected = Pancake.inspectSnapshot(bytes);
+  const inspected = Pikelet.inspectSnapshot(bytes);
   const maxElementsLimit = positiveEnvInt(env, 'MAX_ELEMENTS_LIMIT', DEFAULT_MAX_ELEMENTS);
   const restoredCapacity = metadata.maxElements ?? Math.max(DEFAULT_MAX_ELEMENTS, inspected.count);
   if (!isPositiveInteger(restoredCapacity) || restoredCapacity > maxElementsLimit || restoredCapacity < inspected.count) {
@@ -400,7 +400,7 @@ async function restoreIndex(env) {
   }
 
   const deserializeStart = performance.now();
-  const restored = await Pancake.restore(bytes, overrides);
+  const restored = await Pikelet.restore(bytes, overrides);
   if (generation !== restoreGeneration || index) {
     restored.dispose();
     return false;
@@ -440,7 +440,7 @@ function metadataSnapshotSummary(metadata, size) {
   const hasConfig = metadata.dims !== undefined || metadata.maxElements !== undefined || metadata.initParams !== undefined;
   if (!hasConfig) return null;
   return {
-    format: 'pancake',
+    format: 'pikelet',
     dim: metadata.dims ?? null,
     maxElements: metadata.maxElements ?? null,
     metric: metadata.metric ?? null,
@@ -455,7 +455,7 @@ async function inspectStoredSnapshot(env) {
     return {
       available: true,
       key: localSnapshot.key,
-      metadata: Pancake.inspectSnapshot(localSnapshot.bytes)
+      metadata: Pikelet.inspectSnapshot(localSnapshot.bytes)
     };
   }
   const key = await findLatestSnapshot(env);
@@ -475,7 +475,7 @@ async function inspectStoredSnapshot(env) {
   if (!obj) return { available: false, key, metadata: null };
   const bytes = new Uint8Array(await obj.arrayBuffer());
   try {
-    return { available: true, key, metadata: Pancake.inspectSnapshot(bytes) };
+    return { available: true, key, metadata: Pikelet.inspectSnapshot(bytes) };
   } catch {
     return {
       available: true,
@@ -581,7 +581,7 @@ async function handleRequest(request, env, ctx) {
     return runMutation(async () => {
       const body = await readJson(request, env);
       const config = makeCreateConfig(body, env);
-      const next = await Pancake.create(config);
+      const next = await Pikelet.create(config);
       try {
         if (Array.isArray(body.vectors) && body.vectors.length > 0) {
           next.addBatch(body.vectors);
@@ -608,7 +608,7 @@ async function handleRequest(request, env, ctx) {
   if (url.pathname === '/import' && method === 'POST') {
     return runMutation(async () => {
       const bytes = await readBytes(request, env);
-      const inspected = Pancake.inspectSnapshot(bytes);
+      const inspected = Pikelet.inspectSnapshot(bytes);
       const maxElements = Number.parseInt(
         url.searchParams.get('maxElements') || String(Math.max(DEFAULT_MAX_ELEMENTS, inspected.count)), 10
       );
@@ -637,7 +637,7 @@ async function handleRequest(request, env, ctx) {
           efSearch
         }, 'Invalid import config', positiveEnvInt(env, 'MAX_ELEMENTS_LIMIT', DEFAULT_MAX_ELEMENTS));
       }
-      const next = await Pancake.restore(bytes, overrides);
+      const next = await Pikelet.restore(bytes, overrides);
       restoreGeneration += 1;
       if (index) index.dispose();
       index = next;
@@ -725,7 +725,7 @@ async function handleRequest(request, env, ctx) {
       if (index.ghostCount > 0) index.compact();
       const persisted = await persistIndex(env, { compact: false });
       return binaryResponse(localSnapshot?.bytes ?? index.export(), {
-        'X-Pancake-Persisted': persisted ? '1' : '0'
+        'X-Pikelet-Persisted': persisted ? '1' : '0'
       });
     });
   }
@@ -742,8 +742,8 @@ async function handleRequest(request, env, ctx) {
       'POST /add_batch': '{ vectors: float[][] }',
       'POST /delete': '{ id: number }',
       'POST /compact': 'Compact deleted entries',
-      'POST /export': 'Export Pancake snapshot',
-      'POST /import': 'Import Pancake snapshot',
+      'POST /export': 'Export Pikelet snapshot',
+      'POST /import': 'Import Pikelet snapshot',
       'POST /reset_cache': 'Drop warm in-memory index'
     }
   });

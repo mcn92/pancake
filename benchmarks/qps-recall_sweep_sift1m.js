@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * Recall-QPS sweep on SIFT-1M: Pancake u8 WASM vs hnswlib-node Float32 Native.
+ * Recall-QPS sweep on SIFT-1M: Pikelet u8 WASM vs hnswlib-node Float32 Native.
  *
  * Uses the standard SIFT-1M dataset (1M vectors, 128D, L2).
  *
@@ -17,7 +17,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const Pancake = require('../pancake.js');
+const Pikelet = require('../pikelet.js');
 const { parseBenchmarkArgs, resolveSingleValue, resolveSweepValues } = require('./bench_args');
 
 const parsedArgs = parseBenchmarkArgs();
@@ -32,7 +32,7 @@ const REPETITIONS = 3;
 const WARMUP_QUERIES = 200;
 
 const CONFIGS = [
-  { label: 'pancake-u8-wasm',   library: 'pancake' },
+  { label: 'pancake-u8-wasm',   library: 'pikelet' },
   { label: 'hnswlib-f32-native',  library: 'hnswlib' },
 ];
 
@@ -108,10 +108,10 @@ function stddev(arr) {
   return Math.sqrt(v);
 }
 
-// --- Pancake: build and query ---
-async function buildPancake({ train, dim }) {
+// --- Pikelet: build and query ---
+async function buildPikelet({ train, dim }) {
   log(`  [pancake-u8] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
-  const index = await Pancake.create({
+  const index = await Pikelet.create({
     dim,
     metric: 'l2',
     maxElements: train.length,
@@ -146,7 +146,7 @@ async function buildPancake({ train, dim }) {
   return { index, buildMs };
 }
 
-function queryPancake(index, test, groundTruth, efSearch) {
+function queryPikelet(index, test, groundTruth, efSearch) {
   if (typeof index.setEfSearch === 'function') {
     index.setEfSearch(efSearch);
   } else if (index._e && index._e._i8_set_ef && index._useInt8) {
@@ -154,7 +154,7 @@ function queryPancake(index, test, groundTruth, efSearch) {
   } else if (index._e && index._e._float_set_ef && !index._useInt8) {
     index._e._float_set_ef(efSearch);
   } else {
-    throw new Error('Cannot set ef_search on Pancake index');
+    throw new Error('Cannot set ef_search on Pikelet index');
   }
 
   for (let i = 0; i < WARMUP_QUERIES && i < test.length; i++) {
@@ -226,8 +226,8 @@ async function sweepOne(config, dataset) {
   log('='.repeat(60));
 
   let built;
-  if (config.library === 'pancake') {
-    built = await buildPancake({ train, dim });
+  if (config.library === 'pikelet') {
+    built = await buildPikelet({ train, dim });
   } else {
     built = buildHnswlib({ train, dim });
     if (!built) return null;
@@ -240,8 +240,8 @@ async function sweepOne(config, dataset) {
     log(`\n  ef_search=${efSearch}`);
     const reps = [];
     for (let rep = 0; rep < REPETITIONS; rep++) {
-      const { latencies, meanRecall } = config.library === 'pancake'
-        ? queryPancake(index, test, groundTruth, efSearch)
+      const { latencies, meanRecall } = config.library === 'pikelet'
+        ? queryPikelet(index, test, groundTruth, efSearch)
         : queryHnswlib(index, test, groundTruth, efSearch);
       const sorted = [...latencies].sort((a, b) => a - b);
       const avgLatency = mean(latencies);
@@ -279,7 +279,7 @@ async function sweepOne(config, dataset) {
   return {
     label: config.label,
     library: config.library,
-    dtype: config.library === 'pancake' ? 'u8' : 'f32',
+    dtype: config.library === 'pikelet' ? 'u8' : 'f32',
     buildMs,
     params: { M, ef_construction: EF_CONSTRUCTION, K },
     points,
@@ -367,7 +367,7 @@ async function main() {
   const groundTruth = readIvecs(gtFile);
 
   log(`\n${'='.repeat(60)}`);
-  log('Recall-QPS sweep on SIFT-1M (Pancake vs hnswlib)');
+  log('Recall-QPS sweep on SIFT-1M (Pikelet vs hnswlib)');
   log(`${train.length} vectors, ${dim}D, ${test.length} queries`);
   log(`k=${K}, M=${M}, ef_construction=${EF_CONSTRUCTION}`);
   log(`ef_search sweep: [${EF_SEARCH_VALUES.join(', ')}]`);

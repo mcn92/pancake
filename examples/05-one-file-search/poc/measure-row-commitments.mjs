@@ -30,7 +30,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
-const { PancakeSketchArtifact } = require('../../../pancake-artifact.js');
+const { PancakeSketchArtifact } = require('../../../pikelet-artifact.js');
 
 const DATA = path.join(here, '..', '..', '04-static-wiki-pack', 'data-full');
 const SKETCH_PATH = path.join(DATA, 'wiki.pancake-sketch');

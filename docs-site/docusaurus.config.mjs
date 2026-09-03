@@ -40,7 +40,7 @@ const config = {
         assetBase: 'pikelet-search',
         sourcePath: 'docs',
         sourceRouteBase: 'docs',
-        // No completeProfile block: the complete kind-3 .pancake is the
+        // No completeProfile block: the complete kind-3 .pikelet is the
         // plugin default as of 0.7.0, staging the packaged encoder assets
         // (weights digest-pinned, fetched once) — this site exercises the
         // zero-config path.

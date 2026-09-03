@@ -19,7 +19,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const Pancake = require('../pancake.js');
+const Pikelet = require('../pikelet.js');
 const { parseBenchmarkArgs, resolveSingleValue } = require('./bench_args');
 
 const parsedBenchArgs = parseBenchmarkArgs();
@@ -226,7 +226,7 @@ function chooseDeletedIds(count, fraction, seed) {
 }
 
 async function buildIndex(train, dim) {
-  const index = await Pancake.create({
+  const index = await Pikelet.create({
     dim,
     maxElements: train.length,
     quantized: true,
@@ -236,7 +236,7 @@ async function buildIndex(train, dim) {
     efSearch: EF_SEARCH,
   });
 
-  log(`Building Pancake u8 index (M=${M}, ef_c=${EF_CONSTRUCTION}, ef_s=${EF_SEARCH}, metric=l2)...`);
+  log(`Building Pikelet u8 index (M=${M}, ef_c=${EF_CONSTRUCTION}, ef_s=${EF_SEARCH}, metric=l2)...`);
   const t0 = performance.now();
   const batchSize = 500;
   for (let start = 0; start < train.length; start += batchSize) {

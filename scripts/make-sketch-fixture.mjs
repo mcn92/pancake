@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import Pancake from '../pancake.node.mjs';
+import Pikelet from '../pikelet.node.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const COUNT = 256;
@@ -29,17 +29,17 @@ const cases = [];
 for (const metric of ['l2', 'cosine']) {
   for (const sketchBits of [4, 8]) {
     const rows = seededRows(COUNT, DIM, SEED);
-    const index = await Pancake.create({ dim: DIM, maxElements: COUNT, metric, quantized: true });
+    const index = await Pikelet.create({ dim: DIM, maxElements: COUNT, metric, quantized: true });
     index.addBatch(rows);
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sketch-fx-'));
     const snap = path.join(tmp, 's.pnck');
     fs.writeFileSync(snap, index.export());
     index.dispose();
     const art = path.join(tmp, 'a.pancake-sketch');
-    Pancake.buildSketchArtifactFile(snap, art, { sketchDims: 16, sketchBits, recommendedRerank: 64 });
+    Pikelet.buildSketchArtifactFile(snap, art, { sketchDims: 16, sketchBits, recommendedRerank: 64 });
     const bytes = fs.readFileSync(art);
 
-    const artifact = await Pancake.openSketchArtifactFile(art);
+    const artifact = await Pikelet.openSketchArtifactFile(art);
     // Reference queries: fixed seed, distinct from corpus.
     const queries = seededRows(6, DIM, SEED ^ 0x5a5a).map((v) => Array.from(v));
     const results = [];

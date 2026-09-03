@@ -175,7 +175,7 @@ async function testPersistence(env) {
 
   const readiness = await fetchJSON('/readiness', { headers: auth });
   assert(readiness.status === 200, '/readiness inspects the local snapshot');
-  assert(readiness.json?.snapshot?.format === 'pancake', '/readiness reports the Pancake snapshot format');
+  assert(readiness.json?.snapshot?.format === 'pikelet', '/readiness reports the Pikelet snapshot format');
   assert(readiness.json?.snapshot?.dim === dims, '/readiness reports the snapshot dimension');
 
   const stats = await fetchJSON('/stats', { headers: auth });
@@ -260,7 +260,7 @@ async function testAddBatchValidationIsAtomic(env) {
   });
   assert(badBatch.status === 400, '/add_batch rejects malformed batch');
   assert(badBatch.json?.code === 'DIMENSION_MISMATCH',
-    '/add_batch exposes the stable Pancake error code');
+    '/add_batch exposes the stable Pikelet error code');
 
   const stats = await fetchJSON('/stats', { headers: auth });
   assert(stats.status === 200, '/stats succeeds after rejected /add_batch');

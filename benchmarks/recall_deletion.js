@@ -23,8 +23,8 @@ const M = resolveSingleValue(parsedArgs.m, 12);
 const EF_CONSTRUCTION = resolveSingleValue(parsedArgs.efConstruction, 150);
 const EF_SEARCH = resolveSingleValue(parsedArgs.efSearch, 250);
 
-async function loadPancake() {
-    const mod = await import(pathToFileURL(path.join(__dirname, '..', 'pancake.node.mjs')).href);
+async function loadPikelet() {
+    const mod = await import(pathToFileURL(path.join(__dirname, '..', 'pikelet.node.mjs')).href);
     return mod.default;
 }
 
@@ -71,9 +71,9 @@ function cosineDist(a, b) {
     const N = all.length - QUERY_COUNT;
     const queryStart = N;
 
-    console.log('Loading Pancake public API...');
-    const Pancake = await loadPancake();
-    const index = await Pancake.create({
+    console.log('Loading Pikelet public API...');
+    const Pikelet = await loadPikelet();
+    const index = await Pikelet.create({
         dim: DIMS,
         maxElements: MAX_ELEM,
         metric: 'cosine',
@@ -229,7 +229,7 @@ function cosineDist(a, b) {
             }
             console.log(
                 `target=${targetPct}%  ghosts=${realGhostPct.toFixed(1)}%  live=${liveSet.size}  `
-                + `pancake(ef${EF_SEARCH})=${(pm.recall*100).toFixed(1)}%  `
+                + `pikelet(ef${EF_SEARCH})=${(pm.recall*100).toFixed(1)}%  `
                 + `hnswlib: ${parts.join('  ')}`
             );
         } else {
@@ -241,7 +241,7 @@ function cosineDist(a, b) {
     if (hnswResults) {
         const efCols = HNSW_EF_SWEEP.map(ef => `hnsw ef=${ef}`);
         console.log('\n--- Side-by-side (recall) ---');
-        console.log(`Ghost %  | Pancake ef=${EF_SEARCH} | ${efCols.join(' | ')}`);
+        console.log(`Ghost %  | Pikelet ef=${EF_SEARCH} | ${efCols.join(' | ')}`);
         console.log(`---------|${'-'.repeat(15)}|${efCols.map(() => '-'.repeat(14)).join('|')}`);
         for (let i = 0; i < results.length; i++) {
             const p = results[i];
@@ -256,7 +256,7 @@ function cosineDist(a, b) {
         }
 
         console.log('\n--- Side-by-side (p50 latency) ---');
-        console.log(`Ghost %  | Pancake ef=${EF_SEARCH} | ${efCols.join(' | ')}`);
+        console.log(`Ghost %  | Pikelet ef=${EF_SEARCH} | ${efCols.join(' | ')}`);
         console.log(`---------|${'-'.repeat(15)}|${efCols.map(() => '-'.repeat(14)).join('|')}`);
         for (let i = 0; i < results.length; i++) {
             const p = results[i];
@@ -274,7 +274,7 @@ function cosineDist(a, b) {
     fs.writeFileSync(path.join(os.tmpdir(), 'recall_dbpedia_1536d.json'), JSON.stringify({
         pancakeBuildSec: buildSec,
         hnswlibBuildSec: hnswBuildSec,
-        pancake: results,
+        pikelet: results,
         hnswlib: hnswResults,
     }, null, 2));
     index.dispose();

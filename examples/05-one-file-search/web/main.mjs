@@ -2,16 +2,16 @@
 // The reader, encoder, sketch scan, and calibration are the same modules
 // Node runs; kind-3 uses reader-owned WASM kernels, no server-side search.
 
-import { openPancakeFile } from '../pancake-file-reader.mjs';
+import { openPancakeFile } from '../pikelet-file-reader.mjs';
 import { httpRangeSource } from '../sources.mjs';
 
 // Prefer the content-addressed URL from the pointer (immutable-cacheable,
 // safe across rebuilds); the bare filename stays as the fallback for hosts
 // serving the file without serve.mjs's pointer route.
-const FALLBACK_URL = '/pancake-docs.pancake';
+const FALLBACK_URL = '/pikelet-docs.pikelet';
 async function resolveFileUrl() {
     try {
-        const pointer = await (await fetch('/pancake-latest.json')).json();
+        const pointer = await (await fetch('/pikelet-latest.json')).json();
         if (typeof pointer?.url === 'string') return pointer.url;
     } catch { /* no pointer route on this host */ }
     return FALLBACK_URL;
@@ -34,16 +34,16 @@ const search = await openPancakeFile(source, {
     // a load failure just leaves the JS scan serving. Docs-scale artifacts
     // scan in single-digit ms either way; the reader uses whatever arrives.
     sketchScanner: async (sketch) => {
-        const { default: Pancake } = await import('../../../pancake.web.mjs');
-        return Pancake.createSketchScanner(sketch, { maxRerank: 4096 });
+        const { default: Pikelet } = await import('../../../pikelet.web.mjs');
+        return Pikelet.createSketchScanner(sketch, { maxRerank: 4096 });
     },
 });
 const openMs = performance.now() - openStart;
 const info = search.info();
 // Devtools affordance: poke the live reader from the console —
-// pancakeSearchDemo.search.info().residentScan shows whether the WASM
+// pikeletSearchDemo.search.info().residentScan shows whether the WASM
 // scanner has staged ('engine') or the JS scan is serving ('js').
-window.pancakeSearchDemo = { search, source };
+window.pikeletSearchDemo = { search, source };
 
 statusEl.textContent = `${(info.fileBytes / 1048576).toFixed(2)} MiB file - `
     + `open ${openMs.toFixed(0)} ms, ${source.stats.requests} requests / ${(source.stats.bytes / 1024).toFixed(0)} KiB - `

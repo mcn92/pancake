@@ -12,7 +12,7 @@
  *      of recall targets, log-linearly interpolated along each frontier.
  *
  * Configs:
- *   pikelet-wasm   u8 / fp32   (Pancake.create, setEfSearch per ef)
+ *   pikelet-wasm   u8 / fp32   (Pikelet.create, setEfSearch per ef)
  *   pancake-native u8 / fp32   (native.pancake_*, pancake_set_ef per ef)
  *   usearch-native i8 / f16 / f32 (build-once-save-view per ef —
  *                                  expansion_search is fixed at construction)
@@ -37,7 +37,7 @@
  *   node benchmarks/pareto_frontier.js --ef-search-values 10,50,100,200
  *   node benchmarks/pareto_frontier.js --regenerate-gt
  *   node benchmarks/pareto_frontier.js --dataset nytimes --zero-vector-policy fail
- *   node benchmarks/pareto_frontier.js --dataset nytimes --library pancake
+ *   node benchmarks/pareto_frontier.js --dataset nytimes --library pikelet
  *   node benchmarks/pareto_frontier.js --dataset nytimes --configs pancake-wasm-u8,pancake-wasm-fp32
  */
 
@@ -45,13 +45,13 @@ const { spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const Pancake = require('../pancake.js');
+const Pikelet = require('../pikelet.js');
 const { parseBenchmarkArgs, resolveSingleValue, resolveSweepValues } = require('./bench_args');
 
 // --- Optional libraries (each is independently optional; missing => skipped) ---
 let native;
 try { native = require('../native'); }
-catch (e) { console.warn('WARN: pancake native binding not built (cd native && npm install) — skipping pancake-native configs.'); }
+catch (e) { console.warn('WARN: pikelet native binding not built (cd native && npm install) — skipping pancake-native configs.'); }
 
 let usearch;
 try { usearch = require('usearch'); }
@@ -214,11 +214,11 @@ if (CONFIG_FILTER_LABELS.size > 0 && CONFIG_FILTER_LIBRARIES.size > 0) {
 
 // --- Config table. Every config is ef-swept (no single-point libraries). ---
 let CONFIGS = [];
-CONFIGS.push({ label: 'pikelet-wasm-u8',   library: 'pancake', runtime: 'wasm',   dtype: 'u8',  sweep: true });
-CONFIGS.push({ label: 'pikelet-wasm-fp32',   library: 'pancake', runtime: 'wasm',   dtype: 'f32', sweep: true });
+CONFIGS.push({ label: 'pikelet-wasm-u8',   library: 'pikelet', runtime: 'wasm',   dtype: 'u8',  sweep: true });
+CONFIGS.push({ label: 'pikelet-wasm-fp32',   library: 'pikelet', runtime: 'wasm',   dtype: 'f32', sweep: true });
 if (native) {
-  CONFIGS.push({ label: 'pancake-native-u8', library: 'pancake', runtime: 'native', dtype: 'u8',  sweep: true });
-  CONFIGS.push({ label: 'pancake-native-fp32', library: 'pancake', runtime: 'native', dtype: 'f32', sweep: true });
+  CONFIGS.push({ label: 'pancake-native-u8', library: 'pikelet', runtime: 'native', dtype: 'u8',  sweep: true });
+  CONFIGS.push({ label: 'pancake-native-fp32', library: 'pikelet', runtime: 'native', dtype: 'f32', sweep: true });
 }
 if (usearch) {
   CONFIGS.push({ label: 'usearch-native-int8', library: 'usearch', runtime: 'native', dtype: 'i8',  sweep: true, aliases: ['usearch-int8'] });
@@ -671,12 +671,12 @@ function plotTitle({ train, test, dim }) {
 // Each build* returns a handle object; each query* returns {latencies, meanRecall}.
 // =====================================================================
 
-// --- Pancake WASM ---
+// --- Pikelet WASM ---
 async function buildPancakeWasm({ train, dim, dtype }) {
   const quantized = dtype === 'u8';
   log(`  [${dtype} wasm] build (M=${M}, ef_c=${EF_CONSTRUCTION}, metric=${METRIC})...`);
   const rssBefore = measureRssBytes();
-  const index = await Pancake.create({
+  const index = await Pikelet.create({
     dim, maxElements: train.length, quantized, metric: METRIC,
     M, efConstruction: EF_CONSTRUCTION, efSearch: EF_SEARCH_VALUES[0],
   });
@@ -705,7 +705,7 @@ function queryPancakeWasm(built, test, gt, ef) {
   return { latencies, meanRecall: totalRecall / test.length };
 }
 
-// --- Pancake native ---
+// --- Pikelet native ---
 function buildPancakeNative({ train, dim, dtype }) {
   const quantized = dtype === 'u8' ? 1 : 0;
   log(`  [${dtype} native] build (M=${M}, ef_c=${EF_CONSTRUCTION}, metric=${METRIC})...`);
@@ -1148,7 +1148,7 @@ function queryHnswlib(built, test, gt, ef) {
 async function build(config, dataset) {
   const { train, dim } = dataset;
   switch (config.library) {
-    case 'pancake':
+    case 'pikelet':
       return config.runtime === 'wasm'
         ? await buildPancakeWasm({ train, dim, dtype: config.dtype })
         : buildPancakeNative({ train, dim, dtype: config.dtype });
@@ -1160,7 +1160,7 @@ async function build(config, dataset) {
 function query(config, built, dataset, ef) {
   const { test, groundTruth } = dataset;
   switch (config.library) {
-    case 'pancake':
+    case 'pikelet':
       return config.runtime === 'wasm'
         ? queryPancakeWasm(built, test, groundTruth, ef)
         : queryPancakeNative(built, test, groundTruth, ef);
@@ -1170,7 +1170,7 @@ function query(config, built, dataset, ef) {
   }
 }
 function cleanup(config, built) {
-  if (config.library === 'pancake' && config.runtime === 'native') native.pancake_dispose(built.handle);
+  if (config.library === 'pikelet' && config.runtime === 'native') native.pancake_dispose(built.handle);
   else if (config.library === 'usearch-wasm' && built.runtime) {
     const sp = built.runtime.stackSave();
     try {
@@ -1521,7 +1521,7 @@ async function main() {
       groundTruthFile: gtPath,
     },
     memory: {
-      note: 'memory_mb is the stable index-size proxy: Pancake reports logical index bytes, while USearch uses serialized index bytes. hnswlib-node does not expose index size, so memory_mb is null for hnswlib. wasm_heap_mb reports the full WebAssembly heap buffer when available. rss_delta_mb is process RSS growth during build and is approximate/runtime-dependent.',
+      note: 'memory_mb is the stable index-size proxy: Pikelet reports logical index bytes, while USearch uses serialized index bytes. hnswlib-node does not expose index size, so memory_mb is null for hnswlib. wasm_heap_mb reports the full WebAssembly heap buffer when available. rss_delta_mb is process RSS growth during build and is approximate/runtime-dependent.',
     },
     system: sysInfo,
     params: {

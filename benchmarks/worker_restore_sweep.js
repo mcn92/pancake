@@ -4,7 +4,7 @@
 /**
  * Worker restore sweep
  *
- * Builds synthetic quantized Pancake indexes through the Worker API,
+ * Builds synthetic quantized Pikelet indexes through the Worker API,
  * persists each snapshot to the Worker's backing R2 bucket, forces the
  * in-memory cache cold, then measures:
  *   - R2 fetch time

@@ -3,7 +3,7 @@
 // static artifact, coalesced hydration, and calibrated abstention — with the
 // network meter as the page's centerpiece. Headless hooks (__bench, __probes)
 // are load-bearing for CI/measurement and must keep their shapes.
-import Pancake from '../../../../pancake.web.mjs';
+import Pikelet from '../../../../pikelet.web.mjs';
 import { pipeline, env } from '@huggingface/transformers';
 import { createAbstentionScorer } from './abstention.js';
 import './style.css';
@@ -142,10 +142,10 @@ async function boot() {
     });
 
     const packReady = stage('packOpen', () =>
-        Pancake.SketchArtifact.open(createHttpRangeSource(`${state.packBase}/wiki.pancake-sketch`, 'pack'), {})
+        Pikelet.SketchArtifact.open(createHttpRangeSource(`${state.packBase}/wiki.pancake-sketch`, 'pack'), {})
     ).then(async (artifact) => {
         state.artifact = artifact;
-        state.scanner = await stage('scannerBuild', () => Pancake.createSketchScanner(artifact));
+        state.scanner = await stage('scannerBuild', () => Pikelet.createSketchScanner(artifact));
     });
 
     const offsetsReady = stage('offsetsLoad', async () => {

@@ -16,8 +16,8 @@ or pipeline and feed the resulting vectors into Pikelet. If you want to go
 straight from documents to working search — embedding included — use the
 compile command instead (`npx pikelet compile --source ./docs
 --out search.pikelet`, documented in
-[create-pancake-search/README.md](create-pancake-search/README.md)); it emits
-one `.pancake` file answering natural-language queries via
+[pikelet/README.md](pikelet/README.md)); it emits
+one `.pikelet` file answering natural-language queries via
 `pikelet-wasm/complete`. Pikelet is not a hosted search service either way.
 
 ## Install
@@ -35,7 +35,7 @@ or later.
 
 ```bash
 git clone https://github.com/mcn92/pikelet.git
-cd pancake
+cd pikelet
 npm install          # dev deps for the demos, benchmarks, and tests
 ```
 
@@ -60,7 +60,7 @@ Use the path that matches what you already have:
 - Vectors saved as JSON / JSONL: `Pikelet.loadJsonFile(...)` on the Node entrypoints
 - Existing Pikelet snapshot on disk: `Pikelet.loadSnapshotFile(...)` on the Node entrypoints
 
-If you are working from a repo checkout, replace `import Pikelet from 'pikelet-wasm'` with `import Pikelet from './pancake.node.mjs'` (or `require('./pancake.js')` from CommonJS code that awaits inside an async function).
+If you are working from a repo checkout, replace `import Pikelet from 'pikelet-wasm'` with `import Pikelet from './pikelet.node.mjs'` (or `require('./pikelet.js')` from CommonJS code that awaits inside an async function).
 
 ## Local Node.js Workflow
 

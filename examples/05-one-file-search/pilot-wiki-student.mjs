@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Wiki student pilot, step 1: sample chunks from the wiki corpus into the
 // trainer's expected JSON-list format and launch the PSTU distillation
-// (create-pancake-search/tools/train_student.py, CPU) with abstention
+// (pikelet/tools/train_student.py, CPU) with abstention
 // skipped — the pilot measures ENCODER viability on an open-domain corpus;
 // calibration comes later only if the encoder clears the bar.
 //
@@ -19,7 +19,7 @@ import { spawn } from 'node:child_process';
 const here = path.dirname(new URL(import.meta.url).pathname);
 const DATA = path.join(here, '..', '04-static-wiki-pack', 'data-full');
 const OUT = path.join(here, 'student-pilot');
-const TRAINER = path.join(here, '..', '..', 'create-pancake-search', 'tools', 'train_student.py');
+const TRAINER = path.join(here, '..', '..', 'pikelet', 'tools', 'train_student.py');
 
 const sampleSize = Number(process.argv[2]) || 10000;
 const epochs = Number(process.argv[3]) || 100;

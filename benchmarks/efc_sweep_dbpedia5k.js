@@ -9,7 +9,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const Pancake = require('../pancake.js');
+const Pikelet = require('../pikelet.js');
 const { parseBenchmarkArgs, resolveSingleValue } = require('./bench_args');
 
 const parsedArgs = parseBenchmarkArgs();
@@ -89,7 +89,7 @@ async function main() {
   for (const efc of EFC_VALUES) {
     for (const quantized of [true, false]) {
       const label = quantized ? 'uint8' : 'fp32';
-      const index = await Pancake.create({
+      const index = await Pikelet.create({
         dim, maxElements: train.length, quantized,
         metric: 'l2', M, efConstruction: efc, efSearch: EF_SEARCH,
       });

@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * Recall-QPS sweep on NYTimes-256: Pancake vs hnswlib-node.
+ * Recall-QPS sweep on NYTimes-256: Pikelet vs hnswlib-node.
  *
  * For each library, we:
  *   1. Build one index at a fixed (M, ef_construction)
@@ -17,12 +17,12 @@
  *     parallelizes insertion inside its batch API (Python's add_items uses
  *     OpenMP across threads). hnswlib-node only exposes addPoint, which
  *     inserts one vector per call with no thread parameter, so we get one
- *     core regardless of what we do from JS. Pancake's addBatch is also
+ *     core regardless of what we do from JS. Pikelet's addBatch is also
  *     single-threaded, so this is a symmetric comparison -- but note that
  *     a Python user of hnswlib would see substantially faster builds than
  *     the numbers here suggest.
  *   - Vectors are loaded into one big Float32Array and accessed via subarray
- *     views (zero-copy). Pancake's addBatch accepts these views directly
+ *     views (zero-copy). Pikelet's addBatch accepts these views directly
  *     and writes into WASM heap without per-element boxing.
  *   - hnswlib-node's addPoint REQUIRES a plain Array (it does Array.isArray
  *     internally and rejects typed arrays). To avoid allocating 290k Arrays
@@ -30,9 +30,9 @@
  *     before each call. The native binding consumes the array eagerly via
  *     N-API element accessors, so mutating between calls is safe. We still
  *     pay per-element float->double conversions in the v8 array, but that's
- *     unavoidable given the binding's contract. Pancake's wrapper accepts
+ *     unavoidable given the binding's contract. Pikelet's wrapper accepts
  *     Float32Array directly, so it pays nothing analogous.
- *   - addBatch is used for Pancake regardless of dtype; the wrapper supports
+ *   - addBatch is used for Pikelet regardless of dtype; the wrapper supports
  *     it for both quantized and float modes.
  *   - Warmup queries run before each timed sweep point, since v8 may
  *     re-tier hot functions when ef_search changes the work shape.
@@ -46,7 +46,7 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const Pancake = require('../pancake.js');
+const Pikelet = require('../pikelet.js');
 const { parseBenchmarkArgs, resolveSingleValue, resolveSweepValues } = require('./bench_args');
 
 const parsedArgs = parseBenchmarkArgs();
@@ -130,8 +130,8 @@ try {
 }
 
 const CONFIGS = [
-  { label: 'pancake-u8-wasm',     library: 'pancake',        dtype: 'u8' },
-  { label: 'pancake-f32-wasm',    library: 'pancake',        dtype: 'f32' },
+  { label: 'pancake-u8-wasm',     library: 'pikelet',        dtype: 'u8' },
+  { label: 'pancake-f32-wasm',    library: 'pikelet',        dtype: 'f32' },
   { label: 'pancake-u8-native',   library: 'pancake-native', dtype: 'u8' },
   { label: 'pancake-f32-native',  library: 'pancake-native', dtype: 'f32' },
   { label: 'usearch-i8-native',   library: 'usearch',        dtype: 'i8' },
@@ -385,13 +385,13 @@ function queryUsearch(built, test, groundTruth, efSearch, dim) {
   return { latencies, meanRecall: totalRecall / test.length };
 }
 
-// --- Pancake: build and query ---
-async function buildPancake({ train, dim, dtype }) {
+// --- Pikelet: build and query ---
+async function buildPikelet({ train, dim, dtype }) {
   const quantized = dtype === 'u8';
   log(`  [pancake-${dtype}] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
   // create() defaults to cosine, which matches these angular datasets; no
   // explicit metric needed.
-  const index = await Pancake.create({
+  const index = await Pikelet.create({
     dim,
     maxElements: train.length,
     quantized,
@@ -403,7 +403,7 @@ async function buildPancake({ train, dim, dtype }) {
   const t0 = performance.now();
   // addBatch supports both quantized and float modes; previous version of
   // this script gated it on `quantized`, which silently penalized float
-  // Pancake. Use it unconditionally.
+  // Pikelet. Use it unconditionally.
   for (let start = 0; start < train.length; start += PANCAKE_BATCH_SIZE) {
     const end = Math.min(start + PANCAKE_BATCH_SIZE, train.length);
     // train.slice() returns a plain Array of Float32Array views (the views
@@ -416,7 +416,7 @@ async function buildPancake({ train, dim, dtype }) {
   return { index, buildMs, memoryMB: memMB };
 }
 
-function queryPancake(index, test, groundTruth, efSearch) {
+function queryPikelet(index, test, groundTruth, efSearch) {
   index.setEfSearch(efSearch);
 
   // Warmup: let v8 specialize for the new ef_search work shape.
@@ -438,7 +438,7 @@ function queryPancake(index, test, groundTruth, efSearch) {
   return { latencies, meanRecall: totalRecall / test.length };
 }
 
-// --- pancake native addon: build and query ---
+// --- pikelet native addon: build and query ---
 // Same graph/quantization as the WASM engine but with AVX2 distance kernels;
 // isolates WASM runtime overhead from graph quality. metric=1 (cosine) — these
 // are angular datasets, so unlike the L2 pareto_frontier path this must NOT
@@ -447,7 +447,7 @@ function buildPancakeNative({ train, dim, dtype }) {
   const quantized = dtype === 'u8' ? 1 : 0;
   log(`  [pancake-${dtype}-native] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
   const h = native.pancake_init(dim, train.length, quantized, 1 /* 1=cosine */, M, EF_CONSTRUCTION, EF_SEARCH_VALUES[0], 108);
-  if (h === 0xFFFFFFFF) throw new Error('Failed to init native pancake index');
+  if (h === 0xFFFFFFFF) throw new Error('Failed to init native pikelet index');
 
   const t0 = performance.now();
   const flat = new Float32Array(train.length * dim);
@@ -551,8 +551,8 @@ async function sweepOne(config, dataset) {
   log('='.repeat(60));
 
   let built;
-  if (config.library === 'pancake') {
-    built = await buildPancake({ train, dim, dtype: config.dtype });
+  if (config.library === 'pikelet') {
+    built = await buildPikelet({ train, dim, dtype: config.dtype });
   } else if (config.library === 'pancake-native') {
     built = buildPancakeNative({ train, dim, dtype: config.dtype });
   } else if (config.library === 'usearch') {
@@ -573,8 +573,8 @@ async function sweepOne(config, dataset) {
     const hnswScratch = config.library === 'hnswlib' ? new Array(dim) : null;
     for (let rep = 0; rep < REPETITIONS; rep++) {
       let queryResult;
-      if (config.library === 'pancake') {
-        queryResult = queryPancake(index, test, groundTruth, efSearch);
+      if (config.library === 'pikelet') {
+        queryResult = queryPikelet(index, test, groundTruth, efSearch);
       } else if (config.library === 'pancake-native') {
         queryResult = queryPancakeNative(built, test, groundTruth, efSearch);
       } else if (config.library === 'usearch') {
@@ -718,7 +718,7 @@ async function main() {
 
   const dataset = loadDataset(HDF5_PATH);
   log(`\n${'='.repeat(60)}`);
-  log(`Recall-QPS sweep on ${DS.label} (Pancake vs USearch vs hnswlib)`);
+  log(`Recall-QPS sweep on ${DS.label} (Pikelet vs USearch vs hnswlib)`);
   log(`${dataset.info.n_train} vectors, ${dataset.dim}D, ${dataset.info.n_test} queries`);
   log(`k=${K}, M=${M}, ef_construction=${EF_CONSTRUCTION}`);
   log(`ef_search sweep: [${EF_SEARCH_VALUES.join(', ')}]`);

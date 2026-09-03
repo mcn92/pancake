@@ -43,7 +43,7 @@ const tokenize = (text) => (String(text).toLowerCase().match(/[a-z0-9']+/g) || [
 export async function openLexicalIndexLazy(read, segLength) {
     const headerBytes = await read(0, 64);
     if (!(headerBytes instanceof Uint8Array) || headerBytes.length < 64 || segLength < 64) {
-        throw new Error('.pancake lexical segment is too short');
+        throw new Error('.pikelet lexical segment is too short');
     }
     const hv = new DataView(headerBytes.buffer, headerBytes.byteOffset, headerBytes.byteLength);
     const version = hv.getUint32(0, true);
@@ -59,7 +59,7 @@ export async function openLexicalIndexLazy(read, segLength) {
         || termTableOffset !== doclenOffset + 4 * docCount
         || postingsOffset !== termTableOffset + 24 * termCount
         || postingsOffset + postingsBytes !== segLength) {
-        throw new Error('.pancake lexical segment regions do not tile the segment');
+        throw new Error('.pikelet lexical segment regions do not tile the segment');
     }
     const avgdl = docCount > 0 ? Math.max(1, totalTokens / docCount) : 1;
     const doclenBytes = docCount > 0 ? await read(doclenOffset, 4 * docCount) : new Uint8Array(0);
@@ -150,19 +150,19 @@ export async function openLexicalIndexLazy(read, segLength) {
                     let value = 0;
                     let shift = 0;
                     for (;;) {
-                        if (cursor.at >= cursor.end) throw new Error('.pancake lexical postings truncated');
+                        if (cursor.at >= cursor.end) throw new Error('.pikelet lexical postings truncated');
                         const b = bytes[cursor.at++];
                         value += (b & 0x7f) * 2 ** shift;
                         if (!(b & 0x80)) return value;
                         shift += 7;
-                        if (shift > 35) throw new Error('.pancake lexical postings varint overflow');
+                        if (shift > 35) throw new Error('.pikelet lexical postings varint overflow');
                     }
                 };
                 let docId = 0;
                 for (let p = 0; p < e.df; p++) {
                     docId = p === 0 ? readVarint() : docId + readVarint();
                     const tf = readVarint();
-                    if (docId >= docCount) throw new Error('.pancake lexical postings doc id out of range');
+                    if (docId >= docCount) throw new Error('.pikelet lexical postings doc id out of range');
                     const dl = doclenOf(docId);
                     const norm = tf + BM25_K1 * (1 - BM25_B + (BM25_B * dl) / avgdl);
                     scores.set(docId, (scores.get(docId) || 0) + (idf * tf * (BM25_K1 + 1)) / norm);
@@ -178,7 +178,7 @@ export async function openLexicalIndexLazy(read, segLength) {
 
 export function openLexicalIndex(bytes) {
     if (!(bytes instanceof Uint8Array) || bytes.length < 64) {
-        throw new Error('.pancake lexical segment is too short');
+        throw new Error('.pikelet lexical segment is too short');
     }
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const version = view.getUint32(0, true);
@@ -194,7 +194,7 @@ export function openLexicalIndex(bytes) {
         || termTableOffset !== doclenOffset + 4 * docCount
         || postingsOffset !== termTableOffset + 24 * termCount
         || postingsOffset + postingsBytes !== bytes.length) {
-        throw new Error('.pancake lexical segment regions do not tile the segment');
+        throw new Error('.pikelet lexical segment regions do not tile the segment');
     }
     const avgdl = docCount > 0 ? Math.max(1, totalTokens / docCount) : 1;
 
@@ -217,12 +217,12 @@ export function openLexicalIndex(bytes) {
         let value = 0;
         let shift = 0;
         for (;;) {
-            if (cursor.at >= cursor.end) throw new Error('.pancake lexical postings truncated');
+            if (cursor.at >= cursor.end) throw new Error('.pikelet lexical postings truncated');
             const b = bytes[cursor.at++];
             value += (b & 0x7f) * 2 ** shift;
             if (!(b & 0x80)) return value;
             shift += 7;
-            if (shift > 35) throw new Error('.pancake lexical postings varint overflow');
+            if (shift > 35) throw new Error('.pikelet lexical postings varint overflow');
         }
     }
 
@@ -242,14 +242,14 @@ export function openLexicalIndex(bytes) {
                 const rel = Number(view.getBigUint64(entryAt(i) + 8, true));
                 const len = view.getUint32(entryAt(i) + 16, true);
                 const df = view.getUint32(entryAt(i) + 20, true);
-                if (rel + len > postingsBytes) throw new Error('.pancake lexical postings out of bounds');
+                if (rel + len > postingsBytes) throw new Error('.pikelet lexical postings out of bounds');
                 const idf = Math.log(1 + (docCount - df + 0.5) / (df + 0.5));
                 const cursor = { at: postingsOffset + rel, end: postingsOffset + rel + len };
                 let docId = 0;
                 for (let p = 0; p < df; p++) {
                     docId = p === 0 ? readVarint(cursor) : docId + readVarint(cursor);
                     const tf = readVarint(cursor);
-                    if (docId >= docCount) throw new Error('.pancake lexical postings doc id out of range');
+                    if (docId >= docCount) throw new Error('.pikelet lexical postings doc id out of range');
                     const dl = view.getUint32(doclenOffset + 4 * docId, true);
                     const norm = tf + BM25_K1 * (1 - BM25_B + (BM25_B * dl) / avgdl);
                     scores.set(docId, (scores.get(docId) || 0) + (idf * tf * (BM25_K1 + 1)) / norm);

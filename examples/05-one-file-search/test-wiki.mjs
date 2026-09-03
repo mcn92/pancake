@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Scale acceptance for the wiki .pancake (456k chunks, kind-2 external
+// Scale acceptance for the wiki .pikelet (456k chunks, kind-2 external
 // encoder). The 200 eval queries' precomputed MiniLM embeddings act as the
 // host encoder, so the whole container path — manifest verify, embedded
 // sketch at offset, corpus hydration, retrieval-signal abstention — is
@@ -8,13 +8,13 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { openPancakeFile } from './pancake-file-reader.mjs';
+import { openPancakeFile } from './pikelet-file-reader.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 // data-perm: the pack's canonical cluster-ordered layout; its eval ground
 // truth is in permuted id space, matching artifacts compiled from it.
 const DATA = path.join(here, '..', '04-static-wiki-pack', 'data-perm');
-const pancakePath = path.join(here, 'pancake-wiki.pancake');
+const pikeletPath = path.join(here, 'pancake-wiki.pancake');
 
 let passed = 0;
 let failed = 0;
@@ -33,7 +33,7 @@ const vectorFor = new Map(evalQueries.map((q, i) => [q.text,
         vectorsRaw.byteOffset + (i + 1) * dim * 4))]));
 
 const openStart = performance.now();
-const search = await openPancakeFile(pancakePath, {
+const search = await openPancakeFile(pikeletPath, {
     encodeQuery: async (text) => {
         const vector = vectorFor.get(text);
         if (!vector) throw new Error(`no precomputed embedding for "${text}"`);
@@ -42,7 +42,7 @@ const search = await openPancakeFile(pancakePath, {
 });
 const openMs = performance.now() - openStart;
 const info = search.info();
-console.log(`opened ${path.basename(pancakePath)} in ${(openMs / 1000).toFixed(1)}s: `
+console.log(`opened ${path.basename(pikeletPath)} in ${(openMs / 1000).toFixed(1)}s: `
     + `${info.records.toLocaleString()} records, ${(info.fileBytes / 1048576).toFixed(0)} MiB file, `
     + `resident ${(info.residentBytes / 1048576).toFixed(1)} MiB, sketch hash verified: ${info.residentVerified}`);
 
@@ -98,5 +98,5 @@ check('nonsense query abstains or downgrades', nonsense.matchQuality !== 'strong
     `got ${nonsense.matchQuality} (${nonsense.confidence?.toFixed(3)})`);
 
 await search.close();
-console.log(`\nWiki .pancake acceptance: ${passed} passed, ${failed} failed`);
+console.log(`\nWiki .pikelet acceptance: ${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

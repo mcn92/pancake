@@ -4,7 +4,7 @@ float:
       constructor: Pancake
       disabled: false
       docker_tag: ann-benchmarks-pancake
-      module: ann_benchmarks.algorithms.pancake
+      module: ann_benchmarks.algorithms.pikelet
       name: pancake-u8
       run_groups:
         M-8:
@@ -23,7 +23,7 @@ float:
       constructor: Pancake
       disabled: false
       docker_tag: ann-benchmarks-pancake
-      module: ann_benchmarks.algorithms.pancake
+      module: ann_benchmarks.algorithms.pikelet
       name: pancake-fp32
       run_groups:
         M-8:

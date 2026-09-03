@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Pancake Worker Integration Test
+ * Pikelet Worker Integration Test
  *
  * Tests the worker HTTP API with synthetic 1536D unit-normalized vectors,
  * without depending on external embedding files. The worker is dimension-
@@ -220,7 +220,7 @@ async function testSearchAfterImport(vectors) {
 // ---------------------------------------------------------------------------
 
 async function main() {
-    console.log(`\nPancake Worker Integration Test`);
+    console.log(`\nPikelet Worker Integration Test`);
     console.log(`Target: ${BASE_URL}`);
     console.log(`Mode: synthetic ${DIMS}D vectors`);
 

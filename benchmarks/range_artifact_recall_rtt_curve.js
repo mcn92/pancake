@@ -4,7 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const { performance } = require('perf_hooks');
-const Pancake = require('../pancake.js');
+const Pikelet = require('../pikelet.js');
 
 const OPERATIONAL_EF_SEARCH = 80;
 
@@ -122,7 +122,7 @@ async function main() {
 
   const queries = readFvecs(path.join(dataDir, 'sift_query.fvecs'), queryCount);
   const truth = readIvecs(path.join(dataDir, 'sift_groundtruth.ivecs'), queryCount);
-  const artifact = await Pancake.openRangeArtifactFile(artifactPath);
+  const artifact = await Pikelet.openRangeArtifactFile(artifactPath);
   const started = performance.now();
   const byEfSearch = {};
 

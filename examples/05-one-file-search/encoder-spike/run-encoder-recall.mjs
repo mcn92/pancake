@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import createModule from './encoder.node.mjs';
 import { createWordPiece } from './wordpiece.mjs';
-import { openPancakeFile } from '../pancake-file-reader.mjs';
+import { openPancakeFile } from '../pikelet-file-reader.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const REAL = path.join(here, 'real');

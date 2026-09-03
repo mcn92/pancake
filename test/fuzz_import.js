@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Fuzz harness for Pancake import() path.
+ * Fuzz harness for Pikelet import() path.
  *
  * Generates random and adversarial binary blobs, feeds them to import(),
  * and verifies the index either rejects them cleanly or remains functional.
@@ -27,7 +27,7 @@
 
 'use strict';
 
-const Pancake = require('../pancake.js');
+const Pikelet = require('../pikelet.js');
 
 // ─── PRNG (seeded xoshiro128** for reproducibility) ─────────────────────────
 
@@ -71,7 +71,7 @@ function normalizedVec(dim) {
 
 async function buildValidSnapshot(quantized) {
     const dim = 16;
-    const idx = await Pancake.create({
+    const idx = await Pikelet.create({
         dim, maxElements: 64, metric: 'cosine', quantized,
         M: 8, efConstruction: 50, efSearch: 50,
     });
@@ -150,7 +150,7 @@ function ok(condition, label) {
 async function tryImport(label, data, dim, quantized) {
     let idx;
     try {
-        idx = await Pancake.create({
+        idx = await Pikelet.create({
             dim, maxElements: 1000, metric: 'cosine', quantized,
             M: 8, efConstruction: 50, efSearch: 50,
         });
@@ -179,7 +179,7 @@ async function tryImport(label, data, dim, quantized) {
 async function mustReject(label, data, dim, quantized) {
     let idx;
     try {
-        idx = await Pancake.create({
+        idx = await Pikelet.create({
             dim, maxElements: 1000, metric: 'cosine', quantized,
             M: 8, efConstruction: 50, efSearch: 50,
         });
@@ -508,7 +508,7 @@ async function fuzzPostImportStability() {
     for (const quantized of [true, false]) {
         const label = quantized ? 'uint8' : 'float32';
         const snap = await buildValidSnapshot(quantized);
-        const idx = await Pancake.create({
+        const idx = await Pikelet.create({
             dim, maxElements: 128, metric: 'cosine', quantized,
             M: 8, efConstruction: 50, efSearch: 50,
         });
@@ -537,7 +537,7 @@ async function fuzzPostImportStability() {
 
         // Export/reimport cycle
         const reexported = idx.export();
-        const idx2 = await Pancake.create({
+        const idx2 = await Pikelet.create({
             dim, maxElements: 128, metric: 'cosine', quantized,
             M: 8, efConstruction: 50, efSearch: 50,
         });
@@ -558,7 +558,7 @@ async function fuzzInputValidation() {
 
     for (const quantized of [true, false]) {
         const label = quantized ? 'uint8' : 'float32';
-        const idx = await Pancake.create({
+        const idx = await Pikelet.create({
             dim, maxElements: 64, metric: 'cosine', quantized,
         });
 
@@ -634,7 +634,7 @@ async function fuzzQuantizedScaleCorruption(snapshot) {
                 mv.setFloat32(scalesOffset + i * 4, p.val, true);
             }
             const wrapped = wrapInEnvelope(mutated, snapshot.dim, snapshot.quantized);
-            const idx = await Pancake.create({
+            const idx = await Pikelet.create({
                 dim: snapshot.dim, maxElements: 1000, metric: 'cosine', quantized: true,
                 M: 8, efConstruction: 50, efSearch: 50,
             });
@@ -669,7 +669,7 @@ async function fuzzQuantizedScaleCorruption(snapshot) {
                 mv.setFloat32(offsetsOffset + i * 4, p.val, true);
             }
             const wrapped = wrapInEnvelope(mutated, snapshot.dim, snapshot.quantized);
-            const idx = await Pancake.create({
+            const idx = await Pikelet.create({
                 dim: snapshot.dim, maxElements: 1000, metric: 'cosine', quantized: true,
                 M: 8, efConstruction: 50, efSearch: 50,
             });
@@ -702,7 +702,7 @@ async function fuzzAddDeleteCompactStress(rounds) {
 
     for (const quantized of [true, false]) {
         const label = quantized ? 'uint8' : 'float32';
-        const idx = await Pancake.create({
+        const idx = await Pikelet.create({
             dim, maxElements: 512, metric: 'cosine', quantized,
             M: 8, efConstruction: 50, efSearch: 50,
         });
@@ -743,7 +743,7 @@ async function fuzzAddDeleteCompactStress(rounds) {
                     // Export/reimport cycle
                     if (idx.ghostCount > 0) idx.compact();
                     const snap = idx.export();
-                    const idx2 = await Pancake.create({
+                    const idx2 = await Pikelet.create({
                         dim, maxElements: 512, metric: 'cosine', quantized,
                         M: 8, efConstruction: 50, efSearch: 50,
                     });
@@ -764,7 +764,7 @@ async function fuzzAddDeleteCompactStress(rounds) {
 
 async function fuzzPostImportMutation(snapshot, label) {
     console.log(`\n  Post-import mutation stress (${label})`);
-    const idx = await Pancake.create({
+    const idx = await Pikelet.create({
         dim: snapshot.dim, maxElements: 256, metric: 'cosine', quantized: snapshot.quantized,
         M: 8, efConstruction: 50, efSearch: 50,
     });
@@ -796,7 +796,7 @@ async function fuzzPostImportMutation(snapshot, label) {
 
         // Export/reimport the mutated index
         const snap2 = idx.export();
-        const idx2 = await Pancake.create({
+        const idx2 = await Pikelet.create({
             dim: snapshot.dim, maxElements: 256, metric: 'cosine', quantized: snapshot.quantized,
             M: 8, efConstruction: 50, efSearch: 50,
         });
@@ -824,7 +824,7 @@ async function main() {
     }
 
     rng = xoshiro128ss(seed);
-    console.log(`Pancake Import Fuzz Harness`);
+    console.log(`Pikelet Import Fuzz Harness`);
     console.log(`  seed=${seed}  rounds=${rounds}`);
     console.log('─'.repeat(50));
 

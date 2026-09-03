@@ -71,7 +71,7 @@ try {
   assert(coldBody.results.length === 3, 'cold search should return the requested top three');
   assertScoredSearch(coldBody, 'cold search');
   assert(coldBody.embedding_ms > 0, 'response should report local embedding time');
-  assert(coldBody.search_ms > 0, 'response should report Pancake search time');
+  assert(coldBody.search_ms > 0, 'response should report Pikelet search time');
   assert(coldBody.query === undefined, 'search response should not echo the raw query');
   assert(coldBody.encoder === undefined, 'search response should not expose encoder metadata by default');
   assert(coldBody.timings_us === undefined, 'search response should not expose detailed timings by default');
@@ -84,7 +84,7 @@ try {
   const warmBody = await warm.json();
   assert(warm.status === 200, `warm search should succeed: ${JSON.stringify(warmBody)}`);
   assertScoredSearch(warmBody, 'warm search');
-  assert(warmBody.filter_label === 'README', 'source filter should be applied inside Pancake');
+  assert(warmBody.filter_label === 'README', 'source filter should be applied inside Pikelet');
   assert(warmBody.results.every((row) => row.source_path === 'README.md'), 'filtered results should stay in README');
 
   const getSearch = await miniflare.dispatchFetch('http://demo.test/search?q=private');

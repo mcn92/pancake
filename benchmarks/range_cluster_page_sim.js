@@ -99,8 +99,8 @@ async function main() {
   const parallelism = Number(arg('parallelism', 6));
   const summaryOut = arg('summary-out', null);
 
-  const Pancake = require('../pancake.js');
-  const artifact = await Pancake.openRangeArtifactFile(artifactPath, { loadRouter: false });
+  const Pikelet = require('../pikelet.js');
+  const artifact = await Pikelet.openRangeArtifactFile(artifactPath, { loadRouter: false });
   const { dim, count, recordBytes, maxLevel } = artifact;
   const qdataOffset = 4 + 2 + 2 + maxLevel * 2;
   if (artifact.metric !== 0) throw new Error('simulation assumes L2 metric');

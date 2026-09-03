@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Minimal static server with HTTP Range support — the only thing a .pancake
+// Minimal static server with HTTP Range support — the only thing a .pikelet
 // host needs. Serves the built page from web/dist and the compiled
-// .pancake from the example root.
+// .pikelet from the example root.
 //
 //   node serve.mjs [port]     (default 8790)
 
@@ -11,8 +11,8 @@ import path from 'node:path';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const distDir = path.join(here, 'web', 'dist');
-const artifactPath = path.join(here, 'pancake-docs.pancake');
-const TYPES = { '.html': 'text/html; charset=utf-8', '.mjs': 'text/javascript', '.js': 'text/javascript', '.css': 'text/css', '.pancake': 'application/octet-stream' };
+const artifactPath = path.join(here, 'pikelet-docs.pikelet');
+const TYPES = { '.html': 'text/html; charset=utf-8', '.mjs': 'text/javascript', '.js': 'text/javascript', '.css': 'text/css', '.pikelet': 'application/octet-stream' };
 
 // The artifact's identity is its manifest sha256, already sitting in the
 // header — so the content-addressed URL costs one 64-byte read, no hashing.
@@ -35,9 +35,9 @@ export function createServer() {
         // short-lived pointer names the current one, so a rebuild mid-session
         // can never hand a client mixed bytes — stale pointers 404 and the
         // client refetches the pointer.
-        if (url.pathname === '/pancake-latest.json') {
+        if (url.pathname === '/pikelet-latest.json') {
             const identity = artifactIdentity();
-            const body = JSON.stringify({ identity, url: `/p/${identity}.pancake` });
+            const body = JSON.stringify({ identity, url: `/p/${identity}.pikelet` });
             res.writeHead(200, {
                 'Content-Type': 'application/json',
                 'Cache-Control': 'max-age=60',
@@ -45,19 +45,19 @@ export function createServer() {
             }).end(body);
             return;
         }
-        const addressed = /^\/p\/([0-9a-f]{64})\.pancake$/.exec(url.pathname);
+        const addressed = /^\/p\/([0-9a-f]{64})\.pikelet$/.exec(url.pathname);
         let immutable = false;
         let filePath;
         if (addressed) {
             if (addressed[1] !== artifactIdentity()) {
-                res.writeHead(404).end('stale artifact url — refetch /pancake-latest.json');
+                res.writeHead(404).end('stale artifact url — refetch /pikelet-latest.json');
                 return;
             }
             filePath = artifactPath;
             immutable = true;
         } else {
             filePath = url.pathname === '/' ? path.join(distDir, 'index.html')
-                : url.pathname === '/pancake-docs.pancake' ? artifactPath
+                : url.pathname === '/pikelet-docs.pikelet' ? artifactPath
                 : path.join(distDir, path.normalize(url.pathname).replace(/^([.][.][/\\])+/, ''));
         }
         if (!filePath.startsWith(distDir) && filePath !== artifactPath) {

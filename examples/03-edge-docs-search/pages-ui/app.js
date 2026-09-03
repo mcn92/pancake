@@ -92,7 +92,7 @@ async function runSearch() {
 
   const headers = { 'content-type': 'application/json' };
   const accessKey = accessKeyInput.value.trim();
-  if (accessKey) headers['X-Pancake-Demo-Key'] = accessKey;
+  if (accessKey) headers['X-Pikelet-Demo-Key'] = accessKey;
 
   const requestStart = performance.now();
   const response = await fetch(`${apiBase}/search`, {

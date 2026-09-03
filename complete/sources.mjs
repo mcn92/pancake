@@ -177,7 +177,7 @@ export function httpRangeSource(url, options = {}) {
                     for (const chunk of chunks) { full.set(chunk, at); at += chunk.byteLength; }
                 }
                 stats.fullFallback = true;
-                console.warn('.pancake host does not honor Range; fell back to a one-time full download');
+                console.warn('.pikelet host does not honor Range; fell back to a one-time full download');
                 return full.subarray(offset, offset + length);
             }
             throw new Error(`range read failed: HTTP ${response.status}`);

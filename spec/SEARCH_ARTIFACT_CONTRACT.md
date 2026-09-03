@@ -45,7 +45,7 @@ context of one corpus.
 
 **Artifact**  
 An immutable package of bytes and metadata that declares a search contract.
-Current Pancake artifacts are the complete `.pancake` profile and the
+Current Pancake artifacts are the complete `.pikelet` profile and the
 `.pancake-sketch` index profile it embeds. `.pnck` snapshots (engine
 serialization) and the deprecated `.pancake-range` profile predate the
 contract and cover fewer layers; see section 9.

@@ -5,7 +5,7 @@
  * RAW ABI ENGINE-CEILING BENCHMARK
  *
  * This is the single intentional raw-ABI benchmark kept outside examples/.
- * It bypasses pancake-core.js to measure engine-ceiling insert/profile overhead
+ * It bypasses pikelet-core.js to measure engine-ceiling insert/profile overhead
  * and to access C++ profiling hooks that are not part of the public API.
  *
  * Build Phase Profiler
@@ -23,7 +23,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const Pancake = require('../dist/engine.js');
+const Pikelet = require('../dist/engine.js');
 const { parseBenchmarkArgs, resolveSingleValue } = require('./bench_args');
 
 const args = process.argv.slice(2);
@@ -61,7 +61,7 @@ function generateSyntheticVec(dims) {
     console.log();
 
     const wasmBinary = fs.readFileSync(path.join(__dirname, '..', 'dist', 'engine.wasm'));
-    const engine = await Pancake({ wasmBinary });
+    const engine = await Pikelet({ wasmBinary });
 
     // Check profile functions exist
     if (!engine._pancake_profile_print || !engine._pancake_profile_reset) {

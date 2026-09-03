@@ -94,7 +94,7 @@ coverage plus a hidden-vector probe into `match_quality`:
 - `unscored` is used only when an older asset bundle has no abstention block.
 
 The committed calibration catches the motivating collision query
-`banana pancake recipe` as off-domain, while obvious noise such as emoji-only
+`banana pikelet recipe` as off-domain, while obvious noise such as emoji-only
 input is refused as `none`. Current heldout abstention metrics are recorded in
 `docs-manifest.json`; the model's pooled OOD AUC is `0.986`, collision catch
 rate is `1.000`, shuffled-negative catch rate is `0.727`, nonsense refusal rate

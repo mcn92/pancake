@@ -20,8 +20,8 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const Pancake = require('../../../pancake.js');
-const { exportSketchArtifact } = require('../../../pancake-artifact.js');
+const Pikelet = require('../../../pikelet.js');
+const { exportSketchArtifact } = require('../../../pikelet-artifact.js');
 
 const DEFAULT_ARTIFACT = path.join(
     __dirname,
@@ -163,7 +163,7 @@ async function main() {
         throw new Error(`Artifact not found: ${artifactPath}\nPass --artifact <file.pancake-range>.`);
     }
 
-    const range = await Pancake.openRangeArtifactFile(artifactPath);
+    const range = await Pikelet.openRangeArtifactFile(artifactPath);
     const sketchPath = path.join(
         fs.mkdtempSync(path.join(os.tmpdir(), 'pancake-sketch-demo-')),
         path.basename(artifactPath).replace(/\.pancake-range$/, '') + '.pancake-sketch'
@@ -176,7 +176,7 @@ async function main() {
         await range.clearCache();
         range.resetStats();
 
-        const sketch = await Pancake.openSketchArtifactFile(sketchPath);
+        const sketch = await Pikelet.openSketchArtifactFile(sketchPath);
         try {
             // Real queries when a matching-dimension fvecs file is supplied
             // (e.g. --query-file sift/sift_query.fvecs for the SIFT1M

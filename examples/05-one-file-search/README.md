@@ -2,14 +2,14 @@
 
 A search engine as a single static file. This example compiles the five
 Search Artifact components — corpus, index, encoder, evaluation,
-calibration — into one content-addressed `.pancake`
+calibration — into one content-addressed `.pikelet`
 (`spec/COMPLETE_PROFILE.md`), and serves natural-language queries from it
 in Node and in the browser over HTTP range requests, with no backend and
 no separate search service.
 
 ```bash
-node compile.mjs                      # 03's assets -> pancake-docs.pancake (1.4 MiB)
-node compile.mjs --inspect pancake-docs.pancake
+node compile.mjs                      # 03's assets -> pikelet-docs.pikelet (1.4 MiB)
+node compile.mjs --inspect pikelet-docs.pikelet
 node test-file.mjs                    # the file proves itself (goldens live inside it)
 npx vite build web                    # build the browser page
 node serve.mjs                        # http://127.0.0.1:8790 — search in the browser
@@ -18,7 +18,7 @@ node test-browser.mjs                 # Chromium acceptance (needs playwright ch
 
 ```js
 import { openPancakeFile } from 'pikelet-wasm/complete';
-const search = await openPancakeFile('pancake-docs.pancake');   // or a range source
+const search = await openPancakeFile('pikelet-docs.pikelet');   // or a range source
 const out = await search.query('how do workers restore snapshots');
 // { matchQuality: 'strong', confidence: 0.94, results: [{ title, text, sourcePath, ... }] }
 ```
@@ -72,14 +72,14 @@ smoke, provenance, identity, abstention, and embedded-evaluation checks.
 
 ## Files
 
-- `compile.mjs` — assembles a `.pancake` per the spec: 64 B header,
+- `compile.mjs` — assembles a `.pikelet` per the spec: 64 B header,
   canonical-JSON manifest (its SHA-256 is the artifact identity), segment
   table, and four segments — the index is an embedded `.pancake-sketch`,
   the corpus is an offsets table + JSON records (one range read per
   hydration), encoder+calibration share one query-interpretation segment,
   and the evaluation segment carries the golden queries. `--inspect`
   verifies every digest.
-- `pancake-file-reader.mjs` — now a shim over the published reader at
+- `pikelet-file-reader.mjs` — now a shim over the published reader at
   `pikelet-wasm/complete` (`complete/index.mjs` in this repo).
   Environment-neutral: Node opens a path, the browser passes an HTTP range
   source. Verifies the manifest identity and eager segments at open; the

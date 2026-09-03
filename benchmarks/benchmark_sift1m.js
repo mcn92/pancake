@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * SIFT-1M Benchmark: Pancake u8 (WASM)
+ * SIFT-1M Benchmark: Pikelet u8 (WASM)
  *
  * Uses the standard SIFT-1M dataset (1M vectors, 128D, L2).
  *
@@ -17,7 +17,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const Pancake = require('../pancake.js');
+const Pikelet = require('../pikelet.js');
 const { parseBenchmarkArgs, resolveSingleValue } = require('./bench_args');
 
 const parsedArgs = parseBenchmarkArgs();
@@ -97,11 +97,11 @@ function percentile(sorted, p) {
   return sorted[Math.floor(sorted.length * p)];
 }
 
-async function benchPancake(train, test, groundTruth, dim) {
-  log('\n  Pancake u8 (WASM)');
+async function benchPikelet(train, test, groundTruth, dim) {
+  log('\n  Pikelet u8 (WASM)');
   log('  Building index...');
 
-  const index = await Pancake.create({
+  const index = await Pikelet.create({
     dim, maxElements: train.length, quantized: true,
     metric: 'l2',
     M, efConstruction: EF_CONSTRUCTION, efSearch: EF_SEARCH
@@ -137,7 +137,7 @@ async function benchPancake(train, test, groundTruth, dim) {
   index.dispose();
 
   return {
-    name: 'Pancake u8 (WASM)',
+    name: 'Pikelet u8 (WASM)',
     buildSec: buildMs / 1000,
     memMB: memBytes / 1024 / 1024,
     recall: totalRecall / test.length,
@@ -175,20 +175,20 @@ async function main() {
   log(`M=${M}, efConstruction=${EF_CONSTRUCTION}, efSearch=${EF_SEARCH}`);
   log('='.repeat(60));
 
-  const pancake = await benchPancake(train, test, groundTruth, dim);
+  const pikelet = await benchPikelet(train, test, groundTruth, dim);
 
   log(`\n${'='.repeat(60)}`);
   log('Results');
   log('='.repeat(60));
 
-  printResult(pancake);
+  printResult(pikelet);
 
   const results = {
     benchmark: 'sift-1m',
     timestamp: new Date().toISOString(),
     dataset: { vectors: info.n_train, queries: info.n_test, dim, source: SIFT_DIR },
     params: { K, M, efConstruction: EF_CONSTRUCTION, efSearch: EF_SEARCH },
-    pancake: pancake || null
+    pikelet: pikelet || null
   };
   fs.writeFileSync(JSON_PATH, JSON.stringify(results, null, 2) + '\n');
   log(`\nResults saved to:\n  ${LOG_PATH}\n  ${JSON_PATH}`);

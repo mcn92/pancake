@@ -3,7 +3,7 @@
 Pikelet is a search engine you host like a file.
 
 > Renamed from **Pancake** (2026-09). Same project, same wire format —
-> existing `.pancake` artifacts and their identities remain valid, and the
+> existing `.pikelet` artifacts and their identities remain valid, and the
 > old package names are deprecated pointers to `pikelet-wasm` and
 > `pikelet`.
 
@@ -60,8 +60,8 @@ Three layers, bottom to top:
    - In-memory HNSW index with float32 and row-wise affine uint8 backends.
    - JavaScript API: `Pikelet.create()`, `add()`, `search()`, `export()`,
      `restore()`.
-   - Source in `src/`, package entrypoints at `pancake.js`,
-     `pancake.node.mjs`, `pancake.web.mjs`.
+   - Source in `src/`, package entrypoints at `pikelet.js`,
+     `pikelet.node.mjs`, `pikelet.web.mjs`.
 
 2. **Search artifacts**
    - Immutable, integrity-checked files built from indexes and corpus data,
@@ -239,7 +239,7 @@ From a checkout:
 
 ```bash
 git clone https://github.com/mcn92/pikelet.git
-cd pancake
+cd pikelet
 npm install
 ```
 
@@ -273,9 +273,9 @@ import { assemblePancakeFile } from 'pikelet-wasm/complete/builder';
 Repository checkout:
 
 ```js
-const Pikelet = require('./pancake.js');
-import Pikelet from './pancake.node.mjs';
-import Pikelet from './pancake.web.mjs';
+const Pikelet = require('./pikelet.js');
+import Pikelet from './pikelet.node.mjs';
+import Pikelet from './pikelet.web.mjs';
 ```
 
 The browser entry expects the runtime or bundler to resolve
@@ -358,7 +358,7 @@ command above (`npx pikelet compile`).
 ```js
 import { openPikeletFile } from 'pikelet-wasm/complete'; // or './complete/index.mjs' in a checkout
 
-const search = await openPikeletFile('examples/05-one-file-search/pancake-docs.pancake');
+const search = await openPikeletFile('examples/05-one-file-search/pancake-docs.pikelet');
 
 const out = await search.query('how do workers restore snapshots', { k: 5 });
 

@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-// Compile the five Search Artifact components into one .pancake file per
+// Compile the five Search Artifact components into one .pikelet file per
 // spec/COMPLETE_PROFILE.md (Draft 1), and inspect/verify the result:
 //
-//   node compile.mjs                 # compile 03's assets -> pancake-docs.pancake
-//   node compile.mjs --inspect pancake-docs.pancake
+//   node compile.mjs                 # compile 03's assets -> pikelet-docs.pikelet
+//   node compile.mjs --inspect pikelet-docs.pikelet
 //
 // This is the kind-1 (student-inline) compiler over the docs corpus; see
 // compile-wiki.mjs for the kind-2 (pinned-external encoder) wiki-scale
-// compiler. Shared layout logic lives in create-pancake-search/src/complete-profile.mjs.
+// compiler. Shared layout logic lives in pikelet/src/complete-profile.mjs.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -21,8 +21,8 @@ import {
 } from '../../complete/builder.mjs';
 
 const require = createRequire(import.meta.url);
-const Pancake = require('../../pancake.js');
-const Artifact = require('../../pancake-artifact.js');
+const Pikelet = require('../../pikelet.js');
+const Artifact = require('../../pikelet-artifact.js');
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 // The full student evaluation is per-row and large; the evaluation segment
@@ -64,7 +64,7 @@ async function compile(paths, outPath) {
     // copy of efSearch. Sweep recall-vs-C on the artifact's own vectors
     // (03 ships no float query set, so queries are dequantized rows) and
     // bake the smallest C that reaches the target into the sketch header.
-    const { bytes: provisionalSketch } = Pancake.buildSketchArtifactBytes(snapshotBytes, {});
+    const { bytes: provisionalSketch } = Pikelet.buildSketchArtifactBytes(snapshotBytes, {});
     const rerankSweep = await measureRecommendedRerank({
         artifactModule: Artifact,
         sketchBytes: provisionalSketch,
@@ -72,7 +72,7 @@ async function compile(paths, outPath) {
     });
     console.log(`measured rerank operating point: C=${rerankSweep.recommendedRerank} `
         + `(recall@${rerankSweep.k} ${rerankSweep.recall} over ${rerankSweep.queries} ${rerankSweep.querySource} queries)`);
-    const { bytes: sketchBytes } = Pancake.buildSketchArtifactBytes(snapshotBytes, {
+    const { bytes: sketchBytes } = Pikelet.buildSketchArtifactBytes(snapshotBytes, {
         recommendedRerank: rerankSweep.recommendedRerank,
     });
     const goldenQueries = JSON.parse(fs.readFileSync(path.join(
@@ -112,7 +112,7 @@ async function compile(paths, outPath) {
 export function inspect(filePath) {
     const bytes = fs.readFileSync(filePath);
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    if (view.getUint32(0, true) !== MAGIC) throw new Error('not a .pancake file (bad magic)');
+    if (view.getUint32(0, true) !== MAGIC) throw new Error('not a .pikelet file (bad magic)');
     const formatVersion = view.getUint32(4, true);
     if (!Object.values(FORMAT_VERSIONS).includes(formatVersion)) throw new Error(`unsupported format version ${formatVersion}`);
     const manifestBytes = view.getUint32(8, true);
@@ -152,9 +152,9 @@ const invokedDirectly = process.argv[1] && fileURLToPath(import.meta.url) === pa
 if (invokedDirectly) {
     const args = process.argv.slice(2);
     if (args[0] === '--inspect') {
-        inspect(args[1] || path.join(here, 'pancake-docs.pancake'));
+        inspect(args[1] || path.join(here, 'pikelet-docs.pikelet'));
     } else {
-        const outPath = args[0] || path.join(here, 'pancake-docs.pancake');
+        const outPath = args[0] || path.join(here, 'pikelet-docs.pikelet');
         const result = await compile(docsAssetPaths(), outPath);
         console.log(`compiled ${result.outPath}`);
         console.log(`  ${(result.fileBytes / 1048576).toFixed(2)} MiB, identity ${result.identity.slice(0, 16)}...`);

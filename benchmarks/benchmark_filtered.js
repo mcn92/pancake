@@ -10,7 +10,7 @@
 
 'use strict';
 
-const Pancake = require('../pancake.js');
+const Pikelet = require('../pikelet.js');
 const { parseBenchmarkArgs, resolveSingleValue } = require('./bench_args');
 
 const parsedArgs = parseBenchmarkArgs();
@@ -88,7 +88,7 @@ async function run() {
         const label = quantized ? 'uint8' : 'float32';
         console.log(`--- ${label} ---`);
 
-        const idx = await Pancake.create({
+        const idx = await Pikelet.create({
             dim: DIM, maxElements: COUNT + 100, metric: 'cosine', quantized,
             M, efConstruction: EF_CONSTRUCTION, efSearch: EF_SEARCH,
         });

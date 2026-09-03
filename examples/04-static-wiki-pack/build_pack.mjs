@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import Pancake from '../../pancake.node.mjs';
+import Pikelet from '../../pikelet.node.mjs';
 import { stampPackVersion } from './stamp_pack_version.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -35,7 +35,7 @@ const vectors = new Float32Array(vectorsBytes.buffer, vectorsBytes.byteOffset, c
 
 console.log(`building index: ${count} chunks, dim ${DIM}, cosine u8`);
 const t0 = Date.now();
-const index = await Pancake.create({
+const index = await Pikelet.create({
     dim: DIM,
     maxElements: count,
     metric: 'cosine',
@@ -60,7 +60,7 @@ fs.writeFileSync(snapshotPath, index.export());
 index.dispose();
 
 const sketchPath = path.join(dataDir, 'wiki.pancake-sketch');
-const sketchManifest = Pancake.buildSketchArtifactFile(snapshotPath, sketchPath, {
+const sketchManifest = Pikelet.buildSketchArtifactFile(snapshotPath, sketchPath, {
     sketchDims: 192,    // 2:1 pooling of 384-D (4:1 measured -11pt candidate capture)
     sketchBits: 4,
     recommendedRerank: RECOMMENDED_RERANK,

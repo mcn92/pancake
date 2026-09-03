@@ -8,14 +8,14 @@ import http from 'node:http';
 import https from 'node:https';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openPancakeFile } from './pancake-file-reader.mjs';
+import { openPancakeFile } from './pikelet-file-reader.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // data-perm is the canonical pack layout (cluster-ordered rows, 192-dim
 // sketch); its eval ground truth is in permuted id space, matching the
 // artifact. data-full is the unpermuted source and its GT does not match.
 const DATA = path.join(here, '..', '04-static-wiki-pack', 'data-perm');
-const pancakePath = path.join(here, 'pancake-wiki-inline.pancake');
+const pikeletPath = path.join(here, 'pancake-wiki-inline.pancake');
 const artifactUrl = 'https://github.com/mcn92/pikelet/releases/download/artifact-wiki-inline-v4/pancake-wiki-inline.pancake';
 const expectedIdentity = '1b180adf4c6cebb2dcd5615256df6a25dac5fda8738dbbc11d60af86046f97f3';
 const expectedBytes = 680029254;
@@ -78,19 +78,19 @@ async function download(url, outPath, redirects = 0) {
 }
 
 async function ensureArtifact() {
-    if (fs.existsSync(pancakePath)) {
-        const stat = fs.statSync(pancakePath);
+    if (fs.existsSync(pikeletPath)) {
+        const stat = fs.statSync(pikeletPath);
         if (stat.size === expectedBytes) return;
-        console.log(`local ${path.basename(pancakePath)} has unexpected size ${stat.size}; re-downloading`);
-        fs.rmSync(pancakePath, { force: true });
+        console.log(`local ${path.basename(pikeletPath)} has unexpected size ${stat.size}; re-downloading`);
+        fs.rmSync(pikeletPath, { force: true });
     }
 
-    console.log(`downloading ${path.basename(pancakePath)} from release asset`);
+    console.log(`downloading ${path.basename(pikeletPath)} from release asset`);
     console.log(`  ${artifactUrl}`);
     try {
-        await download(artifactUrl, pancakePath);
+        await download(artifactUrl, pikeletPath);
     } catch (err) {
-        fs.rmSync(`${pancakePath}.download`, { force: true });
+        fs.rmSync(`${pikeletPath}.download`, { force: true });
         throw err;
     }
 }
@@ -103,7 +103,7 @@ function readIdentity(filePath) {
         const header = Buffer.alloc(HEADER_BYTES);
         const bytesRead = fs.readSync(fd, header, 0, HEADER_BYTES, 0);
         if (bytesRead !== HEADER_BYTES || header.readUInt32LE(0) !== 0x31465350) {
-            throw new Error('not a .pancake file (bad magic)');
+            throw new Error('not a .pikelet file (bad magic)');
         }
         return header.subarray(24, 56).toString('hex');
     } finally {
@@ -111,14 +111,14 @@ function readIdentity(filePath) {
     }
 }
 
-const identity = readIdentity(pancakePath);
+const identity = readIdentity(pikeletPath);
 check('manifest identity matches release notes', identity === expectedIdentity, identity);
 
 const openStart = performance.now();
-const search = await openPancakeFile(pancakePath);
+const search = await openPancakeFile(pikeletPath);
 const openMs = performance.now() - openStart;
 const info = search.info();
-console.log(`opened ${path.basename(pancakePath)} in ${(openMs / 1000).toFixed(1)}s: `
+console.log(`opened ${path.basename(pikeletPath)} in ${(openMs / 1000).toFixed(1)}s: `
     + `${(info.fileBytes / 1048576).toFixed(0)} MiB, encoder ${info.encoder.kind}`);
 
 check('reader reports the same identity', info.identity === expectedIdentity, info.identity);

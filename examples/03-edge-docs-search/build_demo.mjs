@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import Pancake from '../../pancake.node.mjs';
+import Pikelet from '../../pikelet.node.mjs';
 import { embedTextWithStudent, loadStudentModel } from './student-embedder.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -25,7 +25,7 @@ const DOC_SOURCES = [
 const SAMPLE_QUERIES = [
   'How do Cloudflare Workers restore snapshots from R2?',
   'Why do I need compact before export after deletes?',
-  'How does filtered search work in Pancake?',
+  'How does filtered search work in Pikelet?',
   'What are the memory tradeoffs for quantized indexes?'
 ];
 
@@ -219,7 +219,7 @@ async function main() {
     vectors[row] = vectorsView.subarray(start, start + studentManifest.outputDim);
   }
 
-  const index = await Pancake.create({
+  const index = await Pikelet.create({
     dim: studentManifest.outputDim,
     maxElements: corpus.length + 16,
     metric: 'cosine',

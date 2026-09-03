@@ -13,7 +13,7 @@
  */
 
 const { performance } = require('perf_hooks');
-const Pancake = require('../pancake.js');
+const Pikelet = require('../pikelet.js');
 
 const args = process.argv.slice(2);
 function intArg(name, fallback) {
@@ -51,7 +51,7 @@ function formatMb(value) {
 
 async function timedCreate() {
   const start = performance.now();
-  const index = await Pancake.create(options);
+  const index = await Pikelet.create(options);
   return { index, ms: performance.now() - start };
 }
 
@@ -68,7 +68,7 @@ async function main() {
 
   const rssBefore = process.memoryUsage().rss;
   const concurrentStart = performance.now();
-  const indexes = await Promise.all(Array.from({ length: INDEXES }, () => Pancake.create(options)));
+  const indexes = await Promise.all(Array.from({ length: INDEXES }, () => Pikelet.create(options)));
   const concurrentMs = performance.now() - concurrentStart;
   const rssDelta = Math.max(0, process.memoryUsage().rss - rssBefore);
 

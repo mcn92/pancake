@@ -4,7 +4,7 @@ Run every command from the repo root unless noted otherwise.
 
 ```bash
 git clone https://github.com/mcn92/pancake.git
-cd pancake
+cd pikelet
 npm install
 ```
 

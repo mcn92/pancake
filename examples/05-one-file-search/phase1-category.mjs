@@ -18,7 +18,7 @@ import { spawn } from 'node:child_process';
 const here = path.dirname(new URL(import.meta.url).pathname);
 const DATA = path.join(here, '..', '04-static-wiki-pack', 'data-full');
 const OUT = path.join(here, 'student-pilot');
-const TRAINER = path.join(here, '..', '..', 'create-pancake-search', 'tools', 'train_student.py');
+const TRAINER = path.join(here, '..', '..', 'pikelet', 'tools', 'train_student.py');
 
 const raw = fs.readFileSync(path.join(OUT, 'cluster-assignments.u16'));
 const assignments = new Uint16Array(raw.buffer, raw.byteOffset, raw.byteLength / 2);

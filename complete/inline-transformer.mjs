@@ -29,23 +29,23 @@ export function parseInlineTransformerEncoder(encoderBytes) {
   const vocabLen = view.getUint32(4, true);
   const blobLen = view.getUint32(8, true);
   if (12 + declLen + vocabLen + blobLen !== encoderBytes.length) {
-    throw new Error('.pancake inline-encoder layout is inconsistent');
+    throw new Error('.pikelet inline-encoder layout is inconsistent');
   }
   const declaration = JSON.parse(decoder.decode(encoderBytes.subarray(12, 12 + declLen)));
   const blob = encoderBytes.subarray(12 + declLen + vocabLen);
   const layout = declaration.layout || {};
   for (const key of Object.keys(KERNEL_LAYOUT)) {
     if (layout[key] !== KERNEL_LAYOUT[key]) {
-      throw new Error(`.pancake inline-encoder declares layout ${key}=${layout[key]}; `
+      throw new Error(`.pikelet inline-encoder declares layout ${key}=${layout[key]}; `
         + `the compiled kernel requires ${key}=${KERNEL_LAYOUT[key]}`);
     }
   }
   if (declaration.dim !== KERNEL_LAYOUT.D) {
-    throw new Error(`.pancake inline-encoder declares dim ${declaration.dim}; the kernel emits ${KERNEL_LAYOUT.D}`);
+    throw new Error(`.pikelet inline-encoder declares dim ${declaration.dim}; the kernel emits ${KERNEL_LAYOUT.D}`);
   }
   const expected = expectedBlobBytes(layout);
   if (blob.length !== expected) {
-    throw new Error(`.pancake inline-encoder blob is ${blob.length} bytes but its declared layout implies ${expected}`);
+    throw new Error(`.pikelet inline-encoder blob is ${blob.length} bytes but its declared layout implies ${expected}`);
   }
   return {
     declaration,

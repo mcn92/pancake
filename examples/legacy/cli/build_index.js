@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * Build a Pancake index from a binary embeddings file.
+ * Build a Pikelet index from a binary embeddings file.
  *
  * Input format:
  *   uint32_le dims
@@ -56,8 +56,8 @@ function parsePositiveInt(value, name) {
     return parsed;
 }
 
-async function loadPancake() {
-    const url = pathToFileURL(path.join(__dirname, '..', '..', '..', 'pancake.node.mjs')).href;
+async function loadPikelet() {
+    const url = pathToFileURL(path.join(__dirname, '..', '..', '..', 'pikelet.node.mjs')).href;
     const mod = await import(url);
     return mod.default;
 }
@@ -82,7 +82,7 @@ async function main() {
         console.log('');
         console.log('Options:');
         console.log('  --embeddings <path>    Input embeddings (required)');
-        console.log('  --output <path>        Output Pancake snapshot (default: index.pnck)');
+        console.log('  --output <path>        Output Pikelet snapshot (default: index.pnck)');
         console.log('  --m <number>           HNSW M (default: 12)');
         console.log('  --ef-construction <n>  Build quality (default: 75)');
         console.log('  --ef-search <n>        Search quality for restored index (default: 100)');
@@ -91,7 +91,7 @@ async function main() {
     }
 
     console.log('='.repeat(70));
-    console.log('Pancake Index Builder');
+    console.log('Pikelet Index Builder');
     console.log('='.repeat(70));
     console.log('');
 
@@ -100,9 +100,9 @@ async function main() {
     console.log(`  ${count} vectors, ${dims}D`);
     console.log('');
 
-    const Pancake = await loadPancake();
+    const Pikelet = await loadPikelet();
     const startTime = Date.now();
-    const index = await Pancake.create({
+    const index = await Pikelet.create({
         dim: dims,
         maxElements: count,
         metric: 'cosine',
@@ -119,7 +119,7 @@ async function main() {
         console.log(`  Built ${ids.length} vectors in ${buildTime.toFixed(1)}s (${(ids.length / buildTime).toFixed(0)} vec/sec)`);
         console.log('');
 
-        console.log(`Exporting Pancake snapshot to ${outputPath}...`);
+        console.log(`Exporting Pikelet snapshot to ${outputPath}...`);
         const snapshot = index.export();
         fs.writeFileSync(outputPath, snapshot);
         console.log(`  Written ${(snapshot.byteLength / 1024 / 1024).toFixed(2)} MB`);

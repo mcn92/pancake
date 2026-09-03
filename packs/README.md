@@ -1,6 +1,6 @@
 # The pack shelf
 
-`packs.json` is a shelf: a static listing of `.pancake` knowledge packs.
+`packs.json` is a shelf: a static listing of `.pikelet` knowledge packs.
 There is no registry service and no accounts — the registry is also just a
 file. Mount everything on a shelf in one line:
 
@@ -33,7 +33,7 @@ transient 429/5xx pressure is retried with backoff:
 
 ```bash
 npx pikelet compile --source https://docs.example.com \
-  --out example-docs.pancake --license MIT
+  --out example-docs.pikelet --license MIT
 ```
 
 The compile output prints the manifest identity; put it in the shelf entry.

@@ -1,7 +1,7 @@
 # Inline-transformer encoder spike (query-interp kind 3)
 
 Feasibility spike for compiling the wiki pack's pinned teacher
-(MiniLM-L6-v2) INTO the `.pancake` as fused-quantized WASM — the engine's
+(MiniLM-L6-v2) INTO the `.pikelet` as fused-quantized WASM — the engine's
 asymmetric-distance move applied to transformer weights: block-affine u8
 weights, f32 activations, dequantization fused into the SIMD dot product so
 float weight tensors are never materialized

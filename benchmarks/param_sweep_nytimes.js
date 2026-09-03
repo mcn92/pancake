@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * Full parameter sweep on NYTimes-256: Pancake vs hnswlib-node.
+ * Full parameter sweep on NYTimes-256: Pikelet vs hnswlib-node.
  *
  * Sweeps M × ef_construction × ef_search. Each (M, ef_c) pair builds
  * the index once; ef_search is tuned at runtime without rebuilding.
@@ -13,7 +13,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const Pancake = require('../pancake.js');
+const Pikelet = require('../pikelet.js');
 const { parseBenchmarkArgs } = require('./bench_args');
 
 const parsedArgs = parseBenchmarkArgs();
@@ -103,7 +103,7 @@ async function main() {
   const groundTruth = readIvecs(path.join(NYTIMES_DIR, 'nytimes_groundtruth.ivecs'));
 
   log(`\n${'='.repeat(70)}`);
-  log(`NYTimes-256 Pancake Parameter Sweep`);
+  log(`NYTimes-256 Pikelet Parameter Sweep`);
   log(`${train.length} vectors, ${dim}D, ${test.length} queries, k=${K}`);
   log(`M: [${M_VALUES}]  ef_c: [${EF_C_VALUES}]  ef_search: [${EF_SEARCH_VALUES}]`);
   log(`${M_VALUES.length * EF_C_VALUES.length} index builds, ${M_VALUES.length * EF_C_VALUES.length * EF_SEARCH_VALUES.length} measurement points`);
@@ -118,7 +118,7 @@ async function main() {
       log(`Building: M=${M}, ef_c=${efC}`);
       log('─'.repeat(70));
 
-      const index = await Pancake.create({
+      const index = await Pikelet.create({
         dim, maxElements: train.length, quantized: true,
         M, efConstruction: efC, efSearch: EF_SEARCH_VALUES[0],
       });

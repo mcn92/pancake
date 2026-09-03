@@ -2,13 +2,13 @@
 'use strict';
 
 /**
- * DBpedia 100K Benchmark: Pancake u8 vs Pancake FP32 vs hnswlib-node
+ * DBpedia 100K Benchmark: Pikelet u8 vs Pikelet FP32 vs hnswlib-node
  *
  * Uses 100K vectors from the DBpedia-OpenAI-1536D dataset with
  * L2 distance. Sweeps ef_search to produce recall-QPS curves for three
  * configurations:
- *   1. Pancake u8 (WASM, quantized)
- *   2. Pancake FP32 (WASM, full precision)
+ *   1. Pikelet u8 (WASM, quantized)
+ *   2. Pikelet FP32 (WASM, full precision)
  *   3. hnswlib-node Float32 (native addon)
  *
  * Expected files in dbpedia/:
@@ -26,7 +26,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const Pancake = require('../pancake.js');
+const Pikelet = require('../pikelet.js');
 const { parseBenchmarkArgs, resolveSingleValue, resolveSweepValues } = require('./bench_args');
 
 const parsedArgs = parseBenchmarkArgs();
@@ -44,8 +44,8 @@ const REPETITIONS = 3;
 const WARMUP_QUERIES = 200;
 
 const CONFIGS = [
-  { label: 'pancake-u8-wasm',  library: 'pancake', dtype: 'u8'  },
-  { label: 'pancake-f32-wasm',   library: 'pancake', dtype: 'f32' },
+  { label: 'pancake-u8-wasm',  library: 'pikelet', dtype: 'u8'  },
+  { label: 'pancake-f32-wasm',   library: 'pikelet', dtype: 'f32' },
   { label: 'hnswlib-f32-native', library: 'hnswlib', dtype: 'f32' },
 ];
 
@@ -192,11 +192,11 @@ function stddev(arr) {
   return Math.sqrt(arr.reduce((a, b) => a + (b - m) ** 2, 0) / arr.length);
 }
 
-// --- Pancake: build + sweep ---
-async function buildPancake({ train, dim, dtype }) {
+// --- Pikelet: build + sweep ---
+async function buildPikelet({ train, dim, dtype }) {
   const quantized = dtype === 'u8';
   log(`  [pancake-${dtype}] building index (M=${M}, ef_c=${EF_CONSTRUCTION}, metric=l2)...`);
-  const index = await Pancake.create({
+  const index = await Pikelet.create({
     dim,
     maxElements: train.length,
     quantized,
@@ -220,7 +220,7 @@ async function buildPancake({ train, dim, dtype }) {
   return { index, buildMs, memBytes: index.memory };
 }
 
-function queryPancake(index, test, groundTruth, efSearch) {
+function queryPikelet(index, test, groundTruth, efSearch) {
   index.setEfSearch(efSearch);
 
   for (let i = 0; i < WARMUP_QUERIES && i < test.length; i++) {
@@ -289,8 +289,8 @@ async function sweepOne(config, dataset) {
   log('='.repeat(70));
 
   let built;
-  if (config.library === 'pancake') {
-    built = await buildPancake({ train, dim, dtype: config.dtype });
+  if (config.library === 'pikelet') {
+    built = await buildPikelet({ train, dim, dtype: config.dtype });
   } else {
     built = buildHnswlib({ train, dim });
     if (!built) return null;
@@ -303,8 +303,8 @@ async function sweepOne(config, dataset) {
     log(`\n  ef_search=${efSearch}`);
     const reps = [];
     for (let rep = 0; rep < REPETITIONS; rep++) {
-      const { latencies, meanRecall } = config.library === 'pancake'
-        ? queryPancake(index, test, groundTruth, efSearch)
+      const { latencies, meanRecall } = config.library === 'pikelet'
+        ? queryPikelet(index, test, groundTruth, efSearch)
         : queryHnswlib(index, test, groundTruth, efSearch);
       const sorted = [...latencies].sort((a, b) => a - b);
       const avgLatency = mean(latencies);
@@ -422,7 +422,7 @@ async function main() {
   }
 
   log('='.repeat(70));
-  log('DBpedia 100K Benchmark: Pancake u8 vs FP32 vs hnswlib (L2)');
+  log('DBpedia 100K Benchmark: Pikelet u8 vs FP32 vs hnswlib (L2)');
   log('='.repeat(70));
 
   // Load dataset

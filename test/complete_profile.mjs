@@ -31,8 +31,8 @@ import { openPancakeFile, verifyHostEncoder } from '../complete/index.mjs';
 import { openLexicalIndex } from '../complete/lexical.mjs';
 
 const require = createRequire(import.meta.url);
-const Pancake = require('../pancake.js');
-const { exportSketchArtifact } = require('../pancake-artifact.js');
+const Pikelet = require('../pikelet.js');
+const { exportSketchArtifact } = require('../pikelet-artifact.js');
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 let passed = 0;
@@ -161,7 +161,7 @@ function buildSynthetic({ profile = PROFILE_V2, declaration = kind2Declaration()
         sampleQueries: ['rec 17'],
     };
     if (manifestPatch) manifestPatch(manifest);
-    const outPath = path.join(tmp, `${name}.pancake`);
+    const outPath = path.join(tmp, `${name}.pikelet`);
     const built = assemblePancakeFile(manifest, segments, outPath);
     return { bytes: fs.readFileSync(outPath), path: outPath, built };
 }
@@ -346,7 +346,7 @@ const A = buildSynthetic();
     const id = Buffer.from(A.bytes); id[24 + 3] ^= 0x01;
     await rejects('a tampered identity fails identity verification', () => openPancakeFile(memorySource(id), { encodeQuery: hostEncode }), /identity verification/);
     const ver = Buffer.from(A.bytes); ver.writeUInt32LE(3, 4);
-    await rejects('format version 3 is rejected explicitly', () => openPancakeFile(memorySource(ver), { encodeQuery: hostEncode }), /unsupported .pancake format version 3/);
+    await rejects('format version 3 is rejected explicitly', () => openPancakeFile(memorySource(ver), { encodeQuery: hostEncode }), /unsupported .pikelet format version 3/);
     const magic = Buffer.from(A.bytes); magic[0] ^= 0x01;
     await rejects('bad magic is rejected', () => openPancakeFile(memorySource(magic), { encodeQuery: hostEncode }), /bad magic/);
     const v1Header = Buffer.from(A.bytes); v1Header.writeUInt32LE(1, 4);
@@ -404,7 +404,7 @@ const A = buildSynthetic();
         ? Buffer.from(JSON.stringify({ ...JSON.parse(b.toString('utf8')), id: 999, distance: -1 }), 'utf8')
         : b));
     const spoofCorpus = buildCorpusSegment(spoofRecords, { pageRecords: PAGE_RECORDS });
-    const spoofPath = path.join(tmp, 'spoof.pancake');
+    const spoofPath = path.join(tmp, 'spoof.pikelet');
     assemblePancakeFile({
         profile: PROFILE_V2, corpus: { ...spoofCorpus.corpus, provenance: null }, dim: DIM, metric: 'cosine',
         encoder: { kind: 'external-transformers-v1' }, recommendedRerank: 40, sampleQueries: [],
@@ -470,7 +470,7 @@ const A = buildSynthetic();
         };
         try {
             const { httpRangeSource: rangeSource } = await import('../complete/sources.mjs');
-            const src = rangeSource('http://host.invalid/b.pancake');
+            const src = rangeSource('http://host.invalid/b.pikelet');
             await src.init();
             await rejects('a 206 answering a different range than requested is refused', () => src.read(64, 64), /returned Content-Range bytes 80-143.*requested bytes 64-127/);
         } finally {
@@ -490,7 +490,7 @@ const A = buildSynthetic();
     };
     try {
         const warn = console.warn; console.warn = () => {};
-        const src = httpRangeSource('http://host.invalid/a.pancake');
+        const src = httpRangeSource('http://host.invalid/a.pikelet');
         await src.init();
         const reqAfterInit = requests;
         const first = await src.read(0, 64);
@@ -601,7 +601,7 @@ const A = buildSynthetic();
     const u8qi = buildQueryInterpSegment(2,
         new Uint8Array(Buffer.from(JSON.stringify(kind2Declaration()), 'utf8')),
         new Uint8Array(CALIBRATION));
-    const u8path = path.join(tmp, 'u8.pancake');
+    const u8path = path.join(tmp, 'u8.pikelet');
     assemblePancakeFile({
         profile: PROFILE_V2, corpus: { ...u8corpus.corpus, provenance: null }, dim: DIM, metric: 'cosine',
         encoder: { kind: 'external-transformers-v1' }, recommendedRerank: 40, sampleQueries: [],
@@ -636,7 +636,7 @@ const A = buildSynthetic();
 {
     const noEval = (() => {
         const corpus = buildCorpusSegment(RECORDS, { pageRecords: PAGE_RECORDS });
-        const outPath = path.join(tmp, 'noeval.pancake');
+        const outPath = path.join(tmp, 'noeval.pikelet');
         assemblePancakeFile({
             profile: PROFILE_V2, corpus: { ...corpus.corpus, provenance: null }, dim: DIM, metric: 'cosine',
             encoder: { kind: 'external-transformers-v1' }, recommendedRerank: 40, sampleQueries: [],
@@ -654,7 +654,7 @@ const A = buildSynthetic();
     const { segments: ae } = layoutOf(arrayEval.bytes);
     // Rebuild with an array evaluation segment.
     const corpus = buildCorpusSegment(RECORDS, { pageRecords: PAGE_RECORDS });
-    const outPath = path.join(tmp, 'arrayeval2.pancake');
+    const outPath = path.join(tmp, 'arrayeval2.pikelet');
     assemblePancakeFile({
         profile: PROFILE_V2, corpus: { ...corpus.corpus, provenance: null }, dim: DIM, metric: 'cosine',
         encoder: { kind: 'external-transformers-v1' }, recommendedRerank: 40, sampleQueries: [],
@@ -681,7 +681,7 @@ const A = buildSynthetic();
             const m = /bytes=(\d+)-(\d+)/.exec(init.headers.Range);
             return new Response(A.bytes.subarray(Number(m[1]), Number(m[2]) + 1), { status: 206 });
         };
-        const noHeader = rangeSource('http://host.invalid/c.pancake');
+        const noHeader = rangeSource('http://host.invalid/c.pikelet');
         await noHeader.init();
         await rejects('a 206 without Content-Range is refused', () => noHeader.read(0, 64), /Content-Range \(missing\)/);
         // A 200 that streams more than the fallback cap is aborted on
@@ -697,7 +697,7 @@ const A = buildSynthetic();
                 },
             }), { status: 200 });
         };
-        const streamy = rangeSource('http://host.invalid/d.pancake', { maxFullFallbackBytes: 4096 });
+        const streamy = rangeSource('http://host.invalid/d.pikelet', { maxFullFallbackBytes: 4096 });
         await streamy.init();
         await rejects('a chunked 200 streaming past the cap is aborted on received bytes',
             () => streamy.read(0, 64), /streamed over 4096 bytes/);
@@ -710,10 +710,10 @@ const A = buildSynthetic();
             const body = A.bytes.subarray(Number(m[1]), Number(m[2]) + 1);
             return new Response(body, { status: 206, headers: { 'content-range': `bytes ${m[1]}-${m[2]}/${A.bytes.length}` } });
         };
-        const unsigned = rangeSource('http://host.invalid/e.pancake?sig=abc', { cacheKeyParam: null });
+        const unsigned = rangeSource('http://host.invalid/e.pikelet?sig=abc', { cacheKeyParam: null });
         await unsigned.init();
         await unsigned.read(0, 64);
-        check('cacheKeyParam: null leaves the URL untouched for signed-URL hosts', seen[0] === 'http://host.invalid/e.pancake?sig=abc');
+        check('cacheKeyParam: null leaves the URL untouched for signed-URL hosts', seen[0] === 'http://host.invalid/e.pikelet?sig=abc');
     } finally {
         globalThis.fetch = realFetch3;
     }
@@ -795,7 +795,7 @@ console.log('\nC. kind-1 student-inline artifact compiled from examples/03 asset
     }
     const snapshot = fs.readFileSync(path.join(assets, 'docs-index.bin'));
     const compileDocs = (name) => {
-        const { bytes: sketchBytes } = Pancake.buildSketchArtifactBytes(snapshot, { recommendedRerank: 120 });
+        const { bytes: sketchBytes } = Pikelet.buildSketchArtifactBytes(snapshot, { recommendedRerank: 120 });
         const corpus = buildCorpusSegment(records);
         return assemblePancakeFile({
             profile: PROFILE_V2,
@@ -810,7 +810,7 @@ console.log('\nC. kind-1 student-inline artifact compiled from examples/03 asset
             { kind: 'corpus', bytes: corpus.bytes },
             { kind: 'query-interp', bytes: buildQueryInterpSegment(1, fs.readFileSync(path.join(assets, 'docs-student.bin')), fs.readFileSync(path.join(assets, 'docs-abstention.json'))) },
             { kind: 'evaluation', bytes: Buffer.from(JSON.stringify({ goldenQueries: goldens }), 'utf8') },
-        ], path.join(tmp, `${name}.pancake`));
+        ], path.join(tmp, `${name}.pikelet`));
     };
     const first = compileDocs('docs-a');
     const second = compileDocs('docs-b');
@@ -943,13 +943,13 @@ console.log('\nD. lexical segment and hybrid retrieval');
     let token = 'sig-1';
     const host = http.createServer((req, res) => {
         const u = new URL(req.url, 'http://x');
-        if (u.pathname === '/front/pack.pancake') {
+        if (u.pathname === '/front/pack.pikelet') {
             frontDoorHits += 1;
-            res.writeHead(302, { location: `/signed/pack.pancake?token=${token}` });
+            res.writeHead(302, { location: `/signed/pack.pikelet?token=${token}` });
             res.end();
             return;
         }
-        if (u.pathname !== '/signed/pack.pancake') { res.writeHead(404); res.end(); return; }
+        if (u.pathname !== '/signed/pack.pikelet') { res.writeHead(404); res.end(); return; }
         if (u.searchParams.get('token') !== token) { res.writeHead(403); res.end(); return; }
         signedHits += 1;
         if (u.searchParams.has('r')) paramOnSigned += 1;
@@ -966,7 +966,7 @@ console.log('\nD. lexical segment and hybrid retrieval');
     });
     await new Promise((resolve) => host.listen(0, '127.0.0.1', resolve));
     const base = `http://127.0.0.1:${host.address().port}`;
-    const src = httpRangeSource(`${base}/front/pack.pancake`);
+    const src = httpRangeSource(`${base}/front/pack.pikelet`);
     await src.init();
     check('redirect resolution finds the size through the pinned target', src.size === payload.length,
         `size ${src.size}`);
@@ -996,7 +996,7 @@ console.log('\nD. lexical segment and hybrid retrieval');
     check('sketchScanner:false reports residentScan js', js.info().residentScan === 'js');
     const wasm = await openPancakeFile(memorySource(A.bytes), {
         encodeQuery: hostEncode,
-        sketchScanner: (sk) => Pancake.createSketchScanner(sk, { maxRerank: 64 }),
+        sketchScanner: (sk) => Pikelet.createSketchScanner(sk, { maxRerank: 64 }),
     });
     // Staging is background by design; poll until the reader reports it.
     for (let i = 0; i < 400 && wasm.info().residentScan !== 'engine'; i++) {

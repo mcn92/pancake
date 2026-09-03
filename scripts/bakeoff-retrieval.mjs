@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-// Retrieval-quality bakeoff over a compiled .pancake artifact: run the same
+// Retrieval-quality bakeoff over a compiled .pikelet artifact: run the same
 // query set through vector-only, BM25-only, and hybrid retrieval (the
 // reader's query({ retrieval }) modes) and score each against expected
 // sections.
 //
-//   node scripts/bakeoff-retrieval.mjs <artifact.pancake> <queries.json>
+//   node scripts/bakeoff-retrieval.mjs <artifact.pikelet> <queries.json>
 //
 // queries.json: [{ text, kind: 'semantic' | 'exact', expect: {...} }, ...]
 // expect matches a returned record when every given field matches:
@@ -25,7 +25,7 @@ const { openPancakeFile } = await import(path.join(ROOT, 'complete', 'index.mjs'
 
 const [artifactPath, queriesPath] = process.argv.slice(2);
 if (!artifactPath || !queriesPath) {
-  console.error('usage: node scripts/bakeoff-retrieval.mjs <artifact.pancake> <queries.json>');
+  console.error('usage: node scripts/bakeoff-retrieval.mjs <artifact.pikelet> <queries.json>');
   process.exit(1);
 }
 const queries = JSON.parse(fs.readFileSync(queriesPath, 'utf8'));

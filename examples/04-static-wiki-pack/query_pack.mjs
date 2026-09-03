@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pipeline } from '@huggingface/transformers';
-import Pancake from '../../pancake.node.mjs';
+import Pikelet from '../../pikelet.node.mjs';
 
 // Usage: node query_pack.mjs [dataDir] [query ...]
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -39,8 +39,8 @@ for (const id of parityIds) {
 console.log(`encoder parity (JS fp32 vs Python fp32): worst cosine ${worst.toFixed(5)} over ${parityIds.length} chunks`);
 
 // --- Search + hydrate ----------------------------------------------------
-const artifact = await Pancake.openSketchArtifactFile(path.join(dataDir, 'wiki.pancake-sketch'));
-const scanner = await Pancake.createSketchScanner(artifact);
+const artifact = await Pikelet.openSketchArtifactFile(path.join(dataDir, 'wiki.pancake-sketch'));
+const scanner = await Pikelet.createSketchScanner(artifact);
 // View through byteOffset/byteLength: small readFileSync results share
 // Node's buffer pool, so bare .buffer would alias unrelated bytes.
 const offsetsBuf = fs.readFileSync(path.join(dataDir, 'corpus-offsets.u32'));
