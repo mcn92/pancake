@@ -63,6 +63,16 @@ const MIN_AUC = 0.85;
 // them would fail honest fits. Below this, the model cannot tell answerable
 // from in-domain-unanswerable and must not ship.
 const MIN_HARD_AUC = 0.75;
+// Threshold sanity rails. When the probe classes separate perfectly (small
+// or template-uniform corpora), the logistic saturates: positive
+// probabilities pile near 1 and percentile thresholds land absurdly high —
+// a hard bar above 0.5 abstains on queries the model itself scores as
+// more-likely-answerable-than-not, which is never the intended asymmetry.
+// The ceiling caps that failure; the band floor guarantees a real "weak"
+// caveat region even when no weak probes were generated (rank-5..K probe
+// sources don't exist on corpora where every probe retrieves at rank 1).
+const HARD_CEILING = 0.5;
+const MIN_WEAK_BAND = 0.08;
 
 // Off-domain but real-English queries, spanning consumer, developer, finance,
 // and household domains. Same role as the wiki calibrator's foreign title
@@ -164,18 +174,33 @@ const STOPWORDS = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'of', 'to', 'in
 // and the hard threshold creeps up until honest paraphrases abstain. These
 // sit closer to how a real query scores, dragging the answerable floor down
 // to where it belongs.
+// Real queries are interrogative sentences, not keyword runs; a fit whose
+// positives are all bare keywords (or title templates) learns a phrasing
+// distribution narrower than what users type, and on uniform corpora the
+// thresholds overfit to it — measured on a 94-passage synthetic registry,
+// where naturally-phrased supported questions landed below a hard threshold
+// of 0.68. Rotating the same content words through question frames keeps
+// the retrieval target identical while spreading the phrasing distribution.
+const CONTENT_FRAMES = [
+  (w) => w,
+  (w) => `what is known about ${w}`,
+  (w) => `which ${w}`,
+  (w) => `is anything said about ${w}`,
+];
+
 function contentWordQuestions(chunks, n, seed, eligiblePos = null) {
   const next = rng(seed);
   const pool = (eligiblePos ?? chunks.map((_, pos) => pos)).map((pos) => ({ chunk: chunks[pos], pos }));
   const picked = sample(pool, Math.min(n, pool.length * 2), seed ^ 0x77aa11);
   const seen = new Set();
   const out = [];
+  let frame = 0;
   for (const { chunk, pos } of picked) {
     const words = [...new Set(tokenize(chunk.text).filter((w) => w.length >= 4 && !STOPWORDS.has(w)))];
     if (words.length < 3) continue;
     const count = Math.min(3 + Math.floor(next() * 3), words.length);
     const start = Math.floor(next() * Math.max(1, words.length - count));
-    const text = words.slice(start, start + count).join(' ');
+    const text = CONTENT_FRAMES[frame++ % CONTENT_FRAMES.length](words.slice(start, start + count).join(' '));
     if (seen.has(text)) continue;
     seen.add(text);
     out.push({ text, sourceId: pos });
@@ -193,7 +218,8 @@ const tokenize = (text) => (text.toLowerCase().match(/[a-z0-9']+/g) || []);
 const COVERAGE_STOPWORDS = new Set([...STOPWORDS,
   'what', 'how', 'who', 'why', 'where', 'when', 'do', 'does', 'did', 'me',
   'tell', 'about', 'explain', 'explained', 'facts', 'information',
-  'overview', 'history', 'definition', 'important', 'work', 'works']);
+  'overview', 'history', 'definition', 'important', 'work', 'works',
+  'known', 'anything', 'said']);
 
 // Coverage weights words by informativeness: a word the corpus uses
 // everywhere ("templates", "support" in a docs corpus) grounds any query
@@ -645,7 +671,16 @@ export async function calibrateRetrievalAbstention({ Pikelet, chunks, vectors, c
     const allWeakP = rows.filter((r) => r.label === -1).map((r) => r.p);
     const weakP = allWeakP.filter((p) => p > Math.max(negCeil, 0.05));
     const hardOverlap = negCeil >= posFloor;
-    const hard = hardOverlap ? posFloor * 0.5 : negCeil + 0.25 * (posFloor - negCeil);
+    const hardRaw = hardOverlap ? posFloor * 0.5 : negCeil + 0.25 * (posFloor - negCeil);
+    // Saturation rail: see HARD_CEILING. A clamp engaging means the fit
+    // separated its own probes too cleanly for percentile placement to be
+    // meaningful — log it, because real phrasings unlike the probes are the
+    // queries a too-high bar silently hides.
+    const hard = Math.min(hardRaw, HARD_CEILING);
+    if (hardRaw > HARD_CEILING) {
+      log(`Calibration: hard threshold computed at ${hardRaw.toFixed(3)} (saturated fit); clamped to ${HARD_CEILING}. `
+        + 'Probe classes separate almost perfectly — treat abstention boundaries on this corpus with caution.');
+    }
     const weakCeil = weakP.length ? quantile(weakP, 0.9) : 0;
     // "Strong" must clear the hard-negative mass. When hard negatives
     // overlap the weakest positives (hardThresholdOverlap), the hard
@@ -655,7 +690,7 @@ export async function calibrateRetrievalAbstention({ Pikelet, chunks, vectors, c
     // confidence. Capped at the positive median: past that the fit is too
     // entangled for the ceiling to be meaningful, and the cvAucHard gate is
     // the real protection.
-    const weak = Math.min(
+    const weakRaw = Math.min(
       Math.max(
         weakCeil > hard && weakCeil < posFloor ? Math.sqrt(weakCeil * posFloor) : posFloor * 0.9,
         hardCeil,
@@ -663,6 +698,12 @@ export async function calibrateRetrievalAbstention({ Pikelet, chunks, vectors, c
       ),
       Math.max(quantile(pos, 0.5), hard),
     );
+    // Band floor: without weak probes the sandwich above can collapse the
+    // weak band to nothing (measured 0.015 wide on a synthetic corpus),
+    // making every uncertain query binary strong/none. Widening only ever
+    // demotes strong to weak — results still shown, with a caveat — so the
+    // floor is safe in the direction that matters.
+    const weak = Math.min(0.95, Math.max(weakRaw, hard + MIN_WEAK_BAND));
 
     // Eval-only rows (foreign-bank queries that overlap the corpus) are
     // scored by the final model and reported: how many the shipped
@@ -716,6 +757,7 @@ export async function calibrateRetrievalAbstention({ Pikelet, chunks, vectors, c
         recombination: cvAucRecombination === null ? null : +cvAucRecombination.toFixed(6),
       },
       hardThresholdOverlap: hardOverlap,
+      hardThresholdClampedFrom: hardRaw > HARD_CEILING ? Number(hardRaw.toFixed(6)) : null,
       vocab: { uniqueWords, keptWords, minCount },
       coverage: { topPassages: COVERAGE_TOP_PASSAGES, commonWords: commonWords.commonWords, commonDfCap: commonWords.dfCap },
     };
