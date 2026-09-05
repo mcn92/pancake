@@ -783,10 +783,10 @@ console.log('\nB. format-1 file (pancake-complete-v1) compatibility');
 // ---------------------------------------------------------------------------
 console.log('\nC. kind-1 student-inline artifact compiled from examples/03 assets');
 {
-    const assets = path.join(ROOT, 'examples', '03-edge-docs-search', 'assets');
+    const assets = path.join(ROOT, 'examples', 'legacy', '03-edge-docs-search', 'assets');
     const corpusRaw = JSON.parse(fs.readFileSync(path.join(assets, 'docs-corpus.json'), 'utf8'));
     const sourceManifest = JSON.parse(fs.readFileSync(path.join(assets, 'docs-manifest.json'), 'utf8'));
-    const goldens = JSON.parse(fs.readFileSync(path.join(ROOT, 'examples', '03-edge-docs-search', 'fixtures', 'abstention-golden.json'), 'utf8'));
+    const goldens = JSON.parse(fs.readFileSync(path.join(ROOT, 'examples', 'legacy', '03-edge-docs-search', 'fixtures', 'abstention-golden.json'), 'utf8'));
     const count = Object.keys(corpusRaw).length;
     const records = [];
     for (let id = 0; id < count; id++) {

@@ -185,7 +185,7 @@ When you run or deploy this example, it runs in your own Cloudflare environment:
 ### Run The Worker Locally
 
 ```bash
-cd examples/reference-worker
+cd examples/legacy/reference-worker
 npx wrangler dev --port 8787 --var ALLOW_INSECURE_ADMIN:1
 ```
 
@@ -194,7 +194,7 @@ npx wrangler dev --port 8787 --var ALLOW_INSECURE_ADMIN:1
 ### Deploy The Worker To Your Own Cloudflare Account
 
 ```bash
-cd examples/reference-worker
+cd examples/legacy/reference-worker
 wrangler r2 bucket create pancake-indexes
 wrangler deploy
 ```
@@ -241,19 +241,13 @@ The Worker has its own binary envelope for `/export` and `/import`.
 
 Do not assume that a Node.js `index.export()` snapshot is interchangeable with the Worker `/import` format. The Worker wraps the engine snapshot with additional metadata for its own restore path.
 
-### Worker Demo Scripts
-
-From the repo root, with the Worker already running:
+### Worker Integration Test
 
 ```bash
-node examples/legacy/technical-demo/test_worker.js http://localhost:8787
-node examples/legacy/technical-demo/technical_demo_worker.js
+node test/test_worker_features.js
 ```
 
-The demos exercise different paths:
-
-- `test_worker.js`: synthetic 1536D Worker/API integration test
-- `technical_demo_worker.js`: interactive REPL against the Worker using the `dist/vectors.bin` asset (gitignored — generate it first with `npm run demo:data`)
+Starts a local `wrangler dev` instance against `examples/legacy/reference-worker` and runs a synthetic 1536D Worker/API integration test against it.
 
 ## Sizing And Tuning
 
@@ -293,5 +287,5 @@ The Worker `/import` route expects the Worker export format, not a raw local pac
 ## Next Steps
 
 - [README.md](README.md) for the full package API surface
-- [examples/reference-worker/README.md](examples/reference-worker/README.md) for the reference Worker deployment model
+- [examples/legacy/reference-worker/README.md](examples/legacy/reference-worker/README.md) for the reference Worker deployment model
 - [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) for the deeper system design document

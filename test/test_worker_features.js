@@ -351,7 +351,7 @@ async function testReadOnlyMode(env) {
 // Runner
 // ---------------------------------------------------------------------------
 
-const WORKER_DIR = path.resolve(__dirname, '..', 'examples', 'reference-worker');
+const WORKER_DIR = path.resolve(__dirname, '..', 'examples', 'legacy', 'reference-worker');
 const DEV_VARS_PATH = path.join(WORKER_DIR, '.dev.vars');
 // A developer's own .dev.vars (API_KEY, READ_ONLY, ...) may already live in
 // the worker directory; the suites below overwrite that file with their own

@@ -329,10 +329,10 @@ lists the gate that actually executes it:
   reference-reader results (`test/fixtures/sketch_golden.js`, checked by
   `test/sketch_profile.js`; run by `npm test`)
 - abstention golden fixtures with exact expected labels
-  (`examples/03-edge-docs-search/fixtures/abstention-golden.json`, driven
+  (`examples/legacy/03-edge-docs-search/fixtures/abstention-golden.json`, driven
   under Miniflare by `npm run test:worker-example`; run in CI)
 - encoder parity verification between independent implementations
-  (`examples/03-edge-docs-search/verify_student.mjs`). This is a
+  (`examples/legacy/03-edge-docs-search/verify_student.mjs`). This is a
   producer-side gate: it requires the trained student artifacts, which are
   not committed, so it runs when a student encoder is (re)trained — not in
   the automated suite. An artifact shipping a distilled encoder without this

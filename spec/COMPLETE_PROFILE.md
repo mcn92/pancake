@@ -431,7 +431,7 @@ after `close()`; `close()` MUST be idempotent.
   a format-1 file, which MUST still open and report the transitional
   integrity stance (a record tamper is documented as undetectable there);
   (C) a kind-1 artifact compiled from the committed
-  `examples/03-edge-docs-search` assets, whose 10 abstention goldens MUST
+  `examples/legacy/03-edge-docs-search` assets, whose 10 abstention goldens MUST
   reproduce their labels, whose hydration round-trips the source corpus,
   and whose compile MUST be byte-deterministic. Kind 3 is covered by
   `examples/05-one-file-search/test-inline.mjs` against the released

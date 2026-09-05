@@ -102,7 +102,7 @@ Search is how you interrogate it. The file is the thing.
 - **`src/`** the vector search engine (HNSW, WASM), quantized and float backends. No native dependencies; runs in Node, browsers, and Cloudflare Workers.
 - **`complete/`, `pikelet-artifact*.js`** the artifact formats: the `.pikelet` container and the sketch index it embeds. Both are content-addressed and integrity-checked. See `spec/` for the byte-level contracts.
 - **`pikelet/`** the CLI (`compile`, `create`, `mcp`, `doctor`) and the Docusaurus search plugin.
-- **`examples/`** worked demos, from a minimal browser search widget to a wiki-scale deployment. Start with `examples/05-one-file-search/`.
+- **`examples/`** worked demos, from a minimal browser search widget to a wiki-scale deployment. Start with [`examples/06-mcp-knowledge-pack/`](examples/06-mcp-knowledge-pack/) (compile, mount, query over MCP) or [`examples/05-one-file-search/`](examples/05-one-file-search/) (the file itself).
 
 ## Attaching a pack to an LLM
 

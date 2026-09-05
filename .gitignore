@@ -67,10 +67,10 @@ pancake_gt_snapshot_*.tar.gz.sha256
 # Worker build output
 docs-site/.docusaurus/
 docs-site/build/
-examples/reference-worker/dist/
-examples/reference-worker/.dev.vars
-examples/03-edge-docs-search/.dev.vars
-examples/03-edge-docs-search/pages-ui/dist/
+examples/legacy/reference-worker/dist/
+examples/legacy/reference-worker/.dev.vars
+examples/legacy/03-edge-docs-search/.dev.vars
+examples/legacy/03-edge-docs-search/pages-ui/dist/
 
 # Local benchmark/analysis artifacts
 pareto/
@@ -97,15 +97,13 @@ nytimes/sweep_*.png
 
 # Local webanns experiment data
 /public/
-examples/01-hello-pack/public/
-examples/01-hello-pack/webanns_1k/
-examples/01-hello-pack/webanns_compare/
-examples/legacy/technical-demo/test.js
+examples/legacy/01-hello-pack/public/
+examples/legacy/01-hello-pack/webanns_1k/
+examples/legacy/01-hello-pack/webanns_compare/
 
 # Generated binaries — regenerate with emb.py or demo scripts
 /vectors.bin
-examples/02-catalog-hydration/runtime_mappings.json
-examples/legacy/technical-demo/loyalty-index.bin
+examples/legacy/02-catalog-hydration/runtime_mappings.json
 
 # Experimental engine build variants (OUT_BASENAME=<name> builds). The shipped
 # artifacts are dist/engine.{js,wasm} and dist/engine.scalar.{js,wasm}; anything
@@ -134,10 +132,6 @@ examples/legacy/technical-demo/demo_hybrid_search.js
 examples/legacy/technical-demo/demo_recipe_search.js
 examples/legacy/technical-demo/demo_recipe_search_enhanced.js
 examples/legacy/range-artifact-demo/static/dist/
-
-# Ignored-only wiki demo leftovers from the pre-repackage path. Move or delete
-# manually after local Node/Workers handles release their files.
-examples/wiki-pack/
 
 # Local toolchains and vendored checkouts (multi-GB, never ship)
 /external/

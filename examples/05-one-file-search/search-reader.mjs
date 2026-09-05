@@ -1,6 +1,6 @@
 // Spike: the composed Search Artifact reader — one call from query text to
 // hydrated, calibrated results, over the five components that
-// examples/03-edge-docs-search ships as separate Worker assets:
+// examples/legacy/03-edge-docs-search ships as separate Worker assets:
 //
 //   corpus      docs-corpus.json       (records: title/text/preview/anchor/path)
 //   index       docs-index.bin         (.pnck snapshot -> sketch tier at open)
