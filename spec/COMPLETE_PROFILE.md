@@ -50,7 +50,7 @@ missing between the components.
    followed and is the product default — `pikelet compile`
    emits it. The three are not generations of one idea but corners of a
    trade-off: each picks two of self-contained, small, and teacher-quality
-   (kind 3 gives up small — its encoder bytes are ~25 MB; kind 1 gives up
+   (kind 3 gives up small — its encoder bytes are ~24 MB; kind 1 gives up
    teacher quality; kind 2 gives up self-contained). A conforming reader
    supports all three.
 
