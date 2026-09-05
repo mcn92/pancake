@@ -31,10 +31,10 @@ if (!existsSync(path.join(bundleDir, 'worker.js'))) {
   console.error(
     `\nThis test needs a bundled Worker at ${bundleDir}/worker.js, which is not present.\n` +
     'It is produced by a Wrangler dry-run of the demo. From the repo root:\n\n' +
-    '  cd examples/03-edge-docs-search\n' +
-    '  npx wrangler deploy --dry-run --outdir ../../.tmp-test-work/student-worker-distilled\n' +
-    '  cd ../..\n' +
-    '  node examples/03-edge-docs-search/test_worker.mjs\n\n' +
+    '  cd examples/legacy/03-edge-docs-search\n' +
+    '  npx wrangler deploy --dry-run --outdir ../../../.tmp-test-work/student-worker-distilled\n' +
+    '  cd ../../..\n' +
+    '  node examples/legacy/03-edge-docs-search/test_worker.mjs\n\n' +
     'Or point --bundle-dir at an existing bundle.\n'
   );
   process.exit(1);

@@ -41,15 +41,15 @@ From the repo root:
 
 ```bash
 ./build.sh
-node examples/02-catalog-hydration/build_snapshot.mjs
-node examples/02-catalog-hydration/mock_catalog_server.mjs
+node examples/legacy/02-catalog-hydration/build_snapshot.mjs
+node examples/legacy/02-catalog-hydration/mock_catalog_server.mjs
 ```
 
 In another terminal, start the reference Worker with unauthenticated admin
 routes enabled for local demo use:
 
 ```bash
-cd examples/reference-worker
+cd examples/legacy/reference-worker
 npx wrangler dev --port 8787 --log-level error --var ALLOW_INSECURE_ADMIN:1
 ```
 
@@ -61,19 +61,19 @@ If `.dev.vars` sets `API_KEY`, pass the same value to the importer:
 
 ```bash
 PANCAKE_API_KEY=local-demo-key \
-  node examples/02-catalog-hydration/worker_import_snapshot.mjs
+  node examples/legacy/02-catalog-hydration/worker_import_snapshot.mjs
 ```
 
 Back at the repo root, import the generated Worker snapshot:
 
 ```bash
-node examples/02-catalog-hydration/worker_import_snapshot.mjs
+node examples/legacy/02-catalog-hydration/worker_import_snapshot.mjs
 ```
 
 Run a query and hydrate the product cards:
 
 ```bash
-node examples/02-catalog-hydration/demo_client.mjs "lightweight waterproof hiking jacket"
+node examples/legacy/02-catalog-hydration/demo_client.mjs "lightweight waterproof hiking jacket"
 ```
 
 ## Show Live Catalog Hydration
@@ -89,7 +89,7 @@ curl -X POST http://127.0.0.1:9090/admin/update \
 Re-run the same search:
 
 ```bash
-node examples/02-catalog-hydration/demo_client.mjs "lightweight waterproof hiking jacket"
+node examples/legacy/02-catalog-hydration/demo_client.mjs "lightweight waterproof hiking jacket"
 ```
 
 The Worker returns the same semantic match order, but the hydrated catalog
@@ -102,13 +102,13 @@ from the Worker index and add a leather hiking boot with 20 in stock:
 
 ```bash
 PANCAKE_API_KEY=local-demo-key \
-  node examples/02-catalog-hydration/live_update.mjs
+  node examples/legacy/02-catalog-hydration/live_update.mjs
 ```
 
 Then search for boots:
 
 ```bash
-node examples/02-catalog-hydration/demo_client.mjs "leather hiking boots"
+node examples/legacy/02-catalog-hydration/demo_client.mjs "leather hiking boots"
 ```
 
 The script writes `runtime_mappings.json`, which is ignored by Git. That file
@@ -121,8 +121,8 @@ If you change the indexed search text or vectors in `search_corpus.jsonl`,
 rebuild and re-import:
 
 ```bash
-node examples/02-catalog-hydration/build_snapshot.mjs
-node examples/02-catalog-hydration/worker_import_snapshot.mjs
+node examples/legacy/02-catalog-hydration/build_snapshot.mjs
+node examples/legacy/02-catalog-hydration/worker_import_snapshot.mjs
 ```
 
 That changes retrieval behavior, which is the right boundary for a snapshot-

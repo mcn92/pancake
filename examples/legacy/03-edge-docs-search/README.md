@@ -129,7 +129,7 @@ npm run build:all
 Extract the documentation corpus:
 
 ```bash
-node examples/03-edge-docs-search/build_demo.mjs \
+node examples/legacy/03-edge-docs-search/build_demo.mjs \
   --out /tmp/pancake-docs-demo \
   --corpus-only
 ```
@@ -140,7 +140,7 @@ not runtime dependencies:
 ```bash
 python3 -m venv /tmp/pancake-student-venv
 /tmp/pancake-student-venv/bin/pip install \
-  -r examples/03-edge-docs-search/requirements-train.txt
+  -r examples/legacy/03-edge-docs-search/requirements-train.txt
 ```
 
 Train and export the student. The first run downloads the teacher checkpoint to
@@ -149,7 +149,7 @@ the selected Hugging Face cache:
 ```bash
 HF_HOME=/tmp/pancake-hf \
 /tmp/pancake-student-venv/bin/python \
-  examples/03-edge-docs-search/train_student.py \
+  examples/legacy/03-edge-docs-search/train_student.py \
   --corpus /tmp/pancake-docs-demo/docs-corpus.json \
   --out /tmp/pancake-student
 ```
@@ -157,15 +157,15 @@ HF_HOME=/tmp/pancake-hf \
 Verify that plain JavaScript reproduces the exported Python model:
 
 ```bash
-node examples/03-edge-docs-search/verify_student.mjs \
+node examples/legacy/03-edge-docs-search/verify_student.mjs \
   --student-dir /tmp/pancake-student
 ```
 
 Build the Pancake snapshot and bundled asset directory:
 
 ```bash
-node examples/03-edge-docs-search/build_demo.mjs \
-  --out examples/03-edge-docs-search/assets \
+node examples/legacy/03-edge-docs-search/build_demo.mjs \
+  --out examples/legacy/03-edge-docs-search/assets \
   --student-dir /tmp/pancake-student
 ```
 
@@ -175,17 +175,17 @@ Build and exercise the actual workerd bundle with an in-process Worker and its
 bundled binary data modules:
 
 ```bash
-cd examples/03-edge-docs-search
+cd examples/legacy/03-edge-docs-search
 npx wrangler deploy --dry-run \
   --outdir ../../.tmp-test-work/student-worker-distilled
 cd ../..
-node examples/03-edge-docs-search/test_worker.mjs
+node examples/legacy/03-edge-docs-search/test_worker.mjs
 ```
 
 ## Run locally
 
 ```bash
-cd examples/03-edge-docs-search
+cd examples/legacy/03-edge-docs-search
 npx wrangler dev --port 8787
 ```
 
@@ -231,13 +231,13 @@ Redeploy after changing `wrangler.toml`.
 
 ## Deploy the Pages UI
 
-The static Pages UI lives in `examples/03-edge-docs-search/pages-ui/`.
+The static Pages UI lives in `examples/legacy/03-edge-docs-search/pages-ui/`.
 
 From the repo root:
 
 ```bash
 npm run build:pages-demo
-npx wrangler pages deploy examples/03-edge-docs-search/pages-ui/dist \
+npx wrangler pages deploy examples/legacy/03-edge-docs-search/pages-ui/dist \
   --project-name pancake-docs-search
 ```
 

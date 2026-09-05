@@ -6,7 +6,7 @@
  * actually call, not as a copy of the raw WASM ABI.
  */
 
-import Pikelet, { PancakeError, PANCAKE_ERROR_CODES } from '../../pikelet.workerd.mjs';
+import Pikelet, { PancakeError, PANCAKE_ERROR_CODES } from '../../../pikelet.workerd.mjs';
 
 let index = null;
 let indexConfig = null;

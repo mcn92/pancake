@@ -23,7 +23,7 @@ From the repository root:
 
 ```bash
 npm run build:pages-demo
-npx wrangler pages deploy examples/03-edge-docs-search/pages-ui/dist \
+npx wrangler pages deploy examples/legacy/03-edge-docs-search/pages-ui/dist \
   --project-name pancake-docs-search
 ```
 

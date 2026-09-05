@@ -1,5 +1,5 @@
 // Client-side abstention scoring for the artifact demo.
-// Mirrors the signal computation in examples/03-edge-docs-search/worker.js
+// Mirrors the signal computation in examples/legacy/03-edge-docs-search/worker.js
 // (buildKnownBucketTables / computeKnownFractions / computeHiddenProbe) so the
 // static demo applies the same shipped calibration as the Worker. The learned
 // scoring itself comes from the canonical student-embedder module.

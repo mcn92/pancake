@@ -62,7 +62,7 @@ without downloading the full snapshot.
 ## Running locally
 
 ```bash
-cd examples/reference-worker
+cd examples/legacy/reference-worker
 npx wrangler dev --port 8787 --var ALLOW_INSECURE_ADMIN:1
 ```
 
@@ -75,7 +75,7 @@ Build a snapshot outside the Worker first — see
 [`build_and_export_index.js`](build_and_export_index.js) — then:
 
 ```bash
-cd examples/reference-worker
+cd examples/legacy/reference-worker
 wrangler r2 bucket create pancake-indexes
 # Uncomment the [[r2_buckets]] block in wrangler.toml so the Worker can
 # persist and restore snapshots from the bucket.

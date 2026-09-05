@@ -1,4 +1,4 @@
-import Pikelet from '../../pikelet.workerd.mjs';
+import Pikelet from '../../../pikelet.workerd.mjs';
 import { embedTextWithStudent, loadStudentModel, scoreQuery } from './student-embedder.mjs';
 import SNAPSHOT_ASSET from './assets/docs-index.bin';
 import STUDENT_ASSET from './assets/docs-student.bin';
@@ -280,7 +280,7 @@ function sourceLabelFromPath(sourcePath) {
   if (sourcePath === 'README.md') return 'README';
   if (sourcePath === 'QUICKSTART.md') return 'Quickstart';
   if (sourcePath === 'docs/SYSTEM_DESIGN.md') return 'System design';
-  if (sourcePath === 'examples/reference-worker/README.md') return 'Worker docs';
+  if (sourcePath === 'examples/legacy/reference-worker/README.md') return 'Worker docs';
   return sourcePath;
 }
 
@@ -780,7 +780,7 @@ function renderPage() {
                   <option value="README.md">README</option>
                   <option value="QUICKSTART.md">Quickstart</option>
                   <option value="docs/SYSTEM_DESIGN.md">System design</option>
-                  <option value="examples/reference-worker/README.md">Worker docs</option>
+                  <option value="examples/legacy/reference-worker/README.md">Worker docs</option>
                 </select>
               </div>
             </div>

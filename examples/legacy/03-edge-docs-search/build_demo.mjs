@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import Pikelet from '../../pikelet.node.mjs';
+import Pikelet from '../../../pikelet.node.mjs';
 import { embedTextWithStudent, loadStudentModel } from './student-embedder.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -19,7 +19,7 @@ const DOC_SOURCES = [
   'README.md',
   'QUICKSTART.md',
   'docs/SYSTEM_DESIGN.md',
-  'examples/reference-worker/README.md'
+  'examples/legacy/reference-worker/README.md'
 ];
 
 const SAMPLE_QUERIES = [
