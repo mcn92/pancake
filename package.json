@@ -141,12 +141,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mcn92/pancake.git"
+    "url": "git+https://github.com/mcn92/pikelet.git"
   },
   "bugs": {
-    "url": "https://github.com/mcn92/pancake/issues"
+    "url": "https://github.com/mcn92/pikelet/issues"
   },
-  "homepage": "https://github.com/mcn92/pancake#readme",
+  "homepage": "https://github.com/mcn92/pikelet#readme",
   "author": "Matthew Noonan",
   "license": "Apache-2.0",
   "publishConfig": {

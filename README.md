@@ -23,6 +23,12 @@ Compile a folder of docs into one `.pikelet` file:
 npx pikelet compile --source ./docs --out search.pikelet
 ```
 
+By default this bundles a full query encoder in the file, which adds a
+fixed ~25 MB regardless of corpus size. That cost is what makes the file
+self-contained: no host model, no network call to embed a query. Smaller
+output is possible with a corpus-distilled encoder (`kind 1`) or a
+host-supplied one (`kind 2`); see `pikelet/README.md`.
+
 Query it:
 
 ```js
@@ -35,8 +41,12 @@ console.log(out.matchQuality, out.results[0]?.title);
 await search.close();
 ```
 
-`matchQuality` is `'strong'`, `'weak'`, or `'none'`. A pack that doesn't
-contain the answer says so instead of guessing.
+`matchQuality` is `'strong'`, `'weak'`, or `'none'` when the corpus had
+enough distinct documents to calibrate abstention at compile time,
+letting a pack say it doesn't contain the answer instead of guessing.
+Too small or too uniform a corpus skips calibration, and matchQuality
+reports `'unscored'`: the artifact still returns its best matches, but
+makes no claim about whether they actually answer the query.
 
 ## Knowledge packs (for LLMs)
 

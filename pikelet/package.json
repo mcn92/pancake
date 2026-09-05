@@ -1,7 +1,7 @@
 {
   "name": "pikelet",
   "version": "0.7.0",
-  "description": "Compile docs into a complete .pikelet search artifact, or scaffold a Pancake-backed search app.",
+  "description": "Compile docs into a complete .pikelet search artifact, or scaffold a Pikelet-backed search app.",
   "type": "module",
   "bin": {
     "pikelet": "./bin/pikelet.mjs"

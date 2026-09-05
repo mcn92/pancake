@@ -387,7 +387,7 @@ async function compileArtifact(flags) {
     await fs.copyFile(path.join(tmpDir, 'assets', config.runtime.fileName), outPath);
     console.log(`Compiled ${outPath}`);
     console.log(`  ${(manifest.artifact.bytes / 1024 / 1024).toFixed(2)} MB, ${manifest.chunkCount} records, identity ${manifest.artifact.identity}`);
-    console.log("Query it from any runtime: openPancakeFile from 'pikelet-wasm/complete'");
+    console.log("Query it from any runtime: openPikeletFile from 'pikelet-wasm/complete'");
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
