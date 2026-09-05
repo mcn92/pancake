@@ -23,7 +23,8 @@ execution model) with a two-tier design:
 The profile exists because sequential dependency depth, not byte volume,
 dominates remote-read latency. Measured on SIFT1M against object storage
 over the public internet, this geometry answered queries 5x faster than
-graph traversal at equal recall (see `ROADMAP.md`, Track A, 2026-08-01).
+graph traversal at equal recall (Track A measurement, 2026-08-01; project
+roadmap notes now kept internally).
 
 Under the contract, this is a distinct profile, not an amendment to the
 range artifact profile: the two share the contract layers but declare
@@ -155,8 +156,8 @@ codebooks, no training step.
 
 Producers SHOULD choose `sketchDims` so that pooling preserves ranking
 quality on their data; 2:1 pooling is the measured reference point for
-SIFT-class vectors (4:1 measurably degrades recall — see `ROADMAP.md`
-closed lines).
+SIFT-class vectors (4:1 measurably degrades recall, per project
+measurement notes kept internally).
 
 ## 3. Execution semantics
 
