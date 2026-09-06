@@ -508,7 +508,7 @@ both as equivalent.
 6. Per-row vector commitments (closing section 6's transitional gap per
    read). Measured 2026-08-25 on the wiki workload — byte/run model,
    adversarial dispersion, and real-HTTP wall-clock replay
-   (`examples/05-one-file-search/poc/ROW_COMMITMENT_MEASUREMENT.md`).
+   (`docs/measurements/row-commitments/ROW_COMMITMENT_MEASUREMENT.md`).
    Outcome, for SKETCH_PROFILE.md's next revision: **interleaved digest
    blocks** — each 16-row group stores a 16-byte-per-row truncated
    SHA-256 digest page inline ahead of its rows, with 32-byte page

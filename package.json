@@ -1,7 +1,7 @@
 {
   "name": "pikelet-wasm",
   "version": "0.7.0",
-  "description": "HNSW vector search in WebAssembly. Runs in Node.js, browsers, and Cloudflare Workers with no native dependencies.",
+  "description": "Vector search engine and .pikelet artifact readers/builders, in WebAssembly. Compile a corpus into one self-contained, hash-verified search file, or use the underlying HNSW engine directly. Runs in Node.js, browsers, and Cloudflare Workers with no native dependencies.",
   "main": "pikelet.js",
   "types": "pikelet.d.ts",
   "exports": {
@@ -123,6 +123,12 @@
   },
   "keywords": [
     "vector-search",
+    "search-artifact",
+    "knowledge-pack",
+    "retrieval",
+    "rag",
+    "mcp",
+    "model-context-protocol",
     "ann",
     "hnsw",
     "wasm",

@@ -100,7 +100,7 @@ returned row against its digest slot before returning or caching it, and
 fail the fetch on any mismatch. `verify: false` opts the whole open out,
 reported as unverified. Defaults (16 rows, 16-byte digests) were chosen by
 the 2026-08-25 access-pattern measurement
-(`examples/05-one-file-search/poc/ROW_COMMITMENT_MEASUREMENT.md`):
+(`docs/measurements/row-commitments/ROW_COMMITMENT_MEASUREMENT.md`):
 digests ride inside existing coalesced runs at ~0% latency overhead and
 +4.2% file size. Version-1 files remain valid; readers report which
 stance a file carries.

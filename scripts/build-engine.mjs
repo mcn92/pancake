@@ -228,7 +228,7 @@ if (patchEngineJs === '1' && outBasename === 'engine') {
   console.log('Applying engine.js patches...');
   let patched = false;
   for (const [command, baseArgs] of pythonCandidates()) {
-    const result = spawnSync(command, [...baseArgs, 'patch_engine.py'], {
+    const result = spawnSync(command, [...baseArgs, 'scripts/patch_engine.py'], {
       stdio: 'inherit',
       env: buildEnv,
     });

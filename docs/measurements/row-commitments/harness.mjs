@@ -23,8 +23,8 @@
 // as egress, before transport overhead.
 
 import fs from 'node:fs';
-import { openPancakeFile } from '../pikelet-file-reader.mjs';
-import { httpRangeSource } from '../sources.mjs';
+import { openPancakeFile } from '../../../examples/05-one-file-search/pikelet-file-reader.mjs';
+import { httpRangeSource } from '../../../examples/05-one-file-search/sources.mjs';
 
 function parseArgs(argv) {
     const args = { positional: [], k: 10, warmPasses: 1 };

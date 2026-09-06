@@ -25,11 +25,11 @@ one `.pikelet` file answering natural-language queries via
 ### Published package
 
 ```bash
-npm install pancake-wasm
+npm install pikelet-wasm
 ```
 
-This guide documents the Pikelet 0.2 contract; it requires `pikelet-wasm@0.2.0`
-or later.
+This guide documents the current Pikelet contract; it requires
+`pikelet-wasm@0.7.0` or later.
 
 ### Repository checkout
 
@@ -195,7 +195,7 @@ npx wrangler dev --port 8787 --var ALLOW_INSECURE_ADMIN:1
 
 ```bash
 cd examples/legacy/reference-worker
-wrangler r2 bucket create pancake-indexes
+wrangler r2 bucket create pikelet-indexes
 wrangler deploy
 ```
 

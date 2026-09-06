@@ -602,10 +602,10 @@ flags, export list, and env-var handling all live in the script. Key flags:
 - **Output:** `dist/engine.js` (~17 KB) + `dist/engine.wasm` (~141 KB;
   ~50 KB gzipped).
 
-A post-build `patch_engine.py` rewrites the Emscripten-generated environment
+A post-build `scripts/patch_engine.py` rewrites the Emscripten-generated environment
 detection, forcing `ENVIRONMENT_IS_NODE = false` in `engine.js` so the modular
 factory loads cleanly across Node, browser, and Workers rather than taking
-Emscripten's CommonJS auto-path. (`patch_engine.py`.)
+Emscripten's CommonJS auto-path. (`scripts/patch_engine.py`.)
 
 **Scalar fallback.** `npm run build:all` (`scripts/build-all.mjs`) builds the
 SIMD engine above and then re-runs the same compile with `WASM_SIMD=0` to emit
