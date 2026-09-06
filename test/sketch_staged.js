@@ -35,7 +35,7 @@ async function main() {
     }
   }
   const idx = { dim, count, metric: 1, qdata, scales, offsets };
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pancake-staged-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pikelet-staged-'));
   const plainPath = path.join(tmp, 'plain.pancake-sketch');
   const microPath = path.join(tmp, 'micro.pancake-sketch');
   const opts = { sketchDims: 32, sketchBits: 8, recommendedRerank: 60 };

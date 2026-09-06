@@ -6,7 +6,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { performance } = require('perf_hooks');
 
-const PANCAKE_MAGIC = 0x504E434B;
+const PIKELET_MAGIC = 0x504E434B;
 const V1_ENVELOPE_HEADER_SIZE = 24;
 const V2_ENVELOPE_HEADER_SIZE = 20;
 const V3_ENVELOPE_HEADER_SIZE = 32;
@@ -40,7 +40,7 @@ function parseIntArg(name, fallback) {
 
 function unwrapSnapshot(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (bytes.byteLength < 4 || view.getUint32(0, true) !== PANCAKE_MAGIC) return bytes;
+  if (bytes.byteLength < 4 || view.getUint32(0, true) !== PIKELET_MAGIC) return bytes;
   const version = view.getUint32(4, true);
   if (version === 1) return bytes.subarray(V1_ENVELOPE_HEADER_SIZE);
   if (version === 2) return bytes.subarray(V2_ENVELOPE_HEADER_SIZE);
@@ -685,7 +685,7 @@ function inspectArtifact(file, options = {}) {
     const sizeBytes = fs.statSync(file).size;
     const expectedSizeBytes = artifact.recordsOffset + artifact.count * artifact.recordBytes;
     const manifest = {
-      format: 'pancake-range-artifact',
+      format: 'pikelet-range-artifact',
       formatVersion: artifact.version,
       file: path.resolve(file),
       sizeBytes,

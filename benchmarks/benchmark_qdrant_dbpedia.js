@@ -46,7 +46,7 @@ function getBoolArg(name) {
 
 const DBPEDIA_DIR = path.resolve(getStrArg('data-dir', path.join(__dirname, '..', 'dbpedia')));
 const QDRANT_URL = (getStrArg('url', process.env.QDRANT_URL || 'http://127.0.0.1:6333')).replace(/\/+$/, '');
-const COLLECTION = getStrArg('collection', 'pancake_dbpedia_l2');
+const COLLECTION = getStrArg('collection', 'pikelet_dbpedia_l2');
 const N_BASE = getIntArg('count', 50_000);
 const N_QUERIES = getIntArg('queries', 1_000);
 const K = getIntArg('k', 10);

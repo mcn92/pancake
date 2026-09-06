@@ -143,7 +143,7 @@ if (wasmSimd === '1') {
 const profileFlags = [];
 let profileDesc = 'profiling off';
 if (profile) {
-  profileFlags.push('-D', 'PANCAKE_UINT8_HNSW_BUILD_PROFILE=1');
+  profileFlags.push('-D', 'PIKELET_UINT8_HNSW_BUILD_PROFILE=1');
   profileDesc = 'profiling on';
 }
 

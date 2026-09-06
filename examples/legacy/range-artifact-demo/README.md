@@ -1,6 +1,6 @@
 # Search Artifact Demo
 
-This is the smallest demo of Pancake's range-readable Search Artifact path.
+This is the smallest demo of Pikelet's range-readable Search Artifact path.
 It opens a compiled `.pancake-range` artifact, keeps the v2 router segment
 resident, and lazily materializes base-layer records through byte-range reads.
 
@@ -90,7 +90,7 @@ The demo intentionally does not load the base index into memory. It uses the
 same public API a Worker or HTTP/R2 deployment would use:
 
 ```js
-const artifact = await Pancake.openRangeArtifactFile('index.pancake-range');
+const artifact = await Pikelet.openRangeArtifactFile('index.pancake-range');
 const result = await artifact.search(query, 10, { efSearch: 10 });
 ```
 
@@ -120,5 +120,5 @@ const source = {
   },
 };
 
-const artifact = await Pancake.RangeArtifact.open(source);
+const artifact = await Pikelet.RangeArtifact.open(source);
 ```

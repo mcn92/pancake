@@ -100,7 +100,7 @@ function generatedPackageJson(config) {
 }
 
 function tomlString(value) {
-  return String(value).replace(/[^a-zA-Z0-9_-]/g, '-').replace(/^-+|-+$/g, '') || 'pancake-search';
+  return String(value).replace(/[^a-zA-Z0-9_-]/g, '-').replace(/^-+|-+$/g, '') || 'pikelet-search';
 }
 async function deployProject(projectDir) {
   const who = runNpmSync(['exec', '--', 'wrangler', 'whoami'], { cwd: projectDir, encoding: 'utf8' });

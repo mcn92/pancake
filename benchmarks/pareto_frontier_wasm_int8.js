@@ -6,7 +6,7 @@
  *
  * Defaults to:
  *   dataset=dbpedia, count=25000, M=12, ef_construction=75
- *   configs=pancake-wasm-u8,pancake-wasm-fp32,pancake-native-u8,pancake-native-fp32,
+ *   configs=pikelet-wasm-u8,pikelet-wasm-fp32,pikelet-native-u8,pikelet-native-fp32,
  *           usearch-wasm-int8,usearch-wasm-fp32,usearch-int8,usearch-fp32
  *
  * Extra CLI args are passed through and take precedence over these defaults.
@@ -31,8 +31,8 @@ addDefault(args, 'count', '25000');
 addDefault(args, 'configs', [
   'pikelet-wasm-u8',
   'pikelet-wasm-fp32',
-  'pancake-native-u8',
-  'pancake-native-fp32',
+  'pikelet-native-u8',
+  'pikelet-native-fp32',
   'usearch-wasm-int8',
   'usearch-wasm-fp32',
   'usearch-int8',

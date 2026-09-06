@@ -12,7 +12,7 @@
 // while the format logic lives in one place.
 import { openPancakeFile, httpRangeSource } from 'pikelet-wasm/complete';
 
-export async function openCompletePancakeUrl(url, options = {}) {
+export async function openCompletePikeletUrl(url, options = {}) {
   const source = httpRangeSource(url, {
     // Bound the ignores-Range fallback well above docs-scale artifacts;
     // wiki-scale files should fail loudly rather than pull 600 MiB.

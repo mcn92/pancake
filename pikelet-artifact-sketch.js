@@ -223,7 +223,7 @@ function exportSketchArtifact(index, outPath, options = {}) {
     }
 
     const manifest = {
-        format: 'pancake-sketch-artifact',
+        format: 'pikelet-sketch-artifact',
         formatVersion: rowIntegrity ? 2 : 1,
         sizeBytes: fileBytes,
         metric: index.metric === 1 ? 'cosine' : 'l2',

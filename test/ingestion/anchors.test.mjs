@@ -28,7 +28,7 @@ const KNOWN_DIVERGENCES = new Map([
   ['The <Component /> story', 'the-story'],
 ]);
 
-function pancakeSlugs(headings) {
+function pikeletSlugs(headings) {
   // Run the battery through the real extraction path (one doc, one
   // slugger instance, so duplicate handling is exercised too).
   const body = headings.map((heading) => `## ${heading}\n\nfiller\n`).join('\n');
@@ -39,7 +39,7 @@ function pancakeSlugs(headings) {
 section('anchors: github-slugger parity battery');
 {
   const vectors = JSON.parse(fs.readFileSync(path.join(here, 'fixtures', 'github-slugger-vectors.json'), 'utf8'));
-  const slugs = pancakeSlugs(vectors.map((v) => v.heading));
+  const slugs = pikeletSlugs(vectors.map((v) => v.heading));
   let mismatches = [];
   vectors.forEach((v, i) => {
     const expected = KNOWN_DIVERGENCES.get(v.heading) ?? v.slug;

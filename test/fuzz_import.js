@@ -56,7 +56,7 @@ function randBytes(len) {
 
 // ─── Snapshot helpers ───────────────────────────────────────────────────────
 
-const PANCAKE_MAGIC = 0x504E434B;
+const PIKELET_MAGIC = 0x504E434B;
 const FLOAT_MAGIC = 0x464C4831;
 const UINT8_MAGIC = 0x49384831;
 
@@ -85,7 +85,7 @@ async function buildValidSnapshot(quantized) {
 function extractWasmPayload(exported) {
     const view = new DataView(exported.buffer, exported.byteOffset, exported.byteLength);
     const magic = view.getUint32(0, true);
-    if (magic !== PANCAKE_MAGIC) return exported;
+    if (magic !== PIKELET_MAGIC) return exported;
     const version = view.getUint32(4, true);
     if (version === 3) {
         const mappingCount = view.getUint32(24, true);
@@ -101,7 +101,7 @@ function wrapInEnvelope(wasmBytes, dim, quantized) {
     const headerSize = 32;
     const result = new Uint8Array(headerSize + wasmBytes.length);
     const view = new DataView(result.buffer);
-    view.setUint32(0, PANCAKE_MAGIC, true);
+    view.setUint32(0, PIKELET_MAGIC, true);
     view.setUint32(4, 3, true); // version
     view.setUint32(8, dim, true);
     view.setUint32(12, 1, true); // cosine
@@ -369,14 +369,14 @@ async function fuzzEnvelopeCorruption() {
     // Bad envelope version
     const buf2 = new Uint8Array(64);
     const v2 = new DataView(buf2.buffer);
-    v2.setUint32(0, PANCAKE_MAGIC, true);
+    v2.setUint32(0, PIKELET_MAGIC, true);
     v2.setUint32(4, 99, true);
     await tryImport('bad-envelope-version', buf2, dim, true);
 
     // Dimension mismatch in envelope
     const buf3 = new Uint8Array(64);
     const v3 = new DataView(buf3.buffer);
-    v3.setUint32(0, PANCAKE_MAGIC, true);
+    v3.setUint32(0, PIKELET_MAGIC, true);
     v3.setUint32(4, 3, true);
     v3.setUint32(8, 999, true); // wrong dim
     v3.setUint32(12, 1, true);
@@ -386,7 +386,7 @@ async function fuzzEnvelopeCorruption() {
     // Metric mismatch
     const buf4 = new Uint8Array(64);
     const v4 = new DataView(buf4.buffer);
-    v4.setUint32(0, PANCAKE_MAGIC, true);
+    v4.setUint32(0, PIKELET_MAGIC, true);
     v4.setUint32(4, 3, true);
     v4.setUint32(8, dim, true);
     v4.setUint32(12, 0, true); // l2 but we create with cosine
@@ -396,7 +396,7 @@ async function fuzzEnvelopeCorruption() {
     // Quantized mismatch
     const buf5 = new Uint8Array(64);
     const v5 = new DataView(buf5.buffer);
-    v5.setUint32(0, PANCAKE_MAGIC, true);
+    v5.setUint32(0, PIKELET_MAGIC, true);
     v5.setUint32(4, 3, true);
     v5.setUint32(8, dim, true);
     v5.setUint32(12, 1, true);
@@ -406,7 +406,7 @@ async function fuzzEnvelopeCorruption() {
     // Truncated v3 envelope (< 32 bytes)
     for (const len of [0, 4, 8, 16, 20, 28, 31]) {
         const buf = new Uint8Array(len);
-        if (len >= 4) new DataView(buf.buffer).setUint32(0, PANCAKE_MAGIC, true);
+        if (len >= 4) new DataView(buf.buffer).setUint32(0, PIKELET_MAGIC, true);
         if (len >= 8) new DataView(buf.buffer).setUint32(4, 3, true);
         await tryImport(`truncated-envelope[${len}B]`, buf, dim, true);
     }
@@ -414,7 +414,7 @@ async function fuzzEnvelopeCorruption() {
     // Envelope claims huge wasmSize
     const buf6 = new Uint8Array(48);
     const v6 = new DataView(buf6.buffer);
-    v6.setUint32(0, PANCAKE_MAGIC, true);
+    v6.setUint32(0, PIKELET_MAGIC, true);
     v6.setUint32(4, 3, true);
     v6.setUint32(8, dim, true);
     v6.setUint32(12, 1, true);
@@ -427,7 +427,7 @@ async function fuzzEnvelopeCorruption() {
     // Envelope with huge mappingCount
     const buf7 = new Uint8Array(48);
     const v7 = new DataView(buf7.buffer);
-    v7.setUint32(0, PANCAKE_MAGIC, true);
+    v7.setUint32(0, PIKELET_MAGIC, true);
     v7.setUint32(4, 3, true);
     v7.setUint32(8, dim, true);
     v7.setUint32(12, 1, true);

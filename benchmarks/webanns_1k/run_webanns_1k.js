@@ -95,7 +95,7 @@ async function main() {
       }
 
       fs.mkdirSync(OUT_DIR, { recursive: true });
-      const outPath = path.join(OUT_DIR, `webanns_arxiv_1k_pancake_${Date.now()}.json`);
+      const outPath = path.join(OUT_DIR, `webanns_arxiv_1k_pikelet_${Date.now()}.json`);
       fs.writeFileSync(outPath, JSON.stringify(result, null, 2));
       printSummary(result);
       console.log('');

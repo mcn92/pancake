@@ -59,10 +59,10 @@ const REPETITIONS = 3;
 const WARMUP_QUERIES = 200;
 
 const CONFIGS = [
-  { label: 'pancake-u8-wasm',   runtime: 'wasm',   dtype: 'u8'  },
-  { label: 'pancake-u8-native', runtime: 'native', dtype: 'u8'  },
-  { label: 'pancake-f32-wasm',    runtime: 'wasm',   dtype: 'f32' },
-  { label: 'pancake-f32-native',  runtime: 'native', dtype: 'f32' },
+  { label: 'pikelet-u8-wasm',   runtime: 'wasm',   dtype: 'u8'  },
+  { label: 'pikelet-u8-native', runtime: 'native', dtype: 'u8'  },
+  { label: 'pikelet-f32-wasm',    runtime: 'wasm',   dtype: 'f32' },
+  { label: 'pikelet-f32-native',  runtime: 'native', dtype: 'f32' },
 ];
 
 // --- Logging / output ---

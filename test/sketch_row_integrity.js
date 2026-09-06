@@ -62,7 +62,7 @@ function queryFor(index, id) {
 }
 
 async function main() {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pancake-rowint-'));
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pikelet-rowint-'));
     const dim = 32, count = 500; // 500 rows -> partial last 16-row block
     const index = makeIndex(dim, count, 42);
     const opts = { sketchDims: 16, sketchBits: 8, recommendedRerank: 40 };

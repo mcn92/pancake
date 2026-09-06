@@ -104,9 +104,9 @@ jobs:
           printf '#include "uint8_float_hnsw.hpp"\n#include "float_hnsw.hpp"\nint main() { return 0; }\n' > /tmp/isa_check.cpp
           set -e
           for FLAGS in \
-            "-mavx512f -mavx512bw -DPANCAKE_ENABLE_AVX512_SIMD -DPANCAKE_ENABLE_AVX2_SIMD -DPANCAKE_ENABLE_SSE2_SIMD" \
-            "-mavx2 -DPANCAKE_ENABLE_AVX2_SIMD -DPANCAKE_ENABLE_SSE2_SIMD" \
-            "-msse2 -DPANCAKE_ENABLE_SSE2_SIMD" \
+            "-mavx512f -mavx512bw -DPIKELET_ENABLE_AVX512_SIMD -DPIKELET_ENABLE_AVX2_SIMD -DPIKELET_ENABLE_SSE2_SIMD" \
+            "-mavx2 -DPIKELET_ENABLE_AVX2_SIMD -DPIKELET_ENABLE_SSE2_SIMD" \
+            "-msse2 -DPIKELET_ENABLE_SSE2_SIMD" \
             ""; do
             g++ -std=c++17 -O2 -Isrc $FLAGS -fsyntax-only /tmp/isa_check.cpp
             echo "compiles: [${FLAGS:-scalar}]"

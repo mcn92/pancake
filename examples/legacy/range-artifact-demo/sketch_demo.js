@@ -165,7 +165,7 @@ async function main() {
 
     const range = await Pikelet.openRangeArtifactFile(artifactPath);
     const sketchPath = path.join(
-        fs.mkdtempSync(path.join(os.tmpdir(), 'pancake-sketch-demo-')),
+        fs.mkdtempSync(path.join(os.tmpdir(), 'pikelet-sketch-demo-')),
         path.basename(artifactPath).replace(/\.pancake-range$/, '') + '.pancake-sketch'
     );
     try {

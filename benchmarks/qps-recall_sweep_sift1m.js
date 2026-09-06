@@ -32,7 +32,7 @@ const REPETITIONS = 3;
 const WARMUP_QUERIES = 200;
 
 const CONFIGS = [
-  { label: 'pancake-u8-wasm',   library: 'pikelet' },
+  { label: 'pikelet-u8-wasm',   library: 'pikelet' },
   { label: 'hnswlib-f32-native',  library: 'hnswlib' },
 ];
 
@@ -110,7 +110,7 @@ function stddev(arr) {
 
 // --- Pikelet: build and query ---
 async function buildPikelet({ train, dim }) {
-  log(`  [pancake-u8] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
+  log(`  [pikelet-u8] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
   const index = await Pikelet.create({
     dim,
     metric: 'l2',
@@ -142,7 +142,7 @@ async function buildPikelet({ train, dim }) {
     }
   }
   const buildMs = performance.now() - t0;
-  log(`  [pancake-u8] build: ${(buildMs / 1000).toFixed(1)}s (${(train.length / (buildMs / 1000)).toFixed(0)} vec/s), memory: ${(index.memory / 1024 / 1024).toFixed(0)} MB`);
+  log(`  [pikelet-u8] build: ${(buildMs / 1000).toFixed(1)}s (${(train.length / (buildMs / 1000)).toFixed(0)} vec/s), memory: ${(index.memory / 1024 / 1024).toFixed(0)} MB`);
   return { index, buildMs };
 }
 

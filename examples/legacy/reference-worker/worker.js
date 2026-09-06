@@ -23,8 +23,8 @@ const DEFAULT_MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 const DEFAULT_MAX_JSON_BYTES = 1 * 1024 * 1024;
 const MAX_EF = 4096;
 const MAX_M = 128;
-const SNAPSHOT_KEY_PREFIX = 'pancake-index-';
-const LEGACY_SNAPSHOT_KEY = 'pancake-index.bin';
+const SNAPSHOT_KEY_PREFIX = 'pikelet-index-';
+const LEGACY_SNAPSHOT_KEY = 'pikelet-index.bin';
 const PUBLIC_ROUTES = new Set(['/health', '/search']);
 const ADMIN_ROUTES = new Set([
   '/init',

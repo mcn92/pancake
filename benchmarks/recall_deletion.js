@@ -127,7 +127,7 @@ function cosineDist(a, b) {
         return { trueTopK, trueK };
     }
 
-    function measurePancakeRecall() {
+    function measurePikeletRecall() {
         let totalRecall = 0;
         const latencies = [];
         for (const qIdx of queryIndices) {
@@ -211,7 +211,7 @@ function cosineDist(a, b) {
 
         const realGhostPct = (1 - liveSet.size / N) * 100;
 
-        const pm = measurePancakeRecall();
+        const pm = measurePikeletRecall();
         results.push({
             targetPct, ghostPct: realGhostPct, live: liveSet.size,
             recall: pm.recall, p50: pm.p50, p99: pm.p99,
@@ -272,7 +272,7 @@ function cosineDist(a, b) {
     }
 
     fs.writeFileSync(path.join(os.tmpdir(), 'recall_dbpedia_1536d.json'), JSON.stringify({
-        pancakeBuildSec: buildSec,
+        pikeletBuildSec: buildSec,
         hnswlibBuildSec: hnswBuildSec,
         pikelet: results,
         hnswlib: hnswResults,

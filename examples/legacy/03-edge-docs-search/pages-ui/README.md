@@ -1,11 +1,11 @@
-# Pancake docs search Pages UI
+# Pikelet docs search Pages UI
 
 Static Cloudflare Pages shell for the Worker-backed semantic-search demo.
 
 Hosted UI:
 
 ```text
-https://pancake-docs-search.pages.dev
+https://pikelet-docs-search.pages.dev
 ```
 
 Worker API: none public at the moment. The companion Worker is deployed in
@@ -24,7 +24,7 @@ From the repository root:
 ```bash
 npm run build:pages-demo
 npx wrangler pages deploy examples/legacy/03-edge-docs-search/pages-ui/dist \
-  --project-name pancake-docs-search
+  --project-name pikelet-docs-search
 ```
 
 The Worker backend lives in the parent directory. Search is currently private

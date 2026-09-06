@@ -360,7 +360,7 @@ try {
     const projectDir = path.join(work, `proj-${runtime}`);
     run(process.execPath, [CPS_BIN, '--name', projectDir, '--source', path.join(ROOT, 'docs'), '--runtime', runtime, '--no-deploy', '--yes', '--force'], {
       cwd: CPS_DIR,
-      env: { ...process.env, PANCAKE_SEARCH_STUB_EMBEDDINGS: '1' },
+      env: { ...process.env, PIKELET_SEARCH_STUB_EMBEDDINGS: '1' },
     });
     const genPkgPath = path.join(projectDir, 'package.json');
     ok(fs.existsSync(genPkgPath), 'scaffold wrote package.json');

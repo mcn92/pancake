@@ -48,7 +48,7 @@ const WARMUP_QUERIES = 200;   // Warmup per point (hot cache, V8 tier-up)
 
 // Which (library, dtype) combinations to run
 const CONFIGS = [
-  { label: 'pancake-u8-wasm',   library: 'pikelet',  dtype: 'u8' },
+  { label: 'pikelet-u8-wasm',   library: 'pikelet',  dtype: 'u8' },
   { label: 'hnswlib-f32-native',  library: 'hnswlib',  dtype: 'f32' },
 ];
 
@@ -152,7 +152,7 @@ function stddev(arr) {
 // --- Pikelet: build and query ---
 async function buildPikelet({ train, dim, dtype }) {
   const quantized = dtype === 'u8';
-  log(`  [pancake-${dtype}] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
+  log(`  [pikelet-${dtype}] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
   const index = await Pikelet.create({
     dim,
     maxElements: train.length,
@@ -174,7 +174,7 @@ async function buildPikelet({ train, dim, dtype }) {
     for (let i = 0; i < train.length; i++) index.add(train[i]);
   }
   const buildMs = performance.now() - t0;
-  log(`  [pancake-${dtype}] build: ${(buildMs / 1000).toFixed(1)}s, memory: ${(index.memory / 1024 / 1024).toFixed(0)} MB`);
+  log(`  [pikelet-${dtype}] build: ${(buildMs / 1000).toFixed(1)}s, memory: ${(index.memory / 1024 / 1024).toFixed(0)} MB`);
   return { index, buildMs };
 }
 

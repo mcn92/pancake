@@ -139,7 +139,7 @@ function validateAbstentionModel(candidate) {
 }
 
 function getCorsOrigin() {
-  const value = String(globalThis.__PANCAKE_ALLOWED_ORIGIN__ || '').trim();
+  const value = String(globalThis.__PIKELET_ALLOWED_ORIGIN__ || '').trim();
   return value || null;
 }
 
@@ -1100,7 +1100,7 @@ function buildResult(hit) {
     preview: chunk?.preview || '',
     source_path: sourcePath,
     anchor,
-    source_url: `https://github.com/mcn92/pancake/blob/main/${sourcePath}${anchor ? `#${anchor}` : ''}`
+    source_url: `https://github.com/mcn92/pikelet/blob/main/${sourcePath}${anchor ? `#${anchor}` : ''}`
   };
 }
 
@@ -1310,7 +1310,7 @@ async function handleSearch(request, env) {
 
 export default {
   async fetch(request, env) {
-    globalThis.__PANCAKE_ALLOWED_ORIGIN__ = String(env.ALLOWED_ORIGIN || '').trim();
+    globalThis.__PIKELET_ALLOWED_ORIGIN__ = String(env.ALLOWED_ORIGIN || '').trim();
     const url = new URL(request.url);
     const rateLimitResponse = await enforceRateLimit(request, env, url);
     if (rateLimitResponse) return rateLimitResponse;
@@ -1323,7 +1323,7 @@ export default {
         headers: {
           ...corsHeaders(),
           'access-control-allow-methods': 'GET, POST, OPTIONS',
-          'access-control-allow-headers': 'authorization, content-type, x-pancake-demo-key'
+          'access-control-allow-headers': 'authorization, content-type, x-pikelet-demo-key'
         }
       });
     }

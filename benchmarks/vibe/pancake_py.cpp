@@ -6,7 +6,7 @@
 // passing through Node or WebAssembly.
 //
 // Build (out of the pancake repo root, with the headers on the include path):
-//   c++ -O3 -std=c++17 -shared -fPIC -DPANCAKE_ENABLE_AVX2_SIMD -mavx2 \
+//   c++ -O3 -std=c++17 -shared -fPIC -DPIKELET_ENABLE_AVX2_SIMD -mavx2 \
 //       $(python3 -m pybind11 --includes) \
 //       -Isrc pancake_py.cpp -o pancake_py$(python3-config --extension-suffix)
 //
@@ -31,11 +31,11 @@
 #include "float_hnsw.hpp"
 
 namespace py = pybind11;
-using pancake::wasm::DistanceMetric;
-using pancake::wasm::Uint8FloatHNSW;
-using pancake::wasm::Uint8FloatHNSWConfig;
-using pancake::wasm::FloatHNSW;
-using pancake::wasm::FloatHNSWConfig;
+using pikelet::wasm::DistanceMetric;
+using pikelet::wasm::Uint8FloatHNSW;
+using pikelet::wasm::Uint8FloatHNSWConfig;
+using pikelet::wasm::FloatHNSW;
+using pikelet::wasm::FloatHNSWConfig;
 
 class PancakeIndex {
 public:

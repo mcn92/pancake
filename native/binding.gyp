@@ -1,7 +1,7 @@
 {
   "targets": [
     {
-      "target_name": "pancake_native",
+      "target_name": "pikelet_native",
       "sources": ["pancake_napi.cpp"],
       "include_dirs": [
         "<!@(node -p \"require('node-addon-api').include\")",
@@ -21,9 +21,9 @@
         "-march=native",
         "-mavx2",
         "-msse2",
-        "-DPANCAKE_ENABLE_AVX512_SIMD",
-        "-DPANCAKE_ENABLE_AVX2_SIMD",
-        "-DPANCAKE_ENABLE_SSE2_SIMD"
+        "-DPIKELET_ENABLE_AVX512_SIMD",
+        "-DPIKELET_ENABLE_AVX2_SIMD",
+        "-DPIKELET_ENABLE_SSE2_SIMD"
       ],
       "conditions": [
         ["OS=='mac'", {
@@ -33,8 +33,8 @@
             "OTHER_CPLUSPLUSFLAGS": [
               "-O3", "-ffast-math", "-fvectorize", "-fslp-vectorize",
               "-fno-rtti", "-mavx2",
-              "-DPANCAKE_ENABLE_AVX512_SIMD",
-              "-DPANCAKE_ENABLE_AVX2_SIMD", "-DPANCAKE_ENABLE_SSE2_SIMD"
+              "-DPIKELET_ENABLE_AVX512_SIMD",
+              "-DPIKELET_ENABLE_AVX2_SIMD", "-DPIKELET_ENABLE_SSE2_SIMD"
             ]
           }
         }],
@@ -42,7 +42,7 @@
           "msvs_settings": {
             "VCCLCompilerTool": {
               "ExceptionHandling": 1,
-              "AdditionalOptions": ["/O2", "/std:c++17", "/arch:AVX2", "/DPANCAKE_ENABLE_AVX2_SIMD", "/DPANCAKE_ENABLE_SSE2_SIMD"]
+              "AdditionalOptions": ["/O2", "/std:c++17", "/arch:AVX2", "/DPIKELET_ENABLE_AVX2_SIMD", "/DPIKELET_ENABLE_SSE2_SIMD"]
             }
           }
         }]

@@ -37,7 +37,7 @@ const { performance } = require('perf_hooks');
 
 const Pikelet = require('../pikelet.js');
 
-const PANCAKE_MAGIC = 0x504E434B;
+const PIKELET_MAGIC = 0x504E434B;
 const V1_ENVELOPE_HEADER_SIZE = 24;
 const V2_ENVELOPE_HEADER_SIZE = 20;
 const V3_ENVELOPE_HEADER_SIZE = 32;
@@ -109,7 +109,7 @@ function readFvecs(file, limit = Infinity) {
 
 function unwrapSnapshot(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (bytes.byteLength < 4 || view.getUint32(0, true) !== PANCAKE_MAGIC) return bytes;
+  if (bytes.byteLength < 4 || view.getUint32(0, true) !== PIKELET_MAGIC) return bytes;
   if (bytes.byteLength < 8) throw new Error('truncated Pikelet snapshot envelope');
   const version = view.getUint32(4, true);
   if (version === 1) return bytes.subarray(V1_ENVELOPE_HEADER_SIZE);
@@ -776,7 +776,7 @@ async function buildSnapshot(snapshotPath, dataDir, count, opts) {
 
 async function main() {
   const dataDir = path.resolve(arg('data-dir', path.join(__dirname, '..', 'sift')));
-  const snapshotPath = path.resolve(arg('snapshot', arg('build-snapshot', '/tmp/pancake-sift1m-u8.pnck')));
+  const snapshotPath = path.resolve(arg('snapshot', arg('build-snapshot', '/tmp/pikelet-sift1m-u8.pnck')));
   const count = parseIntArg('count', 1000000);
   const queries = parseIntArg('queries', 1000);
   const k = parseIntArg('k', 10);

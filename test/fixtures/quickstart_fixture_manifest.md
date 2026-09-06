@@ -6,7 +6,7 @@ checks, and import/export examples.
 Files:
 
 - `quickstart_vectors.jsonl` — source vectors with stable caller IDs
-- `quickstart_index.pnck` — Pancake package snapshot from the same vectors
+- `quickstart_index.pnck` — Pikelet package snapshot from the same vectors
 - `quickstart_worker_export.bin` — Worker `/export`-compatible blob from the same vectors
 
 Dataset:

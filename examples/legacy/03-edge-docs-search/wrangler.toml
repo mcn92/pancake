@@ -1,4 +1,4 @@
-name = "pancake-docs-search"
+name = "pikelet-docs-search"
 main = "worker.js"
 compatibility_date = "2025-04-09"
 compatibility_flags = ["nodejs_compat"]
@@ -7,7 +7,7 @@ preview_urls = false
 
 [vars]
 READ_ONLY = "1"
-ALLOWED_ORIGIN = "https://pancake-docs-search.pages.dev"
+ALLOWED_ORIGIN = "https://pikelet-docs-search.pages.dev"
 DISABLE_SEARCH = "0"
 PRIVATE_SEARCH = "1"
 # API_KEY = "replace-me-with-a-secret"      # Recommended for /readiness and /reset_cache

@@ -11,7 +11,7 @@
     #include <wasm_simd128.h>
 #endif
 
-using namespace pancake::wasm;
+using namespace pikelet::wasm;
 
 namespace {
 
@@ -350,8 +350,8 @@ void* emsc_malloc(size_t size) { return malloc(size); }
 void emsc_free(void* ptr) { free(ptr); }
 
 void pancake_profile_print(uint32_t range_start, uint32_t range_end) {
-#if defined(PANCAKE_UINT8_HNSW_BUILD_PROFILE)
-    pancake::wasm::g_build_profile.print(range_start, range_end);
+#if defined(PIKELET_UINT8_HNSW_BUILD_PROFILE)
+    pikelet::wasm::g_build_profile.print(range_start, range_end);
 #else
     (void)range_start;
     (void)range_end;
@@ -359,8 +359,8 @@ void pancake_profile_print(uint32_t range_start, uint32_t range_end) {
 }
 
 void pancake_profile_reset() {
-#if defined(PANCAKE_UINT8_HNSW_BUILD_PROFILE)
-    pancake::wasm::g_build_profile.reset();
+#if defined(PIKELET_UINT8_HNSW_BUILD_PROFILE)
+    pikelet::wasm::g_build_profile.reset();
 #endif
 }
 

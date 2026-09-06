@@ -85,7 +85,7 @@ class DelayedMemorySource {
 }
 
 async function run() {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pancake-sketch-'));
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pikelet-sketch-'));
     const COUNT = 600;
     const DIM = 32;
     const K = 10;

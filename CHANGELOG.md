@@ -8,6 +8,20 @@ Through 0.6.0 these were published as `pancake-wasm` and
 packages are pre-1.0: a minor bump may carry breaking changes, and each entry lists them
 first.
 
+## Unreleased
+
+### Breaking / compatibility
+
+- **The `PANCAKE_ENCODER_WEIGHTS_URL`, `PANCAKE_SEARCH_EMBED_WORKERS`,
+  `PANCAKE_SEARCH_STUB_EMBEDDINGS`, and `PANCAKE_SEARCH_PYTHON`
+  environment variable fallbacks are removed.** 0.7.0 introduced
+  `PIKELET_ENCODER_WEIGHTS_URL` / `PIKELET_EMBED_WORKERS` while still
+  honoring the old names; those old names no longer work. Use
+  `PIKELET_ENCODER_WEIGHTS_URL`, `PIKELET_EMBED_WORKERS`,
+  `PIKELET_SEARCH_EMBED_WORKERS`, `PIKELET_SEARCH_STUB_EMBEDDINGS`, and
+  `PIKELET_SEARCH_PYTHON`. Pre-1.0; scripts/CI referencing the old
+  names need updating.
+
 ## pikelet-wasm 0.7.0 / pikelet 0.7.0 — 2026-09-02
 
 ### Breaking / compatibility

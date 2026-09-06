@@ -5,9 +5,9 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const WORKER_URL = process.env.PANCAKE_WORKER_URL || 'http://127.0.0.1:8787';
+const WORKER_URL = process.env.PIKELET_WORKER_URL || 'http://127.0.0.1:8787';
 const CATALOG_URL = process.env.CATALOG_DEMO_URL || 'http://127.0.0.1:9090';
-const API_KEY = process.env.PANCAKE_API_KEY || '';
+const API_KEY = process.env.PIKELET_API_KEY || '';
 const RUNTIME_MAPPINGS_PATH = path.join(__dirname, 'runtime_mappings.json');
 
 const leatherBoots = {

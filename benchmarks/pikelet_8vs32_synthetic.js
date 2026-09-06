@@ -390,7 +390,7 @@ async function main() {
   const csvRows = ['label,library,dtype,ef_search,recall,recall_std,qps,qps_std,p50_ms,p95_ms,p99_ms,p999_ms'];
   for (const p of pkPoints) {
     csvRows.push([
-      'pancake-u8-wasm', 'pikelet', 'u8', p.ef_search,
+      'pikelet-u8-wasm', 'pikelet', 'u8', p.ef_search,
       p.recall_mean.toFixed(5), p.recall_std.toFixed(5),
       p.qps_mean.toFixed(2), p.qps_std.toFixed(2),
       p.p50.toFixed(4), p.p95.toFixed(4), p.p99.toFixed(4), p.p999.toFixed(4),

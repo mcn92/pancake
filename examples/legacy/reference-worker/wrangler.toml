@@ -1,4 +1,4 @@
-name = "pancake-search"
+name = "pikelet-search"
 main = "worker.js"
 compatibility_date = "2025-04-09"
 compatibility_flags = ["nodejs_compat"]
@@ -16,12 +16,12 @@ MAX_ELEMENTS_LIMIT = "200000"               # Keep this aligned with Worker memo
 # active R2 binding, `wrangler dev` recycles isolates and races the
 # persist/restore path, which can 503 mutation routes mid-demo. Uncomment to
 # enable snapshot persistence for a real deployment.
-# 1. Create the bucket:   wrangler r2 bucket create pancake-indexes
+# 1. Create the bucket:   wrangler r2 bucket create pikelet-indexes
 # 2. Uncomment below, then redeploy.
 # ---------------------------------------------------------------------------
 # [[r2_buckets]]
 # binding = "INDEX_BUCKET"
-# bucket_name = "pancake-indexes"
+# bucket_name = "pikelet-indexes"
 
 # ---------------------------------------------------------------------------
 # KV — lighter alternative to R2 for small indexes (< 25MB value limit).
@@ -39,7 +39,7 @@ MAX_ELEMENTS_LIMIT = "200000"               # Keep this aligned with Worker memo
 # [[durable_objects.bindings]]
 # name = "SEARCH_INDEX"
 # class_name = "SearchIndex"
-# script_name = "pancake-search"
+# script_name = "pikelet-search"
 
 # [[migrations]]
 # tag = "v1"

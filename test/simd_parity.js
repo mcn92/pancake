@@ -85,7 +85,7 @@ function ensureScalarBuild() {
             OUT_BASENAME: SCALAR_BASENAME,
             WASM_SIMD: '0',
             PATCH_ENGINE_JS: '0',
-            EM_CACHE: process.env.EM_CACHE || path.join(os.tmpdir(), 'pancake-emscripten-cache'),
+            EM_CACHE: process.env.EM_CACHE || path.join(os.tmpdir(), 'pikelet-emscripten-cache'),
         },
         encoding: 'utf8',
     });
@@ -115,8 +115,8 @@ function makePancakeApi(basename) {
 async function main() {
     ensureScalarBuild();
 
-    const PancakeSimd = makePancakeApi('engine');
-    const PancakeScalar = makePancakeApi(SCALAR_BASENAME);
+    const PikeletSimd = makePancakeApi('engine');
+    const PikeletScalar = makePancakeApi(SCALAR_BASENAME);
     const rng = makeRng(0xC0FFEE);
 
     const annScenarios = [
@@ -136,8 +136,8 @@ async function main() {
             efConstruction: 200,
             efSearch: 80,
         };
-        const idxSimd = await PancakeSimd.create(opts);
-        const idxScalar = await PancakeScalar.create(opts);
+        const idxSimd = await PikeletSimd.create(opts);
+        const idxScalar = await PikeletScalar.create(opts);
         try {
             const vectors = Array.from({ length: scenario.count }, () =>
                 scenario.metric === 'cosine'
@@ -188,7 +188,7 @@ async function main() {
             assert.strictEqual(nextSimdId, nextScalarId, `${scenario.label}: add parity after compact`);
 
             const exported = idxSimd.export();
-            const restoredScalar = await PancakeScalar.create(opts);
+            const restoredScalar = await PikeletScalar.create(opts);
             try {
                 restoredScalar.import(exported);
                 for (let i = 0; i < queries.length; i++) {

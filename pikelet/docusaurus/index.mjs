@@ -146,13 +146,13 @@ function makeConfig(context, options, workDir, outDir) {
 
 async function withOptionalStubEmbeddings(enabled, fn) {
   if (!enabled) return fn();
-  const previous = process.env.PANCAKE_SEARCH_STUB_EMBEDDINGS;
-  process.env.PANCAKE_SEARCH_STUB_EMBEDDINGS = '1';
+  const previous = process.env.PIKELET_SEARCH_STUB_EMBEDDINGS;
+  process.env.PIKELET_SEARCH_STUB_EMBEDDINGS = '1';
   try {
     return await fn();
   } finally {
-    if (previous === undefined) delete process.env.PANCAKE_SEARCH_STUB_EMBEDDINGS;
-    else process.env.PANCAKE_SEARCH_STUB_EMBEDDINGS = previous;
+    if (previous === undefined) delete process.env.PIKELET_SEARCH_STUB_EMBEDDINGS;
+    else process.env.PIKELET_SEARCH_STUB_EMBEDDINGS = previous;
   }
 }
 
@@ -377,7 +377,7 @@ function resolveCompleteModule(context) {
   );
 }
 
-export default function pancakeDocusaurusPlugin(context, rawOptions = {}) {
+export default function pikeletDocusaurusPlugin(context, rawOptions = {}) {
   const options = normalizeOptions(rawOptions);
   const workDir = path.resolve(context.siteDir, options.workDir);
   const siteArtifactModule = resolveArtifactModule(context);
@@ -442,7 +442,7 @@ export default function pancakeDocusaurusPlugin(context, rawOptions = {}) {
         headTags: [
           {
             tagName: 'script',
-            innerHTML: `window.__PANCAKE_SEARCH__ = ${JSON.stringify({ assetBase: assetUrlBase })};`,
+            innerHTML: `window.__PIKELET_SEARCH__ = ${JSON.stringify({ assetBase: assetUrlBase })};`,
           },
         ],
         preBodyTags: [

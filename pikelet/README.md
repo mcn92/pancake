@@ -2,7 +2,7 @@
 
 The Pikelet CLI: compile a corpus into one `.pikelet` knowledge pack,
 serve packs to LLMs over MCP, scaffold a search app, or certify hosting.
-(Formerly `pikelet`; the wire format keeps its pancake-era
+(Formerly `pancake`; the wire format keeps its pancake-era
 names, and `.pikelet` files remain fully readable.)
 
 Turn a documentation site into search: either one complete `.pikelet` file
@@ -101,7 +101,7 @@ package copy is absent — registry installs ship without it), on a worker
 pool sized to your cores — roughly 3 minutes for a ~570-chunk docs site on
 8 cores. Each worker holds its own kernel and weight copy, so the pool
 trades a few hundred MB of build-time memory for the near-linear speedup;
-`PANCAKE_SEARCH_EMBED_WORKERS` overrides the pool size (0 forces
+`PIKELET_SEARCH_EMBED_WORKERS` overrides the pool size (0 forces
 sequential). `compile` accepts `--source` (folder or URL), `--out`,
 `--name` (corpus name recorded in the artifact), and `--force` to
 overwrite the output file. Folder sources take `--include`/`--exclude`
@@ -270,7 +270,7 @@ npx pikelet create --name my-docs-search --source ./docs --mode student --no-dep
 ```
 
 Training requires a Python 3 environment with `torch` and `transformers`
-(`PANCAKE_SEARCH_PYTHON` selects the interpreter). The trainer also calibrates
+(`PIKELET_SEARCH_PYTHON` selects the interpreter). The trainer also calibrates
 the abstention scorer and enforces acceptance gates; on small or noisy corpora
 those gates can fail, in which case pass `--skip-abstention` to ship the
 encoder without a match-quality scorer (responses report
@@ -287,7 +287,7 @@ the query encoder.
 For local endpoint testing without Cloudflare Workers AI, generated Workers
 support `LOCAL_STUB_AI=1`. It uses deterministic hash embeddings and is meant
 only for testing the Worker/search path. If you build with
-`PANCAKE_SEARCH_STUB_EMBEDDINGS=1`, rebuild with real Workers AI embeddings
+`PIKELET_SEARCH_STUB_EMBEDDINGS=1`, rebuild with real Workers AI embeddings
 before deploy; stub-built indexes contain hash embeddings, not semantic
 embeddings.
 
@@ -340,14 +340,14 @@ subpath plugin:
 
 ```js
 // docusaurus.config.js
-import pancakeSearch from 'pikelet/docusaurus';
+import pikeletSearch from 'pikelet/docusaurus';
 
 export default {
   plugins: [
     [
-      pancakeSearch,
+      pikeletSearch,
       {
-        assetBase: 'pancake-search',
+        assetBase: 'pikelet-search',
         name: 'my-docs-search',
       },
     ],
@@ -357,7 +357,7 @@ export default {
 
 On `docusaurus build`, the plugin indexes the rendered HTML in the build
 output directory and, by default, compiles it into a complete kind-3
-`search.pikelet` in `build/pancake-search/` — hybrid retrieval, calibrated
+`search.pikelet` in `build/pikelet-search/` — hybrid retrieval, calibrated
 abstention, section anchors, one file. The widget serves it over HTTP
 range reads (opening on a fraction of the file, prefetching the inline
 encoder in the background from the moment the search panel first opens)
@@ -371,22 +371,22 @@ a deprecation note for the range format.
 That means docs, blog posts, pages, and rendered MDX all flow through the
 same folder ingestion, section-aware chunking, and complete-artifact builder
 as the CLI's `compile`, without generating or deploying a Worker. The output
-is `build/pancake-search/search.pikelet` (plus `corpus.json` and
+is `build/pikelet-search/search.pikelet` (plus `corpus.json` and
 `manifest.json`). The widget defers all loading until the first time the
 panel opens; results carry section heading-path breadcrumbs, and raw
 distances only render when the mount element sets
-`data-pancake-debug="1"`. Because the artifact is range-read, the host must
+`data-pikelet-debug="1"`. Because the artifact is range-read, the host must
 honor `Range` — check with `pikelet doctor <url>` (the widget
 degrades to a bounded one-time download when a host ignores it).
 
 By default, the plugin injects a floating, draggable search panel into the page
-and exposes `window.PancakeDocusaurusSearch` for custom UI code. The panel's JS
+and exposes `window.PikeletDocusaurusSearch` for custom UI code. The panel's JS
 and CSS are bundled through Docusaurus; the generated static directory only
 contains the search artifact assets. To ship only the assets and mount your own
 UI, disable the default mount:
 
 ```js
-[pancakeSearch, { assetBase: 'pancake-search', mount: false }]
+[pikeletSearch, { assetBase: 'pikelet-search', mount: false }]
 ```
 
 The `completeProfile` block tunes the default output when the packaged
@@ -394,14 +394,14 @@ assets are not what you want:
 
 ```js
 [
-  pancakeSearch,
+  pikeletSearch,
   {
-    assetBase: 'pancake-search',
+    assetBase: 'pikelet-search',
     sourcePath: 'docs',              // index markdown/MDX sources instead of built HTML
     sourceRouteBase: 'docs',
     completeProfile: {
       vocab: './my-vocab.txt',                     // default: packaged vocab
-      weights: './pancake-search/encoder-weights.bin', // default: fetched, digest-pinned
+      weights: './pikelet-search/encoder-weights.bin', // default: fetched, digest-pinned
       maxTokens: 128,
       // vectors: './docs-vectors.f32',       // optional precomputed document vectors
       // calibration: './calibration.json',   // optional abstention calibration
@@ -416,7 +416,7 @@ The 24.3 MiB `encoder-weights.bin` does not ship: when it is absent (or a
 configured path with that basename is missing), the plugin (and the CLI's
 `runtime.mode: "complete"` path) downloads it once from the
 `inline-encoder-v1` GitHub release, verifies the pinned SHA-256, and caches
-it for reuse. Set `PANCAKE_ENCODER_WEIGHTS_URL` to fetch from a mirror;
+it for reuse. Set `PIKELET_ENCODER_WEIGHTS_URL` to fetch from a mirror;
 custom-named weights are never fetched. Without `vectors`, the build embeds
 every chunk through the packaged encoder at build time (inputs longer than
 `maxTokens` are windowed and mean-pooled, and the build logs how many).
@@ -430,7 +430,7 @@ environment with `torch` and `transformers`; set `trainStudent.python` if
 Docusaurus should call a specific interpreter:
 
 ```js
-[pancakeSearch, { mode: 'student', trainStudent: { python: '.venv/bin/python', epochs: 60 } }]
+[pikeletSearch, { mode: 'student', trainStudent: { python: '.venv/bin/python', epochs: 60 } }]
 ```
 
 Advanced users can provide pre-trained assets, but the model has to travel with
@@ -438,9 +438,9 @@ the matching teacher document vectors for the rendered corpus:
 
 ```js
 [
-  pancakeSearch,
+  pikeletSearch,
   {
-    studentModel: './pancake-student.bin',
+    studentModel: './pikelet-student.bin',
     studentVectors: './docs-vectors.f32',
     studentAbstention: './student-abstention.json',
   },

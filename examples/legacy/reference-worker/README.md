@@ -1,4 +1,4 @@
-# Pancake Worker Reference Architecture
+# Pikelet Worker Reference Architecture
 
 This directory contains a reference Cloudflare Worker deployment built on top of `pikelet-wasm`.
 
@@ -8,7 +8,7 @@ This directory contains a reference Cloudflare Worker deployment built on top of
 > earlier releases predate the 0.2 API this example is written against. See the
 > [root README](../../README.md#install).
 
-The Worker keeps a Pancake index in-process when hot and persists snapshots to
+The Worker keeps a Pikelet index in-process when hot and persists snapshots to
 Cloudflare R2. Treat it as a **snapshot-first ANN serving layer** rather than
 as a durable mutable vector database.
 
@@ -45,7 +45,7 @@ This runs the Worker as a snapshot-backed search endpoint at the edge.
 | `GET /stats` | Live/deleted counts, capacity, and structured memory |
 | `POST /export` | Compact, then serialize index to binary blob |
 | `POST /init` | Create an index (`{ dims, maxElements, M?, efConstruction?, efSearch?, vectors? }`) |
-| `POST /import` | Restore from a Pancake snapshot (`?dims=N` only needed for legacy raw snapshots) |
+| `POST /import` | Restore from a Pikelet snapshot (`?dims=N` only needed for legacy raw snapshots) |
 | `POST /add` | Insert a vector (`{ vector: float[] }`) |
 | `POST /add_batch` | Insert multiple vectors (`{ vectors: float[][] }`) |
 | `POST /delete` | Soft-delete by ID (`{ id: number }`) |
@@ -76,7 +76,7 @@ Build a snapshot outside the Worker first — see
 
 ```bash
 cd examples/legacy/reference-worker
-wrangler r2 bucket create pancake-indexes
+wrangler r2 bucket create pikelet-indexes
 # Uncomment the [[r2_buckets]] block in wrangler.toml so the Worker can
 # persist and restore snapshots from the bucket.
 wrangler deploy
@@ -117,7 +117,7 @@ At the default `M=12` this is `(dim + 92)` bytes per vector. Examples: `30k x 25
 
 **Cold starts and R2 restore.** Worker isolates are not persistent. On cold start, the Worker fetches the index from R2 and deserializes it lazily on the first request. For a large index, the first request after idle will be slow.
 
-**Persistence.** The current Worker example writes standard Pancake snapshots to R2 and restores
+**Persistence.** The current Worker example writes standard Pikelet snapshots to R2 and restores
 from R2 on cold start. This is the durable boundary. In-memory state is only a
 warm cache for the current isolate. Snapshot writes are append-only and restore
 loads the latest saved snapshot, which avoids older async writes overwriting a

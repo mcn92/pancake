@@ -204,7 +204,7 @@ function stddev(arr) {
 
 async function benchPikelet(train, queries, groundTruth, dim, quantized, runtimeLabel) {
   if (runtimeLabel === 'native') {
-    const label = quantized ? 'pancake-u8-native' : 'pancake-f32-native';
+    const label = quantized ? 'pikelet-u8-native' : 'pikelet-f32-native';
     const h = native.pancake_init(dim, train.length, quantized ? 1 : 0, 0, M, EF_CONSTRUCTION, EF_SEARCH, 108);
     if (h === 0xFFFFFFFF) throw new Error(`Failed to init ${label}`);
     const flat = new Float32Array(train.length * dim);
@@ -244,7 +244,7 @@ async function benchPikelet(train, queries, groundTruth, dim, quantized, runtime
     };
   }
 
-  const label = quantized ? 'pancake-u8-wasm' : 'pancake-f32-wasm';
+  const label = quantized ? 'pikelet-u8-wasm' : 'pikelet-f32-wasm';
   const index = await Pikelet.create({
     dim,
     maxElements: train.length,

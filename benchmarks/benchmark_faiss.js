@@ -114,7 +114,7 @@ function percentile(sorted, p) {
 
 // --- Benchmark runners ---
 async function benchPikelet(train, queries, groundTruth, dim, quantized) {
-    const label = quantized ? 'pancake-u8' : 'pancake-f32';
+    const label = quantized ? 'pikelet-u8' : 'pikelet-f32';
     const index = await Pikelet.create({
         dim, maxElements: train.length, quantized,
         metric: 'l2', M, efConstruction: EF_CONSTRUCTION, efSearch: EF_SEARCH,

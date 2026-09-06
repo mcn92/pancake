@@ -62,10 +62,10 @@ function parseBenchmarkArgs(argv = process.argv.slice(2)) {
     remaining.push(arg);
   }
 
-  if (m === undefined) m = readEnvInt('PANCAKE_BENCH_M');
-  if (efConstruction === undefined) efConstruction = readEnvInt('PANCAKE_BENCH_EF_CONSTRUCTION');
-  if (efSearch === undefined) efSearch = readEnvInt('PANCAKE_BENCH_EF_SEARCH');
-  if (efSearchValues === undefined) efSearchValues = readEnvIntList('PANCAKE_BENCH_EF_SEARCH_VALUES');
+  if (m === undefined) m = readEnvInt('PIKELET_BENCH_M');
+  if (efConstruction === undefined) efConstruction = readEnvInt('PIKELET_BENCH_EF_CONSTRUCTION');
+  if (efSearch === undefined) efSearch = readEnvInt('PIKELET_BENCH_EF_SEARCH');
+  if (efSearchValues === undefined) efSearchValues = readEnvIntList('PIKELET_BENCH_EF_SEARCH_VALUES');
 
   if (efSearchValues === undefined && efSearch !== undefined) {
     efSearchValues = [efSearch];

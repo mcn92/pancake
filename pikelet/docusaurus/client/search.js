@@ -158,8 +158,8 @@ class PikeletDocusaurusSearch {
       // and prefetches the kind-3 encoder in the background from the moment
       // the panel opens. Hosts that ignore Range degrade to a bounded
       // download-once inside httpRangeSource itself.
-      const { openCompletePancakeUrl } = await import('./complete-reader.mjs');
-      const completeSearch = await openCompletePancakeUrl(urls.completeArtifactUrl);
+      const { openCompletePikeletUrl } = await import('./complete-reader.mjs');
+      const completeSearch = await openCompletePikeletUrl(urls.completeArtifactUrl);
       this.state = {
         manifest,
         completeSearch,
@@ -235,7 +235,7 @@ function mountSearch() {
   const root = document.querySelector('[data-pikelet-search]');
   if (!root || root.dataset.pikeletMounted === '1') return;
   root.dataset.pikeletMounted = '1';
-  const assetBase = root.dataset.pikeletAssetBase || window.__PANCAKE_SEARCH__?.assetBase;
+  const assetBase = root.dataset.pikeletAssetBase || window.__PIKELET_SEARCH__?.assetBase;
   const search = new PikeletDocusaurusSearch({ assetBase });
   root.innerHTML = `
     <button class="pikelet-search-launcher" type="button" aria-label="Open search">Search</button>

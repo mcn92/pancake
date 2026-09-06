@@ -12,8 +12,8 @@ import { inlineEncoderDeclaration, resolveInlineEncoderInputs } from './complete
 
 async function embedChunks(chunks, config, log, projectDir) {
   const embeddingConfig = config.embedding;
-  if (process.env.PANCAKE_SEARCH_STUB_EMBEDDINGS === '1') {
-    log('Embedding with deterministic local stub (PANCAKE_SEARCH_STUB_EMBEDDINGS=1)');
+  if (process.env.PIKELET_SEARCH_STUB_EMBEDDINGS === '1') {
+    log('Embedding with deterministic local stub (PIKELET_SEARCH_STUB_EMBEDDINGS=1)');
     return chunks.map((chunk) => hashEmbedding(chunk.text, embeddingConfig.dims));
   }
   if (embeddingConfig.mode === 'student') {
@@ -63,7 +63,7 @@ async function trainStudentVectors(chunks, embeddingConfig, log, projectDir) {
   await fs.mkdir(outDir, { recursive: true });
   await fs.writeFile(corpusPath, `${JSON.stringify(chunks.map(publicChunk), null, 2)}\n`);
 
-  const python = trainConfig.python || process.env.PANCAKE_SEARCH_PYTHON || 'python3';
+  const python = trainConfig.python || process.env.PIKELET_SEARCH_PYTHON || 'python3';
   const args = [
     STUDENT_TRAINER,
     '--corpus',
@@ -111,7 +111,7 @@ async function trainStudentVectors(chunks, embeddingConfig, log, projectDir) {
 // import.meta.url under the Docusaurus plugin), embedding falls back to the
 // sequential path below.
 function inlineEmbedWorkerCount(chunkCount) {
-  const env = process.env.PIKELET_EMBED_WORKERS ?? process.env.PANCAKE_SEARCH_EMBED_WORKERS;
+  const env = process.env.PIKELET_EMBED_WORKERS ?? process.env.PIKELET_SEARCH_EMBED_WORKERS;
   if (env !== undefined) {
     const parsed = parseInt(env, 10);
     if (!Number.isInteger(parsed) || parsed < 0) throw new CliError('PIKELET_EMBED_WORKERS must be a non-negative integer');

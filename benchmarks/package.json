@@ -1,5 +1,5 @@
 {
-  "name": "pancake-benchmarks",
+  "name": "pikelet-benchmarks",
   "private": true,
   "description": "Native ANN baselines for benchmarks/*.js. Installed on demand (cd benchmarks && npm install); deliberately not a dependency of pikelet-wasm, so consumers never build faiss/hnswlib/usearch.",
   "dependencies": {

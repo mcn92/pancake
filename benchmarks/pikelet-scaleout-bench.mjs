@@ -1,9 +1,9 @@
-// pancake-scaleout-bench.mjs
+// pikelet-scaleout-bench.mjs
 // Measures aggregate QPS scaling across Node worker_threads, each worker owning an
 // isolated WASM instance importing the same snapshot ("scale out with copies").
 //
 // Usage (from the pikelet repo root):
-//   node pancake-scaleout-bench.mjs [--vectors path.bin] [--dim 384] [--synthN 30000] [--synthD 768]
+//   node pikelet-scaleout-bench.mjs [--vectors path.bin] [--dim 384] [--synthN 30000] [--synthD 768]
 //                                   [--workers 1,2,4,8] [--duration 8] [--ef 100] [--k 10] [--quantized 1]
 //
 // With --vectors: loads float32 vectors from a raw .bin (row-major, dim from --dim).
@@ -29,7 +29,7 @@ const K = parseInt(args.k ?? '10');
 const QUANTIZED = (args.quantized ?? '1') !== '0';
 const N_QUERIES = 512; // pool per worker, cycled
 
-const pancakePath = path.resolve('./pikelet.node.mjs');
+const pikeletPath = path.resolve('./pikelet.node.mjs');
 
 function makeSynthetic(n, d) {
   const centers = 128, C = new Float32Array(centers * d);
@@ -47,7 +47,7 @@ function makeSynthetic(n, d) {
 }
 
 if (isMainThread) {
-  const Pikelet = (await import(pancakePath)).default;
+  const Pikelet = (await import(pikeletPath)).default;
   let data, dim, n;
   if (args.vectors) {
     const buf = fs.readFileSync(args.vectors);
@@ -91,7 +91,7 @@ if (isMainThread) {
       const worker = new Worker(fileURLToPath(import.meta.url), {
         workerData: {
           snapshot, queries, dim, ef: EF, k: K, quantized: QUANTIZED,
-          durationMs: DURATION_S * 1000, workerId: w, pancakePath, maxElements: n,
+          durationMs: DURATION_S * 1000, workerId: w, pikeletPath, maxElements: n,
         },
       });
       workers.push(worker);
@@ -129,9 +129,9 @@ if (isMainThread) {
   }
 } else {
   // ---- worker ----
-  const { snapshot, queries, dim, ef, k, quantized, durationMs, pancakePath, maxElements } = workerData;
+  const { snapshot, queries, dim, ef, k, quantized, durationMs, pikeletPath, maxElements } = workerData;
   try {
-    const Pikelet = (await import(pancakePath)).default;
+    const Pikelet = (await import(pikeletPath)).default;
     const t0 = performance.now();
     const index = await Pikelet.create({ dim, maxElements, metric: 'cosine', quantized, M: 12, efConstruction: 100, efSearch: ef });
     index.import(snapshot);

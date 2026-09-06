@@ -39,9 +39,9 @@ equalrecall_path = base + '_equalrecall.csv'
 
 df = pd.read_csv(raw_path)
 
-# Stable per-label styling. Pancake configs warm, baselines cool.
+# Stable per-label styling. Pikelet configs warm, baselines cool.
 LABELS = list(df['label'].unique())
-PALETTE = ['#d9480f', '#e8590c', '#f08c00', '#c2255c',  # pancake-ish warms
+PALETTE = ['#d9480f', '#e8590c', '#f08c00', '#c2255c',  # pikelet-ish warms
            '#0c8599', '#1098ad', '#1971c2', '#5c940d', '#862e9c', '#495057']
 MARKERS = ['o', 's', '^', 'D', 'v', 'P', 'X', '*', 'h', '<']
 

@@ -17,14 +17,14 @@
   letter-spacing: 0;
 }
 
-.pancake-home-grid {
+.pikelet-home-grid {
   display: grid;
   gap: 1rem;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   margin-top: 2rem;
 }
 
-.pancake-home-panel {
+.pikelet-home-panel {
   border: 1px solid var(--ifm-color-emphasis-200);
   border-radius: 8px;
   padding: 1rem;

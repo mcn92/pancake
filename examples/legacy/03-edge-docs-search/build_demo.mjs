@@ -12,7 +12,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
-const DEFAULT_OUT_DIR = path.join(os.tmpdir(), 'pancake-docs-demo');
+const DEFAULT_OUT_DIR = path.join(os.tmpdir(), 'pikelet-docs-demo');
 const TARGET_CHARS = 700;
 
 const DOC_SOURCES = [

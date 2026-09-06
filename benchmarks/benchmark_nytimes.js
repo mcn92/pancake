@@ -106,7 +106,7 @@ const EF_CONSTRUCTION = resolveSingleValue(parsedArgs.efConstruction, 150);
 const EF_SEARCH_VALUES = resolveSweepValues(parsedArgs, [20, 40, 60, 80, 100, 150, 200, 300, 500, 800]);
 const REPETITIONS = 3;
 const WARMUP_QUERIES = 200;
-const PANCAKE_BATCH_SIZE = 16384;
+const PIKELET_BATCH_SIZE = 16384;
 
 let usearch;
 try {
@@ -126,19 +126,19 @@ let native;
 try {
   native = require('../native');
 } catch (e) {
-  // optional — will skip pancake-native configs (addon not built)
+  // optional — will skip pikelet-native configs (addon not built)
 }
 
 const CONFIGS = [
-  { label: 'pancake-u8-wasm',     library: 'pikelet',        dtype: 'u8' },
-  { label: 'pancake-f32-wasm',    library: 'pikelet',        dtype: 'f32' },
-  { label: 'pancake-u8-native',   library: 'pancake-native', dtype: 'u8' },
-  { label: 'pancake-f32-native',  library: 'pancake-native', dtype: 'f32' },
+  { label: 'pikelet-u8-wasm',     library: 'pikelet',        dtype: 'u8' },
+  { label: 'pikelet-f32-wasm',    library: 'pikelet',        dtype: 'f32' },
+  { label: 'pikelet-u8-native',   library: 'pikelet-native', dtype: 'u8' },
+  { label: 'pikelet-f32-native',  library: 'pikelet-native', dtype: 'f32' },
   { label: 'usearch-i8-native',   library: 'usearch',        dtype: 'i8' },
   { label: 'usearch-f32-native',  library: 'usearch',        dtype: 'f32' },
   { label: 'hnswlib-f32-native',  library: 'hnswlib',        dtype: 'f32' },
 ].filter(c => {
-  if (c.library === 'pancake-native' && !native) return false;
+  if (c.library === 'pikelet-native' && !native) return false;
   if (c.library === 'usearch' && !usearch) return false;
   if (c.library === 'hnswlib' && !HierarchicalNSW) return false;
   return true;
@@ -388,7 +388,7 @@ function queryUsearch(built, test, groundTruth, efSearch, dim) {
 // --- Pikelet: build and query ---
 async function buildPikelet({ train, dim, dtype }) {
   const quantized = dtype === 'u8';
-  log(`  [pancake-${dtype}] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
+  log(`  [pikelet-${dtype}] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
   // create() defaults to cosine, which matches these angular datasets; no
   // explicit metric needed.
   const index = await Pikelet.create({
@@ -404,15 +404,15 @@ async function buildPikelet({ train, dim, dtype }) {
   // addBatch supports both quantized and float modes; previous version of
   // this script gated it on `quantized`, which silently penalized float
   // Pikelet. Use it unconditionally.
-  for (let start = 0; start < train.length; start += PANCAKE_BATCH_SIZE) {
-    const end = Math.min(start + PANCAKE_BATCH_SIZE, train.length);
+  for (let start = 0; start < train.length; start += PIKELET_BATCH_SIZE) {
+    const end = Math.min(start + PIKELET_BATCH_SIZE, train.length);
     // train.slice() returns a plain Array of Float32Array views (the views
     // themselves are not copied). addBatch requires Array.isArray(input).
     index.addBatch(train.slice(start, end));
   }
   const buildMs = performance.now() - t0;
   const memMB = index.memory / 1024 / 1024;
-  log(`  [pancake-${tag}] build: ${(buildMs / 1000).toFixed(1)}s, memory: ${memMB.toFixed(0)} MB`);
+  log(`  [pikelet-${tag}] build: ${(buildMs / 1000).toFixed(1)}s, memory: ${memMB.toFixed(0)} MB`);
   return { index, buildMs, memoryMB: memMB };
 }
 
@@ -443,9 +443,9 @@ function queryPikelet(index, test, groundTruth, efSearch) {
 // isolates WASM runtime overhead from graph quality. metric=1 (cosine) — these
 // are angular datasets, so unlike the L2 pareto_frontier path this must NOT
 // pass L2.
-function buildPancakeNative({ train, dim, dtype }) {
+function buildPikeletNative({ train, dim, dtype }) {
   const quantized = dtype === 'u8' ? 1 : 0;
-  log(`  [pancake-${dtype}-native] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
+  log(`  [pikelet-${dtype}-native] building index (M=${M}, ef_c=${EF_CONSTRUCTION})...`);
   const h = native.pancake_init(dim, train.length, quantized, 1 /* 1=cosine */, M, EF_CONSTRUCTION, EF_SEARCH_VALUES[0], 108);
   if (h === 0xFFFFFFFF) throw new Error('Failed to init native pikelet index');
 
@@ -459,11 +459,11 @@ function buildPancakeNative({ train, dim, dtype }) {
   }
   const buildMs = performance.now() - t0;
   const memMB = native.pancake_memory(h) / 1024 / 1024;
-  log(`  [pancake-${dtype}-native] build: ${(buildMs / 1000).toFixed(1)}s, memory: ${memMB.toFixed(0)} MB`);
+  log(`  [pikelet-${dtype}-native] build: ${(buildMs / 1000).toFixed(1)}s, memory: ${memMB.toFixed(0)} MB`);
   return { handle: h, buildMs, memoryMB: memMB };
 }
 
-function queryPancakeNative(built, test, groundTruth, efSearch) {
+function queryPikeletNative(built, test, groundTruth, efSearch) {
   native.pancake_set_ef(built.handle, efSearch);
   for (let i = 0; i < WARMUP_QUERIES && i < test.length; i++) {
     native.pancake_query(built.handle, test[i], K);
@@ -553,8 +553,8 @@ async function sweepOne(config, dataset) {
   let built;
   if (config.library === 'pikelet') {
     built = await buildPikelet({ train, dim, dtype: config.dtype });
-  } else if (config.library === 'pancake-native') {
-    built = buildPancakeNative({ train, dim, dtype: config.dtype });
+  } else if (config.library === 'pikelet-native') {
+    built = buildPikeletNative({ train, dim, dtype: config.dtype });
   } else if (config.library === 'usearch') {
     built = buildUsearch({ train, dim, dtype: config.dtype });
   } else {
@@ -575,8 +575,8 @@ async function sweepOne(config, dataset) {
       let queryResult;
       if (config.library === 'pikelet') {
         queryResult = queryPikelet(index, test, groundTruth, efSearch);
-      } else if (config.library === 'pancake-native') {
-        queryResult = queryPancakeNative(built, test, groundTruth, efSearch);
+      } else if (config.library === 'pikelet-native') {
+        queryResult = queryPikeletNative(built, test, groundTruth, efSearch);
       } else if (config.library === 'usearch') {
         queryResult = queryUsearch(built, test, groundTruth, efSearch, dim);
       } else {
@@ -614,7 +614,7 @@ async function sweepOne(config, dataset) {
     points.push(summary);
   }
 
-  if (config.library === 'pancake-native') {
+  if (config.library === 'pikelet-native') {
     native.pancake_dispose(built.handle);
   } else if (index && typeof index.dispose === 'function') {
     index.dispose();
@@ -735,7 +735,7 @@ async function main() {
     benchmark: `${DATASET}-angular-sweep`,
     timestamp: new Date().toISOString(),
     dataset: dataset.info,
-    params: { K, M, EF_CONSTRUCTION, EF_SEARCH_VALUES, REPETITIONS, WARMUP_QUERIES, PANCAKE_BATCH_SIZE, ROTATION },
+    params: { K, M, EF_CONSTRUCTION, EF_SEARCH_VALUES, REPETITIONS, WARMUP_QUERIES, PIKELET_BATCH_SIZE, ROTATION },
     results: allResults,
   }, null, 2) + '\n');
   writeCsv(allResults, CSV_PATH);

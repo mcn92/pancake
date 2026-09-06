@@ -742,7 +742,7 @@ function exportSplitArtifact(index, outPath, options = {}) {
         fs.closeSync(fd);
     }
     return {
-        format: 'pancake-range-artifact',
+        format: 'pikelet-range-artifact',
         formatVersion: RANGE_VERSION,
         integrity: {
             idMapSha256: idMapDigest.toString('hex'),

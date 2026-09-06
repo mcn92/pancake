@@ -37,16 +37,16 @@ elif 'nytimes' in _base or 'hnswlib' in _base:
 else:
     DATASET_NAME = 'Sweep'
 
-# Identify pancake and baseline labels from data. There can be several pancake
+# Identify pikelet and baseline labels from data. There can be several pikelet
 # configs (u8/f32 x wasm/native); treat them all as the highlighted family
 # (warm, solid) and everything else as baselines (cool, dashed).
 labels = df['label'].unique().tolist()
-pancake_labels = [l for l in labels if 'pancake' in l.lower()]
-baseline_labels = [l for l in labels if l not in pancake_labels]
-# Primary pancake line used for ef annotations: prefer the shipped u8-wasm
-# default, else the first pancake config present.
-pancake_label = next((l for l in pancake_labels if l == 'pancake-u8-wasm'),
-                     pancake_labels[0] if pancake_labels else None)
+pikelet_labels = [l for l in labels if 'pikelet' in l.lower()]
+baseline_labels = [l for l in labels if l not in pikelet_labels]
+# Primary pikelet line used for ef annotations: prefer the shipped u8-wasm
+# default, else the first pikelet config present.
+pikelet_label = next((l for l in pikelet_labels if l == 'pikelet-u8-wasm'),
+                     pikelet_labels[0] if pikelet_labels else None)
 
 # Marker pool (cycled) + per-family colormaps sized to the actual config counts,
 # so any number of configs renders without running off a fixed-length palette.
@@ -54,11 +54,11 @@ MARKERS = ['o', 's', '^', 'D', 'v', 'P', 'X', '*', '<', '>']
 def _palette(cmap_name, n):
     cmap = plt.get_cmap(cmap_name)
     return [cmap(0.35 + 0.5 * (i / max(1, n - 1))) for i in range(n)]
-warm = _palette('autumn', len(pancake_labels))
+warm = _palette('autumn', len(pikelet_labels))
 cool = _palette('winter', len(baseline_labels))
 
 style_map = {}
-for i, pl in enumerate(pancake_labels):
+for i, pl in enumerate(pikelet_labels):
     style_map[pl] = {'color': warm[i], 'marker': MARKERS[i % len(MARKERS)], 'linestyle': '-'}
 for i, bl in enumerate(baseline_labels):
     style_map[bl] = {'color': cool[i], 'marker': MARKERS[i % len(MARKERS)], 'linestyle': '--'}
@@ -82,9 +82,9 @@ ax1.grid(True, alpha=0.3, which='both')
 ax1.legend(loc='lower left', framealpha=0.9)
 ax1.yaxis.set_major_formatter(mticker.ScalarFormatter())
 
-# Annotate ef_search values on pancake curve
-if pancake_label:
-    pk = df[df['label'] == pancake_label].sort_values('ef_search')
+# Annotate ef_search values on pikelet curve
+if pikelet_label:
+    pk = df[df['label'] == pikelet_label].sort_values('ef_search')
     for _, row in pk.iterrows():
         ax1.annotate(f"ef={int(row.ef_search)}",
                      xy=(row.recall, row.qps),
@@ -116,14 +116,14 @@ fig.savefig(out_path, dpi=150, bbox_inches='tight')
 print(f"Saved: {out_path}")
 
 # --- Print matched-recall comparison table ---
-if pancake_label and baseline_labels:
+if pikelet_label and baseline_labels:
     print(f"\nMatched-recall QPS comparison:")
-    header = f"{'recall':>8}  {pancake_label:>20}"
+    header = f"{'recall':>8}  {pikelet_label:>20}"
     for bl in baseline_labels:
         header += f"  {bl:>20}"
     print(header)
 
-    pk_data = df[df['label'] == pancake_label][['recall', 'qps']].sort_values('recall')
+    pk_data = df[df['label'] == pikelet_label][['recall', 'qps']].sort_values('recall')
     for _, row in pk_data.iterrows():
         target = row['recall']
         line = f"  {target*100:>5.1f}%  {row['qps']:>20.0f}"
@@ -135,9 +135,9 @@ if pancake_label and baseline_labels:
             else:
                 line += f"  {'n/a':>20}"
         print(line)
-elif pancake_label:
+elif pikelet_label:
     print(f"\nPancake-only results (no baseline to compare):")
-    pk_data = df[df['label'] == pancake_label][['recall', 'qps', 'ef_search']].sort_values('ef_search')
+    pk_data = df[df['label'] == pikelet_label][['recall', 'qps', 'ef_search']].sort_values('ef_search')
     print(f"  {'ef':>4}  {'recall':>8}  {'qps':>6}")
     for _, row in pk_data.iterrows():
         print(f"  {int(row.ef_search):>4}  {row.recall*100:>6.1f}%  {row.qps:>6.0f}")

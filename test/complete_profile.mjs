@@ -93,7 +93,7 @@ function memorySource(bytes, { withSize = true } = {}) {
     };
 }
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pancake-complete-'));
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pikelet-complete-'));
 function buildSyntheticSketch() {
     const qdata = new Uint8Array(COUNT * DIM);
     const scales = new Float32Array(COUNT);

@@ -38,7 +38,7 @@ async function run() {
         ids: { idA, idB, idC }
       };
 
-      window.__PANCAKE_BROWSER_SMOKE__ = result;
+      window.__PIKELET_BROWSER_SMOKE__ = result;
       app.textContent = JSON.stringify(result);
     } finally {
       restored.dispose();
@@ -53,6 +53,6 @@ run().catch((error) => {
     ok: false,
     error: error && error.message ? error.message : String(error)
   };
-  window.__PANCAKE_BROWSER_SMOKE__ = result;
+  window.__PIKELET_BROWSER_SMOKE__ = result;
   app.textContent = JSON.stringify(result);
 });

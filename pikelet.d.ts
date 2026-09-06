@@ -220,7 +220,7 @@ export interface RangeArtifactBuildOptions {
 }
 
 export interface RangeArtifactBuildManifest {
-  readonly format: 'pancake-range-artifact';
+  readonly format: 'pikelet-range-artifact';
   readonly formatVersion: number;
   /** Hex SHA-256 whole-segment digests stamped into the v3 header. */
   readonly integrity: Readonly<{
@@ -468,7 +468,7 @@ export interface SketchArtifactBuildOptions {
 }
 
 export interface SketchArtifactBuildManifest {
-  readonly format: 'pancake-sketch-artifact';
+  readonly format: 'pikelet-sketch-artifact';
   readonly formatVersion: number;
   /** Output path; absent on the bytes-in/bytes-out builder. */
   readonly file?: string;

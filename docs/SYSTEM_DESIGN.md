@@ -1,6 +1,6 @@
-# Pancake — System Design
+# Pikelet — System Design
 
-**Scope:** The full Pancake vector-search system as built today — the C++ HNSW
+**Scope:** The full Pikelet vector-search system as built today — the C++ HNSW
 backends, the WASM C ABI, the JavaScript wrapper, the native benchmarking addon,
 serialization, and the Cloudflare Worker reference deployments.
 **Last updated:** 2026-07-19
@@ -38,7 +38,7 @@ re-read of the code.
 
 ## 1. Overview
 
-Pancake is an HNSW (Hierarchical Navigable Small World) approximate
+Pikelet is an HNSW (Hierarchical Navigable Small World) approximate
 nearest-neighbor index compiled from C++ to WebAssembly. The primary artifact is
 a single portable WASM module (`dist/engine.wasm`, ~141 KB raw / ~50 KB gzipped,
 plus a ~17 KB `engine.js` loader / ~5 KB gzipped) that runs unchanged in Node.js,
@@ -56,7 +56,7 @@ backend classes with AVX-512/AVX2/SSE2 SIMD. It is a benchmarking tool — it is
 of the shipped package — and exists to separate runtime overhead (WASM vs native)
 from graph quality (which is identical because the backend code is shared).
 
-Pancake is an index, not a database and not an embedding model. It stores
+Pikelet is an index, not a database and not an embedding model. It stores
 vectors and graph edges only; metadata, persistence policy, and embedding are
 the caller's responsibility.
 
@@ -96,7 +96,8 @@ abstraction —
 it uses the WASM engine only optionally (the sketch scan kernel). Its
 behavioral contract is `spec/SEARCH_ARTIFACT_CONTRACT.md`, its sketch byte
 layout `spec/SKETCH_PROFILE.md`, and every entrypoint bundles it
-(`Pancake.RangeArtifact` / `Pancake.SketchArtifact`). This document covers
+(`Pikelet.RangeArtifact` / `Pikelet.SketchArtifact`, backed by the
+frozen `PancakeRangeArtifact` / `PancakeSketchArtifact` classes). This document covers
 the engine below that line; the artifact layer is specified in `spec/`.
 
 The native addon (`native/pancake_napi.cpp`) replaces the *C ABI* layer with an
@@ -280,9 +281,9 @@ Both backends select a kernel at compile time:
 
 ```cpp
 #if defined(__wasm_simd128__)                                      // WASM SIMD128 (the shipped path)
-#elif defined(PANCAKE_ENABLE_AVX512_SIMD) && defined(__AVX512F__)  // native, 512-bit
-#elif defined(PANCAKE_ENABLE_AVX2_SIMD)                            // native, 256-bit
-#elif defined(PANCAKE_ENABLE_SSE2_SIMD)                            // native, 128-bit
+#elif defined(PIKELET_ENABLE_AVX512_SIMD) && defined(__AVX512F__)  // native, 512-bit
+#elif defined(PIKELET_ENABLE_AVX2_SIMD)                            // native, 256-bit
+#elif defined(PIKELET_ENABLE_SSE2_SIMD)                            // native, 128-bit
 #else                                                              // scalar fallback
 #endif
 ```
@@ -381,7 +382,7 @@ snapshot that still slips an oversized allocation through the bounds checks
 
 Beyond the index API, the ABI exports `emsc_malloc`/`emsc_free` (heap for
 marshalling), `pancake_profile_print`/`pancake_profile_reset` (no-ops unless built with
-`PANCAKE_UINT8_HNSW_BUILD_PROFILE`), and `pancake_shutdown_all` (frees all
+`PIKELET_UINT8_HNSW_BUILD_PROFILE`), and `pancake_shutdown_all` (frees all
 handles). The WASM ABI no longer exposes the earlier experimental `emb_*`
 embedding-model or matrix-helper paths; the public surface is the index API plus
 allocation, profiling, and lifecycle helpers.
@@ -405,7 +406,7 @@ All entrypoints share `pikelet-loader.js`, which memoizes source and compiled
 module promises per SIMD/scalar variant. Concurrent `create()` calls therefore
 share fetch/read/compile work but each call invokes the Emscripten factory with
 a fresh `WebAssembly.Instance`. Heaps, handle tables, growth, failure, and
-disposal remain isolated per index. `Pancake.create()` then allocates per-index
+disposal remain isolated per index. `Pikelet.create()` then allocates per-index
 scratch buffers, calls `_pancake_init`, and returns the wrapper.
 
 ### 7.2 PancakeIndex API
@@ -618,13 +619,13 @@ artifacts in lockstep with the current `src/`.
 
 node-gyp compiles `pancake_napi.cpp` (which includes the same backend headers
 from `../src`) with `-O3 -std=c++17 -ffast-math -ftree-vectorize -march=native
--mavx2 -msse2 -fno-rtti` and `-DPANCAKE_ENABLE_AVX512_SIMD
--DPANCAKE_ENABLE_AVX2_SIMD -DPANCAKE_ENABLE_SSE2_SIMD`. AVX-512 instructions
+-mavx2 -msse2 -fno-rtti` and `-DPIKELET_ENABLE_AVX512_SIMD
+-DPIKELET_ENABLE_AVX2_SIMD -DPIKELET_ENABLE_SSE2_SIMD`. AVX-512 instructions
 come via `-march=native` and the kernels are compile-time gated on
 `__AVX512F__` (plus `__AVX512BW__` for uint8), so non-AVX-512 hosts fall back to
 AVX2 automatically. The macOS block defines the same macros; the Windows block
-does not define `PANCAKE_ENABLE_AVX512_SIMD` and stays on AVX2/SSE2. Output:
-`native/build/Release/pancake_native.node`.
+does not define `PIKELET_ENABLE_AVX512_SIMD` and stays on AVX2/SSE2. Output:
+`native/build/Release/pikelet_native.node`.
 
 ### 10.3 Native vs WASM divergence
 
@@ -684,8 +685,8 @@ and a bucket is bound, the Worker lazily **restores from R2** before serving
 | `/add_batch` | POST | `{vectors}` → `{inserted,ids,count}` | yes |
 | `/delete` | POST | `{id}` → boolean deletion result + deleted count | yes |
 | `/compact` | POST | — → compaction result (awaits persist) | yes |
-| `/export` | POST | — → compacted standard Pancake snapshot | yes |
-| `/import` | POST | Pancake snapshot → config-inferred restore | yes |
+| `/export` | POST | — → compacted standard Pikelet snapshot | yes |
+| `/import` | POST | Pikelet snapshot → config-inferred restore | yes |
 | `/reset_cache` | POST | — → drops warm index, forces cold restore | yes |
 | `/search_debug` | POST | same body and response as `/search` (admin-gated legacy alias) | yes |
 
@@ -717,7 +718,7 @@ The append-only scheme means a slow/late async write cannot clobber a newer
 snapshot under a shared key — restore always loads the newest. The durability
 boundary is R2; in-memory isolate state is a warm cache only.
 
-The stored object is the standard Pancake v3 envelope. `inspectSnapshot()` reads
+The stored object is the standard Pikelet v3 envelope. `inspectSnapshot()` reads
 its construction fields for readiness and `restore()` reconstructs the index on
 cold start. R2 custom metadata stores the full config, but for a v3 envelope
 snapshot only capacity and runtime `efSearch` policy are taken from it — the
@@ -764,7 +765,7 @@ rather than raw WASM exports.
 
 ## 12. Configuration Reference
 
-### 12.1 `Pancake.create(opts)` — JS defaults (the effective ones)
+### 12.1 `Pikelet.create(opts)` — JS defaults (the effective ones)
 
 | Option | Default | Notes |
 |--------|---------|-------|

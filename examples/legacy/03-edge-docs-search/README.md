@@ -1,14 +1,14 @@
 # Zero-dependency distilled docs search
 
-This is the Worker-backed Pancake docs-search demo. The deployed Cloudflare
-Worker restores a bundled quantized Pancake snapshot, embeds each query locally,
+This is the Worker-backed Pikelet docs-search demo. The deployed Cloudflare
+Worker restores a bundled quantized Pikelet snapshot, embeds each query locally,
 and searches the in-memory index. The public UI is served separately from
 Cloudflare Pages under `pages-ui/`.
 
 Hosting status: the Worker is deployed in private mode. `wrangler.toml` sets
 `workers_dev = false`, so there is no public `workers.dev` endpoint — requests
 to one return Cloudflare error 1042. The Pages UI at
-`https://pancake-docs-search.pages.dev` remains live and expects the operator
+`https://pikelet-docs-search.pages.dev` remains live and expects the operator
 to supply a Worker API base URL (it stores the value locally in the browser).
 To host your own public endpoint, deploy with `workers_dev = true` (or a
 custom route) and either set the `DEMO_SEARCH_KEY` secret or deploy
@@ -26,7 +26,7 @@ text
   -> 1.08 MB int8 distilled student
   -> normalized 384D query vector
   -> query-quality score from bundled calibration data
-  -> Pancake WASM
+  -> Pikelet WASM
   -> matching documentation chunks
 ```
 
@@ -35,11 +35,11 @@ with the Worker or contacted at query time.
 
 ## What the demo proves
 
-- Pancake runs inside a Cloudflare Worker without a native addon.
+- Pikelet runs inside a Cloudflare Worker without a native addon.
 - A snapshot can be restored directly from a Worker data module on cold start.
 - Query embedding and vector retrieval run without outbound API requests or storage bindings.
-- The embedding model is application data, not a Pancake dependency.
-- Embedding, Pancake search, and cold-restore latency are reported separately.
+- The embedding model is application data, not a Pikelet dependency.
+- Embedding, Pikelet search, and cold-restore latency are reported separately.
 - `efSearch` and source filters are applied per query through the public API.
 - Off-domain or noise queries are visibly marked as weak/no-match without a second retrieval pass.
 
@@ -105,7 +105,7 @@ target.
 
 The build produces five runtime assets that Wrangler bundles into the Worker:
 
-- `docs-index.bin` — standard Pancake snapshot
+- `docs-index.bin` — standard Pikelet snapshot
 - `docs-corpus.json` — result metadata and previews
 - `docs-manifest.json` — dimensions, construction config, hashes, and evaluation summary
 - `docs-student.bin` — quantized query encoder
@@ -120,7 +120,7 @@ them when the documentation or encoder changes.
 
 ## Build the demo
 
-Build Pancake at the repository root first:
+Build Pikelet at the repository root first:
 
 ```bash
 npm run build:all
@@ -130,7 +130,7 @@ Extract the documentation corpus:
 
 ```bash
 node examples/legacy/03-edge-docs-search/build_demo.mjs \
-  --out /tmp/pancake-docs-demo \
+  --out /tmp/pikelet-docs-demo \
   --corpus-only
 ```
 
@@ -138,8 +138,8 @@ Create an isolated training environment. These packages are offline build tools,
 not runtime dependencies:
 
 ```bash
-python3 -m venv /tmp/pancake-student-venv
-/tmp/pancake-student-venv/bin/pip install \
+python3 -m venv /tmp/pikelet-student-venv
+/tmp/pikelet-student-venv/bin/pip install \
   -r examples/legacy/03-edge-docs-search/requirements-train.txt
 ```
 
@@ -147,26 +147,26 @@ Train and export the student. The first run downloads the teacher checkpoint to
 the selected Hugging Face cache:
 
 ```bash
-HF_HOME=/tmp/pancake-hf \
-/tmp/pancake-student-venv/bin/python \
+HF_HOME=/tmp/pikelet-hf \
+/tmp/pikelet-student-venv/bin/python \
   examples/legacy/03-edge-docs-search/train_student.py \
-  --corpus /tmp/pancake-docs-demo/docs-corpus.json \
-  --out /tmp/pancake-student
+  --corpus /tmp/pikelet-docs-demo/docs-corpus.json \
+  --out /tmp/pikelet-student
 ```
 
 Verify that plain JavaScript reproduces the exported Python model:
 
 ```bash
 node examples/legacy/03-edge-docs-search/verify_student.mjs \
-  --student-dir /tmp/pancake-student
+  --student-dir /tmp/pikelet-student
 ```
 
-Build the Pancake snapshot and bundled asset directory:
+Build the Pikelet snapshot and bundled asset directory:
 
 ```bash
 node examples/legacy/03-edge-docs-search/build_demo.mjs \
   --out examples/legacy/03-edge-docs-search/assets \
-  --student-dir /tmp/pancake-student
+  --student-dir /tmp/pikelet-student
 ```
 
 The build prints preview results for the sample queries before deployment.
@@ -177,8 +177,8 @@ bundled binary data modules:
 ```bash
 cd examples/legacy/03-edge-docs-search
 npx wrangler deploy --dry-run \
-  --outdir ../../.tmp-test-work/student-worker-distilled
-cd ../..
+  --outdir ../../../.tmp-test-work/student-worker-distilled
+cd ../../..
 node examples/legacy/03-edge-docs-search/test_worker.mjs
 ```
 
@@ -210,7 +210,7 @@ The committed configuration sets:
 
 ```toml
 READ_ONLY = "1"
-ALLOWED_ORIGIN = "https://pancake-docs-search.pages.dev"
+ALLOWED_ORIGIN = "https://pikelet-docs-search.pages.dev"
 DISABLE_SEARCH = "0"
 PRIVATE_SEARCH = "1"
 ```
@@ -238,7 +238,7 @@ From the repo root:
 ```bash
 npm run build:pages-demo
 npx wrangler pages deploy examples/legacy/03-edge-docs-search/pages-ui/dist \
-  --project-name pancake-docs-search
+  --project-name pikelet-docs-search
 ```
 
 The Pages UI stores the Worker API URL in browser `localStorage` and keeps the

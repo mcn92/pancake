@@ -56,7 +56,7 @@ npx wrangler dev --config wrangler.toml
 This uses deterministic local hash embeddings for queries. Use it only to test
 the generated Worker/API path; relevance will not match Workers AI.
 
-If the project was built with `PANCAKE_SEARCH_STUB_EMBEDDINGS=1`, rebuild it
+If the project was built with `PIKELET_SEARCH_STUB_EMBEDDINGS=1`, rebuild it
 with real Workers AI embeddings before deploying:
 
 ```bash

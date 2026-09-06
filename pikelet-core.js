@@ -7,7 +7,7 @@ const {
 } = require('./pikelet-errors.js');
 
 // Envelope header for validated export/import
-const PANCAKE_MAGIC = 0x504E434B; // "PNCK"
+const PIKELET_MAGIC = 0x504E434B; // "PNCK"
 const ENVELOPE_VERSION = 3;
 const V1_ENVELOPE_HEADER_SIZE = 24; // magic(4) + version(4) + dim(4) + compressed(4) + metric(4) + quantized(4)
 const V2_ENVELOPE_HEADER_SIZE = 20; // magic(4) + version(4) + dim(4) + metric(4) + quantized(4)
@@ -384,7 +384,7 @@ class PancakeIndex {
             const mappingBytes = liveMappings.length * MAPPING_ENTRY_SIZE;
             const result = new Uint8Array(V3_ENVELOPE_HEADER_SIZE + mappingBytes + wasmSize);
             const view = new DataView(result.buffer);
-            view.setUint32(0, PANCAKE_MAGIC, true);
+            view.setUint32(0, PIKELET_MAGIC, true);
             view.setUint32(4, ENVELOPE_VERSION, true);
             view.setUint32(8, this._dim, true);
             view.setUint32(12, this._isL2 ? 0 : 1, true);
@@ -418,7 +418,7 @@ class PancakeIndex {
         if (bytes.length >= V2_ENVELOPE_HEADER_SIZE) {
             const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 
-            if (view.getUint32(0, true) === PANCAKE_MAGIC) {
+            if (view.getUint32(0, true) === PIKELET_MAGIC) {
                 const version = view.getUint32(4, true);
 
                 let dim;
@@ -1172,7 +1172,7 @@ function inspectSnapshotMetadata(data) {
     let envelopeQuantized = null;
     let nextId = null;
 
-    if (view.getUint32(0, true) === PANCAKE_MAGIC) {
+    if (view.getUint32(0, true) === PIKELET_MAGIC) {
         format = 'pikelet';
         if (bytes.byteLength < 8) {
             throw pikeletError(PANCAKE_ERROR_CODES.SNAPSHOT_INVALID, 'Snapshot envelope is truncated');

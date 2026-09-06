@@ -60,7 +60,7 @@ async function buildFixtures(tmp, metric) {
 }
 
 async function main() {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pancake-hardening-'));
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pikelet-hardening-'));
 
     // 1. Failed opens do not leak descriptors.
     console.log('1. openFile() releases its descriptor when the open is rejected');

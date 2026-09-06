@@ -23,13 +23,13 @@
 #if defined(__wasm_simd128__)
     #include <wasm_simd128.h>
     #define FLOAT_HNSW_WASM_SIMD 1
-#elif defined(PANCAKE_ENABLE_AVX512_SIMD) && defined(__AVX512F__)
+#elif defined(PIKELET_ENABLE_AVX512_SIMD) && defined(__AVX512F__)
     #include <immintrin.h>
     #define FLOAT_HNSW_AVX512_SIMD 1
-#elif defined(PANCAKE_ENABLE_AVX2_SIMD) && defined(__AVX2__)
+#elif defined(PIKELET_ENABLE_AVX2_SIMD) && defined(__AVX2__)
     #include <immintrin.h>
     #define FLOAT_HNSW_AVX2_SIMD 1
-#elif defined(PANCAKE_ENABLE_SSE2_SIMD) && defined(__SSE2__)
+#elif defined(PIKELET_ENABLE_SSE2_SIMD) && defined(__SSE2__)
     #include <xmmintrin.h>
     #include <emmintrin.h>
     #define FLOAT_HNSW_SSE2_SIMD 1
@@ -37,8 +37,8 @@
 
 #ifdef __EMSCRIPTEN__
     #include <emscripten/emscripten.h>
-#elif !defined(PANCAKE_EMSCRIPTEN_GET_NOW_DEFINED)
-    #define PANCAKE_EMSCRIPTEN_GET_NOW_DEFINED
+#elif !defined(PIKELET_EMSCRIPTEN_GET_NOW_DEFINED)
+    #define PIKELET_EMSCRIPTEN_GET_NOW_DEFINED
     #include <chrono>
     static double emscripten_get_now() {
         using namespace std::chrono;
@@ -46,7 +46,7 @@
     }
 #endif
 
-namespace pancake {
+namespace pikelet {
 namespace wasm {
 
 enum class DistanceMetric : uint8_t { L2 = 0, Cosine = 1 };
@@ -1183,4 +1183,4 @@ private:
 };
 
 } // namespace wasm
-} // namespace pancake
+} // namespace pikelet

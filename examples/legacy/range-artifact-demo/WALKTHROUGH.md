@@ -18,7 +18,7 @@ sample top-3 ids: 932085, 934876, 708177
 
 ## What It Demonstrates
 
-Pancake Search Artifacts are compiled, immutable vector-search artifacts that
+Pikelet Search Artifacts are compiled, immutable vector-search artifacts that
 can be searched without loading the full index into memory.
 
 The current v2 artifact separates the graph into:
@@ -32,7 +32,7 @@ that an HTTP Range or Cloudflare R2 deployment would use.
 
 ## Correctness
 
-The split artifact has already been checked against the original Pancake
+The split artifact has already been checked against the original Pikelet
 snapshot traversal:
 
 - dataset: SIFT1M

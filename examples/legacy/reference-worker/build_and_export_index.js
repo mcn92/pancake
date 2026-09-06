@@ -9,7 +9,7 @@
  *     --vectors ./vectors.bin \
  *     --dims 384 \
  *     --count 5000 \
- *     --out /tmp/pancake-index.pnck
+ *     --out /tmp/pikelet-index.pnck
  */
 
 const fs = require('node:fs');
@@ -64,7 +64,7 @@ async function main() {
   const vectorsPath = args.vectors || path.join(engineDir, 'vectors.bin');
   const dims = positiveInt(args.dims || '384', '--dims');
   const count = positiveInt(args.count || '5000', '--count');
-  const outPath = args.out || path.join(os.tmpdir(), 'pancake-index.pnck');
+  const outPath = args.out || path.join(os.tmpdir(), 'pikelet-index.pnck');
   const M = positiveInt(args.M || '8', '--M');
   const efConstruction = positiveInt(args.efC || args.efConstruction || '150', '--efC');
   const efSearch = positiveInt(args.efS || args.efSearch || '100', '--efS');
@@ -102,7 +102,7 @@ async function main() {
 
   console.log('');
   console.log('done. next:');
-  console.log(`  npx wrangler r2 object put pancake-indexes/pancake-index.pnck --file=${outPath} --remote`);
+  console.log(`  npx wrangler r2 object put pikelet-indexes/pikelet-index.pnck --file=${outPath} --remote`);
 }
 
 main().catch(error => {

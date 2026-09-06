@@ -69,7 +69,7 @@ const RESTORE_REPS = getIntArg('restore-reps', 5);
 const QUERY_REPS = getIntArg('query-reps', 20);
 const COUNTS = getCounts();
 const KEEP_SNAPSHOTS = rawArgs.includes('--keep-snapshots');
-const OUT_DIR = getArg('out-dir', path.join(os.tmpdir(), 'pancake-node-restore'));
+const OUT_DIR = getArg('out-dir', path.join(os.tmpdir(), 'pikelet-node-restore'));
 
 function percentile(sorted, p) {
   if (sorted.length === 0) return NaN;

@@ -13,7 +13,7 @@
  *
  * Configs:
  *   pikelet-wasm   u8 / fp32   (Pikelet.create, setEfSearch per ef)
- *   pancake-native u8 / fp32   (native.pancake_*, pancake_set_ef per ef)
+ *   pikelet-native u8 / fp32   (native.pancake_*, native.pancake_set_ef per ef)
  *   usearch-native i8 / f16 / f32 (build-once-save-view per ef —
  *                                  expansion_search is fixed at construction)
  *   usearch-wasm   i8 / f32      (C ABI directly against the WASM artifact;
@@ -38,7 +38,7 @@
  *   node benchmarks/pareto_frontier.js --regenerate-gt
  *   node benchmarks/pareto_frontier.js --dataset nytimes --zero-vector-policy fail
  *   node benchmarks/pareto_frontier.js --dataset nytimes --library pikelet
- *   node benchmarks/pareto_frontier.js --dataset nytimes --configs pancake-wasm-u8,pancake-wasm-fp32
+ *   node benchmarks/pareto_frontier.js --dataset nytimes --configs pikelet-wasm-u8,pikelet-wasm-fp32
  */
 
 const { spawnSync } = require('child_process');
@@ -51,7 +51,7 @@ const { parseBenchmarkArgs, resolveSingleValue, resolveSweepValues } = require('
 // --- Optional libraries (each is independently optional; missing => skipped) ---
 let native;
 try { native = require('../native'); }
-catch (e) { console.warn('WARN: pikelet native binding not built (cd native && npm install) — skipping pancake-native configs.'); }
+catch (e) { console.warn('WARN: pikelet native binding not built (cd native && npm install) — skipping pikelet-native configs.'); }
 
 let usearch;
 try { usearch = require('usearch'); }
@@ -217,8 +217,8 @@ let CONFIGS = [];
 CONFIGS.push({ label: 'pikelet-wasm-u8',   library: 'pikelet', runtime: 'wasm',   dtype: 'u8',  sweep: true });
 CONFIGS.push({ label: 'pikelet-wasm-fp32',   library: 'pikelet', runtime: 'wasm',   dtype: 'f32', sweep: true });
 if (native) {
-  CONFIGS.push({ label: 'pancake-native-u8', library: 'pikelet', runtime: 'native', dtype: 'u8',  sweep: true });
-  CONFIGS.push({ label: 'pancake-native-fp32', library: 'pikelet', runtime: 'native', dtype: 'f32', sweep: true });
+  CONFIGS.push({ label: 'pikelet-native-u8', library: 'pikelet', runtime: 'native', dtype: 'u8',  sweep: true });
+  CONFIGS.push({ label: 'pikelet-native-fp32', library: 'pikelet', runtime: 'native', dtype: 'f32', sweep: true });
 }
 if (usearch) {
   CONFIGS.push({ label: 'usearch-native-int8', library: 'usearch', runtime: 'native', dtype: 'i8',  sweep: true, aliases: ['usearch-int8'] });
@@ -633,7 +633,7 @@ function formatMB(bytes) {
   const mb = bytesToMB(bytes);
   return mb == null ? 'n/a' : mb.toFixed(1) + ' MB';
 }
-function pancakeWasmHeapBytes(index) {
+function pikeletWasmHeapBytes(index) {
   return index.memoryUsage?.wasmHeapBytes ?? null;
 }
 function systemInfo() {
@@ -672,7 +672,7 @@ function plotTitle({ train, test, dim }) {
 // =====================================================================
 
 // --- Pikelet WASM ---
-async function buildPancakeWasm({ train, dim, dtype }) {
+async function buildPikeletWasm({ train, dim, dtype }) {
   const quantized = dtype === 'u8';
   log(`  [${dtype} wasm] build (M=${M}, ef_c=${EF_CONSTRUCTION}, metric=${METRIC})...`);
   const rssBefore = measureRssBytes();
@@ -686,12 +686,12 @@ async function buildPancakeWasm({ train, dim, dtype }) {
     index.addBatch(train.slice(start, Math.min(start + batchSize, train.length)));
   }
   const buildMs = performance.now() - t0;
-  const heapBytes = pancakeWasmHeapBytes(index);
+  const heapBytes = pikeletWasmHeapBytes(index);
   const rssDelta = rssDeltaBytes(rssBefore, measureRssBytes());
   log(`  [${dtype} wasm] build: ${(buildMs / 1000).toFixed(1)}s, logical index: ${formatMB(index.memory)} (wasm heap ${formatMB(heapBytes)}, rss +${formatMB(rssDelta)})`);
   return { index, buildMs, memBytes: index.memory, memorySource: 'logical_index', wasmHeapBytes: heapBytes, rssDeltaBytes: rssDelta };
 }
-function queryPancakeWasm(built, test, gt, ef) {
+function queryPikeletWasm(built, test, gt, ef) {
   built.index.setEfSearch(ef);
   for (let i = 0; i < WARMUP_QUERIES && i < test.length; i++) built.index.search(test[i], K);
   const latencies = new Array(test.length);
@@ -706,7 +706,7 @@ function queryPancakeWasm(built, test, gt, ef) {
 }
 
 // --- Pikelet native ---
-function buildPancakeNative({ train, dim, dtype }) {
+function buildPikeletNative({ train, dim, dtype }) {
   const quantized = dtype === 'u8' ? 1 : 0;
   log(`  [${dtype} native] build (M=${M}, ef_c=${EF_CONSTRUCTION}, metric=${METRIC})...`);
   const rssBefore = measureRssBytes();
@@ -726,7 +726,7 @@ function buildPancakeNative({ train, dim, dtype }) {
   log(`  [${dtype} native] build: ${(buildMs / 1000).toFixed(1)}s, logical index: ${formatMB(memBytes)} (rss +${formatMB(rssDelta)})`);
   return { handle: h, buildMs, memBytes, memorySource: 'logical_index', rssDeltaBytes: rssDelta };
 }
-function queryPancakeNative(built, test, gt, ef) {
+function queryPikeletNative(built, test, gt, ef) {
   native.pancake_set_ef(built.handle, ef);
   for (let i = 0; i < WARMUP_QUERIES && i < test.length; i++) native.pancake_query(built.handle, test[i], K);
   const latencies = new Array(test.length);
@@ -1150,8 +1150,8 @@ async function build(config, dataset) {
   switch (config.library) {
     case 'pikelet':
       return config.runtime === 'wasm'
-        ? await buildPancakeWasm({ train, dim, dtype: config.dtype })
-        : buildPancakeNative({ train, dim, dtype: config.dtype });
+        ? await buildPikeletWasm({ train, dim, dtype: config.dtype })
+        : buildPikeletNative({ train, dim, dtype: config.dtype });
     case 'usearch': return buildUsearch({ train, dim, dtype: config.dtype });
     case 'usearch-wasm': return await buildUsearchWasm({ train, dim, dtype: config.dtype, wasmPath: config.wasmPath });
     case 'hnswlib': return buildHnswlib({ train, dim });
@@ -1162,8 +1162,8 @@ function query(config, built, dataset, ef) {
   switch (config.library) {
     case 'pikelet':
       return config.runtime === 'wasm'
-        ? queryPancakeWasm(built, test, groundTruth, ef)
-        : queryPancakeNative(built, test, groundTruth, ef);
+        ? queryPikeletWasm(built, test, groundTruth, ef)
+        : queryPikeletNative(built, test, groundTruth, ef);
     case 'usearch': return queryUsearch(built, test, groundTruth, ef);
     case 'usearch-wasm': return queryUsearchWasm(built, test, groundTruth, ef);
     case 'hnswlib': return queryHnswlib(built, test, groundTruth, ef);
@@ -1504,7 +1504,7 @@ async function main() {
 
   // Outputs
   fs.writeFileSync(JSON_PATH, JSON.stringify({
-    benchmark: `pancake-pareto-frontier-${DATASET}-${METRIC}`,
+    benchmark: `pikelet-pareto-frontier-${DATASET}-${METRIC}`,
     timestamp: new Date().toISOString(),
     dataset: {
       name: DATASET,

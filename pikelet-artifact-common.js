@@ -7,7 +7,7 @@
 
 const { pikeletError, PANCAKE_ERROR_CODES } = require('./pikelet-errors.js');
 
-const PANCAKE_MAGIC = 0x504E434B;
+const PIKELET_MAGIC = 0x504E434B;
 const V1_ENVELOPE_HEADER_SIZE = 24;
 const V2_ENVELOPE_HEADER_SIZE = 20;
 const V3_ENVELOPE_HEADER_SIZE = 32;
@@ -309,7 +309,7 @@ function resolveOptionalPositiveInt(value, name, fallback) {
 
 function unwrapSnapshot(bytes) {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    if (bytes.byteLength < 4 || view.getUint32(0, true) !== PANCAKE_MAGIC) return bytes;
+    if (bytes.byteLength < 4 || view.getUint32(0, true) !== PIKELET_MAGIC) return bytes;
     // Envelope fields are untrusted: every size read from them must be
     // checked against the actual buffer before slicing, so a corrupt
     // envelope fails closed with a coded error instead of a raw RangeError.
@@ -529,7 +529,7 @@ async function verifySegmentSha256(source, offset, totalBytes, expected, label, 
 module.exports = {
     resolveSearchK,
     resolveOptionalPositiveInt,
-    PANCAKE_MAGIC,
+    PIKELET_MAGIC,
     V1_ENVELOPE_HEADER_SIZE,
     V2_ENVELOPE_HEADER_SIZE,
     V3_ENVELOPE_HEADER_SIZE,

@@ -1,8 +1,8 @@
 # Catalog Demo
 
-This demo shows the intended Cloudflare Worker shape for Pancake:
+This demo shows the intended Cloudflare Worker shape for Pikelet:
 
-- Pancake Worker does semantic retrieval
+- Pikelet Worker does semantic retrieval
 - A separate catalog backend hydrates live product fields
 - Search ranking comes from a snapshot
 - Price and inventory come from the source of truth
@@ -60,7 +60,7 @@ If you have a local `.dev.vars` file with `READ_ONLY=1`, change it to
 If `.dev.vars` sets `API_KEY`, pass the same value to the importer:
 
 ```bash
-PANCAKE_API_KEY=local-demo-key \
+PIKELET_API_KEY=local-demo-key \
   node examples/legacy/02-catalog-hydration/worker_import_snapshot.mjs
 ```
 
@@ -101,7 +101,7 @@ With the mock catalog and reference Worker still running, remove the rain shell
 from the Worker index and add a leather hiking boot with 20 in stock:
 
 ```bash
-PANCAKE_API_KEY=local-demo-key \
+PIKELET_API_KEY=local-demo-key \
   node examples/legacy/02-catalog-hydration/live_update.mjs
 ```
 

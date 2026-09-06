@@ -115,10 +115,10 @@ async function runBrowserTest(browserType, url) {
     await page.goto(url, { waitUntil: 'networkidle' });
 
     await page.waitForFunction(() => {
-      return !!window.__PANCAKE_BROWSER_SMOKE__;
+      return !!window.__PIKELET_BROWSER_SMOKE__;
     }, null, { timeout: 20000 });
 
-    const result = await page.evaluate(() => window.__PANCAKE_BROWSER_SMOKE__);
+    const result = await page.evaluate(() => window.__PIKELET_BROWSER_SMOKE__);
 
     if (!result || !result.ok) {
       throw new Error(`Test failed: ${result && result.error ? result.error : 'unknown error'}`);

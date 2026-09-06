@@ -216,7 +216,7 @@ const INLINE_WEIGHTS_URL = 'https://github.com/mcn92/pikelet/releases/download/i
 const INLINE_WEIGHTS_SHA256 = '3b14685a73bd7f30477be8dad89902b6e4bb55e49ec325c9e071c462cf89089b';
 
 async function fetchInlineEncoderWeights(weightsPath) {
-  const url = process.env.PIKELET_ENCODER_WEIGHTS_URL || process.env.PANCAKE_ENCODER_WEIGHTS_URL || INLINE_WEIGHTS_URL;
+  const url = process.env.PIKELET_ENCODER_WEIGHTS_URL || INLINE_WEIGHTS_URL;
   let body;
   try {
     const response = await fetch(url, { redirect: 'follow' });

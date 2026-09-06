@@ -1,4 +1,4 @@
-const config = window.PANCAKE_DEMO_CONFIG || {};
+const config = window.PIKELET_DEMO_CONFIG || {};
 const form = document.getElementById('search-form');
 const queryInput = document.getElementById('query');
 const kInput = document.getElementById('k');
@@ -10,8 +10,8 @@ const statusEl = document.getElementById('status');
 const metricsEl = document.getElementById('metrics');
 const resultsEl = document.getElementById('results');
 
-const storedApiBase = localStorage.getItem('pancakeWorkerApiBase');
-const storedAccessKey = sessionStorage.getItem('pancakeDemoAccessKey');
+const storedApiBase = localStorage.getItem('pikeletWorkerApiBase');
+const storedAccessKey = sessionStorage.getItem('pikeletDemoAccessKey');
 apiInput.value = storedApiBase || config.apiBase || '';
 accessKeyInput.value = storedAccessKey || '';
 
@@ -130,13 +130,13 @@ saveApiButton.addEventListener('click', () => {
   const apiBase = getApiBase();
   const accessKey = accessKeyInput.value.trim();
   if (apiBase) {
-    localStorage.setItem('pancakeWorkerApiBase', apiBase);
+    localStorage.setItem('pikeletWorkerApiBase', apiBase);
     apiInput.value = apiBase;
   }
   if (accessKey) {
-    sessionStorage.setItem('pancakeDemoAccessKey', accessKey);
+    sessionStorage.setItem('pikeletDemoAccessKey', accessKey);
   } else {
-    sessionStorage.removeItem('pancakeDemoAccessKey');
+    sessionStorage.removeItem('pikeletDemoAccessKey');
   }
   setStatus('Connection settings saved.');
 });

@@ -61,8 +61,8 @@ const REPETITIONS = 3;
 const WARMUP_QUERIES = 200;
 
 const CONFIGS = [
-  { label: 'pancake-u8-wasm',   library: 'pikelet',  dtype: 'u8'  },
-  { label: 'pancake-f32-wasm',    library: 'pikelet',  dtype: 'f32' },
+  { label: 'pikelet-u8-wasm',   library: 'pikelet',  dtype: 'u8'  },
+  { label: 'pikelet-f32-wasm',    library: 'pikelet',  dtype: 'f32' },
   { label: 'usearch-int8-native', library: 'usearch',  dtype: 'i8'  },
   { label: 'usearch-f32-native',  library: 'usearch',  dtype: 'f32' },
 ];
@@ -199,7 +199,7 @@ function stddev(arr) {
 // --- Pikelet: build + query ---
 async function buildPikelet({ train, dim, dtype }) {
   const quantized = dtype === 'u8';
-  log(`  [pancake-${dtype}] building index (M=${M}, ef_c=${EF_CONSTRUCTION}, metric=l2)...`);
+  log(`  [pikelet-${dtype}] building index (M=${M}, ef_c=${EF_CONSTRUCTION}, metric=l2)...`);
   const index = await Pikelet.create({
     dim,
     maxElements: train.length,
@@ -220,7 +220,7 @@ async function buildPikelet({ train, dim, dtype }) {
     }
   }
   const buildMs = performance.now() - t0;
-  log(`  [pancake-${dtype}] build: ${(buildMs / 1000).toFixed(1)}s, memory: ${(index.memory / 1024 / 1024).toFixed(1)} MB`);
+  log(`  [pikelet-${dtype}] build: ${(buildMs / 1000).toFixed(1)}s, memory: ${(index.memory / 1024 / 1024).toFixed(1)} MB`);
   return { index, buildMs, memBytes: index.memory };
 }
 
@@ -539,7 +539,7 @@ async function main() {
 
   // Save outputs
   fs.writeFileSync(JSON_PATH, JSON.stringify({
-    benchmark: 'pancake-vs-usearch-dbpedia-100k-l2',
+    benchmark: 'pikelet-vs-usearch-dbpedia-100k-l2',
     timestamp: new Date().toISOString(),
     dataset: { vectors: train.length, queries: test.length, dim, metric: 'l2', source: DBPEDIA_DIR },
     params: { K, M, EF_CONSTRUCTION, EF_SEARCH_VALUES, REPETITIONS, WARMUP_QUERIES },

@@ -167,8 +167,8 @@ async function main() {
   status('loading dataset');
   const rows = await loadDataset();
   const configs = [
-    { name: 'pancake-int8-M16-ef1000', quantized: true, M: 16, efConstruction: 1000, efSearch: 1000 },
-    { name: 'pancake-f32-M16-ef1000', quantized: false, M: 16, efConstruction: 1000, efSearch: 1000 },
+    { name: 'pikelet-int8-M16-ef1000', quantized: true, M: 16, efConstruction: 1000, efSearch: 1000 },
+    { name: 'pikelet-f32-M16-ef1000', quantized: false, M: 16, efConstruction: 1000, efSearch: 1000 },
   ];
 
   const results = [];

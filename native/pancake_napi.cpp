@@ -1,5 +1,5 @@
 /**
- * pancake_napi.cpp — Node.js N-API binding for Pancake HNSW engine.
+ * pancake_napi.cpp — Node.js N-API binding for the Pikelet HNSW engine.
  *
  * Wraps the same C++ engine (engine.cpp) that the WASM build uses, but
  * compiled natively with SSE2 SIMD. Provides an identical API surface so
@@ -36,7 +36,7 @@
 #include <string>
 #include <algorithm>
 
-using namespace pancake::wasm;
+using namespace pikelet::wasm;
 
 namespace {
 
@@ -507,4 +507,4 @@ Napi::Object InitModule(Napi::Env env, Napi::Object exports) {
     return exports;
 }
 
-NODE_API_MODULE(pancake_native, InitModule)
+NODE_API_MODULE(pikelet_native, InitModule)

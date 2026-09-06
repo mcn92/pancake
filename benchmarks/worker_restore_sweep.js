@@ -23,7 +23,7 @@
  *   - Set MAX_ELEMENTS_LIMIT in examples/worker/wrangler.toml high enough
  *     for the largest requested count.
  *   - Set ALLOW_INSECURE_ADMIN=1 for a local-only run, or export
- *     PANCAKE_API_KEY to match the Worker's API_KEY.
+ *     PIKELET_API_KEY to match the Worker's API_KEY.
  */
 
 const { parseBenchmarkArgs, resolveSingleValue } = require('./bench_args');
@@ -36,7 +36,7 @@ const POSITIONAL_ARGS = parsedArgs.args.filter((arg, idx, arr) => {
   return true;
 });
 const WORKER_URL = POSITIONAL_ARGS[0] || 'http://localhost:8787';
-const API_KEY = process.env.PANCAKE_API_KEY || '';
+const API_KEY = process.env.PIKELET_API_KEY || '';
 const COUNTS = (() => {
   const idx = process.argv.indexOf('--counts');
   if (idx !== -1 && process.argv[idx + 1]) {

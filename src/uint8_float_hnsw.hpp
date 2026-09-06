@@ -29,13 +29,13 @@
 #if defined(__wasm_simd128__)
     #include <wasm_simd128.h>
     #define UINT8_HNSW_WASM_SIMD 1
-#elif defined(PANCAKE_ENABLE_AVX512_SIMD) && defined(__AVX512F__) && defined(__AVX512BW__)
+#elif defined(PIKELET_ENABLE_AVX512_SIMD) && defined(__AVX512F__) && defined(__AVX512BW__)
     #include <immintrin.h>
     #define UINT8_HNSW_AVX512_SIMD 1
-#elif defined(PANCAKE_ENABLE_AVX2_SIMD) && defined(__AVX2__)
+#elif defined(PIKELET_ENABLE_AVX2_SIMD) && defined(__AVX2__)
     #include <immintrin.h>
     #define UINT8_HNSW_AVX2_SIMD 1
-#elif defined(PANCAKE_ENABLE_SSE2_SIMD) && defined(__SSE2__)
+#elif defined(PIKELET_ENABLE_SSE2_SIMD) && defined(__SSE2__)
     #include <xmmintrin.h>
     #include <emmintrin.h>
     #define UINT8_HNSW_SSE2_SIMD 1
@@ -43,8 +43,8 @@
 
 #ifdef __EMSCRIPTEN__
     #include <emscripten/emscripten.h>
-#elif !defined(PANCAKE_EMSCRIPTEN_GET_NOW_DEFINED)
-    #define PANCAKE_EMSCRIPTEN_GET_NOW_DEFINED
+#elif !defined(PIKELET_EMSCRIPTEN_GET_NOW_DEFINED)
+    #define PIKELET_EMSCRIPTEN_GET_NOW_DEFINED
     #include <chrono>
     static double emscripten_get_now() {
         using namespace std::chrono;
@@ -63,10 +63,10 @@
   #endif
 #endif
 
-namespace pancake {
+namespace pikelet {
 namespace wasm {
 
-#if defined(PANCAKE_UINT8_HNSW_BUILD_PROFILE)
+#if defined(PIKELET_UINT8_HNSW_BUILD_PROFILE)
 struct BuildProfile {
     uint64_t inserts = 0;
 
@@ -1141,7 +1141,7 @@ private:
                 g_build_profile.base_prune_calls++;
                 g_build_profile.base_prune_candidates += candidates.size();
             });
-#if defined(PANCAKE_UINT8_HNSW_BUILD_PROFILE)
+#if defined(PIKELET_UINT8_HNSW_BUILD_PROFILE)
             double sort_t0 = emscripten_get_now();
             std::sort(candidates.begin(), candidates.end());
             g_build_profile.prune_sort_ms += emscripten_get_now() - sort_t0;
@@ -1783,7 +1783,7 @@ private:
         for (const Edge& edge : edges) {
             candidates.emplace_back(edge.dist, edge.neighbor);
         }
-#if defined(PANCAKE_UINT8_HNSW_BUILD_PROFILE)
+#if defined(PIKELET_UINT8_HNSW_BUILD_PROFILE)
         double sort_t0 = emscripten_get_now();
         std::sort(candidates.begin(), candidates.end());
         g_build_profile.prune_sort_ms += emscripten_get_now() - sort_t0;
@@ -1838,4 +1838,4 @@ private:
 };
 
 } // namespace wasm
-} // namespace pancake
+} // namespace pikelet

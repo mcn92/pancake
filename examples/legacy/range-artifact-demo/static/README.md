@@ -1,7 +1,7 @@
 # Browser Search Artifact Demo
 
-This is a static browser demo for Pancake range-readable artifacts. It is a
-fully client-side semantic search over the Pancake documentation: a
+This is a static browser demo for Pikelet range-readable artifacts. It is a
+fully client-side semantic search over the Pikelet documentation: a
 `.pancake-range` index opened through HTTP range requests, a 1.08 MiB distilled
 student encoder that embeds queries locally, and the docs corpus for result
 display. No backend, no outbound API calls — a static host only distributes
