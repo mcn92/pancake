@@ -21,7 +21,35 @@ npx pikelet compile --source ./docs --out search.pikelet
 
 The common shape: the corpus is built offline, changes on a release cycle rather than by the second, and you'd rather host it than operate it.
 
-Renamed from *Pancake* in September 2026. Same project, same file formats; `pancake-wasm` and `create-pancake-search` are deprecated pointers to `pikelet-wasm` and `pikelet`. Not related to the [Pikelet programming language](https://github.com/pikelet-lang/pikelet), which had the name first.
+## Install
+
+```
+npm install pikelet-wasm        # engine + artifact readers/builders
+npm install -g pikelet          # compile / create / mcp CLI
+```
+
+```
+git clone https://github.com/mcn92/pikelet.git && cd pikelet && npm install
+```
+
+The checkout includes prebuilt WASM in `dist/`; rebuilding needs Emscripten and is only necessary if you change `src/`.
+
+```js
+import { openPikeletFile } from 'pikelet-wasm/complete';
+
+const search = await openPikeletFile('search.pikelet');   // path, URL, or a { size, read(offset, len) } source
+const out = await search.query('how do workers restore snapshots', { k: 5 });
+console.log(out.matchQuality, out.results[0]?.title);
+await search.close();
+```
+
+If you already have vectors and just want the in-memory engine:
+
+```js
+import Pikelet from 'pikelet-wasm';
+const index = await Pikelet.create({ dim: 384, maxElements: 100000, metric: 'cosine', quantized: true });
+index.add(vec); index.search(query, 10); index.export();
+```
 
 ## One decision
 
@@ -51,7 +79,7 @@ x_i·x_j = D·o_i·o_j + o_i·s_j·Σq_j + o_j·s_i·Σq_i + s_i·s_j·(q_i·q_j
 
 **Pooling.** Average adjacent groups of `p` bytes and you get a shorter row. Because the mean of `offset + scale·q` over a group equals `offset + scale·mean(q)`, the shorter row keeps the *same two constants*. That's the sketch tier (below), and the micro tier is the same thing done twice.
 
-**Weights.** The bundled query encoder is a 6-layer MiniLM whose matrices are stored the same way, one (scale, offset) per 64-column block. Activations stay float32, weights stay bytes, dequantization happens inside the matmul. 24 MB instead of 86, and the same widen-and-multiply kernel that scores vectors runs the transformer.
+**Weights.** The bundled query encoder is a 6-layer MiniLM whose matrices are stored the same way, one (scale, offset) per 64-column block. Activations stay float32, weights stay bytes, dequantization happens inside the matmul. 24 MB instead of 86, using the same widen-and-multiply trick — a separate kernel, same arithmetic identity — that scores vectors.
 
 The consequence for the file format: a row decodes from its own bytes and its own two floats and nothing else. No codebook, no global statistics. So every row is a fixed-size byte range at a computable offset, which is what makes it fetchable on its own, hashable on its own, and verifiable on the read that fetches it.
 
@@ -117,36 +145,6 @@ npx pikelet mcp install --client claude-code \
 
 The client gets `search`, `get_record`, `list_packs`, and `verify_pack` (which runs the golden queries stored in the file). Every result carries the pack identity and source location, so citations are pinnable. URL packs are range-read, never downloaded whole. See [`pikelet/README.md`](pikelet/README.md) for the full MCP reference and [`packs/README.md`](packs/README.md) for hosting a pack.
 
-## Install
-
-```
-npm install pikelet-wasm        # engine + artifact readers/builders
-npm install -g pikelet          # compile / create / mcp CLI
-```
-
-```
-git clone https://github.com/mcn92/pikelet.git && cd pikelet && npm install
-```
-
-The checkout includes prebuilt WASM in `dist/`; rebuilding needs Emscripten and is only necessary if you change `src/`.
-
-```js
-import { openPikeletFile } from 'pikelet-wasm/complete';
-
-const search = await openPikeletFile('search.pikelet');   // path, URL, or a { size, read(offset, len) } source
-const out = await search.query('how do workers restore snapshots', { k: 5 });
-console.log(out.matchQuality, out.results[0]?.title);
-await search.close();
-```
-
-If you already have vectors and just want the in-memory engine:
-
-```js
-import Pikelet from 'pikelet-wasm';
-const index = await Pikelet.create({ dim: 384, maxElements: 100000, metric: 'cosine', quantized: true });
-index.add(vec); index.search(query, 10); index.export();
-```
-
 ## Numbers
 
 Stated with their conditions, because they don't mean anything without them.
@@ -166,6 +164,8 @@ Don't use it if your corpus changes faster than you can recompile; if you need a
 ## Status
 
 One author. The engine and readers are published and tested (`npm test` runs the engine, sketch, complete-profile, MCP, and ingestion conformance suites). The `.pikelet` format spec is Draft 2 and not frozen. The encoder kernel's C++ source lives at [`examples/05-one-file-search/encoder-spike/encoder.cpp`](examples/05-one-file-search/encoder-spike/encoder.cpp); the compiled `.wasm` shipped in `complete/encoder-kernels/` is built from it, and its weights are verified against embedded test vectors at open. Bare `.pnck` engine snapshots carry no checksum; integrity starts at the artifact layer.
+
+Renamed from *Pancake* in September 2026. Same project, same file formats; `pancake-wasm` and `create-pancake-search` are deprecated pointers to `pikelet-wasm` and `pikelet`. Not related to the [Pikelet programming language](https://github.com/pikelet-lang/pikelet), which had the name first.
 
 Specs: [`spec/SEARCH_ARTIFACT_CONTRACT.md`](spec/SEARCH_ARTIFACT_CONTRACT.md), [`spec/SKETCH_PROFILE.md`](spec/SKETCH_PROFILE.md), [`spec/COMPLETE_PROFILE.md`](spec/COMPLETE_PROFILE.md).
 

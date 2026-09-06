@@ -1204,7 +1204,10 @@ private:
         const uint8_t* data = &qdata_[db_id * dims_];
         float s = scales_[db_id];
         float o = offsets_[db_id];
-        float dot = 0.0f;
+        // Factored form: y*x = offset*sum(y) + scale*(y*q), applied once at
+        // the end, instead of dequantizing (offset + scale*byte) per lane.
+        float raw = 0.0f;
+        float qsum = 0.0f;
         size_t d = 0;
 
 #ifdef UINT8_HNSW_WASM_SIMD
@@ -1212,8 +1215,10 @@ private:
         v128_t acc1 = wasm_f32x4_splat(0.0f);
         v128_t acc2 = wasm_f32x4_splat(0.0f);
         v128_t acc3 = wasm_f32x4_splat(0.0f);
-        v128_t v_scale = wasm_f32x4_splat(s);
-        v128_t v_offset = wasm_f32x4_splat(o);
+        v128_t qacc0 = wasm_f32x4_splat(0.0f);
+        v128_t qacc1 = wasm_f32x4_splat(0.0f);
+        v128_t qacc2 = wasm_f32x4_splat(0.0f);
+        v128_t qacc3 = wasm_f32x4_splat(0.0f);
 
         for (; d + 16 <= dims_; d += 16) {
             v128_t bytes = wasm_v128_load(data + d);
@@ -1222,67 +1227,87 @@ private:
             v128_t u16_hi = wasm_u16x8_extend_high_u8x16(bytes);
 
             v128_t f0 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_low_u16x8(u16_lo));
-            v128_t val0 = WFMA(v_offset, f0, v_scale);
-            acc0 = WFMA(acc0, wasm_v128_load(query + d), val0);
+            v128_t y0 = wasm_v128_load(query + d);
+            acc0 = WFMA(acc0, y0, f0);
+            qacc0 = wasm_f32x4_add(qacc0, y0);
 
             v128_t f1 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_high_u16x8(u16_lo));
-            v128_t val1 = WFMA(v_offset, f1, v_scale);
-            acc1 = WFMA(acc1, wasm_v128_load(query + d + 4), val1);
+            v128_t y1 = wasm_v128_load(query + d + 4);
+            acc1 = WFMA(acc1, y1, f1);
+            qacc1 = wasm_f32x4_add(qacc1, y1);
 
             v128_t f2 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_low_u16x8(u16_hi));
-            v128_t val2 = WFMA(v_offset, f2, v_scale);
-            acc2 = WFMA(acc2, wasm_v128_load(query + d + 8), val2);
+            v128_t y2 = wasm_v128_load(query + d + 8);
+            acc2 = WFMA(acc2, y2, f2);
+            qacc2 = wasm_f32x4_add(qacc2, y2);
 
             v128_t f3 = wasm_f32x4_convert_i32x4(wasm_u32x4_extend_high_u16x8(u16_hi));
-            v128_t val3 = WFMA(v_offset, f3, v_scale);
-            acc3 = WFMA(acc3, wasm_v128_load(query + d + 12), val3);
+            v128_t y3 = wasm_v128_load(query + d + 12);
+            acc3 = WFMA(acc3, y3, f3);
+            qacc3 = wasm_f32x4_add(qacc3, y3);
         }
 
         v128_t acc = wasm_f32x4_add(wasm_f32x4_add(acc0, acc1),
                                     wasm_f32x4_add(acc2, acc3));
-        dot = wasm_f32x4_extract_lane(acc, 0) + wasm_f32x4_extract_lane(acc, 1) +
+        raw = wasm_f32x4_extract_lane(acc, 0) + wasm_f32x4_extract_lane(acc, 1) +
               wasm_f32x4_extract_lane(acc, 2) + wasm_f32x4_extract_lane(acc, 3);
+        v128_t qacc = wasm_f32x4_add(wasm_f32x4_add(qacc0, qacc1),
+                                     wasm_f32x4_add(qacc2, qacc3));
+        qsum = wasm_f32x4_extract_lane(qacc, 0) + wasm_f32x4_extract_lane(qacc, 1) +
+               wasm_f32x4_extract_lane(qacc, 2) + wasm_f32x4_extract_lane(qacc, 3);
 #elif defined(UINT8_HNSW_AVX512_SIMD)
         __m512 acc0 = _mm512_setzero_ps();
         __m512 acc1 = _mm512_setzero_ps();
         __m512 acc2 = _mm512_setzero_ps();
         __m512 acc3 = _mm512_setzero_ps();
-        __m512 v_scale = _mm512_set1_ps(s);
-        __m512 v_offset = _mm512_set1_ps(o);
+        __m512 qacc0 = _mm512_setzero_ps();
+        __m512 qacc1 = _mm512_setzero_ps();
+        __m512 qacc2 = _mm512_setzero_ps();
+        __m512 qacc3 = _mm512_setzero_ps();
 
         for (; d + 64 <= dims_; d += 64) {
             __m512 ff0 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(
                 _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + d))));
-            __m512 val0 = _mm512_add_ps(v_offset, _mm512_mul_ps(ff0, v_scale));
-            acc0 = _mm512_add_ps(acc0, _mm512_mul_ps(_mm512_loadu_ps(query + d), val0));
+            __m512 y0 = _mm512_loadu_ps(query + d);
+            acc0 = _mm512_fmadd_ps(y0, ff0, acc0);
+            qacc0 = _mm512_add_ps(qacc0, y0);
 
             __m512 ff1 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(
                 _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + d + 16))));
-            __m512 val1 = _mm512_add_ps(v_offset, _mm512_mul_ps(ff1, v_scale));
-            acc1 = _mm512_add_ps(acc1, _mm512_mul_ps(_mm512_loadu_ps(query + d + 16), val1));
+            __m512 y1 = _mm512_loadu_ps(query + d + 16);
+            acc1 = _mm512_fmadd_ps(y1, ff1, acc1);
+            qacc1 = _mm512_add_ps(qacc1, y1);
 
             __m512 ff2 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(
                 _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + d + 32))));
-            __m512 val2 = _mm512_add_ps(v_offset, _mm512_mul_ps(ff2, v_scale));
-            acc2 = _mm512_add_ps(acc2, _mm512_mul_ps(_mm512_loadu_ps(query + d + 32), val2));
+            __m512 y2 = _mm512_loadu_ps(query + d + 32);
+            acc2 = _mm512_fmadd_ps(y2, ff2, acc2);
+            qacc2 = _mm512_add_ps(qacc2, y2);
 
             __m512 ff3 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(
                 _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + d + 48))));
-            __m512 val3 = _mm512_add_ps(v_offset, _mm512_mul_ps(ff3, v_scale));
-            acc3 = _mm512_add_ps(acc3, _mm512_mul_ps(_mm512_loadu_ps(query + d + 48), val3));
+            __m512 y3 = _mm512_loadu_ps(query + d + 48);
+            acc3 = _mm512_fmadd_ps(y3, ff3, acc3);
+            qacc3 = _mm512_add_ps(qacc3, y3);
         }
 
         __m512 acc = _mm512_add_ps(_mm512_add_ps(acc0, acc1), _mm512_add_ps(acc2, acc3));
         alignas(64) float tmp[16];
         _mm512_store_ps(tmp, acc);
-        for (int i = 0; i < 16; ++i) dot += tmp[i];
+        for (int i = 0; i < 16; ++i) raw += tmp[i];
+        __m512 qacc = _mm512_add_ps(_mm512_add_ps(qacc0, qacc1), _mm512_add_ps(qacc2, qacc3));
+        alignas(64) float qtmp[16];
+        _mm512_store_ps(qtmp, qacc);
+        for (int i = 0; i < 16; ++i) qsum += qtmp[i];
 #elif defined(UINT8_HNSW_AVX2_SIMD)
         __m256 acc0 = _mm256_setzero_ps();
         __m256 acc1 = _mm256_setzero_ps();
         __m256 acc2 = _mm256_setzero_ps();
         __m256 acc3 = _mm256_setzero_ps();
-        __m256 v_scale = _mm256_set1_ps(s);
-        __m256 v_offset = _mm256_set1_ps(o);
+        __m256 qacc0 = _mm256_setzero_ps();
+        __m256 qacc1 = _mm256_setzero_ps();
+        __m256 qacc2 = _mm256_setzero_ps();
+        __m256 qacc3 = _mm256_setzero_ps();
 
         for (; d + 32 <= dims_; d += 32) {
             __m128i bytes0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + d));
@@ -1291,12 +1316,14 @@ private:
             __m256i i32_1 = _mm256_cvtepu16_epi32(_mm256_extracti128_si256(u16_0, 1));
 
             __m256 ff0 = _mm256_cvtepi32_ps(i32_0);
-            __m256 val0 = _mm256_add_ps(v_offset, _mm256_mul_ps(ff0, v_scale));
-            acc0 = _mm256_add_ps(acc0, _mm256_mul_ps(_mm256_loadu_ps(query + d), val0));
+            __m256 y0 = _mm256_loadu_ps(query + d);
+            acc0 = _mm256_add_ps(acc0, _mm256_mul_ps(y0, ff0));
+            qacc0 = _mm256_add_ps(qacc0, y0);
 
             __m256 ff1 = _mm256_cvtepi32_ps(i32_1);
-            __m256 val1 = _mm256_add_ps(v_offset, _mm256_mul_ps(ff1, v_scale));
-            acc1 = _mm256_add_ps(acc1, _mm256_mul_ps(_mm256_loadu_ps(query + d + 8), val1));
+            __m256 y1 = _mm256_loadu_ps(query + d + 8);
+            acc1 = _mm256_add_ps(acc1, _mm256_mul_ps(y1, ff1));
+            qacc1 = _mm256_add_ps(qacc1, y1);
 
             __m128i bytes1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + d + 16));
             __m256i u16_1 = _mm256_cvtepu8_epi16(bytes1);
@@ -1304,25 +1331,33 @@ private:
             __m256i i32_3 = _mm256_cvtepu16_epi32(_mm256_extracti128_si256(u16_1, 1));
 
             __m256 ff2 = _mm256_cvtepi32_ps(i32_2);
-            __m256 val2 = _mm256_add_ps(v_offset, _mm256_mul_ps(ff2, v_scale));
-            acc2 = _mm256_add_ps(acc2, _mm256_mul_ps(_mm256_loadu_ps(query + d + 16), val2));
+            __m256 y2 = _mm256_loadu_ps(query + d + 16);
+            acc2 = _mm256_add_ps(acc2, _mm256_mul_ps(y2, ff2));
+            qacc2 = _mm256_add_ps(qacc2, y2);
 
             __m256 ff3 = _mm256_cvtepi32_ps(i32_3);
-            __m256 val3 = _mm256_add_ps(v_offset, _mm256_mul_ps(ff3, v_scale));
-            acc3 = _mm256_add_ps(acc3, _mm256_mul_ps(_mm256_loadu_ps(query + d + 24), val3));
+            __m256 y3 = _mm256_loadu_ps(query + d + 24);
+            acc3 = _mm256_add_ps(acc3, _mm256_mul_ps(y3, ff3));
+            qacc3 = _mm256_add_ps(qacc3, y3);
         }
 
         __m256 acc = _mm256_add_ps(_mm256_add_ps(acc0, acc1), _mm256_add_ps(acc2, acc3));
         alignas(32) float tmp[8];
         _mm256_store_ps(tmp, acc);
-        dot = tmp[0] + tmp[1] + tmp[2] + tmp[3] + tmp[4] + tmp[5] + tmp[6] + tmp[7];
+        raw = tmp[0] + tmp[1] + tmp[2] + tmp[3] + tmp[4] + tmp[5] + tmp[6] + tmp[7];
+        __m256 qacc = _mm256_add_ps(_mm256_add_ps(qacc0, qacc1), _mm256_add_ps(qacc2, qacc3));
+        alignas(32) float qtmp[8];
+        _mm256_store_ps(qtmp, qacc);
+        qsum = qtmp[0] + qtmp[1] + qtmp[2] + qtmp[3] + qtmp[4] + qtmp[5] + qtmp[6] + qtmp[7];
 #elif defined(UINT8_HNSW_SSE2_SIMD)
         __m128 acc0 = _mm_setzero_ps();
         __m128 acc1 = _mm_setzero_ps();
         __m128 acc2 = _mm_setzero_ps();
         __m128 acc3 = _mm_setzero_ps();
-        __m128 v_scale = _mm_set1_ps(s);
-        __m128 v_offset = _mm_set1_ps(o);
+        __m128 qacc0 = _mm_setzero_ps();
+        __m128 qacc1 = _mm_setzero_ps();
+        __m128 qacc2 = _mm_setzero_ps();
+        __m128 qacc3 = _mm_setzero_ps();
         __m128i zero = _mm_setzero_si128();
 
         for (; d + 16 <= dims_; d += 16) {
@@ -1330,26 +1365,33 @@ private:
             __m128i u16_lo = _mm_unpacklo_epi8(bytes, zero);
             __m128i u16_hi = _mm_unpackhi_epi8(bytes, zero);
 
-            #define SSE2_ASYM_DOT(u16v, lohi, offset, accN) { \
+            #define SSE2_ASYM_DOT(u16v, lohi, offset, accN, qaccN) { \
                 __m128 ff = _mm_cvtepi32_ps(_mm_unpack##lohi##_epi16(u16v, zero)); \
-                __m128 val = _mm_add_ps(v_offset, _mm_mul_ps(ff, v_scale)); \
-                accN = _mm_add_ps(accN, _mm_mul_ps(_mm_loadu_ps(query + d + offset), val)); \
+                __m128 yv = _mm_loadu_ps(query + d + offset); \
+                accN = _mm_add_ps(accN, _mm_mul_ps(yv, ff)); \
+                qaccN = _mm_add_ps(qaccN, yv); \
             }
-            SSE2_ASYM_DOT(u16_lo, lo, 0,  acc0);
-            SSE2_ASYM_DOT(u16_lo, hi, 4,  acc1);
-            SSE2_ASYM_DOT(u16_hi, lo, 8,  acc2);
-            SSE2_ASYM_DOT(u16_hi, hi, 12, acc3);
+            SSE2_ASYM_DOT(u16_lo, lo, 0,  acc0, qacc0);
+            SSE2_ASYM_DOT(u16_lo, hi, 4,  acc1, qacc1);
+            SSE2_ASYM_DOT(u16_hi, lo, 8,  acc2, qacc2);
+            SSE2_ASYM_DOT(u16_hi, hi, 12, acc3, qacc3);
             #undef SSE2_ASYM_DOT
         }
 
         __m128 acc = _mm_add_ps(_mm_add_ps(acc0, acc1), _mm_add_ps(acc2, acc3));
         alignas(16) float tmp[4];
         _mm_store_ps(tmp, acc);
-        dot = tmp[0] + tmp[1] + tmp[2] + tmp[3];
+        raw = tmp[0] + tmp[1] + tmp[2] + tmp[3];
+        __m128 qacc = _mm_add_ps(_mm_add_ps(qacc0, qacc1), _mm_add_ps(qacc2, qacc3));
+        alignas(16) float qtmp[4];
+        _mm_store_ps(qtmp, qacc);
+        qsum = qtmp[0] + qtmp[1] + qtmp[2] + qtmp[3];
 #endif
         for (; d < dims_; d++) {
-            dot += query[d] * (o + s * static_cast<float>(data[d]));
+            raw += query[d] * static_cast<float>(data[d]);
+            qsum += query[d];
         }
+        float dot = o * qsum + s * raw;
         if (dot > 1.0f) dot = 1.0f;
         else if (dot < -1.0f) dot = -1.0f;
         return 1.0f - dot;
